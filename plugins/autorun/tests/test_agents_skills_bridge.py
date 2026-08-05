@@ -65,9 +65,36 @@ def _claude_skills(home: Path) -> Path:
 
 
 def test_setting_declares_the_documented_contract():
-    assert _AGENTS_SKILLS_SETTING.env_var == "AUTORUN_CLAUDE_AGENTS_SKILLS"
+    assert _AGENTS_SKILLS_SETTING.env_var == "AUTORUN_SHARED_SKILLS_BRIDGE"
     assert _AGENTS_SKILLS_SETTING.default == "none"
     assert set(_AGENTS_SKILLS_SETTING.choices) == {"link", "copy", "none"}
+
+
+def test_the_retired_claude_specific_spellings_still_resolve():
+    """The bridge was named for Claude when Claude was the only harness it
+    could reach. Renaming it must not silently ignore the value a user already
+    has in their environment or config."""
+    from autorun.install import resolve_choice_setting
+
+    from_env = resolve_choice_setting(
+        _AGENTS_SKILLS_SETTING, env={"AUTORUN_CLAUDE_AGENTS_SKILLS": "link"}, config={}
+    )
+    assert (from_env.value, from_env.source) == ("link", "env AUTORUN_CLAUDE_AGENTS_SKILLS")
+
+    from_config = resolve_choice_setting(
+        _AGENTS_SKILLS_SETTING, env={}, config={"claude_agents_skills": "copy"}
+    )
+    assert (from_config.value, from_config.source) == ("copy", "config")
+
+    current_wins = resolve_choice_setting(
+        _AGENTS_SKILLS_SETTING,
+        env={
+            "AUTORUN_SHARED_SKILLS_BRIDGE": "copy",
+            "AUTORUN_CLAUDE_AGENTS_SKILLS": "link",
+        },
+        config={},
+    )
+    assert current_wins.value == "copy", "the current spelling outranks the alias"
 
 
 def test_default_is_off_so_no_install_changes_a_users_skills_directory(home):
@@ -213,10 +240,62 @@ def test_creates_the_harness_skills_directory_when_missing(home):
     assert result.created_skills_dir
 
 
-def test_platform_without_a_skills_dir_is_a_no_op(home):
+def test_a_harness_that_reads_the_shared_root_is_never_bridged(home):
+    """ForgeCode scans ~/.agents/skills itself, so a second copy would be a
+    duplicate rather than a fix."""
     _shared_skill(home, "demo")
     result = bridge_agents_skills(PLATFORMS["forgecode"], mode="link")
     assert result.linked == ()
+
+
+# --------------------------------------------------------------------------
+# The bridge is not Claude-only
+# --------------------------------------------------------------------------
+#
+# Two harnesses cannot read ~/.agents/skills: Claude and Antigravity. Only
+# Claude was reachable, because the bridge keyed off platform_skills_dir, which
+# was declared for Claude alone. An Antigravity user's shared skills therefore
+# never arrived, and the setting is still named --claude-agents-skills.
+#
+# Antigravity's global root is ~/.gemini/config/skills — the only path all
+# three AGY variants honor (atamel.dev, 2026-07-01; evidence S10/L4 in
+# ~/.agents/notes/2026-08-05-cross-harness-skill-install-paths-and-install-protocol-plan.md).
+
+
+def test_antigravity_is_bridged_into_the_root_all_its_variants_read(home):
+    _shared_skill(home, "demo")
+
+    result = bridge_agents_skills(PLATFORMS["antigravity"], mode="link")
+
+    assert "demo" in result.linked, (
+        "Antigravity cannot read ~/.agents/skills, so a shared skill is "
+        "invisible to it unless the bridge reaches it"
+    )
+    bridged = home / ".gemini" / "config" / "skills" / "demo"
+    assert bridged.exists(), f"expected the link at {bridged}"
+    assert (bridged / "SKILL.md").is_file()
+
+
+def test_the_bridge_picks_its_destination_from_the_registry(home):
+    """No harness-name branch: a harness registered with a different read tier
+    is bridged there, with no edit to the bridge."""
+    import dataclasses
+
+    from autorun.platforms import ConfigDirSkills
+
+    synthetic = dataclasses.replace(
+        PLATFORMS["claude"],
+        name="synthetic",
+        config_dir="~/.synthetic/",
+        loads_shared_agents_skills=False,
+        skill_search_routes=(ConfigDirSkills("its-own-skills"),),
+    )
+    _shared_skill(home, "demo")
+
+    result = bridge_agents_skills(synthetic, mode="link")
+
+    assert "demo" in result.linked
+    assert (home / ".synthetic" / "its-own-skills" / "demo" / "SKILL.md").is_file()
 
 
 def test_dry_run_reports_without_writing(home):

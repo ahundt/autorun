@@ -2513,6 +2513,12 @@ class ChoiceSetting:
     choices: tuple[str, ...]
     default: str
     config_key: str | None = None
+    # Retired spellings, checked after the current one at the same tier. A
+    # setting that outgrows a harness-specific name needs somewhere for the old
+    # name to keep working; without this, renaming one silently ignores the
+    # value users already have in their environment and config.
+    env_var_aliases: tuple[str, ...] = ()
+    config_key_aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2583,12 +2589,14 @@ def resolve_choice_setting(
     if chosen is not None:
         return ResolvedChoice(chosen, "cli")
 
-    chosen = _valid(env.get(setting.env_var))
-    if chosen is not None:
-        return ResolvedChoice(chosen, f"env {setting.env_var}")
+    for variable in (setting.env_var, *setting.env_var_aliases):
+        chosen = _valid(env.get(variable))
+        if chosen is not None:
+            return ResolvedChoice(chosen, f"env {variable}")
 
-    if setting.config_key is not None:
-        chosen = _valid(config.get(setting.config_key))
+    keys = (setting.config_key, *setting.config_key_aliases)
+    for key in (key for key in keys if key is not None):
+        chosen = _valid(config.get(key))
         if chosen is not None:
             return ResolvedChoice(chosen, "config")
 
@@ -3308,24 +3316,17 @@ def platform_extensions_dir(platform: Platform) -> Path | None:
     return base / platform.extensions_subdir
 
 
-def platform_skills_dir(platform: Platform) -> Path | None:
-    """Return where one harness scans for skills inside its own config dir.
-
-    None when the harness declares no config-dir-local skills directory —
-    Codex, for instance, reads :func:`shared_agents_skills_dir` instead.
-    """
-    base = platform_config_dir(platform)
-    if not platform.skills_subdir or base is None:
-        return None
-    return base / platform.skills_subdir
-
-
 _AGENTS_SKILLS_SETTING = ChoiceSetting(
-    name="claude_agents_skills",
-    env_var="AUTORUN_CLAUDE_AGENTS_SKILLS",
+    name="shared_skills_bridge",
+    env_var="AUTORUN_SHARED_SKILLS_BRIDGE",
     choices=("link", "copy", "none"),
     default="none",
-    config_key="claude_agents_skills",
+    config_key="shared_skills_bridge",
+    # Named for Claude when Claude was the only harness the bridge could
+    # reach. Antigravity also cannot read ~/.agents/skills, so the capability
+    # is not Claude's; the old spellings keep working.
+    env_var_aliases=("AUTORUN_CLAUDE_AGENTS_SKILLS",),
+    config_key_aliases=("claude_agents_skills",),
 )
 
 def skill_placement_help() -> str:
@@ -3538,6 +3539,34 @@ def platform_skill_destinations(platform: Platform) -> tuple[Path, ...]:
     return platform.native_skills.destinations(platform_config_dir(platform))
 
 
+def skill_search_paths(platform: Platform) -> tuple[Path, ...]:
+    """Return every root this harness reads skills from, in discovery order.
+
+    The counterpart to :func:`platform_skill_destinations`, which answers where
+    autorun *writes*. Those are different sets, and one helper answering both
+    is why duplicate detection only ever ran for Claude: it keyed off the sole
+    declared config-dir skills directory, so Gemini's ``~/.gemini/skills``,
+    Qwen's ``~/.qwen/skills``, Codex's ``~/.codex/skills`` and OpenCode's own
+    root were invisible to it.
+
+    Order matters and is preserved: the shared root first where the harness
+    scans it, then each declared root. Duplicates are dropped, because a
+    harness that names the same directory twice should not make a skill look
+    like two.
+
+    Complexity: O(R) for R declared routes.
+    """
+    roots: list[Path] = []
+    if platform.loads_shared_agents_skills:
+        roots.append(shared_agents_skills_dir())
+    config_dir = platform_config_dir(platform)
+    for route in platform.skill_search_routes:
+        roots.extend(route.destinations(config_dir))
+
+    seen: set[Path] = set()
+    return tuple(root for root in roots if not (root in seen or seen.add(root)))
+
+
 def unsatisfiable_skill_placements(
     placement: SkillPlacement | str,
     cli_names: Iterable[str],
@@ -3638,6 +3667,82 @@ class AgentsSkillsBridge:
     fell_back_to_copy: bool = False
     created_skills_dir: bool = False
 
+    def report_lines(self, platform: Platform, mode: str, destination: Path) -> list[str]:
+        """Return what to tell the user about this bridge pass.
+
+        Lives on the result rather than in the install orchestrator: the
+        orchestrator's job is to decide which harnesses to bridge, not to know
+        the shape of every outcome. Keeping the branches here also makes the
+        wording testable without capturing stdout.
+
+        Complexity: O(S) for S skill names mentioned.
+        """
+        label = platform.display_name
+        if self.refused_reason:
+            return [f"   ⚠ {label}: shared skills not bridged: {self.refused_reason}"]
+
+        lines: list[str] = []
+        if self.linked:
+            verb = "copied" if self.fell_back_to_copy else mode
+            lines.append(
+                f"✓ {len(self.linked)} shared skill(s) {verb} into {destination}: "
+                f"{', '.join(self.linked)}"
+            )
+            lines.append(f"   Restart {label} for new skills to load.")
+        for names, why in (
+            (self.skipped_plugin, "already provided by a plugin"),
+            (self.skipped_existing, "already present"),
+        ):
+            if names:
+                lines.append(
+                    f"   {label}: skipped {len(names)} {why}: {', '.join(names)}"
+                )
+        return lines
+
+
+def bridge_destination(platform: Platform) -> Path | None:
+    """Return where shared skills must be copied for this harness to see them.
+
+    None when no bridge is needed or possible: a harness that scans
+    ``~/.agents/skills`` itself needs no second copy, and one that declares no
+    skill root of its own has nowhere to put it.
+
+    The destination comes from the registry rather than from a harness name.
+    The previous form read ``platform_skills_dir``, declared for Claude alone,
+    so Antigravity — the only other harness that cannot read the shared root —
+    was silently unbridgeable and its users never received shared skills.
+
+    Complexity: O(R) for R declared read routes.
+    """
+    if platform.loads_shared_agents_skills:
+        return None
+    for path in skill_search_paths(platform):
+        return path
+    return None
+
+
+def bridgeable_platforms(
+    cli_names: Iterable[str],
+) -> list[tuple[Platform, Path]]:
+    """Return each named harness that needs a bridge, with its destination.
+
+    The selection rule in one place: a harness needs a bridge when it cannot
+    read the shared root and declares somewhere to put the copies. Callers get
+    a list to walk instead of re-deriving the condition, which is what let the
+    bridge stay Claude-only long after a second harness qualified.
+
+    Complexity: O(H) for H named harnesses.
+    """
+    selected: list[tuple[Platform, Path]] = []
+    for name in cli_names:
+        platform = PLATFORMS.get(name)
+        if platform is None:
+            continue
+        destination = bridge_destination(platform)
+        if destination is not None:
+            selected.append((platform, destination))
+    return selected
+
 
 def bridge_agents_skills(
     platform: Platform,
@@ -3668,7 +3773,7 @@ def bridge_agents_skills(
     (anthropics/claude-code#38051), so writing there would look like success and
     load nothing.
     """
-    skills_dir = platform_skills_dir(platform)
+    skills_dir = bridge_destination(platform)
     if mode == "none" or skills_dir is None:
         return AgentsSkillsBridge()
 
@@ -5389,37 +5494,6 @@ def install_plugins(
                 print("✓ autorun guidance written to ~/.claude/CLAUDE.md")
         # --- END --- DELETE WHEN FIXED ---
 
-        if claude_agents_skills != "none":
-            bridge = bridge_agents_skills(
-                PLATFORMS["claude"],
-                mode=claude_agents_skills,
-                plugin_skill_names=_skill_dir_names(
-                    _autorun_plugin_dir(marketplace_root, plugins) / "skills"
-                )
-                if _autorun_plugin_dir(marketplace_root, plugins)
-                else set(),
-                dry_run=dry_run,
-            )
-            if bridge.refused_reason:
-                print(f"   ⚠ shared skills not bridged: {bridge.refused_reason}")
-            elif bridge.linked:
-                verb = "copied" if bridge.fell_back_to_copy else claude_agents_skills
-                print(
-                    f"✓ {len(bridge.linked)} shared skill(s) {verb} into "
-                    f"{platform_skills_dir(PLATFORMS['claude'])}: "
-                    f"{', '.join(bridge.linked)}"
-                )
-                print("   Restart Claude Code for new skills to load.")
-            if bridge.skipped_plugin:
-                print(
-                    f"   Skipped {len(bridge.skipped_plugin)} already provided by a "
-                    f"plugin: {', '.join(bridge.skipped_plugin)}"
-                )
-            if bridge.skipped_existing:
-                print(
-                    f"   Skipped {len(bridge.skipped_existing)} already present: "
-                    f"{', '.join(bridge.skipped_existing)}"
-                )
 
     # Install for Gemini CLI
     if "gemini" in target_clis:
@@ -5557,6 +5631,23 @@ def install_plugins(
     if "opencode" in target_clis:
         opencode_success, opencode_msg = _install_for_opencode(marketplace_root, plugins, force)
         all_succeeded = all_succeeded and opencode_success
+
+    # Bridge shared skills into every selected harness that cannot read the
+    # shared root. Driven by bridge_destination, not by a harness name: this
+    # ran for Claude alone, so Antigravity — the only other harness in that
+    # position — never received a shared skill.
+    if claude_agents_skills != "none":
+        plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
+        plugin_names = _skill_dir_names(plugin_dir / "skills") if plugin_dir else set()
+        for platform, destination in bridgeable_platforms(target_clis):
+            bridge = bridge_agents_skills(
+                platform,
+                mode=claude_agents_skills,
+                plugin_skill_names=plugin_names,
+                dry_run=dry_run,
+            )
+            for line in bridge.report_lines(platform, claude_agents_skills, destination):
+                print(line)
 
     # Optional: uv tool install for global CLI
     if tool:
@@ -5929,9 +6020,10 @@ def _install_lock_parents() -> set[Path]:
         _codex_plugin_source_dir().parent,
     }
     for platform in PLATFORMS.values():
-        for directory in (platform_skills_dir(platform), platform_extensions_dir(platform)):
-            if directory is not None:
-                parents.add(directory)
+        parents.update(skill_search_paths(platform))
+        extensions = platform_extensions_dir(platform)
+        if extensions is not None:
+            parents.add(extensions)
     return parents
 
 
@@ -5996,11 +6088,7 @@ def _uninstall_bridged_skills() -> None:
     else belongs to another tool.
     """
     agents_skills = shared_agents_skills_dir()
-    for platform in PLATFORMS.values():
-        skills_dir = platform_skills_dir(platform)
-        if skills_dir is None or not skills_dir.is_dir():
-            continue
-
+    for skills_dir in _harness_skill_dirs_excluding_shared():
         for entry in sorted(skills_dir.iterdir()):
             if entry.is_symlink():
                 try:
@@ -6021,6 +6109,30 @@ def _uninstall_bridged_skills() -> None:
                 shutil.rmtree(entry, ignore_errors=True)
                 if not entry.exists():
                     print(f"   Removed bridged skill copy: {entry}")
+
+
+def _harness_skill_dirs_excluding_shared() -> list[Path]:
+    """Return every existing harness-local skill root, shared root excluded.
+
+    Three sweeps ask this same question — remove bridged skills, check for
+    dangling links, check for duplicates — and each previously asked it of
+    ``platform_skills_dir``, which only Claude declared. One helper keeps them
+    from drifting apart again, and each directory appears once even when two
+    harnesses read it (OpenCode also scans ``~/.claude/skills``).
+
+    Complexity: O(P x R) for P platforms and R declared routes.
+    """
+    agents_skills = shared_agents_skills_dir()
+    seen: set[Path] = set()
+    directories: list[Path] = []
+    for platform in PLATFORMS.values():
+        for skills_dir in skill_search_paths(platform):
+            if skills_dir == agents_skills or skills_dir in seen:
+                continue
+            seen.add(skills_dir)
+            if skills_dir.is_dir():
+                directories.append(skills_dir)
+    return directories
 
 
 def _is_within(candidate: Path, root: Path) -> bool:
@@ -6147,10 +6259,7 @@ def _health_skill_links() -> list[HealthFinding]:
     findings: list[HealthFinding] = []
     agents_skills = shared_agents_skills_dir()
 
-    for platform in PLATFORMS.values():
-        skills_dir = platform_skills_dir(platform)
-        if skills_dir is None or not skills_dir.is_dir():
-            continue
+    for skills_dir in _harness_skill_dirs_excluding_shared():
         for entry in sorted(skills_dir.iterdir()):
             if not entry.is_symlink():
                 continue
@@ -6188,36 +6297,40 @@ def _health_duplicate_skills() -> list[HealthFinding]:
     shared_names = _skill_dir_names(agents_skills)
 
     for platform in PLATFORMS.values():
-        skills_dir = platform_skills_dir(platform)
-        if skills_dir is None or not skills_dir.is_dir():
-            continue
-        for entry in sorted(skills_dir.iterdir()):
-            if entry.is_symlink() or not entry.is_dir():
-                continue  # a link to the shared copy is one skill, not two
-            if entry.name not in shared_names:
+        # Every root the harness reads, not just the one autorun writes. The
+        # old form checked platform_skills_dir, which is declared for Claude
+        # alone, so a skill sitting in both the shared root and ~/.qwen/skills
+        # or ~/.gemini/skills was never reported.
+        for skills_dir in skill_search_paths(platform):
+            if skills_dir == agents_skills or not skills_dir.is_dir():
                 continue
-            findings.append(
-                HealthFinding(
-                    code="skill-duplicate",
-                    detail=(
-                        f"{entry.name!r} exists both at {entry} and in "
-                        f"{agents_skills}. {platform.display_name} deduplicates "
-                        "by resolved path, so it is listed twice."
-                    ),
-                    # This check sees two paths; it cannot see which one the
-                    # user wrote. Telling them to delete "whichever copy is
-                    # stale" asks for a guess whose wrong answer destroys their
-                    # own skill, so it points at the command that shows the
-                    # intended route and its ownership instead.
-                    remedy=(
-                        "Run `autorun --install-dry-run --skill-placement auto` "
-                        "to see the intended route for this harness, then re-run "
-                        "the install to republish autorun-owned copies. If "
-                        f"{entry} is yours, move or rename it first — autorun "
-                        "never replaces a copy it does not own."
-                    ),
+            for entry in sorted(skills_dir.iterdir()):
+                if entry.is_symlink() or not entry.is_dir():
+                    continue  # a link to the shared copy is one skill, not two
+                if entry.name not in shared_names:
+                    continue
+                findings.append(
+                    HealthFinding(
+                        code="skill-duplicate",
+                        detail=(
+                            f"{entry.name!r} exists both at {entry} and in "
+                            f"{agents_skills}. {platform.display_name} "
+                            "deduplicates by resolved path, so it is listed twice."
+                        ),
+                        # This check sees two paths; it cannot see which one the
+                        # user wrote. Telling them to delete "whichever copy is
+                        # stale" asks for a guess whose wrong answer destroys
+                        # their own skill, so it points at the command that
+                        # shows the intended route and its ownership instead.
+                        remedy=(
+                            "Run `autorun --install-dry-run --skill-placement "
+                            "auto` to see the intended route for this harness, "
+                            "then re-run the install to republish autorun-owned "
+                            f"copies. If {entry} is yours, move or rename it "
+                            "first — autorun never replaces a copy it does not own."
+                        ),
+                    )
                 )
-            )
     return findings
 
 
@@ -6929,13 +7042,20 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
     parser.add_argument(
+        "--shared-skills-bridge",
         "--claude-agents-skills",
+        dest="shared_skills_bridge",
         choices=_AGENTS_SKILLS_SETTING.choices,
         default=None,
         help=(
-            "Bridge shared ~/.agents skills into Claude Code's skills directory: "
-            "link (symlink), copy, or none. Default: none. "
-            "AUTORUN_CLAUDE_AGENTS_SKILLS also sets this; the flag wins."
+            "Copy shared ~/.agents/skills into the skills directory of a "
+            "harness that cannot read that root — Claude Code and Antigravity "
+            "today. link (symlink), copy, or none. Default: none. link keeps "
+            "one file, so editing a skill changes it everywhere; copy forks on "
+            "the first edit with nothing reporting the divergence. Note that "
+            "bridging exposes every shared skill to the harness, and skill "
+            "listings are budgeted context. AUTORUN_SHARED_SKILLS_BRIDGE also "
+            "sets this (AUTORUN_CLAUDE_AGENTS_SKILLS still works); the flag wins."
         ),
     )
     parser.add_argument(
@@ -7011,7 +7131,7 @@ def _install_module_main(argv: list[str] | None = None) -> int:
         "conductor": args.conductor,
         "codex_hook_source": args.codex_hook_source,
         "codex_plugin_marketplace": args.codex_plugin_marketplace,
-        "claude_agents_skills": args.claude_agents_skills,
+        "claude_agents_skills": args.shared_skills_bridge,
         "skill_placement": args.skill_placement,
     }
     if args.install_dry_run:

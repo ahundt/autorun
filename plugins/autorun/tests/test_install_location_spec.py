@@ -227,7 +227,7 @@ def test_uninstall_and_install_share_every_location_helper():
         for fn in ("_uninstall_bridged_skills", "_uninstall_platform_memory_blocks")
     )
     assert "shared_agents_skills_dir()" in uninstall_body
-    assert "platform_skills_dir(" in uninstall_body
+    assert "_harness_skill_dirs_excluding_shared(" in uninstall_body
     # And it must not reconstruct paths by hand.
     assert 'Path.home() / ".agents"' not in uninstall_body
     assert 'Path.home() / ".claude"' not in uninstall_body
@@ -253,7 +253,7 @@ def test_no_uninstall_function_hardcodes_a_deploy_location():
 
     assert not offenders, (
         "Uninstall must resolve locations through the same helpers install "
-        "uses — platform_skills_dir, platform_extensions_dir, "
+        "uses — skill_search_paths, platform_extensions_dir, "
         "shared_agents_skills_dir, _platform_memory_config_dir:\n  "
         + "\n  ".join(offenders)
     )
@@ -342,15 +342,33 @@ def test_platform_memory_declarations_are_complete_or_absent():
         )
 
 
-def test_platform_skills_subdir_requires_a_config_dir():
-    """skills_subdir without config_dir resolves to nothing, silently."""
+def test_config_dir_relative_skill_routes_require_a_config_dir():
+    """A ConfigDirSkills route with no config_dir resolves to nothing, and does
+    it silently — the harness would simply never see a skill.
+
+    Restated from the retired skills_subdir field: the same rule now applies to
+    any route that addresses a directory relative to config_dir, whether it is
+    the native destination or a declared read tier.
+    """
     import sys
 
     sys.path.insert(0, str(SRC.parent))
-    from autorun.platforms import PLATFORMS
+    from autorun.platforms import (
+        PLATFORMS,
+        CombinedSkillRoutes,
+        ConfigDirSkills,
+        ExtensionSkills,
+    )
+
+    def _needs_config_dir(route) -> bool:
+        if isinstance(route, CombinedSkillRoutes):
+            return any(_needs_config_dir(inner) for inner in route.routes)
+        return isinstance(route, (ConfigDirSkills, ExtensionSkills))
 
     for name, platform in PLATFORMS.items():
-        if platform.skills_subdir:
+        routes = (platform.native_skills, *platform.skill_search_routes)
+        if any(_needs_config_dir(route) for route in routes):
             assert platform.config_dir, (
-                f"platform {name!r} declares skills_subdir with no config_dir"
+                f"platform {name!r} declares a config-dir-relative skill route "
+                "with no config_dir, so it resolves to nothing"
             )

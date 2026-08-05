@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Set
 
 import pytest
@@ -710,6 +711,142 @@ def test_a_placement_that_would_install_nothing_is_refused_with_a_remedy():
     for problem in problems:
         assert "To fix:" in problem and "--skill-placement" in problem, (
             f"a refusal must carry a runnable remedy: {problem!r}"
+        )
+
+
+# ─── Read tiers: where the harness looks, not where autorun writes ───────────
+#
+# platform_skills_dir answered two different questions with one helper: the
+# destination autorun writes under the native route, and every tier the harness
+# reads. They are not the same set. Gemini reads ~/.gemini/skills and Qwen reads
+# ~/.qwen/skills — real discovery tiers autorun never writes and never declared,
+# which is why duplicate detection could not see a collision there.
+#
+# Evidence keys refer to the sources table in
+# ~/.agents/notes/2026-08-05-cross-harness-skill-install-paths-and-install-protocol-plan.md
+
+
+# Home-relative skill roots each harness reads, beyond the shared root.
+# claude   S2  ~/.claude/skills
+# codex    L5  ~/.codex/skills
+# gemini   S5  ~/.gemini/skills
+# qwen     S6  ~/.qwen/skills
+# opencode S8  ~/.config/opencode/skills and ~/.claude/skills
+# forgecode S9 ~/forge/skills   (no dot — as documented)
+# antigravity S10 ~/.gemini/config/skills
+_EXPECTED_OWN_SKILL_ROOTS = {
+    "claude": {".claude/skills"},
+    "codex": {".codex/skills"},
+    "gemini": {".gemini/skills"},
+    "qwen": {".qwen/skills"},
+    "opencode": {".config/opencode/skills", ".claude/skills"},
+    "forgecode": {"forge/skills"},
+    "antigravity": {".gemini/config/skills"},
+}
+
+
+def test_skill_search_paths_include_every_documented_read_tier(tmp_path, monkeypatch):
+    """Each harness's own skill roots must be declared, not just the one
+    autorun writes."""
+    from autorun.install import skill_search_paths
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    for name, platform in PLATFORMS.items():
+        found = {
+            str(path.relative_to(tmp_path))
+            for path in skill_search_paths(platform)
+            if tmp_path in path.parents or path.parent == tmp_path
+        }
+        missing = _EXPECTED_OWN_SKILL_ROOTS[name] - found
+        assert not missing, f"{name} does not declare read tiers {sorted(missing)}"
+
+
+def test_skill_search_paths_include_the_shared_root_exactly_when_it_is_read(
+    tmp_path, monkeypatch
+):
+    """The shared root is a read tier for the five harnesses that scan it and
+    for no others."""
+    from autorun.install import shared_agents_skills_dir, skill_search_paths
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    shared = shared_agents_skills_dir()
+
+    for name, platform in PLATFORMS.items():
+        present = shared in skill_search_paths(platform)
+        assert present is platform.loads_shared_agents_skills, (
+            f"{name}: shared root present={present} but "
+            f"loads_shared_agents_skills={platform.loads_shared_agents_skills}"
+        )
+
+
+def test_duplicate_detection_sees_a_collision_in_a_non_claude_harness(
+    tmp_path, monkeypatch
+):
+    """The check ran only where platform_skills_dir was declared, which was
+    Claude alone. A skill in both ~/.agents/skills and ~/.qwen/skills is two
+    copies that can drift, and nothing reported it."""
+    from autorun import install as inst
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    for root in (tmp_path / ".agents" / "skills", tmp_path / ".qwen" / "skills"):
+        skill = root / "collider"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(
+            "---\nname: collider\ndescription: two copies\n---\n", encoding="utf-8"
+        )
+
+    findings = inst._health_duplicate_skills()
+    detail = " ".join(f.detail for f in findings)
+    assert "collider" in detail and ".qwen" in detail, (
+        "a name present in both the shared root and Qwen's own skills "
+        f"directory must be reported as a duplicate; got {findings!r}"
+    )
+
+
+def test_a_link_to_the_shared_copy_is_not_reported_as_a_duplicate(
+    tmp_path, monkeypatch
+):
+    """Edge case the bridge depends on: one file reached by two paths is one
+    skill. Reporting it would tell users to break the link that keeps their
+    edits unified."""
+    from autorun import install as inst
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    shared_skill = tmp_path / ".agents" / "skills" / "linked"
+    shared_skill.mkdir(parents=True)
+    (shared_skill / "SKILL.md").write_text(
+        "---\nname: linked\ndescription: one copy\n---\n", encoding="utf-8"
+    )
+    qwen_skills = tmp_path / ".qwen" / "skills"
+    qwen_skills.mkdir(parents=True)
+    (qwen_skills / "linked").symlink_to(shared_skill)
+
+    detail = " ".join(f.detail for f in inst._health_duplicate_skills())
+    assert "linked" not in detail, (
+        "a symlink to the shared copy is one skill reached two ways, not two "
+        "copies, and must not be reported"
+    )
+
+
+def test_missing_read_tiers_are_skipped_without_error(tmp_path, monkeypatch):
+    """Edge case: almost every declared tier is absent on a given machine."""
+    from autorun.install import skill_search_paths
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    for platform in PLATFORMS.values():
+        paths = skill_search_paths(platform)
+        assert all(p.is_absolute() for p in paths), platform.name
+        assert len(set(paths)) == len(paths), (
+            f"{platform.name} declares the same read tier twice"
         )
 
 

@@ -32,7 +32,7 @@ from autorun.install import (  # noqa: E402
     merge_custom_harness_specs,
     parse_custom_harness_spec,
     platform_config_dir,
-    platform_skills_dir,
+    skill_search_paths,
     shared_agents_dir,
     shared_agents_skills_dir,
 )
@@ -124,22 +124,29 @@ def test_an_absolute_value_is_left_alone(monkeypatch, tmp_path):
 
 def test_claude_skills_dir_derives_from_platform_config_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    assert platform_skills_dir(PLATFORMS["claude"]) == tmp_path / ".claude" / "skills"
+    assert skill_search_paths(PLATFORMS["claude"]) == (tmp_path / ".claude" / "skills",)
 
 
-def test_platform_without_a_skills_dir_returns_none():
-    """Only harnesses that declare one get a directory."""
-    assert platform_skills_dir(PLATFORMS["forgecode"]) is None
+def test_a_harness_reads_the_shared_root_and_its_own(monkeypatch, tmp_path):
+    """Restated from the retired platform_skills_dir, which returned one
+    directory or None. ForgeCode used to answer None; it in fact reads two
+    roots, and reporting neither is what hid its skills from every sweep."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert skill_search_paths(PLATFORMS["forgecode"]) == (
+        tmp_path / ".agents" / "skills",
+        tmp_path / "forge" / "skills",
+    )
 
 
-def test_platform_skills_dir_follows_a_relocated_config_dir(monkeypatch, tmp_path):
+def test_skill_roots_follow_a_relocated_config_dir(monkeypatch, tmp_path):
     """A harness whose config_dir moves takes its skills directory along."""
     import dataclasses
 
+    monkeypatch.setenv("HOME", str(tmp_path))
     moved = dataclasses.replace(
         PLATFORMS["claude"], config_dir=str(tmp_path / "elsewhere") + "/"
     )
-    assert platform_skills_dir(moved) == tmp_path / "elsewhere" / "skills"
+    assert skill_search_paths(moved) == (tmp_path / "elsewhere" / "skills",)
 
 
 # --------------------------------------------------------------------------
@@ -227,8 +234,8 @@ def test_skills_dir_follows_the_config_dir_env_var(monkeypatch, tmp_path):
     """Relocating a harness config dir moves its skills directory with it."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-alt"))
-    assert platform_skills_dir(PLATFORMS["claude"]) == (
-        tmp_path / "claude-alt" / "skills"
+    assert skill_search_paths(PLATFORMS["claude"]) == (
+        tmp_path / "claude-alt" / "skills",
     )
 
 

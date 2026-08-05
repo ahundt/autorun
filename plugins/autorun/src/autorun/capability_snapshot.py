@@ -76,7 +76,6 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "config_dir_env_vars": list(platform.config_dir_env_vars),
         "config_dir_env_var_subdir": platform.config_dir_env_var_subdir,
         "extensions_subdir": platform.extensions_subdir,
-        "skills_subdir": platform.skills_subdir,
         # The route's own words, not a reconstruction from path fragments: a
         # harness whose skills ship in a plugin package and one with no native
         # route at all are both "no subdir", and the snapshot must not present
@@ -85,6 +84,11 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         # be comparable across machines.
         "native_skills": type(platform.native_skills).__name__,
         "native_skills_description": platform.native_skills.describe(),
+        # Read tiers, kept distinct from the write destination above. Described
+        # rather than resolved for the same reason: comparable across machines.
+        "skill_search_routes": [
+            route.describe() for route in platform.skill_search_routes
+        ],
         "loads_shared_agents_skills": platform.loads_shared_agents_skills,
         "install_by_default": platform.install_by_default,
         "memory_filename": platform.memory_filename,

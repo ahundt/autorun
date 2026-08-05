@@ -519,7 +519,7 @@ def test_route_report_lists_every_destination_directory():
     silently dropped by an `or`."""
     import dataclasses
 
-    from autorun.install import describe_skill_routes, platform_extensions_dir, platform_skills_dir
+    from autorun.install import describe_skill_routes, platform_config_dir
     from autorun.platforms import PLATFORMS
 
     from autorun.platforms import CombinedSkillRoutes, ConfigDirSkills, ExtensionSkills
@@ -527,7 +527,6 @@ def test_route_report_lists_every_destination_directory():
     multi = dataclasses.replace(
         PLATFORMS["claude"],
         name="multiroot",
-        skills_subdir="skills",
         extensions_subdir="exts",
         native_skills=CombinedSkillRoutes(
             (ConfigDirSkills("skills"), ExtensionSkills("exts"))
@@ -538,8 +537,9 @@ def test_route_report_lists_every_destination_directory():
     )
     rendered = "\n".join(lines)
 
-    assert str(platform_skills_dir(multi)) in rendered
-    assert str(platform_extensions_dir(multi)) in rendered
+    config_dir = platform_config_dir(multi)
+    assert str(config_dir / "skills") in rendered
+    assert str(config_dir / "exts") in rendered
 
 
 def test_route_report_uses_the_per_harness_mode():

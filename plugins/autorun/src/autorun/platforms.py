@@ -95,6 +95,27 @@ class ExtensionSkills(SkillRoute):
 
 
 @dataclass(frozen=True, slots=True)
+class HomeDirSkills(SkillRoute):
+    """A skills directory addressed from the home directory, not config_dir.
+
+    Needed because two harnesses read roots that are not under their own
+    config directory: ForgeCode documents ``~/forge/skills`` (no dot, while its
+    config dir is ``~/.forge/``), and OpenCode reads Claude's
+    ``~/.claude/skills`` as one of its own tiers. Antigravity's global root,
+    ``~/.gemini/config/skills``, likewise sits beside its config dir rather
+    than inside it.
+    """
+
+    subdir: str = ""
+
+    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+        return (Path.home() / self.subdir,) if self.subdir else ()
+
+    def describe(self) -> str:
+        return f"~/{self.subdir}"
+
+
+@dataclass(frozen=True, slots=True)
 class PluginPackageSkills(SkillRoute):
     """Skills carried inside a staged plugin package outside ``config_dir``.
 
@@ -787,14 +808,17 @@ class Platform:
     # --skill-placement value into one route per harness, so a harness that
     # cannot read the shared root never has `auto` point there.
     loads_shared_agents_skills: bool = False
-    # Subdirectory of config_dir this harness scans for skills. Empty means the
-    # harness has no config-dir-local skills directory — Codex reads the shared
-    # ~/.agents/skills instead, which is configuration, not platform data.
-    skills_subdir: str = ""
     # Where skills go when this harness does not take the shared-root route.
     # A SkillRoute rather than another path fragment, so "packages its skills"
     # and "has no native route" are distinguishable; see SkillRoute.
     native_skills: SkillRoute = field(default_factory=NoNativeSkillRoute)
+    # Every root this harness READS skills from, beyond the shared
+    # ~/.agents/skills root that loads_shared_agents_skills already covers.
+    # Deliberately separate from native_skills: writing and reading are
+    # different questions, and collapsing them is what hid Gemini's
+    # ~/.gemini/skills and Qwen's ~/.qwen/skills from duplicate detection.
+    # Same route classes, because "a directory holding skills" is one concept.
+    skill_search_routes: tuple[SkillRoute, ...] = ()
     # Stable slug for the sentinel pair. Changing it orphans blocks already
     # written into users' files, which uninstall would then fail to remove.
     memory_sentinel_slug: str = ""
@@ -951,11 +975,11 @@ CLAUDE = register(
         # No dedicated install function: Claude is installed inline through the
         # marketplace and plugin cache. This declared "_install_for_claude" for
         # a function nobody wrote, and capability_snapshot published it.
+        skill_search_routes=(ConfigDirSkills("skills"),),
         install_fn_name="",
         memory_filename="CLAUDE.md",
         memory_template="claude_template/CLAUDE.md",
         memory_sentinel_slug="claude-memory-md",
-        skills_subdir="skills",
         native_skills=ConfigDirSkills("skills"),
         list_cmd=("claude", "plugin", "list"),
         app_bundle_ids=("com.anthropic.claudefordesktop",),
@@ -1045,6 +1069,7 @@ GEMINI = register(
         config_dir="~/.gemini/",
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
+        skill_search_routes=(ConfigDirSkills("skills"),),
         install_fn_name="_install_for_gemini",
         # https://geminicli.com/docs/cli/using-agent-skills/ — Gemini's
         # discovery tiers include the shared ~/.agents/skills root, so the
@@ -1122,6 +1147,7 @@ ANTIGRAVITY = register(
         config_dir="~/.gemini/antigravity-cli/",
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
+        skill_search_routes=(HomeDirSkills(".gemini/config/skills"),),
         install_fn_name="_install_for_antigravity",
         list_cmd=("agy", "plugin", "list"),
         native_skills=ExtensionSkills("plugins"),
@@ -1172,6 +1198,7 @@ QWEN = register(
         config_dir_env_vars=("QWEN_HOME",),
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
+        skill_search_routes=(ConfigDirSkills("skills"),),
         install_fn_name="_install_for_qwen",
         # Qwen Code's Storage.getUserSkillsDirs() maps
         # SKILL_PROVIDER_CONFIG_DIRS = [".qwen", ".agents"] over os.homedir(),
@@ -1217,6 +1244,7 @@ CODEX = register(
         config_dir_env_vars=("CODEX_HOME",),
         template_dir=None,  # user-level install at ~/.codex/hooks.json
         hooks_path_var="${PLUGIN_ROOT}",  # ${CLAUDE_PLUGIN_ROOT} also set as compat
+        skill_search_routes=(ConfigDirSkills("skills"),),
         install_fn_name="_install_for_codex",
         memory_filename="AGENTS.md",
         memory_template="codex_template/AGENTS.md",
@@ -1289,6 +1317,7 @@ FORGECODE = register(
         config_dir="~/.forge/",
         config_dir_env_vars=("FORGE_CONFIG",),
         template_dir="forgecode_template",
+        skill_search_routes=(HomeDirSkills("forge/skills"),),
         install_fn_name="_install_for_forgecode",
         memory_filename="AGENTS.md",
         memory_template="forgecode_template/AGENTS.md",
@@ -1347,6 +1376,10 @@ OPENCODE = register(
         # the harness subdirectory is appended.
         config_dir_env_vars=("XDG_CONFIG_HOME",),
         config_dir_env_var_subdir="opencode",
+        skill_search_routes=(
+            ConfigDirSkills("skills"),
+            HomeDirSkills(".claude/skills"),
+        ),
         install_fn_name="_install_for_opencode",
         memory_filename="AGENTS.md",
         memory_template="opencode_template/AGENTS.md",
