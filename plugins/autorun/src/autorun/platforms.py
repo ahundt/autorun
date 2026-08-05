@@ -543,6 +543,16 @@ class Platform:
     # inferred from the harness name so a family member that gains Conductor
     # opts in here instead of being excluded by a string literal.
     aggregates_conductor_tasks: bool = False
+    # True when this harness can deliver PreToolUse with a transcript path but
+    # skip UserPromptSubmit, so an autorun policy command typed by the user
+    # reaches autorun only by reading the transcript. Such a command is applied
+    # after the tool call it was meant to authorize, which is why a
+    # default-scope allow granted this way also needs a grace window.
+    policy_commands_arrive_in_transcript: bool = False
+    # True when this harness's session id is not stable across the hook calls
+    # belonging to one tool invocation, so scoped-allow fingerprints key on the
+    # harness name instead and parallel invocations still match each other.
+    fingerprint_ignores_session_id: bool = False
     # Status values this harness's own task-update tool accepts. Guidance must
     # never name a value absent here: the AI would call it and get a hard
     # validation error instead of the action autorun offered it. Empty means
@@ -1063,6 +1073,8 @@ CODEX = register(
         task_management_style="plan_checklist",
         task_plan_tools=frozenset({"update_plan"}),
         agent_spawn_tools=frozenset({"spawn_agent"}),
+        policy_commands_arrive_in_transcript=True,
+        fingerprint_ignores_session_id=True,
         command_display_prefix="ar:",
         command_invocation_hint=(
             "Type /ar:<command>. Codex keeps its own slash menu closed, so a "

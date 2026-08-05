@@ -361,13 +361,18 @@ class TestHarnessNamesLiveInTheRegistry:
     members that now carry the family's traffic.
     """
 
-    def test_task_lifecycle_compares_no_harness_name_literals(self):
+    def test_dispatch_modules_compare_no_harness_name_literals(self):
         import re
 
-        source = (PLUGIN_ROOT / "src" / "autorun" / "task_lifecycle.py").read_text(
-            encoding="utf-8"
-        )
-        offenders = re.findall(r"cli_type\s*(?:==|!=)\s*\"[a-z]+\"", source)
+        offenders: dict[str, list[str]] = {}
+        for module in ("task_lifecycle.py", "plugins.py"):
+            source = (PLUGIN_ROOT / "src" / "autorun" / module).read_text(encoding="utf-8")
+            # Strip comments: prose may quote a literal while describing why a
+            # Platform field exists, and that is documentation, not dispatch.
+            code = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
+            found = re.findall(r"cli_type\s*(?:==|!=)\s*\"[a-z]+\"", code)
+            if found:
+                offenders[module] = found
         assert not offenders, (
             "resolve harness behavior through Platform fields instead: "
             f"{offenders}"

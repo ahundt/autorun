@@ -679,7 +679,7 @@ def _make_block_op(scope: str, op: str):
                         CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS,
                     )
                 )
-                if default_scope and ctx.cli_type == "codex"
+                if default_scope and platform_for(ctx.cli_type).policy_commands_arrive_in_transcript
                 else None
             )
             sa = ScopedAllow(
@@ -769,7 +769,7 @@ def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
     policy commands such as ``ar:ok 'git push'`` and routes them through the
     same registered handlers as native prompt hooks.
     """
-    if ctx.cli_type != "codex":
+    if not platform_for(ctx.cli_type).policy_commands_arrive_in_transcript:
         return None
 
     command = latest_transcript_command(
@@ -1083,7 +1083,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # consume stores call_id so the next parallel invocation can verify it.
     from .scoped_allow import fingerprint_call
 
-    fingerprint_session = "codex" if ctx.cli_type == "codex" else ctx.session_id
+    _fp_platform = platform_for(ctx.cli_type)
+    fingerprint_session = (
+        _fp_platform.name if _fp_platform.fingerprint_ignores_session_id else ctx.session_id
+    )
     call_id = fingerprint_call(fingerprint_session, ctx.tool_name, cmd)
 
     # TIER 1: Allows (short-circuit, first match wins — explicit allow overrides everything)
@@ -2262,7 +2265,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     Bypass for Gemini CLI: Gemini uses Conductor (markdown-based) rather than
     native tool calls for task tracking.
     """
-    if ctx.cli_type == "gemini":
+    if platform_for(ctx.cli_type).aggregates_conductor_tasks:
         return None
 
     if not _task_staleness_applies(ctx):
@@ -2583,7 +2586,7 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
         lines.append(f"Stale-task clear: {ghost_state} (min={cfg.ghost_clear_min_consecutive_blocks})")
 
         # Superset Capability: Gemini-specific hints for task management
-        if ctx.cli_type == "gemini":
+        if platform_for(ctx.cli_type).aggregates_conductor_tasks:
             lines.append("\n💡 Gemini Note: Tasks are natively managed via the Conductor extension.")
             lines.append("   Use /conductor:status to see full track details.")
 

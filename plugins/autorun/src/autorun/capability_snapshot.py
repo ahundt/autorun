@@ -59,6 +59,8 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "task_plan_tools": sorted(platform.task_plan_tools),
         "agent_spawn_tools": sorted(platform.agent_spawn_tools),
         "aggregates_conductor_tasks": platform.aggregates_conductor_tasks,
+        "policy_commands_arrive_in_transcript": platform.policy_commands_arrive_in_transcript,
+        "fingerprint_ignores_session_id": platform.fingerprint_ignores_session_id,
         "command_prefixes": list(platform.command_prefixes),
         "command_display_prefix": platform.command_display_prefix,
         "has_exit2_workaround": platform.has_exit2_workaround,
