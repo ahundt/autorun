@@ -84,6 +84,39 @@ later fixture, can still point tests at the production socket and PID files.
 `tests/conftest.py` removes the complete temporary root after the suite unless
 debug artifact retention is explicitly enabled.
 
+### The isolated socket path has almost no headroom
+
+`AUTORUN_HOME` under the temporary root produces this daemon socket path:
+
+```
+<TMPDIR>/autorun_test_runtime_XXXXXXXX/autorun-home/daemon.sock
+```
+
+Everything after `<TMPDIR>` is 55 characters. `sun_path` holds 104 bytes on
+macOS and BSD, 108 on Linux, so a macOS `TMPDIR` longer than 48 characters
+makes the socket unbindable. Measured on macOS 25.5 (2026-08-05): the
+per-user `TMPDIR` is 48 characters, the socket path is 103, and a probe that
+binds progressively longer paths first fails at exactly 104.
+
+That is zero bytes of headroom. Renaming the runtime prefix, adding one
+directory level, or running under a longer `TMPDIR` breaks every
+daemon-backed test at once.
+
+The failure does not announce itself as a path problem. With a 124-byte
+socket path a real `PostToolUse` hook returns
+
+```json
+{"continue": true, "systemMessage": "[autorun] autorun CLI timed out after 5s"}
+```
+
+at exit 0, and writes no session state at all. A test that asserts on
+persisted state then fails with an empty result while the harness reports a
+clean run. Check the path length before hunting for a persistence bug:
+
+```bash
+python3 -c "import os;p=os.environ['AUTORUN_HOME']+'/daemon.sock';print(len(p),p)"
+```
+
 Tests that replace persistence must patch the owner lookup:
 
 ```python
