@@ -1104,6 +1104,128 @@ class TestBinaryAbsentExtensionRefresh:
             "an extension without autorun's owned marker must never be touched"
         )
 
+    def test_legacy_extension_is_adopted_from_an_autorun_install_receipt(
+        self, tmp_path, monkeypatch
+    ):
+        """A directory autorun materialized before the marker existed is ours.
+
+        Found on a live machine: ~/.gemini/extensions/ar/ ran hook_entry.py
+        893577ca while source was 61a7582e, and every refresh declined it for
+        lacking .autorun-owned. Marker-only ownership makes any pre-marker
+        install permanently unreachable, so it runs stale hook code forever
+        with no signal — the failure mode autorun exists to prevent.
+
+        The harness writes <cli>-extension-install.json recording the path it
+        installed from. When that path is autorun's own Gemini template, the
+        directory is autorun's regardless of the marker.
+        """
+        inst, config_dir, owned, stranger = self._refresh_env(
+            tmp_path, monkeypatch, cli_name="a-binary-that-is-not-installed"
+        )
+        (owned / inst.OWNED_MARKER_NAME).unlink()
+        gemini_src = inst._gemini_template_dir(REPO_ROOT / "plugins" / "autorun")
+        assert (gemini_src / "gemini-extension.json").exists(), (
+            "fixture needs autorun's real Gemini template"
+        )
+        (owned / ".gemini-extension-install.json").write_text(
+            json.dumps({"source": str(gemini_src), "type": "local"}), encoding="utf-8"
+        )
+
+        ok, msg = inst._install_gemini_family_extensions(
+            marketplace_root=REPO_ROOT,
+            plugins=["autorun"],
+            force=True,
+            cli_name="gemini",
+            display_name="Legacy Gemini CLI",
+            config_dir=config_dir,
+            install_hint="npm install -g @google-labs/gemini-cli",
+            refresh_only=True,
+        )
+
+        assert ok is True
+        assert "Refreshed" in msg and "ar" in msg
+        assert "def main" in (owned / "hooks" / "hook_entry.py").read_text(encoding="utf-8"), (
+            "a pre-marker autorun install kept running stale hook code"
+        )
+        assert inst.read_owned_marker(owned) is not None, (
+            "adoption must write the marker so the next sweep needs no receipt"
+        )
+        assert (stranger / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "# theirs\n"
+
+    def test_extension_with_a_foreign_install_receipt_is_left_alone(
+        self, tmp_path, monkeypatch
+    ):
+        """Adoption must not widen into overwriting someone else's extension.
+
+        A receipt proves only where the directory came from. If that is not
+        autorun's template, the directory stays untouched exactly as an
+        unmarked one does.
+        """
+        inst, config_dir, owned, stranger = self._refresh_env(
+            tmp_path, monkeypatch, cli_name="a-binary-that-is-not-installed"
+        )
+        (owned / inst.OWNED_MARKER_NAME).unlink()
+        (owned / ".gemini-extension-install.json").write_text(
+            json.dumps({"source": str(tmp_path / "somebody-elses-extension"), "type": "local"}),
+            encoding="utf-8",
+        )
+
+        ok, msg = inst._install_gemini_family_extensions(
+            marketplace_root=REPO_ROOT,
+            plugins=["autorun"],
+            force=True,
+            cli_name="gemini",
+            display_name="Legacy Gemini CLI",
+            config_dir=config_dir,
+            install_hint="npm install -g @google-labs/gemini-cli",
+            refresh_only=True,
+        )
+
+        assert ok is True
+        assert "No gemini extensions owned by autorun to refresh." == msg
+        assert (owned / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "# stale\n", (
+            "a foreign install receipt must not authorize a refresh"
+        )
+        assert inst.read_owned_marker(owned) is None, "no marker may be written for a foreign dir"
+
+    def test_receipt_naming_a_sibling_of_the_template_is_rejected(
+        self, tmp_path, monkeypatch
+    ):
+        """Ownership needs an exact path, not one under the same parent.
+
+        autorun's template sits beside codex_template and forgecode_template in
+        src/autorun/, so a prefix or parent-directory test would let any of
+        them, or a hand-made gemini_template_backup, claim an extension. A
+        mutation replacing the equality check with a startswith test on the
+        parent passes every other case in this class, which is why this one
+        names a sibling specifically.
+        """
+        inst, config_dir, owned, _stranger = self._refresh_env(
+            tmp_path, monkeypatch, cli_name="a-binary-that-is-not-installed"
+        )
+        (owned / inst.OWNED_MARKER_NAME).unlink()
+        template = inst._gemini_template_dir(REPO_ROOT / "plugins" / "autorun")
+        sibling = template.parent / "gemini_template_backup"
+        (owned / ".gemini-extension-install.json").write_text(
+            json.dumps({"source": str(sibling), "type": "local"}), encoding="utf-8"
+        )
+
+        ok, msg = inst._install_gemini_family_extensions(
+            marketplace_root=REPO_ROOT,
+            plugins=["autorun"],
+            force=True,
+            cli_name="gemini",
+            display_name="Legacy Gemini CLI",
+            config_dir=config_dir,
+            install_hint="npm install -g @google-labs/gemini-cli",
+            refresh_only=True,
+        )
+
+        assert ok is True
+        assert "No gemini extensions owned by autorun to refresh." == msg
+        assert (owned / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "# stale\n"
+        assert inst.read_owned_marker(owned) is None
+
     def test_unowned_only_extensions_report_no_refresh(self, tmp_path, monkeypatch):
         inst, config_dir, owned, _stranger = self._refresh_env(tmp_path, monkeypatch)
         (owned / inst.OWNED_MARKER_NAME).unlink()

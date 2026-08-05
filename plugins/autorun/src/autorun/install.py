@@ -1902,15 +1902,26 @@ def _refresh_owned_gemini_extensions(
     missing binary left stale hook code live under ``<config>/extensions/``
     while the Claude cache updated (found 2026-08-04: a hook_entry.py edit
     reached every other install target). File sync only, no CLI calls; and
-    only directories carrying autorun's owned marker are touched, so a
-    same-named extension the user wrote is left alone.
+    only directories autorun owns are touched, so a same-named extension the
+    user wrote is left alone.
+
+    Ownership is the owned marker, or an install receipt naming autorun's own
+    Gemini template as the source. Marker-only ownership stranded every
+    directory materialized before the marker existed: found 2026-08-05 on a
+    live machine, where ``~/.gemini/extensions/ar/`` ran a hook_entry.py four
+    commits behind source and each sweep declined it, silently, with no path
+    back. Adopting from the receipt writes the marker, so the check runs once.
     """
     refreshed: list[str] = []
-    for plugin_dir, _gemini_src in plugins_to_install:
+    for plugin_dir, gemini_src in plugins_to_install:
         ext_name = _gemini_extension_name(plugin_dir)
         installed_dir = config_dir / "extensions" / ext_name
-        if not installed_dir.is_dir() or read_owned_marker(installed_dir) is None:
+        if not installed_dir.is_dir():
             continue
+        if read_owned_marker(installed_dir) is None:
+            if not _extension_receipt_names_source(installed_dir, gemini_src):
+                continue
+            write_owned_marker(installed_dir, plugin=ext_name)
         _sync_gemini_extension_resources(
             plugin_dir,
             installed_dir,
@@ -1920,6 +1931,44 @@ def _refresh_owned_gemini_extensions(
         )
         refreshed.append(ext_name)
     return refreshed
+
+
+def _extension_receipt_names_source(installed_dir: Path, gemini_src: Path) -> bool:
+    """Return whether the harness recorded installing this from ``gemini_src``.
+
+    Gemini-family CLIs drop ``<cli>-extension-install.json`` recording the path
+    they installed from, so an unmarked directory can still prove it came from
+    autorun. The filename is per harness (``.gemini-``, ``.qwen-``), hence the
+    glob rather than threading the CLI name through another parameter.
+
+    Only an exact resolved-path match counts. A prefix or name test would let a
+    sibling directory under the same parent claim ownership, and this function
+    is the sole gate protecting a user-authored extension from being
+    overwritten.
+
+    Complexity: O(R) reads for R receipts in one directory, R being 0 or 1 in
+    practice.
+    """
+    try:
+        wanted = gemini_src.resolve()
+    except OSError:
+        return False
+    for receipt in sorted(installed_dir.glob(".*-extension-install.json")):
+        try:
+            payload = json.loads(receipt.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        source = payload.get("source")
+        if not isinstance(source, str) or not source:
+            continue
+        try:
+            if Path(source).resolve() == wanted:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _install_gemini_family_extensions(
