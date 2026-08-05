@@ -433,6 +433,27 @@ class TestStatuslineTap:
 # === 7. Compaction-event dispatch ====================================
 
 class TestCompactionDispatch:
+    def test_claude_actually_delivers_the_compaction_event_it_handles(self):
+        """A handler nobody sends events to is dead code with a docstring.
+
+        `cache_guard_on_precompact` registers for PreCompact, and the guard
+        invalidates its cached usage measurement there. That only runs if the
+        installed hooks.json subscribes to the event, so the subscription is
+        part of the feature, not packaging detail. PreCompact is in both
+        repo-maintained Claude event allowlists (test_hooks_format.py,
+        test_split_layout.py); PostCompact is in only one, so it stays
+        unsubscribed until that is settled.
+        """
+        import json
+
+        hooks = json.loads(
+            (Path(__file__).resolve().parents[1] / "hooks" / "hooks.json").read_text(encoding="utf-8")
+        )["hooks"]
+
+        assert "PreCompact" in hooks, "cache-guard invalidation never fires without this"
+        command = hooks["PreCompact"][0]["hooks"][0]["command"]
+        assert "hook_entry.py" in command
+
     def test_precompact_is_noop_returns_none(self, tmp_state_dir):
         from autorun.cache_guard import CacheGuard
         sid = _sid("pc")

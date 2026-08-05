@@ -1834,7 +1834,9 @@ def test_codex_manifest_declares_the_canonical_command_surface():
     expected = [f"./commands/{name}.md" for name in CONFIG["codex_canonical_commands"]]
 
     assert data["commands"] == expected
-    assert len(expected) == 16
+    # 16 control commands plus help, which is the entry that makes the other
+    # 16 discoverable on a harness with no autorun completion menu.
+    assert len(expected) == 17
 
 
 def test_every_canonical_codex_command_document_exists():

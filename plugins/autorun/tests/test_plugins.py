@@ -1992,14 +1992,25 @@ class TestTaskSubcommandsAreTheOnlyTaskSpellings:
     a second description of a subcommand `/ar:task` already parses, and every
     harness catalog paid for the duplicate entry. The wrappers and documents
     are gone — these tests keep the dash family from growing back.
+
+    Input tolerance is separate from advertising: `core._RETIRED_COMMAND_SPELLINGS`
+    still routes a remembered `/ar:task-status` to the subcommand handler
+    (pinned in test_command_spellings.py). Nothing here may re-register an
+    alias, add a document, or put the spelling back in a harness catalog.
     """
 
-    @pytest.mark.parametrize(
-        "prompt",
-        ["/ar:task-status", "/task-status", "/ar:task-ignore", "/task-ignore"],
-    )
-    def test_dash_spellings_no_longer_dispatch(self, prompt):
+    @pytest.mark.parametrize("prompt", ["/task-status", "/task-ignore"])
+    def test_dash_spellings_without_the_ar_prefix_do_not_dispatch(self, prompt):
         assert app._find_command(prompt) is None, f"{prompt} still has a handler"
+
+    @pytest.mark.parametrize("prompt", ["/ar:task-status", "/ar:task-ignore"])
+    def test_retired_dash_spellings_own_no_alias_of_their_own(self, prompt):
+        """They resolve through canonicalization to `/ar:task <operation>`;
+        the registry itself never learns the dash name."""
+        match = app._find_command(prompt)
+        assert match is not None, f"{prompt} lost its input tolerance"
+        assert match.alias == "/ar:task"
+        assert prompt not in app.command_handlers
 
     @pytest.mark.parametrize("prompt", ["/ar:task status", "/ar:task ignore 7 done"])
     def test_two_word_forms_dispatch(self, prompt):

@@ -1,11 +1,13 @@
 ---
-description: Create new plan from scratch
-argument-hint: <feature/project description>
+name: planprocess
+description: Use when the user asks to "execute the plan", "run the plan", "/ar:planprocess", or "/ar:pp". Executes an approved plan step by step with the wait process, task tracking, and verification before each completion claim.
+aliases: [pp]
+argument-hint: "[task description]"
 ---
 
-# Create New Plan (/ar:plannew)
+# Development Planning (/ar:planprocess)
 
-$ARGUMENTS
+The user's request is the task description for everything below.
 
 ---
 
@@ -96,9 +98,17 @@ Include EVERY distinct user message that shaped this plan. Do not summarize or m
 
 ---
 
-## 3. MODE: PLAN CREATION (Not Execution)
+## 3. MODE: PLANNING (Not Execution)
 
-You are creating a NEW plan from scratch. No existing plan to reference. Do NOT execute code changes until plan approved.
+Execute rigorous methodology step by step. Do NOT execute code changes until plan approved.
+
+**Self-Check Questions** (answer YES to all before proceeding):
+1. Is the code clean, robust, and concise?
+2. Has the full plan file been brought up to date with latest insights?
+3. Does the plan integrate beautifully with existing code and patterns?
+4. Have you consolidated to match best approach per §1.1 Principles with concrete outputs per §1.2?
+5. Is it superbly designed for architect, maintainer, AND user audiences?
+6. Are different backends handled transparently, seamlessly, and robustly for future API changes?
 
 ---
 
@@ -132,44 +142,27 @@ Use Task tool to launch parallel Explore subagents (up to 3) to understand:
 4. CITE file:line-range for verified findings
 5. Mark unverifiable findings as "[UNVERIFIED]"
 
-### Step 5: Requirements Discovery
-1. **Clarify Goal**: What specific outcome does this plan achieve?
-2. **Identify Stakeholders**: Who benefits? (users, developers, maintainers)
-3. **Define Success Criteria**: How will we know when complete?
-4. **Scope Boundaries**: What is IN scope? What is OUT of scope?
-
-### Step 6: Architecture Exploration
-Before designing, explore codebase:
-1. Use Glob to find related files
-2. Read 2-3 similar implementations for reference
-3. Identify existing patterns to follow
-4. **Concrete Requirement**: Cite specific files (e.g., `src/handler.ts:42-56`)
-
-### Step 7: Launch Plan Subagent
+### Step 5: Launch Plan Subagent
 Use Task tool with Plan subagent to design implementation from exploration results.
 
-### Step 8: Plan Structure
-Create plan addressing §1.1 Philosophy checklist:
-- [ ] TDD, [ ] DRY, [ ] OODA, [ ] KISS, [ ] YAGNI, [ ] SOLID, [ ] RAII, [ ] WOLOG
-
-### Step 9: Describe Logic Flow
+### Step 6: Describe Logic Flow
 Trace logic flow through the description. Show data/control flow.
 
-### Step 10: Use Actual Quotes
+### Step 7: Use Actual Quotes
 Quote actual code with file:line-range references. No paraphrasing.
 
-### Step 11: Critique Work
+### Step 8: Critique Work
 Critique overall + line-by-line against ALL best practices (§1.1) and quality standards (§1.3).
 
-### Step 12: Propose Multiple Solutions
+### Step 9: Propose Multiple Solutions
 Propose ≥3 distinct solutions to each issue. Choose best with compelling justification.
 
-### Step 13: Thread Management
+### Step 10: Thread Management
 Each thread of updates (different approaches/solutions being refined) needs a unique name with incrementing version number (`<taskname>-v1`, `<taskname>-v2`, ...). This enables referencing specific iterations: "In auth-solution-v2 we tried X, but auth-solution-v3 uses Y".
 
-### Step 14: Final Verification - Completeness Check
+### Step 11: Final Verification - Completeness Check
 
-1. **Verify ALL cases from $ARGUMENTS:**
+1. **Verify ALL cases from the user's request:**
    1. [ ] Primary use case implemented
    2. [ ] ALL edge cases from requirements included
    3. [ ] ALL languages/platforms mentioned covered
@@ -182,6 +175,9 @@ Each thread of updates (different approaches/solutions being refined) needs a un
 4. Confirm code examples are syntactically correct
 5. Ensure no steps skipped (check TaskList)
 6. **If ANY case missing**: Return to relevant step. Do NOT proceed incomplete.
+
+### Step 12: Plan Output
+Create concrete step-by-step plan with checkbox items. Add all to TaskList via TaskCreate.
 
 ---
 
@@ -240,6 +236,7 @@ After outputting "Wait," execute these 8 steps:
 | **code-architect** | Complex architectural planning |
 | **code-explorer** | Deep analysis of existing features |
 | **code-reviewer** | Code quality, bugs, security review |
+| **pr-test-analyzer** | Test coverage analysis |
 
 **Parallel execution**: Launch multiple in single message when tasks are independent.
 
@@ -257,51 +254,19 @@ Then transition to execution:
    3. **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
    4. **Bias Mitigation:** Be cautious, humble, patient, and scrupulous; avoid overconfidence and check your assumptions and your work, explore your environment to ensure you understand the system tasks goals and what is already done, verifying because you are often overconfident, duplicate work, and falsely claim incomplete tasks are "complete" or "production ready".
 
-2. **THREE-STAGE COMPLETION SYSTEM** - Execute all three stages during planning:
-   - **Stage 1**: Create initial plan, identify expertise, generate best practices
-     → Output **AUTORUN_INITIAL_TASKS_COMPLETED** when Stage 1 done
-   - **Stage 2**: Critical evaluation, Wait Process, propose multiple solutions
-     → Output **CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED** when Stage 2 done
-   - **Stage 3**: Final verification, completeness check
-     → Output **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY** when Stage 3 done
-   - **ExitPlanMode**: ONLY allowed after Stage 3 complete
+2. **SYSTEM STOP SIGNALS** - NEVER output unless condition met:
+   - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP`
+   - `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY`
 
-3. **SYSTEM STOP SIGNALS** - NEVER output unless condition met:
-   - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` - Emergency stop
-
-4. **Safety Protocol**: Execute **ONLY IF** task involves high-risk or irreversible destructive actions (e.g., database operations, file deletion, state modification).
+3. **Safety Protocol**: Execute **ONLY IF** task involves high-risk or irreversible destructive actions (e.g., database operations, file deletion, state modification).
    1. **Assess Risk**: Evaluate if action is irreversible or could cause state corruption.
    2. **Mitigation Action**: If high-risk, execute these steps and explicitly state your actions:
       1. **INITIATE SAFETY PROTOCOL**: Announce 'INITIATE SAFETY PROTOCOL' to begin assessment.
       2. **Secure State**: Create environment backup or state checkpoint **before** proceeding.
       3. **Verify Integrity**: Verify checkpoint succeeded.
       4. **CONSIDER OPTIONS**: List options, evaluate failure modes, select best.
-   3. **CRITICAL ESCAPE PRE-CHECK**: If, after mitigation, risk remains irreversible → proceed to step 5.
+   3. **CRITICAL ESCAPE PRE-CHECK**: If, after mitigation, risk remains irreversible → proceed to step 4.
 
-5. **CRITICAL ESCAPE TO STOP SYSTEM**: Only if irreversible, catastrophic, or cannot be mitigated, immediately output exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
+4. **CRITICAL ESCAPE TO STOP SYSTEM**: Only if irreversible, catastrophic, or cannot be mitigated, immediately output exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
 
----
-
-## 10. Post-Acceptance Execution Protocol (Run AFTER User Approves Plan)
-
-Before executing ANY plan step after approval:
-
-1. **Scaffold all tasks.** For each implementation step N in the plan:
-   a. `TaskCreate(subject="[TDD] Step N: Write tests for <step description>")`
-   b. `TaskCreate(subject="[EXEC] Step N: <step description>")`
-   c. `TaskUpdate([EXEC] task, addBlockedBy=[[TDD] task])` — tests must pass before implementation
-   d. `TaskUpdate([EXEC] Step N, addBlockedBy=[[EXEC] Step N-1])` — sequential execution
-
-2. **Create final verification task:**
-   `TaskCreate(subject="[VERIFY] Run full test suite and confirm all steps complete")`
-
-3. **NEVER start coding** until the full task DAG is created and visible in TaskList.
-
-4. **Task lifecycle during execution:**
-   - Before starting each step: `TaskUpdate(taskId, status="in_progress")`
-   - When blocked by unexpected work: `TaskCreate(subject="[BLOCKER] description")` immediately
-   - When step complete: `TaskUpdate(taskId, status="completed")`, then `TaskList` to find next task
-   - Do NOT mark completed unless tests pass and requirements met
-
-5. **Task update frequency:** After every 3 tool calls, check `TaskList` and verify the current task
-   is marked `in_progress`. If no task is `in_progress`, mark the correct task before continuing.
+5. **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM**: When 100% complete and verified, remember you are often overconfident—double-check the resources from which you receive or retrieve new tasks and think if anything was missed, then output exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**

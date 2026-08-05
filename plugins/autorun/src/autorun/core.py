@@ -212,6 +212,18 @@ def _command_prefixes_for_cli(cli_type: str | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(prefixes))
 
 
+# Command names that once dispatched and are no longer advertised anywhere: no
+# command document, no harness catalog entry, no registered alias. Mapping them
+# here is input tolerance only, so a user who remembers a spelling autorun used
+# to document still gets the command they meant. Never add a name that never
+# dispatched — an undocumented spelling that silently works is a second surface
+# to maintain.
+_RETIRED_COMMAND_SPELLINGS = {
+    "task-status": "task status",
+    "task-ignore": "task ignore",
+}
+
+
 def canonicalize_command_prompt(prompt: str, cli_type: str | None = None) -> str:
     """Normalize an accepted autorun prompt command to canonical /ar:* form."""
     prompt = prompt.strip()
@@ -220,7 +232,9 @@ def canonicalize_command_prompt(prompt: str, cli_type: str | None = None) -> str
             continue
         suffix = prompt[len(prefix) :]
         if re.match(r"^[A-Za-z][A-Za-z0-9_-]*(?:\s|$)", suffix):
-            return f"{CANONICAL_COMMAND_PREFIX}{suffix}"
+            name, separator, arguments = suffix.partition(" ")
+            name = _RETIRED_COMMAND_SPELLINGS.get(name, name)
+            return f"{CANONICAL_COMMAND_PREFIX}{name}{separator}{arguments}"
     return prompt
 
 
@@ -1501,6 +1515,7 @@ class EventContext:
         "_last_assistant_message",
         "_background_tasks",
         "_session_crons",
+        "_server_url",
     )
 
     # Stage constants for type consistency
@@ -1568,6 +1583,7 @@ class EventContext:
         background_tasks: List = None,
         session_crons: List = None,
         session_identity_authority: SessionIdentityAuthority = "unresolved",
+        server_url: str = "",
     ):
         object.__setattr__(self, "_session_id", session_id)
         object.__setattr__(
@@ -1597,6 +1613,7 @@ class EventContext:
         # Used by features that need to read raw usage / history (e.g. cache_guard).
         # Always present on hook-originated contexts; may be None for test / CLI contexts.
         object.__setattr__(self, "_transcript_path", transcript_path)
+        object.__setattr__(self, "_server_url", server_url or "")
         # Session start source from hook payload (startup/resume/clear/compact)
         object.__setattr__(self, "_source", source)
         object.__setattr__(self, "_agent_id", agent_id or None)
@@ -1639,6 +1656,16 @@ class EventContext:
         back to fail-open behaviour on ``None``.
         """
         return self._transcript_path
+
+    @property
+    def server_url(self) -> str:
+        """Address the harness is listening on, when it told autorun one.
+
+        OpenCode's plugin sends its `serverUrl` on attach; every other harness
+        leaves this empty. Reading it through a real property rather than
+        getattr keeps a broken plumbing path visible instead of silently None.
+        """
+        return self._server_url
 
     @property
     def stop_hook_active(self) -> bool:
@@ -2316,6 +2343,19 @@ class AutorunApp:
             "SessionStart": [],
             "PostToolUse": [],
             "UserPromptSubmit": [],
+            # Compaction lifecycle. The cache guard invalidates its cached
+            # measurement on these; they were missing here, so `on()` dropped
+            # those registrations and the handlers never ran. Claude's
+            # hooks.json does not subscribe to them yet either — wiring the
+            # subscription is separate from accepting the handler.
+            "PreCompact": [],
+            "PostCompact": [],
+            "PreCompress": [],
+            # Harness-specific lifecycle frames. OpenCode's plugin is the only
+            # sender today: it hands the daemon its server address on load and
+            # withdraws it on dispose.
+            "OpenCodeAttach": [],
+            "OpenCodeDetach": [],
         }
 
     def command(self, *aliases: str):
@@ -2337,8 +2377,15 @@ class AutorunApp:
         def decorator(func: Callable):
             # SubagentStop shares Stop chain
             target = "Stop" if event == "SubagentStop" else event
-            if target in self.chains:
-                self.chains[target].append(func)
+            if target not in self.chains:
+                # Dropping the registration silently is how a handler ends up
+                # installed, imported, and never called: declare the event in
+                # self.chains above instead.
+                raise ValueError(
+                    f"{func.__name__} registers for unknown event {event!r}; "
+                    f"known events: {sorted(self.chains)}"
+                )
+            self.chains[target].append(func)
             return func
 
         return decorator
@@ -2665,7 +2712,10 @@ class AutorunDaemon:
                 session_transcript=normalized["session_transcript"],
                 store=self.store,
                 cli_type=cli_type,
-                cwd=payload.get("_cwd"),
+                # The Python client wrapper adds "_cwd"; a raw socket client
+                # such as the OpenCode plugin sends plain "cwd". Accept both so
+                # a frame that took the short path is not left without a cwd.
+                cwd=payload.get("_cwd") or payload.get("cwd"),
                 permission_mode=normalized["permission_mode"],
                 source=normalized["source"],
                 agent_id=normalized["agent_id"],
@@ -2675,6 +2725,7 @@ class AutorunDaemon:
                 last_assistant_message=normalized["last_assistant_message"],
                 background_tasks=normalized["background_tasks"],
                 session_crons=normalized["session_crons"],
+                server_url=payload.get("server_url", ""),
             )
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.

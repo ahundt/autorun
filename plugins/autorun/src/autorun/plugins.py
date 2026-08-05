@@ -31,13 +31,22 @@ Plugins:
 import re
 import fnmatch
 import shlex
+import textwrap
 import time
 from dataclasses import dataclass
 from functools import lru_cache, cache
 from pathlib import Path
 from typing import Optional, Dict, Callable
 
-from .core import app, EventContext, logger, format_command_for_cli, format_suggestion
+from .core import (
+    app,
+    EventContext,
+    logger,
+    format_command_for_cli,
+    format_commands_for_cli,
+    format_suggestion,
+)
+from .command_docs import CommandEntry, command_help_inventory
 from .config import (
     CONFIG,
     DEFAULT_INTEGRATIONS,
@@ -821,6 +830,177 @@ def _prepend_transcript_policy_notice(
     return f"{notice}{separator}{message}"
 
 
+def _help_entries() -> tuple[CommandEntry, ...]:
+    """Read the shipped command documents, or nothing if they are unreachable.
+
+    A wheel install ships `src/autorun` without the `commands/` directory, so
+    help degrades to the registry list instead of failing.
+    """
+    try:
+        from .resources import get_commands_dir
+
+        return command_help_inventory(get_commands_dir())
+    except Exception as exc:  # unreadable or absent command documents
+        logger.warning(f"Command help falling back to the registry: {exc}")
+        return ()
+
+
+def _help_skills() -> dict[str, dict[str, str]]:
+    """Installed skills, or nothing if the packaged skills are unreachable."""
+    try:
+        from .command_docs import skill_docs_inventory
+        from .resources import get_skills_dir
+
+        return skill_docs_inventory(get_skills_dir())
+    except Exception as exc:  # unreadable or absent skill directory
+        logger.warning(f"Command help omitting skills: {exc}")
+        return {}
+
+
+def _render_skill_list(skills: dict[str, dict[str, str]], cli_type: str | None) -> list[str]:
+    """Skills are invoked in the harness's own way, not as autorun commands."""
+    if not skills:
+        return []
+    invocation = platform_for(cli_type).skill_invocation_format
+    spellings = {name: invocation.format(name=name) for name in skills}
+    width = max(len(spelling) for spelling in spellings.values())
+    lines = ["\nSkills this harness loads:"]
+    lines.extend(
+        f"  {spellings[name]:<{width}}  {textwrap.shorten(skill['description'], width=96, placeholder=' …')}"
+        for name, skill in sorted(skills.items())
+    )
+    return lines
+
+
+def _help_line(entry: CommandEntry, width: int) -> str:
+    spelling = f"/ar:{entry.name}"
+    also = ", ".join(f"/ar:{alias}" for alias in entry.aliases)
+    # A paragraph-long description would push every other command off screen;
+    # `/ar:help <command>` still shows it whole.
+    summary = textwrap.shorten(entry.description, width=96, placeholder=" …")
+    line = f"  {spelling:<{width}}  {summary}"
+    return f"{line} (also {also})" if also else line
+
+
+def _render_command_list(entries: tuple[CommandEntry, ...]) -> list[str]:
+    """Group by who answers: autorun itself, or the model reading the document."""
+    width = max((len(entry.name) + 4 for entry in entries), default=0)
+    sections = (
+        ("Commands autorun runs for you", [e for e in entries if e.dispatches]),
+        ("Guides the model reads", [e for e in entries if not e.dispatches]),
+    )
+    lines: list[str] = []
+    for title, group in sections:
+        if not group:
+            continue
+        lines.append(f"\n{title}:")
+        lines.extend(_help_line(entry, width) for entry in group)
+    return lines
+
+
+def _render_one_command(entry: CommandEntry) -> list[str]:
+    lines = [f"\n/ar:{entry.name} — {entry.description}"]
+    if entry.argument_hint:
+        lines.append(f"  arguments: {entry.argument_hint}")
+    if entry.aliases:
+        lines.append("  also: " + ", ".join(f"/ar:{alias}" for alias in entry.aliases))
+    lines.append(
+        "  autorun answers this one directly."
+        if entry.dispatches
+        else "  the model follows this document."
+    )
+    return lines
+
+
+@app.command("/ar:help", "ar", "/ar", "ar:")
+def handle_help(ctx: EventContext) -> str:
+    """List every autorun command in the spelling this harness understands.
+
+    Bare `ar`, `/ar`, and `ar:` land here too: someone who cannot remember a
+    command types the shortest thing they can, and an unanswered guess is a
+    worse outcome than a list. Cost is O(D) document reads on explicit
+    invocation; nothing here runs on a hook path.
+    """
+    entries = _help_entries()
+    skills = _help_skills()
+    topic = (ctx.activation_prompt or "").split(maxsplit=1)
+    requested = topic[1].strip().lstrip("/").removeprefix("ar:").strip() if len(topic) > 1 else ""
+
+    lines = [f"autorun commands — {platform_for(ctx.cli_type).command_invocation_hint}"]
+    if not entries:
+        lines.append("\nCommand documents are not installed beside this autorun package.")
+        lines.append("Registered commands: " + ", ".join(sorted(app.command_handlers)))
+        return format_commands_for_cli("\n".join(lines), ctx.cli_type)
+
+    if requested:
+        match = next((entry for entry in entries if requested in entry.spellings), None)
+        if match is not None:
+            lines.extend(_render_one_command(match))
+            return format_commands_for_cli("\n".join(lines), ctx.cli_type)
+        if requested in skills:
+            invocation = platform_for(ctx.cli_type).skill_invocation_format.format(name=requested)
+            lines.append(f"\n{invocation} — {skills[requested]['description']}")
+            return format_commands_for_cli("\n".join(lines), ctx.cli_type)
+        lines.append(f"\nNo command named {requested!r}. The full list:")
+
+    lines.extend(_render_command_list(entries))
+    lines.extend(_render_skill_list(skills, ctx.cli_type))
+    lines.append("\n/ar:help <command> for arguments and alternative spellings.")
+    return format_commands_for_cli("\n".join(lines), ctx.cli_type)
+
+
+_OPENCODE_ATTACHMENT_KEY = "opencode_attachment"
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _loopback_server_url(server_url: str) -> str:
+    """Return the URL only when it points at this machine over http(s).
+
+    The daemon POSTs to whatever address it is handed, so accepting an
+    arbitrary one would let any local process aim autorun at a host of its
+    choosing. Same-user trust ends at the loopback interface.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(server_url)
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    host = (parsed.hostname or "").lower()
+    if host in _LOOPBACK_HOSTS or host.startswith("127."):
+        return server_url
+    return ""
+
+
+@app.on("OpenCodeAttach")
+def attach_opencode_server(ctx: EventContext) -> None:
+    """Remember where this OpenCode session is listening.
+
+    The JS plugin sends its `serverUrl` once per session bootstrap. Recording
+    it is what lets the daemon act as the SDK client later; nothing here calls
+    out, so an attach costs one state write.
+    """
+    server_url = _loopback_server_url(ctx.server_url or "")
+    if not server_url:
+        if ctx.server_url:
+            logger.warning(f"Refused non-loopback OpenCode server_url: {ctx.server_url!r}")
+        return None
+    ctx.state_set(
+        _OPENCODE_ATTACHMENT_KEY,
+        {"server_url": server_url, "cwd": ctx.cwd or "", "attached_at": time.time()},
+    )
+    return None
+
+
+@app.on("OpenCodeDetach")
+def detach_opencode_server(ctx: EventContext) -> None:
+    """Drop the recorded address when the plugin disposes."""
+    ctx.state_set(_OPENCODE_ATTACHMENT_KEY, None)
+    return None
+
+
 @app.command("/ar:reload")
 def handle_reload(ctx: EventContext) -> str:
     """Force reload of integration files."""
@@ -1380,9 +1560,9 @@ def _get_task_creation_reminder(ctx: EventContext) -> Optional[str]:
                 "Do not call any other tool until the checklist exists."
             )
     if ctx.plan_awaiting_execution_tasks:
-        return CONFIG["plan_execution_task_reminder"]
+        return _resolve_task_dependency(CONFIG["plan_execution_task_reminder"], ctx.cli_type, 4)
     elif ctx.plan_awaiting_planning_tasks:
-        return CONFIG["plan_planning_task_reminder"]
+        return _resolve_task_dependency(CONFIG["plan_planning_task_reminder"], ctx.cli_type, 3)
     return None
 
 
@@ -1394,7 +1574,7 @@ def _get_tdd_scaffolding_message(ctx: EventContext) -> str:
             "The plan list must include one [TDD] item and one [EXEC] item per implementation step, "
             "with each [EXEC] item pending until its matching [TDD] item is completed."
         )
-    return CONFIG.get("tdd_scaffolding_message", "")
+    return _resolve_task_dependency(CONFIG.get("tdd_scaffolding_message", ""), ctx.cli_type, 4)
 
 
 def _task_staleness_instructions(ctx: EventContext) -> str:
@@ -1418,29 +1598,48 @@ def _task_staleness_instructions(ctx: EventContext) -> str:
         )
 
     if ctx.plan_awaiting_planning_tasks:
-        return (
+        return _resolve_task_dependency(
             "You must create planning tasks: "
-            '1. {task_create}({task_title}="[PLANNING] Step N: [name]") '
-            "2. {task_update}({task_id_param}=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
-            "3. {task_list} -- verify all tasks visible. "
-            "Do not call any other tool until planning tasks exist."
+            '1. {task_create}({task_title}="[PLANNING] Step N: [name]") -- one per step, not one broad task '
+            "2. {task_list} -- verify all tasks visible "
+            "{task_dependency}"
+            "Do not call any other tool until planning tasks exist.",
+            ctx.cli_type,
+            3,
         )
     if ctx.plan_awaiting_execution_tasks:
-        return (
+        return _resolve_task_dependency(
             "You must create execution tasks: "
             '1. {task_create}({task_title}="[TDD] Step N: Write tests for [step]") '
             '2. {task_create}({task_title}="[EXEC] Step N: [step description]") '
-            "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
-            "4. {task_list} -- verify all tasks visible. "
-            "Do not write code until execution tasks are created and wired."
+            "3. {task_list} -- verify all tasks visible "
+            "{task_dependency}"
+            "Do not write code until execution tasks are created.",
+            ctx.cli_type,
+            4,
         )
-    return (
+    return _resolve_task_dependency(
         "Call one of these Task tools: "
         "1. {task_list} -- review current tasks "
         '2. {task_update}({task_id_param}=N, status="in_progress"|"completed") -- update status '
-        '3. {task_create}({task_title}="...", description="...") -- add newly discovered work '
-        "4. {task_update}({task_id_param}=N, addBlockedBy=[M]) -- update dependencies if order changed."
+        '3. {task_create}({task_title}="...", description="...") -- add each newly discovered step '
+        "as its own fine-grained task "
+        "{task_dependency}",
+        ctx.cli_type,
+        4,
     )
+
+
+def _resolve_task_dependency(text: str, cli_type: str | None, number: int) -> str:
+    """Fill the `{task_dependency}` slot with this harness's dependency syntax.
+
+    Harnesses whose task tools take no dependency parameter get nothing, so the
+    AI is never told to pass an argument its own tool would reject. The clause
+    is always the last numbered item, so dropping it leaves no gap.
+    """
+    syntax = platform_for(cli_type).task_dependency_syntax
+    clause = f"{number}. {syntax}: wire dependencies so blocked work cannot start early. " if syntax else ""
+    return text.replace("{task_dependency}", clause)
 
 
 def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: bool = False, no_tasks: bool = False) -> str:
@@ -1457,18 +1656,19 @@ def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: 
         level = "TASK UPDATE OVERDUE" if overdue else "TASK UPDATE REQUIRED"
         return (
             f"\n{level}: {threshold} calls without a plan update. "
-            "Next: {task_progress}; refresh statuses and add new work. "
+            "Next: {task_progress}; refresh statuses and add newly discovered work as "
+            "concrete steps, one per item. "
             f"The next non-task call will be blocked. Disable reminders: {disable}." + agent_context
         )
 
     if no_tasks:
         message = CONFIG["task_staleness_no_tasks_message"].format(threshold=threshold)
-        return message + agent_context
+        return _resolve_task_dependency(message, ctx.cli_type, 3) + agent_context
     if overdue:
         message = CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
         return message + agent_context
     message = CONFIG["task_staleness_message"].format(threshold=threshold)
-    return message + agent_context
+    return _resolve_task_dependency(message, ctx.cli_type, 4) + agent_context
 
 
 _TASK_STALENESS_AGENT_SCOPES = frozenset({"all", "user", "subagent"})
@@ -2735,26 +2935,25 @@ def cache_guard_on_precompress(ctx: EventContext) -> None:
 # ============================================================================
 
 
-def _make_plan_handler(md_filename: str):
+def _make_plan_handler(skill_name: str):
     """
-    Factory: Generate plan command handler that reads and returns markdown content.
+    Factory: Generate a plan command handler that returns the skill's guidance.
 
-    This provides a Python-level workaround for symlink discovery issues.
-    Claude Code doesn't always discover symlinked commands properly, so we
-    create explicit handlers that read the markdown files.
+    The plan procedures live in `skills/<name>/SKILL.md` so every harness that
+    reads ~/.agents/skills can load them; autorun still answers the command
+    itself so the guidance arrives on harnesses that never see the skill.
 
     Args:
-        md_filename: Name of markdown file in commands/ directory (e.g., "plannew.md")
+        skill_name: Skill directory name, e.g. "plannew"
 
     Returns:
-        Callable: Handler function that returns markdown file content
+        Callable: Handler function returning the skill body
     """
 
     def handler(ctx: EventContext) -> str:
-        from pathlib import Path
+        from .resources import get_skills_dir
 
-        commands_dir = Path(__file__).parent.parent.parent / "commands"
-        md_path = commands_dir / md_filename
+        md_path = get_skills_dir() / skill_name / "SKILL.md"
 
         # Set plan_active and task creation nag for all plan commands
         ctx.plan_active = True
@@ -2769,26 +2968,34 @@ def _make_plan_handler(md_filename: str):
         ctx.plan_awaiting_planning_tasks = not has_tasks
 
         if not md_path.exists():
-            return f"❌ Error: Plan command file not found: {md_filename}"
+            return f"❌ Error: plan skill not found: {skill_name}"
 
         try:
-            return md_path.read_text(encoding="utf-8")
+            # Body only: the frontmatter is catalog metadata for the harness,
+            # not instructions for the model.
+            from .command_docs import split_frontmatter
+
+            _frontmatter, body = split_frontmatter(
+                md_path.read_text(encoding="utf-8"), source=str(md_path)
+            )
+            return body
         except Exception as e:
-            return f"❌ Error reading plan command: {e}"
+            return f"❌ Error reading plan skill: {e}"
 
     return handler
 
 
-# Data-driven registration: symlink aliases for plan commands
+# Data-driven registration: every spelling of each plan command reaches the
+# skill that carries the procedure.
 _PLAN_ALIASES = {
-    "NEW_PLAN": ("/ar:pn", "/ar:plannew", "plannew.md"),
-    "REFINE_PLAN": ("/ar:pr", "/ar:planrefine", "planrefine.md"),
-    "UPDATE_PLAN": ("/ar:pu", "/ar:planupdate", "planupdate.md"),
-    "PROCESS_PLAN": ("/ar:pp", "/ar:planprocess", "planprocess.md"),
+    "NEW_PLAN": ("/ar:pn", "/ar:plannew", "plannew"),
+    "REFINE_PLAN": ("/ar:pr", "/ar:planrefine", "planrefine"),
+    "UPDATE_PLAN": ("/ar:pu", "/ar:planupdate", "planupdate"),
+    "PROCESS_PLAN": ("/ar:pp", "/ar:planprocess", "planprocess"),
 }
 
-for plan_type, (short_cmd, long_cmd, md_file) in _PLAN_ALIASES.items():
-    app.command(short_cmd, long_cmd, plan_type)(_make_plan_handler(md_file))
+for plan_type, (short_cmd, long_cmd, skill) in _PLAN_ALIASES.items():
+    app.command(short_cmd, long_cmd, plan_type)(_make_plan_handler(skill))
 
 
 # ============================================================================

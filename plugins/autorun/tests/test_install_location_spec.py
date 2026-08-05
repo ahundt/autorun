@@ -136,8 +136,9 @@ def test_no_source_file_hardcodes_a_harness_config_directory():
     harness_dirs = {".claude", ".codex", ".gemini", ".qwen", ".forge"}
     # install.py legitimately holds the *defaults* that Platform.config_dir
     # values are compared against, plus marketplace-cache discovery that
-    # predates this rule. Cap the count so it cannot grow.
-    budget = {"install.py": 30, "main.py": 1}
+    # predates this rule. The budget is the measured count after the
+    # platform_config_dir() seam landed: it may only ever be lowered.
+    budget = {"install.py": 19, "main.py": 1}
 
     counts: dict[str, int] = {}
     detail: dict[str, list[str]] = {}

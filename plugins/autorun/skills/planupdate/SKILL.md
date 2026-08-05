@@ -1,11 +1,13 @@
 ---
-description: Quick sync plan with codebase state
+name: planupdate
+description: Use when the user asks to "update the plan", "sync the plan with the code", "/ar:planupdate", or "/ar:pu". Reconciles an existing plan with the current codebase and marks what already shipped.
+aliases: [pu]
 argument-hint: [plan file]
 ---
 
 # Quick Plan Update (/ar:planupdate)
 
-$ARGUMENTS
+The user's request is the task description for everything below.
 
 ---
 

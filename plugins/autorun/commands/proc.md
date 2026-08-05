@@ -1,5 +1,6 @@
 ---
 description: Start autoproc - procedural autonomous workflow
+aliases: [gp]
 ---
 
 # Your Task (/ar:proc - Procedural Workflow: Sequential Improvement Methodology)

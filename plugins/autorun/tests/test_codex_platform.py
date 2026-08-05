@@ -132,16 +132,24 @@ def test_codex_task_progress_uses_update_plan():
 
 
 def test_codex_command_prefix_metadata_accepts_plain_prompt_forms():
-    """Command spelling differences are platform data, not dispatch branches."""
+    """Command spelling differences are platform data, not dispatch branches.
+
+    Codex still needs the no-slash forms most: it swallows unknown slash
+    commands before UserPromptSubmit hooks run. They are now part of the shared
+    superset every platform accepts (see test_command_spellings.py), so this
+    pins the Codex-visible half of that contract plus its native display form.
+    """
     p = PLATFORMS["codex"]
-    assert p.command_prefixes == ("/ar:", "ar:", "ar ")
+    assert p.command_prefixes == ("/ar:", "ar:", "ar ", "/ar-", "ar-")
     assert p.command_display_prefix == "ar:"
 
 
-def test_claude_and_gemini_keep_native_slash_command_prefixes():
-    assert PLATFORMS["claude"].command_prefixes == ("/ar:",)
+def test_claude_and_gemini_keep_native_slash_display_prefixes():
+    """Acceptance is shared; only the DISPLAY spelling is per-harness, so
+    Claude's /ar autocomplete and rendered guidance stay unchanged."""
+    assert PLATFORMS["claude"].command_prefixes == ("/ar:", "ar:", "ar ", "/ar-", "ar-")
     assert PLATFORMS["claude"].command_display_prefix == "/ar:"
-    assert PLATFORMS["gemini"].command_prefixes == ("/ar:",)
+    assert PLATFORMS["gemini"].command_prefixes == ("/ar:", "ar:", "ar ", "/ar-", "ar-")
     assert PLATFORMS["gemini"].command_display_prefix == "/ar:"
 
 

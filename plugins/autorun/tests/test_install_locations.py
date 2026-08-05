@@ -310,13 +310,37 @@ def test_opencode_install_lands_in_the_resolved_config_dir(monkeypatch, tmp_path
 
 
 def test_opencode_install_follows_the_config_dir_env_var(monkeypatch, tmp_path):
+    """OpenCode resolves its config root from XDG_CONFIG_HOME/opencode.
+
+    Probed against opencode 1.18.13: with OPENCODE_CONFIG_DIR set to an empty
+    directory, `opencode serve` still loaded ~/.config/opencode/opencode.json,
+    and with XDG_CONFIG_HOME set it loaded <XDG>/opencode/opencode.json.
+    Installing to OPENCODE_CONFIG_DIR would write where OpenCode never reads.
+    """
     from autorun.install import _install_for_opencode
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(tmp_path / "opencode-work"))
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     marketplace_root = Path(__file__).resolve().parents[3]
 
     ok, msg = _install_for_opencode(marketplace_root, ["autorun"])
 
     assert ok, msg
-    assert (tmp_path / "opencode-work" / "AGENTS.md").is_file()
+    assert (tmp_path / "xdg" / "opencode" / "AGENTS.md").is_file()
+
+
+def test_opencode_ignores_the_env_var_it_does_not_read(monkeypatch, tmp_path):
+    """OPENCODE_CONFIG_DIR must not steer the install: the binary ignores it."""
+    from autorun.install import _install_for_opencode
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(tmp_path / "never-read"))
+    marketplace_root = Path(__file__).resolve().parents[3]
+
+    ok, msg = _install_for_opencode(marketplace_root, ["autorun"])
+
+    assert ok, msg
+    assert not (tmp_path / "never-read").exists()
+    assert (tmp_path / ".config" / "opencode" / "AGENTS.md").is_file()

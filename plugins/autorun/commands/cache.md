@@ -1,6 +1,6 @@
 ---
 description: Cache-miss / compaction protection gate (disabled by default)
-argument-hint: [on|off|set|ok|no|status] [args…]
+argument-hint: "[on|off|set|ok|no|status] [args…]"
 ---
 
 # Cache Protection Gate (/ar:cache)

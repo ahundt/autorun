@@ -117,6 +117,11 @@ Without three-stage: Claude might stop after Stage 1 with incomplete work.
 
 ### All Commands
 
+`/ar:help` lists these live; `/ar:help <cmd>` shows one. Dispatch takes `/ar:st`,
+`ar:st`, `ar st`, `/ar-st`, `ar-st`, and the retired `ar:task-status`/`ar:task-ignore`;
+only what autorun prints is per-harness. Codex never delivers the leading slash;
+ForgeCode and OpenCode run only their installed command files.
+
 **AutoFile Policy** (controls file creation via PreToolUse hooks):
 
 | Short | Long | Legacy | Description |
@@ -149,6 +154,7 @@ Without three-stage: Claude might stop after Stage 1 with incomplete work.
 
 | Short | Long | Description |
 |-------|------|-------------|
+| - | `/ar:help` | List every command in this harness's spelling |
 | `/ar:gc` | `/ar:commit` | Git commit requirements (17 steps) |
 | `/ar:ph` | `/ar:philosophy` | System design philosophy (17 principles) |
 
@@ -170,6 +176,8 @@ Built-in protections for: `rm` → `trash`, `git reset --hard` → `git stash`, 
 See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS list.
 
 **Hook Error Prevention**: See `plugins/autorun/CLAUDE.md` "Hook Error Prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
+
+**Never print outside CLI entry points**: stdout is the hook response and stderr reads as a hook failure that disables every hook — log via `logging_utils.get_logger()`.
 
 **Tmux/Session Tools**:
 

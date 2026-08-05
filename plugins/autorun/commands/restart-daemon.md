@@ -1,7 +1,6 @@
 ---
 name: restart-daemon
 description: Restart the daemon for the current autorun install/source tree
-aliases: [rd, daemon-restart]
 ---
 
 # Restart Daemon

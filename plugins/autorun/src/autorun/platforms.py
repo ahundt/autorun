@@ -529,12 +529,36 @@ class Platform:
     # marker instead — safe for any harness, including ones not listed above.
     native_task_statuses: frozenset[str] = field(default_factory=frozenset)
 
+    # Native syntax for declaring that one task waits on another, or "" when
+    # this harness's task tools expose no dependency parameter. Same rule as
+    # native_task_statuses above: guidance that names a parameter the harness
+    # rejects costs the AI a failed call instead of the ordering autorun asked
+    # for. Codex's update_plan is a flat checklist and the Gemini family's task
+    # tools take a title and a status, so only Claude Code declares one.
+    task_dependency_syntax: str = ""
+
     # === Autorun prompt commands ===
     # Autorun command handlers are registered in canonical /ar:* form. Some
     # harnesses accept additional prompt-hook spellings; dispatch normalizes any
-    # listed prefix back to /ar:* before handlers run.
-    command_prefixes: tuple[str, ...] = ("/ar:",)
+    # listed prefix back to /ar:* before handlers run. One shared superset is
+    # accepted on EVERY platform so a spelling carried over from another harness
+    # still works wherever the harness lets the text reach autorun: slash-colon
+    # (Claude/Gemini native), bare colon and space (Codex swallows unknown slash
+    # commands before hooks see them), and the dash form ForgeCode/OpenCode
+    # command files advertise because ':' is illegal in their filenames.
+    # Only command_display_prefix is per-platform: rendered guidance and native
+    # autocomplete keep each harness's own spelling.
+    command_prefixes: tuple[str, ...] = ("/ar:", "ar:", "ar ", "/ar-", "ar-")
     command_display_prefix: str = "/ar:"
+    # One line telling a user how commands reach autorun on THIS harness, shown
+    # as the header of `/ar:help`. Written in canonical /ar: form and rendered
+    # through format_commands_for_cli, so the display prefix stays the only
+    # place a spelling is decided.
+    command_invocation_hint: str = "Type /ar:<command>; installed command files appear in completion."
+    # How a user invokes an installed Agent Skill here. Claude, Qwen, and
+    # Antigravity make every skill a slash command; Codex mentions it with `$`;
+    # harnesses with only a model-facing skill tool are asked in words.
+    skill_invocation_format: str = "/{name}"
 
     # === Hook capability ===
     has_hooks: bool = True
@@ -560,6 +584,10 @@ class Platform:
     # (e.g. CODEX_HOME). install.platform_config_dir() honors them between the
     # CONFIG["harness_config_dirs"] override and the config_dir default.
     config_dir_env_vars: tuple[str, ...] = ()
+    # Subdirectory to append when the env var above names a PARENT rather than
+    # the config dir itself, as XDG_CONFIG_HOME does. Empty means the variable
+    # already holds the config dir (CODEX_HOME, CLAUDE_CONFIG_DIR, ...).
+    config_dir_env_var_subdir: str = ""
     template_dir: str | None = None
     hooks_path_var: str = ""
     install_fn_name: str = ""
@@ -711,6 +739,7 @@ CLAUDE = register(
         name="claude",
         display_name="Claude Code",
         binary="claude",
+        command_invocation_hint="Type /ar to autocomplete, or /ar:<command> directly.",
         standalone_session_env_vars=("CLAUDE_SESSION_ID",),
         has_hooks=True,
         schema_type="strict",
@@ -733,6 +762,8 @@ CLAUDE = register(
         task_management_style="task_tools",
         task_create_tools=frozenset({"TaskCreate"}),
         task_update_tools=frozenset({"TaskUpdate"}),
+        # TaskUpdate declares addBlockedBy and addBlocks.
+        task_dependency_syntax="{task_update}({task_id_param}=N, addBlockedBy=[M])",
         task_review_tools=frozenset({"TaskList", "TaskGet"}),
         # Verified against the live tool: TaskUpdate rejects anything else with
         # InputValidationError ('expected one of "pending"|"in_progress"|
@@ -939,8 +970,6 @@ QWEN = register(
         task_update_tools=GEMINI.task_update_tools,
         task_review_tools=GEMINI.task_review_tools,
         task_bulk_tools=GEMINI.task_bulk_tools,
-        command_prefixes=("/ar:",),
-        command_display_prefix="/ar:",
         supports_additional_context_events=GEMINI.supports_additional_context_events,
     )
 )
@@ -984,8 +1013,12 @@ CODEX = register(
         native_shell_read_commands=frozenset({"cat", "head", "tail"}),
         task_management_style="plan_checklist",
         task_plan_tools=frozenset({"update_plan"}),
-        command_prefixes=("/ar:", "ar:", "ar "),
         command_display_prefix="ar:",
+        command_invocation_hint=(
+            "Type /ar:<command>. Codex keeps its own slash menu closed, so a "
+            "leading slash never reaches autorun; skills answer to $name."
+        ),
+        skill_invocation_format="${name}",
         supports_additional_context_events=frozenset(
             {
                 "SessionStart",
@@ -1036,6 +1069,17 @@ FORGECODE = register(
         memory_filename="AGENTS.md",
         memory_template="forgecode_template/AGENTS.md",
         memory_sentinel_slug="forgecode-agents-md",
+        # Commands arrive as files whose name IS the invocation, and ':' is
+        # illegal in ForgeCode command filenames, so the shipped documents are
+        # ar-<cmd>.md. Guidance must teach the spelling those files create.
+        command_display_prefix="/ar-",
+        command_invocation_hint=(
+            "Type /ar:<command>. ForgeCode delivers no events to autorun, so "
+            "only the installed command files run and guards stay advisory."
+        ),
+        # ForgeCode exposes skills through a model-facing `skill` tool, with no
+        # user-typed invocation of its own.
+        skill_invocation_format="the {name} skill",
         # tool_names empty: not relevant without hooks (advisory AGENTS.md only)
     )
 )
@@ -1046,17 +1090,29 @@ OPENCODE = register(
         name="opencode",
         display_name="OpenCode",
         binary="opencode",
-        # OpenCode documents OPENCODE_CONFIG / OPENCODE_CONFIG_DIR for config
-        # relocation (opencode.ai/docs/config); no session env var is
+        # OPENCODE_CONFIG / OPENCODE_CONFIG_DIR are worth detecting because a
+        # user who set them is running OpenCode, but neither relocates the
+        # config dir — see config_dir_env_vars below. No session env var is
         # documented, so standalone identity needs --session or
         # AUTORUN_SESSION_ID like the Claude fallback.
         detect_env_vars=("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"),
         detect_path_hints=(".opencode", ".config/opencode"),
         has_hooks=False,
-        schema_type="none",  # hook surface is JS plugins, not external hooks
+        # Hook surface is JS plugins, not external hook commands. autorun ships
+        # one plugin file for this harness only: OpenCode runs on Bun and loads
+        # it in-process, so its users already have that runtime. No other
+        # platform may pull in a second runtime — Python is the only one autorun
+        # requires everywhere else.
+        schema_type="none",
         hook_protocol=NO_HOOKS,
         config_dir="~/.config/opencode/",
-        config_dir_env_vars=("OPENCODE_CONFIG_DIR",),
+        # Probed against opencode 1.18.13: with OPENCODE_CONFIG_DIR pointed at
+        # an empty directory, `opencode serve` still loaded
+        # ~/.config/opencode/opencode.json; with XDG_CONFIG_HOME set it loaded
+        # <XDG>/opencode/opencode.json. XDG_CONFIG_HOME names the parent, so
+        # the harness subdirectory is appended.
+        config_dir_env_vars=("XDG_CONFIG_HOME",),
+        config_dir_env_var_subdir="opencode",
         install_fn_name="_install_for_opencode",
         memory_filename="AGENTS.md",
         memory_template="opencode_template/AGENTS.md",
@@ -1066,6 +1122,15 @@ OPENCODE = register(
         loads_shared_agents_skills=True,
         # Commands are Claude-format markdown ($ARGUMENTS, $1..$N, !`cmd`,
         # @path) copied from the portable bundle; no hooks, advisory only.
+        # Those files are named ar-<cmd>.md, so guidance teaches /ar-<cmd>
+        # until the plugin bridge makes ar:<cmd> dispatch here.
+        command_display_prefix="/ar-",
+        command_invocation_hint=(
+            "Type /ar:<command>. OpenCode delivers no events to autorun, so "
+            "only the installed command files run and guards stay advisory."
+        ),
+        # OpenCode also reaches skills through its native `skill` tool.
+        skill_invocation_format="the {name} skill",
     )
 )
 

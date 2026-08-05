@@ -1,5 +1,6 @@
 ---
 description: Require justification before creating new files
+aliases: [j, afj]
 ---
 
 # AutoFile Justify Mode

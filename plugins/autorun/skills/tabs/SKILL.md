@@ -1,7 +1,8 @@
 ---
-description: Discover and manage Claude sessions across tmux windows
+name: tabs
+description: Use when the user asks to "list my claude sessions", "which windows are waiting", "/ar:tabs". Discovers Claude sessions across tmux windows and reports which need attention.
 allowed-tools: Bash(tmux *), Bash(uv *)
-argument-hint: [A,B:command] or [all:continue] or [awaiting:status]
+argument-hint: "[A,B:command] or [all:continue] or [awaiting:status]"
 ---
 
 # Claude Session Manager
@@ -12,11 +13,11 @@ Discover, analyze, and interact with Claude Code sessions across tmux windows.
 
 Current tmux sessions and Claude windows:
 
-!`tmux list-sessions -F "#{session_name}: #{session_windows} windows" 2>/dev/null || echo "No tmux sessions"`
+Run `tmux list-sessions` and read its output before choosing a session.
 
 ## Your Task
 
-$ARGUMENTS
+The user's request is the task description for everything below.
 
 If no arguments provided, discover all Claude sessions and present them to the user.
 

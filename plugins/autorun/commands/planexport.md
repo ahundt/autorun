@@ -1,6 +1,7 @@
 ---
 description: "Plan export status and settings [on|off|globalon|globaloff|dir <path>|pattern <template>|rejected [on|off|dir <path>]|reset]"
 argument-hint: "[on|off|globalon|globaloff|dir <path>|pattern <template>|rejected [on|off|dir <path>]|reset]"
+aliases: [pe]
 ---
 
 # Plan Export (/ar:planexport)

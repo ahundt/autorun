@@ -29,6 +29,7 @@ irreversible actions.
 
 ## Stop semantics
 
-If the user wants you to stop and you have incomplete tasks, surface
-the override path explicitly: only the user can type `/ar:sos` or
-`/ar:task ignore <id>` to unblock the stop.
+ForgeCode has no stop event, so autorun holds nothing open here and no
+emergency-stop or task command is installed — the six commands above are
+the whole surface. Never say autorun blocked or cleared a stop. When you
+stop with work outstanding, name what is left and let the user decide.

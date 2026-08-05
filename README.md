@@ -30,6 +30,9 @@ autorun --install
 # Verify installation
 /ar:st
 # Expected: "AutoFile policy: allow-all"
+
+# See every command in your harness's own spelling
+/ar:help
 ```
 
 Use as much or as little workflow structure as the task needs: keep the safety
@@ -61,7 +64,7 @@ hooks in the background, run a task directly, or add planning for larger work.
 
 > Works with **Claude Code**, **Google Antigravity**, **Qwen Code**, **Codex CLI**, **ForgeCode**, and **OpenCode**. Legacy **Gemini CLI** support remains explicit opt-in — see [Multi-CLI Support](#multi-cli-support).
 
-> Examples use Claude/Gemini slash commands. In Codex, use the same command without the leading slash, such as `ar:st` or `ar:ok git push`.
+> Examples use Claude/Gemini slash commands. In Codex, use the same command without the leading slash, such as `ar:st` or `ar:ok git push`. Every harness that receives your prompt also accepts the other spellings: [Command Spellings by Harness](#command-spellings-by-harness).
 
 **Self-Improvement** (learn from past sessions):
 
@@ -85,6 +88,7 @@ aise analyze --when 30d --limit 50 --output /absolute/new/analysis
 - [Tmux Integration](#tmux-integration)
 - [Development](#development)
 - [Available Commands](#available-commands)
+  - [Command Spellings by Harness](#command-spellings-by-harness)
   - [AutoFile (File Creation Control)](#autofile-file-creation-control)
   - [Command Redirecting](#command-redirecting)
   - [Autorun Commands (Autonomous Execution)](#autorun-commands-autonomous-execution)
@@ -621,9 +625,37 @@ python -m plugins.autorun.src.autorun.install --install --force
 - **Project/Repo name**: `autorun`
 - **Marketplace name**: `autorun` (used for `/plugin install autorun@autorun`)
 - **Command prefix**: `ar` (short forms like `/ar:st` for speed, long forms like `/ar:status` for discoverability)
+- **Live list**: `/ar:help` prints every command with its description, `/ar:help <command>` prints one command's arguments, and typing `ar` alone opens the same list
+
+### Command Spellings by Harness
+
+The grammar is `ar:<command> [arguments]` everywhere. Harnesses differ only in
+which spellings they hand to autorun.
+
+| You type | Claude Code, Antigravity, Qwen Code | Codex CLI | ForgeCode, OpenCode |
+|---|---|---|---|
+| `/ar:st` | runs, and appears in the slash menu | never arrives | never arrives |
+| `ar:st`, `ar st`, `ar-st` | runs | runs | never arrives |
+| `/ar-st` | untested | never arrives | runs, for the installed files named below |
+| `ar:task-status`, `ar:task-ignore`, under any prefix above | runs as `ar:task status` and `ar:task ignore` | same | never arrives |
+
+"Never arrives" means the harness itself keeps the text: Codex holds its own
+slash menu closed, and ForgeCode and OpenCode send autorun no events at all. On
+those two the installed files `ar-go`, `ar-st`, `ar-allow`, `ar-find`,
+`ar-commit`, and `ar-ph` are the whole command surface, and the guards in their
+`AGENTS.md` are advice to the agent rather than enforcement.
+
+`/ar-st` on Claude Code, Antigravity, and Qwen Code depends on those harnesses
+passing an unknown slash command to their hooks, which autorun has not tested;
+the other four spellings always arrive.
+
+Autorun prints the local spelling everywhere: `/ar:` on Claude Code and the
+Gemini family, `ar:` on Codex, `/ar-` on ForgeCode and OpenCode. `/ar:help`
+opens with the rule for the harness you are on.
 
 | Short | Long | Legacy | Description |
 |-------|------|--------|-------------|
+| - | `/ar:help` | - | List every command and what it does, in this harness's spelling |
 | `/ar:a` | `/ar:allow` | `/afa` | Allow all file creation (Level 3) |
 | `/ar:j` | `/ar:justify` | `/afj` | Require justification for new files (Level 2) |
 | `/ar:f` | `/ar:find` | `/afs` | Find existing files only - no creation (Level 1) |
@@ -914,6 +946,9 @@ enforcement resumes automatically.
 - **Config**: `~/.autorun/task-lifecycle.config.json`
 
 ### Documentation Commands
+
+These ship as Agent Skills, so Codex, Qwen, ForgeCode, and OpenCode load them
+too, not only Claude Code. The commands below are unchanged.
 
 #### Commit Command
 

@@ -647,13 +647,17 @@ CONFIG = {
     # Injected when threshold crossed. {threshold} replaced at runtime.
     # V4 strings: no emoji, complete tool syntax, dependency wiring, disable instruction.
     # Warn-then-deny enforcement: 2 PostToolUse levels only (1st + 2nd).
+    # {{task_dependency}} is resolved by plugins._resolve_task_dependency() to the
+    # harness's own dependency syntax, or to nothing where its task tools have no
+    # dependency parameter. It always comes last so the numbering never gaps.
     "task_staleness_message": (
         "\nTASK UPDATE REQUIRED: {threshold} tool calls without {{task_create}} or {{task_update}}. "
         "Your next action must be one of these Task tools: "
         "1. {{task_list}}: review current tasks and their status "
         '2. {{task_update}}({{task_id_param}}=N, status="in_progress"|"completed"): update status '
-        '3. {{task_create}}({{task_title}}="...", description="..."): one per specific newly discovered step '
-        "4. {{task_update}}({{task_id_param}}=N, addBlockedBy=[M]): update dependencies if order changed. "
+        '3. {{task_create}}({{task_title}}="...", description="..."): break what is left into '
+        "fine-grained steps, one task per step, never one broad task "
+        "{{task_dependency}}"
         "Do not call any tool except these until you have updated your task list. "
         "Your next non-Task tool call will be blocked. Disable: /ar:tasks off"
     ),
@@ -670,9 +674,9 @@ CONFIG = {
     "task_staleness_no_tasks_message": (
         "\nNO TASKS EXIST: {threshold} tool calls with zero tasks tracking your work. "
         "Your next action must be {{task_create}}: "
-        '1. {{task_create}}({{task_title}}="[step]: [action]", description="..."): one per specific step, NOT one broad task '
+        '1. {{task_create}}({{task_title}}="[step]: [action]", description="..."): one concrete step per task, NOT one broad task '
         '2. {{task_update}}({{task_id_param}}=N, status="in_progress"): mark the task you are starting '
-        "3. {{task_update}}({{task_id_param}}=N, addBlockedBy=[M]): wire dependencies if tasks have order. "
+        "{{task_dependency}}"
         "Do not call any other tool until you have created at least one task. "
         "Disable: /ar:tasks off"
     ),
@@ -821,17 +825,17 @@ CONFIG = {
         "\nTDD SCAFFOLDING REQUIRED: you must create TDD and EXEC tasks before writing ANY implementation code: "
         '1. {{task_create}}({{task_title}}="[TDD] Step N: [test description]"): one per plan step '
         '2. {{task_create}}({{task_title}}="[EXEC] Step N: [impl description]"): one per plan step '
-        "3. {{task_update}}({{task_id_param}}=[EXEC_ID], addBlockedBy=[[TDD_ID]]): wire each EXEC blocked by TDD "
-        "4. {{task_list}}: verify all tasks visible. "
-        "Do not write implementation code until TDD tasks are created and wired."
+        "3. {{task_list}}: verify all tasks visible "
+        "{{task_dependency}}"
+        "Do not write implementation code until TDD tasks are created."
     ),
     # --- Task Creation Reminder Messages (v0.10) ---
     "plan_planning_task_reminder": (
         "\nPLANNING TASKS REQUIRED: a plan is active with no tasks tracking it. "
         "Your next action must be {{task_create}}: "
-        '1. {{task_create}}({{task_title}}="[PLANNING] Step N: [name]") '
-        "2. {{task_update}}({{task_id_param}}=N, addBlockedBy=[N-1]): wire sequential dependencies "
-        "3. {{task_list}}: verify all tasks visible. "
+        '1. {{task_create}}({{task_title}}="[PLANNING] Step N: [name]"): one per step, not one broad task '
+        "2. {{task_list}}: verify all tasks visible "
+        "{{task_dependency}}"
         "Do not call any other tool until planning tasks exist."
     ),
     "plan_execution_task_reminder": (
@@ -839,9 +843,9 @@ CONFIG = {
         "Your next action must be {{task_create}}: "
         '1. {{task_create}}({{task_title}}="[TDD] Step N: Write tests for [step]") '
         '2. {{task_create}}({{task_title}}="[EXEC] Step N: [step description]") '
-        "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
-        "4. {{task_list}}: verify all tasks visible. "
-        "Do not write code until execution tasks are created and wired."
+        "3. {{task_list}}: verify all tasks visible "
+        "{{task_dependency}}"
+        "Do not write code until execution tasks are created."
     ),
     # ─── Bug Workarounds ──────────────────────────────────────────────────────
     # BUG #18534: Claude Code PostToolUse additionalContext broken.
@@ -1127,9 +1131,11 @@ After every step and substep you must say "Wait," and execute this sequential th
     # those were short aliases and legacy spellings of commands already in the
     # list — 391 tokens advertising a second name for the same behavior.
     #
-    # Listing the canonical names here removes those 11 entries from the model's
-    # catalog. It does NOT remove any command: every alias stays registered in
-    # plugins.py and every document stays in commands/ for human completion.
+    # Declaring canonical names here dropped those eleven (29 -> 18); removing
+    # tmux.md and ttest.md, which Codex's own migration filter rejects, left the
+    # 16 entries below. Listing a name does NOT remove any command: every alias
+    # stays registered in plugins.py and every document stays in commands/ for
+    # human completion.
     #
     # Codex converts each listed document into a skill entry at plugin install
     # (codex-rs core-plugins command_migration) and SILENTLY DROPS any document
@@ -1152,6 +1158,7 @@ After every step and substep you must say "Wait," and execute this sequential th
         "globalno",
         "globalok",
         "globalstatus",
+        "help",
         "justify",
         "no",
         "ok",

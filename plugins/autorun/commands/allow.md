@@ -1,5 +1,6 @@
 ---
 description: Allow all file creation - full permission to create and modify files
+aliases: [a, afa]
 ---
 
 # AutoFile Allow Mode

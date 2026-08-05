@@ -1141,13 +1141,19 @@ class TestAutorunApp:
         assert result.handler is handle_go
         assert result.activation_prompt == "/ar:go build something"
 
-        codex_result = test_app._find_command("ar go build something", "codex")
-        assert codex_result is not None
-        assert codex_result.alias == "/ar:go"
-        assert codex_result.handler is handle_go
-        assert codex_result.activation_prompt == "/ar:go build something"
-        assert test_app._find_command("ar go build something", "claude") is None
-        assert test_app._find_command("ar go build something", "gemini") is None
+        # Every platform accepts the same spelling superset, so a form learned
+        # on one harness keeps working on the next (test_command_spellings.py
+        # owns that contract; this pins that arguments survive the rewrite).
+        for cli_type in ("codex", "claude", "gemini"):
+            spelled = test_app._find_command("ar go build something", cli_type)
+            assert spelled is not None, f"ar go ... lost its handler on {cli_type}"
+            assert spelled.alias == "/ar:go"
+            assert spelled.handler is handle_go
+            assert spelled.activation_prompt == "/ar:go build something"
+
+        # Tolerance stops at the prefix: unprefixed text is never a command.
+        assert test_app._find_command("go build something", "claude") is None
+        assert test_app._find_command("argo build something", "codex") is None
 
     def test_dispatch_user_prompt_submit_command(self):
         """dispatch should handle UserPromptSubmit with command."""

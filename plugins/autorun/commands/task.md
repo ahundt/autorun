@@ -1,6 +1,7 @@
 ---
 description: Inspect tasks or configure pause, prompts, recovery, and ignore behavior
 argument-hint: "[status|pause [N] [duration] [reason]|resume|ignore <id> [reason]|prompts ...|recovery ...|on|off|N]"
+aliases: [tasks]
 ---
 
 # Task Control

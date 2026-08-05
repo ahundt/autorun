@@ -59,8 +59,12 @@ def test_capability_snapshot_command_docs_cover_runtime_ar_aliases():
 
     snapshot = build_capability_snapshot()
     command_docs = snapshot["command_docs"]
+    # A workflow converted to a skill still answers to `/ar:<name>`: Claude Code
+    # namespaces plugin skills as `/<plugin>:<skill>` and this plugin is `ar`.
+    # Either surface documents the spelling; neither means it is undocumented.
+    documented = set(command_docs) | set(snapshot["skills"])
 
-    missing_docs = sorted(alias for alias in snapshot["commands"] if alias.startswith("/ar:") and alias.removeprefix("/ar:") not in command_docs)
+    missing_docs = sorted(alias for alias in snapshot["commands"] if alias.startswith("/ar:") and alias.removeprefix("/ar:") not in documented)
 
     assert missing_docs == []
     assert command_docs["restart-daemon"]["executable"] is True

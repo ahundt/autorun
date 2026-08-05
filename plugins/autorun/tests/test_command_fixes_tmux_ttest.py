@@ -16,6 +16,7 @@ Key bugs fixed:
 
 import sys
 import os
+from pathlib import Path
 import pytest
 import subprocess
 import time
@@ -404,41 +405,33 @@ output = f"Result: {session_out}"
         # But we verify the fix pattern works above
 
 
-class TestSymlinkInheritance:
-    """Test that tm.md and tt.md symlinks properly inherit frontmatter"""
+class TestTmuxCommandDocumentsPointAtOneSkill:
+    """Every tmux spelling reaches one body of guidance.
 
-    def test_symlink_configuration(self):
-        """Test that symlinks are properly configured"""
-        commands_dir = os.path.join(os.path.dirname(__file__), '..', 'commands')
+    tm.md used to be a symlink to tmux.md so the two spellings could not drift.
+    The procedures now live in the `tmux-automation` skill, which every harness
+    that reads ~/.agents/skills can load, so all four documents are short
+    pointers instead — same guarantee, one copy, and it works off Claude too.
+    """
 
-        tm_path = os.path.join(commands_dir, 'tm.md')
-        tt_path = os.path.join(commands_dir, 'tt.md')
+    SPELLINGS = ("tmux.md", "tm.md", "ttest.md", "tt.md")
 
-        # Check that they are symlinks
-        assert os.path.islink(tm_path), f"tm.md should be a symlink (got {os.path.islink(tm_path)})"
-        assert os.path.islink(tt_path), f"tt.md should be a symlink (got {os.path.islink(tt_path)})"
+    def test_each_spelling_points_at_the_skill(self):
+        commands_dir = Path(__file__).resolve().parents[1] / "commands"
 
-        # Check symlink targets
-        tm_target = os.readlink(tm_path)
-        tt_target = os.readlink(tt_path)
+        for name in self.SPELLINGS:
+            text = (commands_dir / name).read_text(encoding="utf-8")
+            assert "tmux-automation" in text, f"{name} does not name the skill"
+            assert len(text.splitlines()) < 25, f"{name} grew a second copy of the procedure"
 
-        assert tm_target == 'tmux.md', f"tm.md should link to tmux.md, got {tm_target}"
-        assert tt_target == 'ttest.md', f"tt.md should link to ttest.md, got {tt_target}"
+    def test_the_skill_carries_the_procedures_the_documents_promise(self):
+        skill = Path(__file__).resolve().parents[1] / "skills" / "tmux-automation"
 
-        # Verify content is correct (should be same as targets)
-        with open(tm_path, 'r', encoding="utf-8") as f:
-            tm_content = f.read()
-        with open(os.path.join(commands_dir, 'tmux.md'), 'r', encoding="utf-8") as f:
-            tmux_content = f.read()
-
-        assert tm_content == tmux_content, "tm.md should have same content as tmux.md"
-
-        with open(tt_path, 'r', encoding="utf-8") as f:
-            tt_content = f.read()
-        with open(os.path.join(commands_dir, 'ttest.md'), 'r', encoding="utf-8") as f:
-            ttest_content = f.read()
-
-        assert tt_content == ttest_content, "tt.md should have same content as ttest.md"
+        assert (skill / "SKILL.md").is_file()
+        assert (skill / "references" / "session-management.md").is_file()
+        assert (skill / "references" / "isolated-testing.md").is_file()
+        cleanup = (skill / "references" / "session-management.md").read_text(encoding="utf-8")
+        assert "autorun-test" in cleanup, "the cleanup safety rule was lost in the move"
 
 
 if __name__ == '__main__':

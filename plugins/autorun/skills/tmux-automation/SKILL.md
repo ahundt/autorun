@@ -5,6 +5,12 @@ description: Drive CLI tests inside isolated tmux/byobu sessions with ai-monitor
 
 # Automated CLI Testing with Session Management
 
+**autorun-specific procedures** (read the one you need, not both):
+`references/session-management.md` creates, lists, and cleans up isolated
+sessions, including the rule that cleanup only ever touches names starting with
+`autorun-test`. `references/isolated-testing.md` runs a command inside the
+dedicated `autorun-test` session so the caller's own session is never touched.
+
 This skill provides comprehensive capabilities for automated testing of CLI applications, plugins, and terminal workflows using tmux/byobu sessions with full ai-monitor integration. Perfect for testing Claude Code plugins, command-line tools, and automated workflows.
 
 ## Core Commands

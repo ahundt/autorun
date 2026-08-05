@@ -346,21 +346,14 @@ def get_plan_from_transcript(transcript_path: str) -> Optional[Path]:
 
 def get_plan_from_metadata(plan_path: Path) -> Optional[str]:
     """Extract session_id from plan file YAML frontmatter."""
+    from .command_docs import split_frontmatter
+
     try:
-        content = plan_path.read_text(encoding="utf-8")
-        if not content.startswith("---"):
-            return None
-        frontmatter_end = content.find("\n---", 4)
-        if frontmatter_end == -1:
-            return None
-        frontmatter = content[4:frontmatter_end].strip()
-        for line in frontmatter.split("\n"):
-            if line.startswith("session_id:"):
-                session_id = line.split(":", 1)[1].strip()
-                return session_id.strip('"\'')
+        frontmatter, _ = split_frontmatter(plan_path.read_text(encoding="utf-8"))
     except (IOError, UnicodeDecodeError):
-        pass
-    return None
+        return None
+    session_id = frontmatter.get("session_id")
+    return str(session_id) if session_id else None
 
 
 def find_plan_by_session_id(session_id: str) -> Optional[Path]:

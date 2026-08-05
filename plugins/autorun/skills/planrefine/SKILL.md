@@ -1,11 +1,13 @@
 ---
-description: Deep critique existing plan with code verification
+name: planrefine
+description: Use when the user asks to "refine the plan", "critique the plan", "/ar:planrefine", or "/ar:pr". Critiques an existing plan against the actual code, records a change ledger, and iterates until a full pass finds no new material issue.
+aliases: [pr]
 argument-hint: [plan file or content]
 ---
 
 # Refine Existing Plan (/ar:planrefine)
 
-$ARGUMENTS
+The user's request is the task description for everything below.
 
 ---
 
@@ -229,7 +231,7 @@ Each thread of updates (different approaches/solutions being refined) needs a un
 
 ### Step 14: Final Verification - Completeness Check
 
-1. **Verify ALL cases from $ARGUMENTS:**
+1. **Verify ALL cases from the user's request:**
    1. [ ] Primary use case implemented
    2. [ ] ALL edge cases from requirements included
    3. [ ] ALL languages/platforms mentioned covered

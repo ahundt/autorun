@@ -30,7 +30,17 @@ dependencies = [
     "bashlex>=0.18",
     "psutil",
     "filelock>=3.12.0",
+    # Frontmatter is YAML. Three hand-written subset parsers used to read it and
+    # each understood a different subset; command_docs.split_frontmatter is the
+    # single reader now, and it imports this lazily so no hook pays for it.
+    "pyyaml>=6.0",
 ]
+# Runtime policy: Python is the only runtime autorun requires. Bun appears in
+# exactly one place — the OpenCode plugin, which OpenCode itself loads in-process
+# and which its users therefore already have. Its tests skip when bun is absent,
+# so the suite stays green without it. Do not add a second runtime for the hook
+# path: a Bun hook client measured 28.2 ms against nc's 9.7 ms and would cost
+# every Claude and Codex user a dependency they do not need.
 
 [project.optional-dependencies]
 bashlex = ["bashlex>=0.18"]

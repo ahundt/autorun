@@ -1,5 +1,6 @@
 ---
 description: Show current AutoFile policy and settings
+aliases: [st, afst]
 ---
 
 # AutoFile Status

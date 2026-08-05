@@ -1,6 +1,6 @@
 ---
 name: gemini
-description: Use gemini CLI for any combination of: superior vision for analysis of images, diagrams, screenshots, PDFs, documents, video, and audio; code review with detailed citations and cross-referencing patterns; Google search; and multi-model workflows; all for planning, feedback, and getting unstuck.
+description: "Use gemini CLI for any combination of: superior vision for analysis of images, diagrams, screenshots, PDFs, documents, video, and audio; code review with detailed citations and cross-referencing patterns; Google search; and multi-model workflows; all for planning, feedback, and getting unstuck."
 ---
 
 # Gemini CLI Reference

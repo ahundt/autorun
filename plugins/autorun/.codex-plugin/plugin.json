@@ -28,6 +28,7 @@
     "./commands/globalno.md",
     "./commands/globalok.md",
     "./commands/globalstatus.md",
+    "./commands/help.md",
     "./commands/justify.md",
     "./commands/no.md",
     "./commands/ok.md",

@@ -336,32 +336,37 @@ class TestAgentIntegrationScenarios:
 class TestCommandWorkflowIntegration:
     """Test command workflow integration"""
 
-    def test_ttest_command_structure(self):
-        """`ttest.md` is the one CLI-testing command document; the old
-        `tmux-test-workflow.md` summary duplicated it."""
-        command_file = os.path.join(os.path.dirname(__file__), '..', 'commands', 'ttest.md')
-        assert os.path.exists(command_file)
+    def test_isolated_testing_procedure_survived_the_move_to_the_skill(self):
+        """The CLI-testing procedure is now a reference of `tmux-automation`.
 
-        with open(command_file, 'r', encoding="utf-8") as f:
+        It used to be `commands/ttest.md`; moving it into the skill is what
+        makes it loadable on harnesses that read ~/.agents/skills. The sections
+        are the contract, so they are checked at the new location.
+        """
+        reference = os.path.join(
+            os.path.dirname(__file__), '..', 'skills', 'tmux-automation',
+            'references', 'isolated-testing.md',
+        )
+        assert os.path.exists(reference)
+
+        with open(reference, 'r', encoding="utf-8") as f:
             content = f.read()
 
-        assert 'description:' in content
-        assert 'argument-hint:' in content
         assert '## Run a Custom Command in Isolation' in content
         assert '## Basic Test Sequence' in content
         assert '## Safety' in content
 
-    def test_tmux_command_structure(self):
-        """`tmux.md` is the one session-management command document; the old
-        `tmux-session-management.md` summary duplicated it."""
-        command_file = os.path.join(os.path.dirname(__file__), '..', 'commands', 'tmux.md')
-        assert os.path.exists(command_file)
+    def test_session_management_procedure_survived_the_move_to_the_skill(self):
+        """Same for the session-management procedure, formerly `commands/tmux.md`."""
+        reference = os.path.join(
+            os.path.dirname(__file__), '..', 'skills', 'tmux-automation',
+            'references', 'session-management.md',
+        )
+        assert os.path.exists(reference)
 
-        with open(command_file, 'r', encoding="utf-8") as f:
+        with open(reference, 'r', encoding="utf-8") as f:
             content = f.read()
 
-        assert 'description:' in content
-        assert 'argument-hint:' in content
         assert '## Actions' in content
         assert '## Safety' in content
 

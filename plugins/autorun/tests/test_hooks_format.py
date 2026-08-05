@@ -560,7 +560,7 @@ class TestGeminiHookMatchers:
 CLAUDE_CODE_VALID_EVENTS = {
     "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
     "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop",
-    "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest",
+    "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest",
     "Setup", "TeammateIdle", "TaskCompleted", "Elicitation",
     "ElicitationResult", "ConfigChange", "WorktreeCreate",
     "WorktreeRemove", "InstructionsLoaded",

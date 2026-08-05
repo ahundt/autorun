@@ -50,32 +50,32 @@ class TestPlanCommandHandlers:
         assert mappings["/ar:planprocess"] == "PROCESS_PLAN"
 
     @pytest.mark.unit
-    def test_plan_markdown_files_exist(self):
-        """Test plan markdown files exist in commands directory"""
-        commands_dir = Path(__file__).parent.parent / "commands"
+    def test_plan_procedures_live_in_skills_with_short_spellings_intact(self):
+        """The four plan procedures are skills; the short spellings still work.
 
-        # Check target files exist
-        assert (commands_dir / "plannew.md").exists(), "Missing plannew.md"
-        assert (commands_dir / "planrefine.md").exists(), "Missing planrefine.md"
-        assert (commands_dir / "planupdate.md").exists(), "Missing planupdate.md"
-        assert (commands_dir / "planprocess.md").exists(), "Missing planprocess.md"
+        They used to be command documents with pn/pr/pu/pp symlinked onto them
+        so the two spellings could not drift. The procedure now lives once in
+        `skills/<name>/SKILL.md`, which every harness reading ~/.agents/skills
+        can load, and each short document points at it.
+        """
+        plugin_root = Path(__file__).parent.parent
+        commands_dir = plugin_root / "commands"
+        skills_dir = plugin_root / "skills"
 
-        # Check symlinks exist
-        pn_symlink = commands_dir / "pn.md"
-        pr_symlink = commands_dir / "pr.md"
-        pu_symlink = commands_dir / "pu.md"
-        pp_symlink = commands_dir / "pp.md"
+        for name, short in (
+            ("plannew", "pn"),
+            ("planrefine", "pr"),
+            ("planupdate", "pu"),
+            ("planprocess", "pp"),
+        ):
+            skill = skills_dir / name / "SKILL.md"
+            assert skill.is_file(), f"Missing skills/{name}/SKILL.md"
 
-        assert pn_symlink.exists(), "Missing pn.md symlink"
-        assert pr_symlink.exists(), "Missing pr.md symlink"
-        assert pu_symlink.exists(), "Missing pu.md symlink"
-        assert pp_symlink.exists(), "Missing pp.md symlink"
-
-        # Verify symlinks point to correct targets
-        assert pn_symlink.is_symlink(), "pn.md should be a symlink"
-        assert pr_symlink.is_symlink(), "pr.md should be a symlink"
-        assert pu_symlink.is_symlink(), "pu.md should be a symlink"
-        assert pp_symlink.is_symlink(), "pp.md should be a symlink"
+            pointer = commands_dir / f"{short}.md"
+            assert pointer.is_file(), f"Missing commands/{short}.md"
+            text = pointer.read_text(encoding="utf-8")
+            assert name in text, f"{short}.md does not name the {name} skill"
+            assert len(text.splitlines()) < 25, f"{short}.md grew a second copy"
 
     @pytest.mark.unit
     def test_plan_handler_factory(self):

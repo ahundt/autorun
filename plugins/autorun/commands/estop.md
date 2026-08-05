@@ -3,6 +3,7 @@ description: Emergency stop - immediately halt all autonomous operations
 # Manual-only: reachable by typing the command, not by model choice.
 # Halts autonomous work outright; a model deciding to trip it mid-task is a failure mode, not a feature.
 disable-model-invocation: true
+aliases: [sos]
 ---
 
 # Emergency Stop

@@ -1,5 +1,6 @@
 ---
 description: Find existing files only - prevents new file creation (strictest mode)
+aliases: [f, afs]
 ---
 
 # AutoFile Strict Search Mode

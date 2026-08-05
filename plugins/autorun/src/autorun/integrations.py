@@ -286,7 +286,9 @@ def load_all_integrations() -> list[Integration]:
                     continue
 
                 try:
-                    fm, body = _extract_frontmatter(md_file.read_text(encoding="utf-8"))
+                    fm, body = _extract_frontmatter(
+                        md_file.read_text(encoding="utf-8"), source=str(md_file)
+                    )
                 except Exception as e:
                     logger.warning(f"Error reading {md_file}: {e}")
                     continue
@@ -339,7 +341,7 @@ def load_all_integrations() -> list[Integration]:
     return integrations
 
 
-def _extract_frontmatter(content: str) -> tuple[dict, str]:
+def _extract_frontmatter(content: str, *, source: str = "") -> tuple[dict, str]:
     """
     Extract YAML-like frontmatter from markdown.
 
@@ -357,41 +359,9 @@ def _extract_frontmatter(content: str) -> tuple[dict, str]:
     Returns:
         (frontmatter_dict, body_text)
     """
-    if not content.startswith("---"):
-        return {}, content
+    from .command_docs import split_frontmatter
 
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return {}, content
-
-    # Parse simple YAML (key: value pairs, lists)
-    fm_text = parts[1].strip()
-    frontmatter = {}
-
-    for line in fm_text.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-
-        if ":" in line:
-            key, value = line.split(":", 1)
-            key = key.strip()
-            value = value.strip()
-
-            # Parse list syntax: [item1, item2]
-            if value.startswith("[") and value.endswith("]"):
-                value = [item.strip().strip("\"'") for item in value[1:-1].split(",")]
-            # Parse boolean
-            elif value.lower() in ("true", "false"):
-                value = value.lower() == "true"
-            # Parse quoted string
-            elif value.startswith(('"', "'")) and value.endswith(value[0]):
-                value = value[1:-1]
-
-            frontmatter[key] = value
-
-    body = parts[2].strip()
-    return frontmatter, body
+    return split_frontmatter(content)
 
 
 def _pattern_specificity(patterns: tuple[str, ...]) -> int:

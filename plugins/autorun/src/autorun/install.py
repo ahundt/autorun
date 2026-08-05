@@ -2987,7 +2987,11 @@ def platform_config_dir(platform: Platform) -> Path | None:
     for var in platform.config_dir_env_vars:
         value = os.environ.get(var)
         if value:
-            return _expand_home(value)
+            resolved = _expand_home(value)
+            # XDG_CONFIG_HOME and friends name the parent of the harness's own
+            # directory, so appending is what makes the resolved path the one
+            # the harness actually reads.
+            return resolved / platform.config_dir_env_var_subdir if platform.config_dir_env_var_subdir else resolved
     if not platform.config_dir:
         return None
     return _expand_home(platform.config_dir)
@@ -4296,13 +4300,87 @@ def _install_for_opencode(
     no per-harness skills link.
     """
     base = platform_config_dir(PLATFORMS["opencode"])
-    return _install_markdown_commands_harness(
+    ok, msg = _install_markdown_commands_harness(
         marketplace_root,
         plugins,
         base=base,
         display_name="OpenCode",
         memory_platform=PLATFORMS["opencode"],
     )
+    if not ok:
+        return (ok, msg)
+    return _install_opencode_plugin_shim(marketplace_root, plugins, base)
+
+
+def _install_opencode_plugin_shim(
+    marketplace_root: Path, plugins: list[str], base: Path
+) -> tuple[bool, str]:
+    """Copy the JS bridge into OpenCode's plugin directory.
+
+    OpenCode loads plugins from ``<config>/plugin/`` (singular, verified
+    against opencode 1.18.13) as plain ES modules with no build step. The
+    daemon socket path is substituted absolutely here so nothing resolves
+    through the host PATH while a session runs, and the directory carries an
+    ownership marker naming just this file: users keep their own plugins there.
+
+    Only this install route writes JavaScript. OpenCode runs on Bun and loads
+    the plugin in-process, so its users already have that runtime; Claude,
+    Codex, Qwen, Gemini, and ForgeCode users need Python alone and must not be
+    handed a second runtime requirement.
+    """
+    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
+    if plugin_dir is None:
+        return (False, f"autorun plugin not found under {marketplace_root}")
+
+    source = plugin_dir / "src" / "autorun" / "opencode_template" / "plugin" / "autorun.js"
+    if not source.is_file():
+        return (False, f"OpenCode plugin shim missing at {source}")
+
+    destination_dir = base / "plugin"
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    # Same entry point and same flags every other harness's hook command uses,
+    # as argv rather than a shell string because the shim spawns it directly.
+    hook_entry = plugin_dir / "hooks" / "hook_entry.py"
+    hook_command = (
+        ["uv", "run", "--quiet", "--no-sync", "--project", str(plugin_dir),
+         "python", str(hook_entry), "--cli", "opencode"]
+        if hook_entry.is_file()
+        else []
+    )
+    shim = (
+        source.read_text(encoding="utf-8")
+        .replace("__AUTORUN_SOCKET__", str(ipc.AUTORUN_SOCKET_PATH))
+        .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(hook_command))
+    )
+    (destination_dir / "autorun.js").write_text(shim, encoding="utf-8")
+    write_owned_marker(
+        destination_dir, plugin=_plugin_registry_name(plugin_dir), files=["autorun.js"]
+    )
+    print(f"✓ OpenCode plugin bridge installed at {destination_dir / 'autorun.js'}")
+    return (True, f"OpenCode bridge installed at {destination_dir}")
+
+
+def _uninstall_for_opencode() -> None:
+    """Remove the files autorun owns in OpenCode's config dir.
+
+    The plugin directory is shared with the user's own plugins, so only the
+    filenames the marker records are removed.
+    """
+    base = platform_config_dir(PLATFORMS["opencode"])
+    if base is None:
+        return
+    for directory in (base / "plugin", base / "commands"):
+        marker = read_owned_marker(directory)
+        if marker is None:
+            continue
+        for name in marker.files:
+            target = directory / name
+            if target.is_file():
+                target.unlink()
+        (directory / OWNED_MARKER_NAME).unlink(missing_ok=True)
+        if directory.is_dir() and not list(directory.iterdir()):
+            directory.rmdir()
+        print(f"   Removed {len(marker.files)} autorun file(s) from {directory}")
 
 
 def _install_conductor(force: bool = False) -> tuple[bool, str]:
@@ -5219,6 +5297,10 @@ def uninstall_plugins(selection: str = "all") -> int:
     _uninstall_platform_memory_blocks()
     _uninstall_bridged_skills()
     _uninstall_harness_commands()
+    # OpenCode keeps its own directories: _uninstall_harness_commands only
+    # walks ForgeCode's base, so without this the plugin shim and the ar-*.md
+    # files would survive an uninstall.
+    _uninstall_for_opencode()
     _uninstall_codex_plugin_package()
     _remove_install_locks()
 

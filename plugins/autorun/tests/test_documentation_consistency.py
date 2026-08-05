@@ -77,10 +77,16 @@ def test_readme_lists_every_cli_choice_value():
 
 
 def test_maintained_docs_reference_only_installed_autorun_commands():
-    """Do not present skills or removed commands as `/ar:*` commands."""
+    """Do not present removed commands as `/ar:*` commands.
+
+    Claude Code namespaces a plugin skill as `/<plugin>:<skill>` and this
+    plugin is named `ar`, so a workflow converted from `commands/x.md` to
+    `skills/x/SKILL.md` still answers to `/ar:x`. Both surfaces count; a name
+    on neither is a spelling no harness can resolve.
+    """
     command_names = {
         path.stem for path in (PLUGIN_ROOT / "commands").glob("*.md")
-    }
+    } | {path.parent.name for path in (PLUGIN_ROOT / "skills").glob("*/SKILL.md")}
     invalid: list[str] = []
     for path in _maintained_docs():
         for line_number, line in enumerate(
@@ -89,6 +95,31 @@ def test_maintained_docs_reference_only_installed_autorun_commands():
             for name in re.findall(r"/ar:([A-Za-z0-9_-]+)", line):
                 if name not in command_names:
                     invalid.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: /ar:{name}")
+
+    assert invalid == []
+
+
+def test_every_shipped_document_has_strictly_valid_yaml_frontmatter():
+    """Harnesses read frontmatter with real YAML parsers.
+
+    Claude Code, Codex, and Qwen all parse SKILL.md and command frontmatter as
+    YAML, and a document whose frontmatter will not parse loses its
+    description, or the whole document, without saying so. An unquoted
+    `argument-hint: [a|b] extra` or a description with a bare colon is enough.
+    """
+    import yaml
+
+    invalid = []
+    for path in sorted((PLUGIN_ROOT / "commands").glob("*.md")) + sorted(
+        (PLUGIN_ROOT / "skills").glob("*/SKILL.md")
+    ):
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        try:
+            yaml.safe_load(text.split("---", 2)[1])
+        except yaml.YAMLError as exc:
+            invalid.append(f"{path.relative_to(PLUGIN_ROOT)}: {str(exc).splitlines()[0]}")
 
     assert invalid == []
 

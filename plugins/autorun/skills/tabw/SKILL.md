@@ -1,7 +1,8 @@
 ---
-description: Execute actions on Claude sessions across tmux windows (DANGEROUS)
+name: tabw
+description: Use when the user asks to "continue every session", "send this to all windows", "/ar:tabw". Acts on Claude sessions across tmux windows; destructive to in-flight work, so it states what it will do before doing it.
 allowed-tools: Bash(tmux *), Bash(uv *)
-argument-hint: [A,B:continue] or [all:escape] or [awaiting:continue]
+argument-hint: "[A,B:continue] or [all:escape] or [awaiting:continue]"
 ---
 
 # Claude Session Writer
@@ -12,11 +13,11 @@ Execute actions on Claude Code sessions across tmux windows.
 
 Current tmux sessions:
 
-!`tmux list-sessions -F "#{session_name}: #{session_windows} windows" 2>/dev/null || echo "No tmux sessions"`
+Run `tmux list-sessions` and read its output before choosing a session.
 
 ## Your Task
 
-$ARGUMENTS
+The user's request is the task description for everything below.
 
 If no arguments provided, discover sessions first, then ask user what action to execute.
 

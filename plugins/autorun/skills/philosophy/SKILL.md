@@ -1,5 +1,7 @@
 ---
-description: Display Universal System Design Philosophy - 17 core principles for building exceptional systems
+name: philosophy
+description: Use when the user asks for the "system design philosophy", "design principles", "/ar:philosophy", or "/ar:ph", and before major feature work, an architecture decision, or a pull-request review. Lists the 17 universal system design principles, ordered from most fundamental to most specific, each with the concrete example that makes it checkable.
+aliases: [ph]
 ---
 
 # Universal System Design Philosophy

@@ -1,5 +1,6 @@
 ---
 description: Start autorun - autonomous task execution
+aliases: [go]
 ---
 
 # Resume Claude automatically when it stops - Autorun Workflow
