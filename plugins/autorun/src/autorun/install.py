@@ -1881,17 +1881,6 @@ def _install_for_qwen(
     )
 
 
-def _gemini_extension_name(gemini_src: Path, plugin_dir: Path) -> str:
-    """The extension's registered name: manifest ``name``, else the dir name."""
-    try:
-        import json
-
-        with open(gemini_src / "gemini-extension.json", encoding="utf-8") as f:
-            return json.load(f).get("name", plugin_dir.name)
-    except Exception:
-        return plugin_dir.name
-
-
 def _refresh_owned_gemini_extensions(
     config_dir: Path,
     plugins_to_install: list[tuple[Path, Path]],
@@ -1909,8 +1898,8 @@ def _refresh_owned_gemini_extensions(
     same-named extension the user wrote is left alone.
     """
     refreshed: list[str] = []
-    for plugin_dir, gemini_src in plugins_to_install:
-        ext_name = _gemini_extension_name(gemini_src, plugin_dir)
+    for plugin_dir, _gemini_src in plugins_to_install:
+        ext_name = _gemini_extension_name(plugin_dir)
         installed_dir = config_dir / "extensions" / ext_name
         if not installed_dir.is_dir() or read_owned_marker(installed_dir) is None:
             continue
@@ -2068,7 +2057,7 @@ def _install_gemini_family_extensions(
         # Detect stale pre-refactor layout before doing anything destructive.
         _migrate_legacy_layout(plugin_dir)
 
-        ext_name = _gemini_extension_name(gemini_src, plugin_dir)
+        ext_name = _gemini_extension_name(plugin_dir)
 
         print(f"   Installing {plugin_name} (name: {ext_name})...")
 
