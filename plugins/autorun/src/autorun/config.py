@@ -907,7 +907,7 @@ CONFIG = {
     # https://github.com/anthropics/claude-code/issues/4669
     # Workaround: client.output_hook_response prints the reason to stderr and
     # returns exit code 2 on deny, for affected platforms only.
-    # Evidence: plugins/autorun/CLAUDE.md "Bug #4669 Workaround"; applicability
+    # Evidence: the BUG #4669 block below and plugins/autorun/AGENTS.md; applicability
     # is declared per platform as Platform.has_exit2_workaround.
     # Override: env var of the same name (true|false|always|never). The older
     # AUTORUN_EXIT2_WORKAROUND spelling and the `--exit2-mode` flag remain
@@ -1252,7 +1252,7 @@ def detect_cli_type(payload: dict = None) -> str:
 # client.output_hook_response with False, leaving only Pathway B.
 BUG_4669_FLAG = "AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED"
 
-# Predates the bug-workaround policy and is documented in CLAUDE.md, the README
+# Predates the bug-workaround policy and is documented in AGENTS.md, the README
 # and `--exit2-mode`, which writes it. Kept as an alias and checked first so an
 # explicit `--exit2-mode never` still wins over the newer key.
 BUG_4669_LEGACY_FLAG = "AUTORUN_EXIT2_WORKAROUND"

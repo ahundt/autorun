@@ -9,6 +9,16 @@ Execution Priority:
 2. Recovery: Plugin-local or global autorun CLI
 3. Bootstrap fallback: Run from plugin source
 
+NEVER write to stderr on an exit-0 path, here or in anything this launches.
+Claude Code treats any stderr from a hook as a hook error, discards that hook's
+JSON response, and carries on looking healthy — so one stray print(), warning,
+or traceback silently disables every autorun protection (command blocking, file
+policies, task enforcement) for the whole session. The only sanctioned stderr
+is an exit-2 deny, which is how Claude receives the denial reason (bug #4669).
+`_emit_cli_result` enforces exactly that split: exit-0 stderr goes to the file
+log, exit-2 stderr is forwarded. Route diagnostics through `log_debug`, and
+errors through `fail_open`, which writes JSON to stdout.
+
 Design Principles:
 - Fail-open for lifecycle/context hooks, fail-closed for tool permission gates
 - Fast: Use stdlib-only daemon IPC without a second Python process

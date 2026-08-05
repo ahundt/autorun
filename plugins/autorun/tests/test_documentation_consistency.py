@@ -149,3 +149,67 @@ def test_readme_documents_custom_harness_grammar_and_values():
     for flavor in ("gemini", "qwen", "antigravity", "agy", "codex"):
         assert flavor in help_text
         assert flavor in readme
+
+
+# Agent memory files are injected into model context repeatedly, so a stale
+# path or method name in them is expensive: it sends every future session to a
+# file or symbol that does not exist. A 2026-08-05 review found four such
+# references that had drifted silently because no test read them
+# (`hooks/claude-hooks.json` for `hooks/hooks.json`, and
+# `CacheGuard.from_session().on_pretooluse(...)` for the real
+# `CacheGuard.from_ctx(ctx).check(ctx)`). These two tests close that gap.
+
+AGENT_MEMORY_FILES = (
+    REPO_ROOT / "AGENTS.md",
+    PLUGIN_ROOT / "AGENTS.md",
+)
+# Only repo-relative source references are checkable: a `~/...` or absolute
+# path names a user's machine, not this tree.
+_DOC_PATH_RE = re.compile(r"`([\w./-]+/[\w.-]+\.(?:py|json|md|toml))`")
+# `ClassName.method_name(` in prose, plus the chained `).method_name(` form —
+# the stale `CacheGuard.from_session().on_pretooluse(...)` hid in the chain,
+# where the receiver is a `)` rather than a class name.
+_DOC_METHOD_RE = re.compile(r"`?\b([A-Z]\w+)\.([a-z_][a-z0-9_]*)\(")
+_DOC_CHAINED_METHOD_RE = re.compile(r"\)\.([a-z_][a-z0-9_]*)\(")
+
+
+def _memory_file_text() -> list[tuple[Path, str]]:
+    return [(path, path.read_text(encoding="utf-8")) for path in AGENT_MEMORY_FILES]
+
+
+def test_agent_memory_files_only_reference_paths_that_exist():
+    """Every repo-relative path in an agent memory file must resolve."""
+    missing: list[str] = []
+    for path, text in _memory_file_text():
+        for reference in sorted(set(_DOC_PATH_RE.findall(text))):
+            if any(
+                (root / reference).exists()
+                for root in (PLUGIN_ROOT, REPO_ROOT, PLUGIN_ROOT / "src" / "autorun")
+            ):
+                continue
+            missing.append(f"{path.relative_to(REPO_ROOT)} -> {reference}")
+    assert not missing, (
+        "agent memory files reference paths that do not exist; every session "
+        "that reads them is sent somewhere real:\n  " + "\n  ".join(missing)
+    )
+
+
+def test_agent_memory_files_only_reference_methods_that_exist():
+    """Every `Class.method(` named in an agent memory file must be defined."""
+    source = "\n".join(
+        candidate.read_text(encoding="utf-8")
+        for candidate in (PLUGIN_ROOT / "src" / "autorun").rglob("*.py")
+        if "__pycache__" not in candidate.parts
+    )
+    defined = set(re.findall(r"^\s*(?:async\s+)?def\s+(\w+)", source, re.MULTILINE))
+    missing: list[str] = []
+    for path, text in _memory_file_text():
+        named = {(owner, method) for owner, method in _DOC_METHOD_RE.findall(text)}
+        named |= {("<chained>", m) for m in _DOC_CHAINED_METHOD_RE.findall(text)}
+        for owner, method in sorted(named):
+            if method not in defined:
+                missing.append(f"{path.relative_to(REPO_ROOT)} -> {owner}.{method}()")
+    assert not missing, (
+        "agent memory files name methods that no longer exist:\n  "
+        + "\n  ".join(missing)
+    )

@@ -815,6 +815,12 @@ CLAUDE = register(
 )
 
 
+# Google retired the standalone Gemini CLI on 2026-06-18 for free, Pro, and
+# Ultra personal accounts, consolidating on Antigravity CLI (`agy`). Enterprise
+# Gemini Code Assist licences and paid API keys still run the old binary, which
+# is why this entry stays and why install_by_default is False. The QWEN and
+# ANTIGRAVITY entries carry the live traffic; Qwen Code is itself a fork of
+# Gemini CLI v0.8.2, which is why all three share these event names.
 GEMINI = register(
     Platform(
         name="gemini",

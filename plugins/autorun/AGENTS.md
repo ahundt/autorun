@@ -1,267 +1,102 @@
-# ⚠️ CRITICAL: Read from Git Repository, NOT Plugin Cache
+# autorun plugin development guidance
 
-## You Are Reading the WRONG Location If:
+One file per directory, shared by every harness: `CLAUDE.md` and `GEMINI.md`
+here are symlinks to this file. Edit `AGENTS.md`; never replace a symlink with
+a second copy.
 
-- Path contains: `~/.claude/plugins/cache/`
-- Path contains: `/.claude/plugins/cache/`
-- You see a version number like `0.12.0/` in the path
+Repository-level guidance (commands, installation, three-stage verification,
+plugin overview) lives in the root [`AGENTS.md`](../../AGENTS.md). This file
+covers developing the plugin itself.
 
-## CORRECT Location: Git Repository
+## Hook error prevention (CRITICAL)
 
-**Always read from this location (relative to git root):**
-```
-plugins/autorun/
-```
+Claude Code treats ANY stderr output from a hook as a hook error and discards
+that hook's JSON response. Every hook protection (rm blocking, git safety, file
+policies) silently stops working while the session still looks healthy.
 
-**Why:**
-- ✅ Git repository with version control
-- ✅ Uncommitted changes are visible
-- ✅ Editable source files (changes take effect)
-- ✅ Active development location
-- ✅ Test files can be run and modified
-- ✅ Has latest bug fixes and improvements
+1. **`pyproject.toml [tool.uv]`**: never add deprecated UV fields. UV removes fields silently across versions and prints a stderr warning for unknown ones, which breaks all hooks. `default-extras` was removed in UV 0.9+; put default extras in `[project] dependencies` instead.
+2. **Slash commands**: every bash command in a `.md` file must use `uv run --project ${CLAUDE_PLUGIN_ROOT} python`, never bare `python3`. `allowed-tools` frontmatter must say `Bash(uv *)`, not `Bash(python3:*)`. This covers `!`-prefixed dynamic output too, for example ``!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "from autorun.config import CONFIG; print(CONFIG['key'])"` ``.
+3. **Hook stderr**: `hook_entry.py` must never write to stderr. Route all error handling through `fail_open()`, which writes JSON to stdout.
+4. **Cache sync**: after fixing `pyproject.toml` or `hooks.json` in the source, run `uv run --project plugins/autorun python -m autorun --install --force`. Hand-copying files into `~/.claude/plugins/cache/` is fragile and is overwritten on the next install.
+5. **Session restart**: hook configuration is read once at session start, so `hooks.json` and `pyproject.toml` fixes take effect only in the NEXT session.
 
-## Quick Install/Update Command
+Regression tests: `test_hook_entry.py::TestUVCompatibility` and
+`test_hook_entry.py::TestCacheSync`. Diagnose with `uv run --project
+<plugin_root> python -c "pass" 2>&1`; any output beyond Building/Installed
+lines is the problem.
 
-**Primary installation command** (run from repository root):
-```bash
-(uv run --project plugins/autorun python -m autorun --install --force && \
-  cd plugins/autorun && \
-  uv tool install --force --editable . && \
-  cd ../.. && \
-  autorun --restart-daemon) 2>&1 | tee "install-$(date +%Y%m%d-%H%M%S).log"
-```
+## Read and edit the git repository, not the plugin cache
 
-**IMPORTANT:** Use a **3-minute timeout** when running via Bash tool - the UV tool
-install step can take 1-2 minutes on first run or when dependencies change.
+Work in `<git-root>/plugins/autorun/`. Never edit
+`~/.claude/plugins/cache/autorun/ar/<version>/` (the marketplace
+is `autorun`, the plugin inside it is `ar`).
 
-**What this does:**
-1. Syncs plugin to cache (both Claude Code and Gemini CLI)
-2. Installs UV tool globally (`autorun`, `aise` commands)
-3. Restarts daemon to pick up code changes
-4. Logs output to timestamped file: `install-YYYYMMDD-HHMMSS.log`
+Installing the plugin (`/plugin install https://github.com/ahundt/autorun.git`)
+copies the repository into that cache, and the plugin loads from there, so an
+AI following a runtime path lands in the cache by accident. Edits there are not
+version controlled, are overwritten on the next install, and may already be
+behind the repository's bug fixes.
 
-**When to run:**
-- After editing Python source files in `src/autorun/`
-- After modifying hook files in `hooks/`
-- After changing plugin configuration
-- When testing fixes or new features
+You are in the wrong place if the path contains `.claude/plugins/cache/` or a
+version directory like `0.12.0/`. Recover by `cd <git-root>/plugins/autorun/`
+(`git status` must succeed, `pwd` must end in `plugins/autorun/`), make the edit
+and run the tests there, commit from the git root, then reinstall with
+`/plugin update autorun`.
 
-**Log file:** Check `install-*.log` for installation details and troubleshooting
+## Feature implementation lessons
 
-## WRONG Location: Plugin Cache (READ-ONLY)
+Tests set `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` before any autorun import
+or they reach the live daemon. Rules: root [`AGENTS.md`](../../AGENTS.md)
+§ Critical Runtime Isolation; full spec:
+[`docs/RUNTIME_STATE_ISOLATION.md`](docs/RUNTIME_STATE_ISOLATION.md).
 
-**DO NOT read from:**
-```
-~/.claude/plugins/cache/autorun/autorun/0.12.0/
-```
+Follow these when adding any new gated feature.
 
-**Why NOT:**
-- ❌ Cached copy installed by plugin system
-- ❌ Changes here don't persist (reinstalled on update)
-- ❌ Not a git repository
-- ❌ No version control or git history
-- ❌ Not the development location
-- ❌ May be outdated (missing bug fixes)
-
-## How This Happens
-
-Claude Code plugin installation process:
-1. `/plugin install https://github.com/ahundt/autorun.git`
-2. Claude copies repository to: `~/.claude/plugins/cache/autorun/autorun/0.12.0/`
-3. Plugin loads from cache location
-4. **Problem**: AI may read cached code instead of git repository
-5. **Issue**: Changes in dev repo may not be reflected in cache until reinstalled
-
-## Directory Structure
-
-```
-autorun/                             # Git repository root
-├── plugins/autorun/                 # <-- DEVELOPMENT LOCATION (READ THIS)
-│   ├── src/autorun/                 # Source code to edit
-│   ├── tests/                         # Tests to run
-│   ├── commands/                      # Plugin commands
-│   ├── agents/                        # Agent definitions
-│   ├── CLAUDE.md                      # <-- This file
-│   └── .claude-plugin/                # Plugin manifest
-└── ... (other files)
-
-~/.claude/plugins/cache/autorun/     # Plugin cache (DO NOT EDIT)
-└── autorun/
-    └── 0.12.0/                        # Cached copy (READ-ONLY)
-        ├── src/autorun/             # May be outdated!
-        ├── tests/
-        └── ...
-```
-
-## Entry Points
-
-- **Commands**: `commands/autorun` — executable called by Claude Code plugin system (JSON stdin/stdout)
-- **Hooks**: `hooks/hook_entry.py` — event handler for UserPromptSubmit, PreToolUse, Stop, SubagentStop (configured via `hooks/claude-hooks.json`)
-- **CLI**: `autorun` command → `src/autorun/__main__.py:main` (installed globally via `uv tool install --editable .`)
-- **Config**: `src/autorun/config.py` — single source of truth for all CONFIG values
-
-## Feature Implementation Lessons (from `/ar:cache`, v0.10)
-
-**Critical:** Set `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` before imports so
-tests cannot touch the live daemon. In daemon paths use `state_get`, `state_set`,
-and atomic `state_update`; wrap legacy persistence with `state_synchronize` so
-threads, processes, sessions, and harnesses cannot observe stale state. Never
-raise timeouts or weaken isolation/concurrency tests to hide persistent I/O.
-Full specification: [`docs/RUNTIME_STATE_ISOLATION.md`](docs/RUNTIME_STATE_ISOLATION.md).
-
-Rules extracted from the `/ar:cache` build and earlier fixes. Follow them when adding any new gated feature.
-
-1. **Reuse `ScopedAllow` + `parse_scope_args` for every override grant.** Do not invent a new TTL/count parser — the `5m | 5 | perm | 2h30m` grammar lives in `scoped_allow.py:42-76` and its `_PARALLEL_GRACE_SECONDS = 1.0` fingerprint-matched grace window already mitigates rtk's double-hook. See `cache_guard.grant_override`.
-2. **Use the scoped `EventContext` state APIs in daemon paths.** `state_get`, `state_set`, and `state_update` keep `ThreadSafeDB` coherent; wrap legacy direct-persistence helpers with `state_synchronize`. Reserve `session_state()` for standalone administration and persistence internals.
-3. **When a feature adds a new Claude event, add the Gemini analog at the same time.** `PreCompact` on Claude → `PreCompress` on Gemini (advisory, cannot block, no PostCompress exists). Wire both at `plugins.py:@app.on(...)`, add mapping in `core.py:GEMINI_EVENT_MAP`, and declare the event in BOTH `hooks/hooks.json` (Claude) AND `src/autorun/gemini_template/hooks/hooks.json` (Gemini).
-4. **When you need data from hook stdin beyond what `EventContext` already exposes, add a slot + property.** `transcript_path` was missing before `/ar:cache`. Pattern: add the slot, property, kwarg to `__init__`, and update every `EventContext(...)` call site (daemon, plan_export, anywhere else). Do not `getattr(ctx, "field", None)` — that silently returns None when the plumbing is broken.
-5. **Features that may block tools must slot AFTER TIER 1 (`/ar:ok` allows) and BEFORE TIER 2 (pattern blocks).** Otherwise an explicit allow cannot bypass the new gate. See `plugins.check_blocked_commands` → `CacheGuard.from_session().on_pretooluse(...)` site.
-6. **Keep full persistent-state reads off warm hooks.** Hydrate through `ThreadSafeDB` once per session and use atomic updates for shared fields. Coalescing file locks alone still reparses the full durable state.
-7. **Fail open when data is unknown.** A gate that errors or denies on missing fields is worse than a gate that allows. CacheGuard returns `HookDecision.allow()` whenever the configured axis's data is None. Cross-CLI robustness falls out of this rule for free.
-8. **Default off.** Any new gate must default `False` in its `FeatureToggle`. Users opt in via `/ar:<feature> on`.
-9. **Anchor `.gitignore` directory patterns with a leading `/` when you mean the repo root.** Unanchored `cache/` matches `plugins/autorun/skills/cache/` too — the `/ar:cache` skill was invisible to git until this was fixed. Use `/cache/` + explicit `!plugins/autorun/skills/cache/` when you must name the dir `cache` for UX reasons.
-10. **Harness hook-event allowlists have one owner:** `tests/harness_hook_events.py` — `test_split_layout.py`, `test_hooks_format.py`, and `test_dual_cli_pathways.py` all import it. Edit the sets there only, and only with a source: an unknown event name in a Claude-scanned manifest is what bug #24115 turns into a silent disable of every hook.
-11. **Capture tool-result fixtures from the transcript's `toolUseResult` field, not from its rendered `tool_result` block.** A Claude Code transcript stores both, and they are different objects; `toolUseResult` is what arrives as the hook's `tool_response`. The delegation spawn ledger was built from the rendered block's prose `agentId: <id>` line and recorded nothing in a live session, because the hook was handed `{"isAsync": true, "status": "async_launched", "agentId": "<id>", ...}`, which `coerce_tool_result_to_str` JSON-encodes into `"agentId": "<id>"`. Every unit test passed against the wrong shape. Extract with `python3 -c` over `~/.claude/projects/<project>/<session>.jsonl`, keeping lines that carry `toolUseResult`, then generalize ids, paths, and model names. `hooks/hook_entry.py` reads one JSON payload from stdin, so a captured payload can be replayed through a real hook process directly. The always-on debug log at `~/.autorun/hook_entry_debug.log` records only the stdin byte count, not the payload — it will not answer this question. When a parser must accept both shapes, one pattern with optional quotes beats a dict-shape reader that regresses the prose form.
-12. **Give every wire contract one live canary.** Fixture drift is invisible to fixture-driven tests by construction, so a contract that only a real harness produces needs one real-money end-to-end check. `test_claude_live_fanout_populates_the_spawn_ledger` costs under $0.01, runs in ~27s, and was the only test that could fail on lesson 11's defect. Gate it behind `AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1` and assert on persisted state, not on the model's reply — a harness exit code of 0 says nothing about whether the hook saw anything.
-
-## Verification Commands
-
-**Check if you're in the right location:**
-```bash
-# Should show git repository
-git status
-
-# Should show a branch name and a clean-or-known working tree
-# If error: "not a git repository", you're in the WRONG location
-
-# Check current working directory
-pwd
-# Should end with: plugins/autorun/
-```
-
-## Hook Error Prevention (CRITICAL)
-
-Claude Code treats ANY stderr output from hooks as "hook error" and ignores the hook's JSON response. This silently disables ALL hook protections (rm blocking, git safety, etc.) while appearing to work.
-
-**Rules to prevent hook errors:**
-
-1. **pyproject.toml [tool.uv]**: NEVER add deprecated UV fields. UV versions remove fields silently. When UV encounters an unknown field, it prints a warning to stderr, which breaks ALL hooks. The `default-extras` field was removed in UV 0.9+. If you need default extras, put them in `[project] dependencies` instead.
-
-2. **Slash commands**: ALL bash commands in `.md` files MUST use `uv run --project ${CLAUDE_PLUGIN_ROOT} python` — never bare `python3`. The `allowed-tools` frontmatter must use `Bash(uv *)` not `Bash(python3:*)`.
-
-3. **Hook stderr**: hook_entry.py must NEVER write to stderr. All error handling must go through `fail_open()` which writes JSON to stdout.
-
-4. **Cache sync**: After fixing pyproject.toml or hooks.json in the source, run the installer to sync to cache:
-   ```bash
-   uv run --project plugins/autorun python -m autorun --install --force
-   ```
-   Manual file copies to `~/.claude/plugins/cache/` are fragile and will be overwritten on next install. Always use the installer.
-
-5. **Session restart**: Hook configuration is cached at session start. Fixes to hooks.json or pyproject.toml only take effect on the NEXT Claude Code session.
-
-**Regression tests**: `test_hook_entry.py::TestUVCompatibility` and `test_hook_entry.py::TestCacheSync`
-
-**Diagnosis**: Run `uv run --project <plugin_root> python -c "pass" 2>&1` — any output beyond "Building/Installed" lines is a problem.
-
-## Bug #4669 Workaround (Claude Code v1.0.62+)
-
-**Problem**: Claude Code ignores `permissionDecision:"deny"` at exit 0. Tool executes anyway despite JSON deny decision.
-
-**Solution**: Apply the exit-2 workaround only on platforms that declare `has_exit2_workaround` (today: Claude Code). Gemini CLI respects the JSON decision field correctly.
-
-**Behavior**:
-- **Claude Code**: Uses exit 2 + stderr (only way blocking works due to bug #4669)
-- **Gemini CLI**: Uses JSON `decision` field (works correctly per spec)
-- **Applicability**: `Platform.has_exit2_workaround` in `platforms.py`, not a hardcoded harness name. Detection itself uses `GEMINI_SESSION_ID` / `GEMINI_PROJECT_DIR`.
-
-**Configuration** (resolution order — first tier that names a recognized value wins):
-
-1. `AUTORUN_EXIT2_WORKAROUND` env var, which `--exit2-mode` writes
-2. `AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED` env var
-3. the CONFIG entry of that same name
-4. `Platform.has_exit2_workaround`
-
-Values at any tier: `true`/`1`/`auto` (affected platforms only), `always` (all platforms), `false`/`0`/`never` (off). An unrecognized value falls through to the next tier rather than disabling blocking.
-
-```bash
-# Affected platforms only (default - recommended)
-export AUTORUN_EXIT2_WORKAROUND=auto
-
-# Force enable for testing
-export AUTORUN_EXIT2_WORKAROUND=always
-
-# Disable for testing/future
-export AUTORUN_EXIT2_WORKAROUND=never
-```
-
-CLI argument (applies to current execution):
-```bash
-autorun --exit2-mode auto    # Default - auto-detect CLI
-autorun --exit2-mode always  # Force exit-2 for all CLIs
-autorun --exit2-mode never   # Disable workaround for all CLIs
-```
-
-**Technical Details**:
-- Detection: `plugins/autorun/src/autorun/config.py:detect_cli_type()`
-- Unified output: `plugins/autorun/src/autorun/client.py:output_hook_response()`
-- Response format: Both `decision` (Gemini) and `hookSpecificOutput.permissionDecision` (Claude) fields included
-- Exit codes: 0 for allow/Gemini-deny, 2 for Claude-deny (stderr contains reason)
-
-**Reference**: `plugins/autorun/src/autorun/client.py:output_hook_response()` and `config.py:detect_cli_type()`
-
-## Dynamic Content in Slash Commands
-
-Markdown commands can include dynamic bash output using `!` prefix ([docs](https://docs.anthropic.com/en/docs/claude-code/slash-commands)). To access CONFIG:
-
-```bash
-!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "from autorun.config import CONFIG; print(CONFIG['key'])"`
-```
-
-## If You See This File in Cache Location
-
-1. Navigate to git repository: `cd <git-root>/plugins/autorun/`
-2. Read CLAUDE.md from that location
-3. Edit source files in that location
-4. Run tests from that location
-5. Commit changes to git repository
-6. Reinstall plugin: `/plugin update autorun`
-
-## Summary
-
-- **READ**: `<git-root>/plugins/autorun/`
-- **EDIT**: `<git-root>/plugins/autorun/`
-- **TEST**: `<git-root>/plugins/autorun/`
-- **COMMIT**: `<git-root>/` (git root)
-
-**NEVER**: `~/.claude/plugins/cache/...` (wrong location, may be outdated)
+1. **Reuse `ScopedAllow` and `parse_scope_args` for every override grant.** Never write a second TTL/count parser: the `5m | 5 | perm | 2h30m` grammar is `scoped_allow.py:parse_scope_args` (line 44), and `_PARALLEL_GRACE_SECONDS` (line 187) already absorbs rtk's double-hook. See `cache_guard.grant_override`.
+2. **Use `state_get`, `state_set`, and `state_update` in daemon paths, never `session_state()`.** They keep `ThreadSafeDB` coherent; wrap legacy direct-persistence helpers in `state_synchronize`. `session_state()` is for standalone administration and persistence internals only.
+3. **A new Claude event needs its Gemini analog wired in the same change, in three places:** `plugins.py:@app.on(...)`, `core.py:GEMINI_EVENT_MAP`, and BOTH `hooks/hooks.json` and `src/autorun/gemini_template/hooks/hooks.json`. `PreCompact` maps to `PreCompress`, which is advisory and cannot block; no `PostCompress` exists.
+4. **New hook-stdin data needs a slot, a property, an `__init__` kwarg, and every `EventContext(...)` call site updated.** Never `getattr(ctx, "field", None)`: it returns None when the plumbing is broken instead of failing. `transcript_path` is the case that taught this.
+5. **Features that may block tools slot AFTER TIER 1 (`/ar:ok` allows) and BEFORE TIER 2 (pattern blocks),** or an explicit allow cannot bypass the new gate. Site: `plugins.check_blocked_commands` → `CacheGuard.from_ctx(ctx).check(ctx)` (`plugins.py:1126`).
+6. **Keep full persistent-state reads off warm hooks.** Hydrate through `ThreadSafeDB` once per session and use atomic updates for shared fields. Coalescing file locks alone does not fix this; it still reparses the full durable state.
+7. **Fail open when data is unknown.** A gate that errors or denies on missing fields is worse than one that allows, so CacheGuard returns `HookDecision.allow()` whenever its axis data is None. Cross-CLI robustness falls out of this for free.
+8. **Default off.** A new gate defaults `False` in its `FeatureToggle`; users opt in with `/ar:<feature> on`.
+9. **Anchor `.gitignore` directory patterns with a leading `/` when you mean the repo root.** Unanchored `cache/` also matches `plugins/autorun/skills/cache/`, which hid the `/ar:cache` skill from git entirely.
+10. **Harness hook-event allowlists have one owner, `tests/harness_hook_events.py`.** Edit the sets there only, and only with a source: an unknown event name in a Claude-scanned manifest is what bug #24115 turns into a silent disable of every hook.
+11. **Capture tool-result fixtures from a transcript's `toolUseResult` field, not its rendered `tool_result` block.** They are different objects, and only `toolUseResult` matches what the hook receives as `tool_response`. The delegation spawn ledger was built from the rendered prose `agentId: <id>` and recorded nothing in a live session, because the hook is handed `{"agentId": "<id>", ...}`, which `coerce_tool_result_to_str` JSON-encodes to `"agentId": "<id>"`. Every unit test passed against the wrong shape. `hooks/hook_entry.py` replays a captured payload from stdin; `~/.autorun/hook_entry_debug.log` cannot settle it, since it logs the stdin byte count and not the payload.
+12. **Give every wire contract one live canary.** Fixture drift is invisible to fixture-driven tests by construction, so a contract only a real harness produces needs one real-money end-to-end check behind `AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1`. Assert on persisted state, never the model's reply: a harness exit code of 0 says nothing about whether the hook saw anything. `test_claude_live_fanout_populates_the_spawn_ledger` is the worked example, under $0.01 and ~27s.
 
 ## Bug Workaround Policy
 
-All SDK bug workarounds (Claude Code, Gemini CLI, future CLIs) **MUST** follow all of the following:
+Every SDK bug workaround (Claude Code, Gemini CLI, future CLIs) must follow all
+of this.
 
-**Flag** — MUST use ONE key as both env var and CONFIG dict entry:
-1. Format: `AUTORUN_BUG_<DESCRIPTIVE_NAME>_BUG_<NUMBER>_WORKAROUND_ENABLED`
-2. Lookup: env var → CONFIG dict → default `True`
+**Flag** — ONE key serving as both env var and CONFIG entry:
+
+1. Format `AUTORUN_BUG_<DESCRIPTIVE_NAME>_BUG_<NUMBER>_WORKAROUND_ENABLED`
+2. Lookup order: env var → CONFIG dict → default `True`
 3. Values: `true`/`1`/`auto` (affected platform) · `always` (all) · `false`/`0`/`never` (off)
 
-**Code** — MUST be a self-contained removable unit, invisible to callers:
-1. One bracketed helper function (`# --- BUG #N WORKAROUND START/END --- DELETE WHEN FIXED ---`) with one call site (one-line)
-2. Helper checks env → CONFIG → `cli_type` (via `detect_cli_type()`, never hardcoded); no-op on unaffected platforms
-3. Sets both workaround AND designed output (e.g. `systemMessage` AND `additionalContext`) so designed field is ready when bug is fixed
-4. Preserves `respond()` print guards: `reason=""` when `systemMessage` set (anti-double-print); `reason=""`+`systemMessage=""` on PreToolUse deny (anti-triple-print with stderr)
-5. Only uses fields in `HOOK_SCHEMAS` for the event type (`validate_hook_response()` strips others)
-6. Every affected site has: bug number, full issue link, description, disable key, deletion instruction
-7. Removal: delete helper (START→END) + replace call with designed-behavior literal
+**Code** — a self-contained removable unit, invisible to callers:
 
-**Tests** — MUST have a self-contained removable test block:
-1. Bracketed `# --- BUG #N TESTS START/END ---` with shared `_BUG_FLAG` constant
-2. Pass with flag True AND False; cover: affected+enabled, affected+disabled, unaffected, env=always, env=never
-3. No non-bug test depends on these — delete block when fixed
+1. One bracketed helper (`# --- BUG #N WORKAROUND START/END --- DELETE WHEN FIXED ---`) with one one-line call site
+2. The helper checks env → CONFIG → `cli_type` (via `detect_cli_type()`, never a hardcoded name) and no-ops on unaffected platforms
+3. It sets both the workaround AND the designed output (for example `systemMessage` AND `additionalContext`) so the designed field is ready when the bug is fixed
+4. It preserves `respond()` print guards: `reason=""` when `systemMessage` is set (anti-double-print), and `reason=""` plus `systemMessage=""` on a PreToolUse deny (anti-triple-print with stderr)
+5. It uses only fields in `HOOK_SCHEMAS` for that event type; `validate_hook_response()` strips the rest
+6. Every affected site carries the bug number, full issue link, description, disable key, and deletion instruction
+7. Removal is: delete the helper START→END, replace the call with the designed-behavior literal
 
-**When fixed**: set `False` (quick) or delete helper, replace call with literal, delete CONFIG key + test block (cleanup). Defense-in-depth handlers remain.
+**Tests** — a self-contained removable block:
 
-**CONFIG template** (`config.py` `# ─── Bug Workarounds ───`):
+1. Bracketed `# --- BUG #N TESTS START/END ---` with a shared `_BUG_FLAG` constant
+2. Passing with the flag both True and False, covering affected+enabled, affected+disabled, unaffected, `env=always`, and `env=never`
+3. No non-bug test depends on the block, so it can be deleted whole
+
+**When fixed**: set the flag `False` for a quick disable, or delete the helper,
+replace the call with the literal, and delete the CONFIG key and test block.
+Defense-in-depth handlers stay.
+
+**CONFIG template** (`config.py`, `# ─── Bug Workarounds ───`):
 
 ```
 # BUG #NNNNN: What's broken. https://github.com/anthropics/claude-code/issues/NNNNN
@@ -275,62 +110,51 @@ All SDK bug workarounds (Claude Code, Gemini CLI, future CLIs) **MUST** follow a
 | [#4669](https://github.com/anthropics/claude-code/issues/4669): deny ignored at exit 0 | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED`; `AUTORUN_EXIT2_WORKAROUND` and `--exit2-mode` remain as higher-precedence aliases | `True` | stderr + exit 2 |
 | [#18534](https://github.com/anthropics/claude-code/issues/18534): additionalContext dropped | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED` | `True` | channel="ai" → "both" |
 | [#24115](https://github.com/anthropics/claude-code/issues/24115): plugin loader scans marketplace-source hooks/ AND cache; strict Zod rejects Gemini event names with `invalid_key` | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED` | `True` | Claude events ONLY in `plugins/autorun/hooks/`; Gemini events live under `src/autorun/gemini_template/` (outside Claude's scan path) |
-| [#14449](https://github.com/google-gemini/gemini-cli/issues/14449) ([PR #14460](https://github.com/google-gemini/gemini-cli/pull/14460)): Gemini hardcodes extension hooks at `<ext>/hooks/hooks.json`; manifest `hooks` field ignored | Gemini CLI | `AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED` | `True` | Installer materializes `~/.gemini/extensions/<name>/` from template dir; `hook_entry.py` copied into `<ext>/hooks/` so `${extensionPath}/hooks/hook_entry.py` resolves |
+| [#14449](https://github.com/google-gemini/gemini-cli/issues/14449) ([PR #14460](https://github.com/google-gemini/gemini-cli/pull/14460)): Gemini hardcodes extension hooks at `<ext>/hooks/hooks.json`; manifest `hooks` field ignored | Gemini CLI | `AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED` | `True` | Installer materializes `~/.gemini/extensions/<name>/` from the template dir; `hook_entry.py` copied into `<ext>/hooks/` so `${extensionPath}/hooks/hook_entry.py` resolves |
 
-### Bug #24115 & #14449 in depth
+Both workarounds are fully documented where they are implemented, so this file
+does not restate them. Read `src/autorun/config.py:should_use_exit2_workaround()`
+and its bracketed block for #4669 (resolution order, value tokens, removal), and
+the `# --- BUG #24115 & #14449 WORKAROUND START ---` block at the top of
+`src/autorun/install.py` for the split repo layout (root causes, both env keys,
+removal steps).
 
-These two bugs co-motivate the split repo layout implemented in install.py
-(`# --- BUG #24115 & #14449 WORKAROUND START ---`).
+Upstream status, checked 2026-08-05 with `gh`: #4669 closed 2026-01-05 and
+#24115 closed 2026-04-27, both `NOT_PLANNED`; #18534 closed 2026-01-19 as
+`DUPLICATE`; only #14449 closed `COMPLETED` (2025-12-19), by PR #14460 merging
+the `hooks/hooks.json` convention this already targets. Three of the four were
+closed without a fix, so a closed issue is not permission to delete a
+workaround. Verify the behavior first.
 
-**Root causes (each bug independent of the other):**
+## Quick install/update command
 
-1. **Claude Code bug #24115**: When `claude plugin list` runs, Claude scans
-   `plugins/autorun/hooks/*.json` in the marketplace source directory (git
-   checkout) in addition to the versioned cache. The plugin we ship is
-   registered as a `directory`-type marketplace source pointing at the git
-   repo itself (`~/.claude/plugins/known_marketplaces.json`), so Claude
-   reads the source hooks/ directly. Its Zod schema rejects any unknown
-   event name with `invalid_key`. Gemini event names (`BeforeTool`,
-   `BeforeAgent`, etc.) present in that path silently disable ALL plugin
-   hooks and show `ar@autorun: ✘ failed to load`.
-
-2. **Gemini CLI bug #14449**: Gemini's extension hook loader hardcodes
-   `<extension_root>/hooks/hooks.json`. The `hooks` field in
-   `gemini-extension.json` is documented but ignored at runtime. PR #14460
-   landed in Dec 2025 and should ship in a future release — until then we
-   cannot redirect Gemini to look at a different file path.
-
-**Why one workaround solves both:** Keep Claude's hooks at
-`plugins/autorun/hooks/hooks.json` (default path, Claude-valid events only),
-and stage Gemini's hooks at `plugins/autorun/src/autorun/gemini_template/hooks/hooks.json`
-(outside Claude's scan surface). At install time, point `gemini extensions install`
-at the template dir; it materializes `~/.gemini/extensions/<name>/` with the
-hardcoded layout Gemini expects. Copy `hook_entry.py` into
-`<ext>/hooks/` so `${extensionPath}/hooks/hook_entry.py` resolves.
-
-**Pathway 2 & 6 (`gemini extensions install <github-url>` or `.` from
-repo root):** committed symlinks at repo root (`./gemini-extension.json`,
-`./hooks/`) redirect into the template so Gemini sees the required layout
-when installing from the repo as a whole. The symlinks are outside Claude's
-scan path.
-
-**Configuration:** either environment variable or CONFIG entry controls
-each workaround independently. Values: `true`/`1`/`auto` (on, default),
-`false`/`0`/`never` (off — likely to produce a broken install until the
-upstream bug is actually fixed).
+Run from the repository root after editing anything under `src/autorun/` or
+`hooks/`, after changing plugin configuration, and when testing a fix:
 
 ```bash
-# Disable Claude marketplace-scan workaround (requires #24115 to be fixed)
-export AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED=false
-
-# Disable Gemini hardcoded-hooks-path workaround (requires #14449 to be fixed)
-export AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED=false
+(uv run --project plugins/autorun python -m autorun --install --force && \
+  cd plugins/autorun && \
+  uv tool install --force --editable . && \
+  cd ../.. && \
+  autorun --restart-daemon) 2>&1 | tee "install-$(date +%Y%m%d-%H%M%S).log"
 ```
 
-**When both bugs are fixed:** follow the deletion instructions in the
-bracketed block in `plugins/autorun/src/autorun/install.py`. Short
-summary: remove the helpers, move Gemini assets back to plugin root,
-rename `hooks/hooks.json` to declare both CLI event sets (or keep them
-separated at a finer granularity), delete the `BUG #24115 & #14449 TESTS`
-block in `test_split_layout.py`, remove the two CONFIG keys, and drop the
-repo-root shim symlinks.
+It syncs the plugin to both the Claude Code and Gemini caches, installs the
+`autorun` and `aise` commands globally, and restarts the daemon so code changes
+take effect. Allow a 3-minute timeout through the Bash tool: the UV tool step
+takes 1-2 minutes on a first run or a dependency change.
+
+## Gemini-family harnesses
+
+`gemini` here covers the Qwen Code and Antigravity (agy) family, and Qwen Code
+forked Gemini CLI, so `GEMINI_EVENT_MAP`, `gemini_template/`, and the `gemini`
+platform key cover all of them. Standalone Gemini CLI is retired but still
+supported; its `enableHooks` prerequisite and legacy install live in
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) and [README.md](../../README.md).
+
+## Entry points
+
+- **Commands**: `commands/autorun` — executable called by the plugin system (JSON stdin/stdout)
+- **Hooks**: `hooks/hook_entry.py` — configured via `hooks/hooks.json`
+- **CLI**: `autorun` → `src/autorun/__main__.py:main` (via `uv tool install --editable .`)
+- **Config**: `src/autorun/config.py` — single source of truth for all CONFIG values

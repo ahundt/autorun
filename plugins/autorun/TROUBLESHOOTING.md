@@ -51,7 +51,7 @@ This guide helps resolve common issues with autorun hooks in both Claude Code an
    }
    ```
 
-   **Fix**: Edit `~/.gemini/settings.json` and add the tools section (see [GEMINI.md](GEMINI.md#required-settings))
+   **Fix**: Edit `~/.gemini/settings.json` and add the tools section shown above
 
 3. **Check Extension Installed**
    ```bash
@@ -240,7 +240,8 @@ chmod +x ~/.claude/plugins/cache/autorun/autorun/*/hooks/hook_entry.py
 
    The Claude file (`plugins/autorun/hooks/hooks.json`) uses `${CLAUDE_PLUGIN_ROOT}` and Claude event names.
    The Gemini template (`plugins/autorun/src/autorun/gemini_template/hooks/hooks.json`) uses `${extensionPath}` and Gemini event names.
-   See bug #24115 / #14449 workaround notes in `plugins/autorun/CLAUDE.md` for why they live apart.
+   See the `# --- BUG #24115 & #14449 WORKAROUND START ---` block in
+   `plugins/autorun/src/autorun/install.py` for why they live apart.
 
 3. **Reinstall**
 
@@ -510,8 +511,8 @@ If none of these solutions work:
 
 ## Related Documentation
 
-- [GEMINI.md](GEMINI.md) - Gemini CLI specific documentation
-- [CLAUDE.md](CLAUDE.md) - Claude Code specific documentation
+- [AGENTS.md](AGENTS.md) - plugin development guidance, shared by every harness
+  (`CLAUDE.md` and `GEMINI.md` are symlinks to it)
 - [README.md](../../README.md) - Full autorun documentation
 - [GitHub Issues](https://github.com/ahundt/autorun/issues)
 

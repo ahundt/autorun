@@ -2082,7 +2082,7 @@ class EventContext:
         References:
         - GitHub Issues: #4669, #18312, #13744, #20946, #10964
         - Hook docs: https://code.claude.com/docs/en/hooks
-        - CLAUDE.md: Hook Error Prevention section
+        - plugins/autorun/AGENTS.md: "Hook error prevention" section
         """
         cli_type = self.cli_type
         from .platforms import get_platform

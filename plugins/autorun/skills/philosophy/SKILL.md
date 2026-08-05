@@ -24,8 +24,12 @@ These are ordered from most fundamental to most specific:
    Example: Just run `systemname` - no flags needed for 95% of cases.
 
 4. **Solve Problems FOR Users**: Don't just report problems - fix them automatically.
-   When we detect a conflict, we don't just tell users about it, we retry with
-   a solution. Users should feel the system is working on their behalf.
+   When we detect a conflict, we don't just tell users about the conflict, we
+   retry with a solution. Users should feel the system is working on their behalf.
+   When a problem absolutely cannot be solved for users, fail loudly with the
+   context and guidance users need to solve that problem themselves: the exact
+   state the system stopped in and the specific next action. Never fail silently
+   or hand back a bare error.
 
 5. **Use Existing APIs and Capabilities**: When adding new functionality, explore to understand the context and determine what is already done and the right point at which to work to avoid duplication. If one of the already imported tools can do it effectively, use that. Search to ensure you are using the most modern and up-to-date reliable tool possible. Don't implement things manually unless necessary. Leverage existing solutions that solve development problems effectively.
 

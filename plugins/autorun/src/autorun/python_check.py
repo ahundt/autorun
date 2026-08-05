@@ -109,7 +109,7 @@ def check_python_version():
         print("    brew install uv                                     # macOS Homebrew")
         print("")
         print("  GitHub / docs:  https://github.com/ahundt/autorun")
-        print("  Local docs:     plugins/autorun/CLAUDE.md")
+        print("  Local docs:     plugins/autorun/AGENTS.md")
         print("=" * 70)
         return False
 
@@ -133,7 +133,7 @@ def check_python_version():
         print("    autorun --status")
         print()
         print("  GitHub / docs:  https://github.com/ahundt/autorun")
-        print("  Local docs:     plugins/autorun/CLAUDE.md")
+        print("  Local docs:     plugins/autorun/AGENTS.md")
         print("=" * 70)
 
     return True

@@ -353,6 +353,11 @@ _AGENT_SPAWN_TOOL_NAMES = frozenset({"Agent", "Task"})
 # and older builds carry the prose line 'agentId: <id>'. One pattern with
 # optional quotes covers both, and covers a nested id too, instead of a
 # dict-shape reader that would miss the prose form.
+# To re-derive this fixture after a harness change, read the parent session's
+# ~/.claude/projects/<project>/<session>.jsonl, keep the lines carrying a
+# 'toolUseResult' field (that object is what arrives as tool_response; the
+# rendered tool_result content block is a different, prose shape), then
+# generalize ids, paths, and model names before committing it.
 _AGENT_SPAWN_ID_RE = re.compile(r'\bagentId"?\s*:\s*"?([A-Za-z0-9]{8,})')
 # A SubagentStop's transcript_path names the child: .../agent-<id>.jsonl.
 _AGENT_TRANSCRIPT_RE = re.compile(r"agent-([A-Za-z0-9]{8,})\.jsonl$")

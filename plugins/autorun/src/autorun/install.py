@@ -979,7 +979,11 @@ def _install_pdf_deps() -> CmdResult:
 # --- BUG #24115 & #14449 WORKAROUND START --- DELETE WHEN BOTH BUGS ARE FIXED ---
 # BUG #24115 (Claude Code): plugin loader reads hooks/ from the marketplace
 #   source dir in addition to the installed cache. Any Gemini event name in
-#   `plugins/autorun/hooks/` fails Claude's strict Zod with `invalid_key`.
+#   `plugins/autorun/hooks/` fails Claude's strict Zod with `invalid_key`,
+#   which disables EVERY plugin hook and surfaces only as
+#   `ar@autorun: ✘ failed to load`. That symptom is autorun's own finding;
+#   the upstream report covers the dual scan, not the schema rejection.
+#   Regression coverage: tests/test_split_layout.py.
 #   https://github.com/anthropics/claude-code/issues/24115
 # BUG #14449 (Gemini CLI): hooks.json path is hardcoded at
 #   `<extension_root>/hooks/hooks.json`; the manifest's `hooks` field is ignored.
@@ -1006,6 +1010,10 @@ def _install_pdf_deps() -> CmdResult:
 #   3. Delete this bracketed block (START→END), _gemini_template_dir,
 #      _copy_hook_entry_to_gemini_ext, _migrate_legacy_layout.
 #   4. Simplify _install_for_gemini to install from plugin_dir directly.
+#   5. Delete the repo-root shim symlinks ./gemini-extension.json and ./hooks/,
+#      which redirect into gemini_template/ so `gemini extensions install .`
+#      and the GitHub-URL pathway see the layout Gemini requires. Step 2
+#      moves their target, so leaving them behind leaves dangling links.
 
 
 def _bug_workaround_enabled(key: str) -> bool:
@@ -1015,7 +1023,7 @@ def _bug_workaround_enabled(key: str) -> bool:
     token set stays identical across them — `false`/`0`/`never` disable,
     `true`/`1`/`auto`/`always` enable, anything else falls through to CONFIG.
     The per-bug wrappers below carry the issue link and deletion instructions
-    required by the Bug Workaround Policy in plugins/autorun/CLAUDE.md.
+    required by the Bug Workaround Policy in plugins/autorun/AGENTS.md.
     """
     from .config import CONFIG
 
@@ -2368,7 +2376,7 @@ def resolve_choice_setting(
 
     An unrecognized value at any tier falls through to the next rather than
     raising: a typo in an environment variable should not abort an install
-    (``plugins/autorun/CLAUDE.md`` lesson 7, "fail open when data is unknown").
+    (``plugins/autorun/AGENTS.md`` lesson 7, "fail open when data is unknown").
     """
     env = os.environ if env is None else env
     config = {} if config is None else config
@@ -3197,7 +3205,7 @@ def resolve_skill_placement(
     :func:`resolve_choice_setting`. The CLI tier raises on a bad token because
     the user is present to fix it; the env and config tiers fall open to the
     next tier, because a stale export must not abort an install
-    (``plugins/autorun/CLAUDE.md`` lesson 7).
+    (``plugins/autorun/AGENTS.md`` lesson 7).
 
     Complexity: O(V) for V tokens at the winning tier.
     """
@@ -5711,7 +5719,7 @@ def check_install_health() -> list[HealthFinding]:
 
     Advisory only — reports, never repairs. Every probe is individually
     guarded so an unreadable directory downgrades one finding rather than
-    aborting a status pass (`plugins/autorun/CLAUDE.md` lesson 7).
+    aborting a status pass (`plugins/autorun/AGENTS.md` lesson 7).
     """
     findings: list[HealthFinding] = []
     for probe in (

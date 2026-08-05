@@ -10,7 +10,7 @@
   processes, sessions, and harnesses cannot observe stale state.
 - Never hide persistent-state I/O or lock failures by raising hook timeouts, and
   never weaken concurrency, protocol, or isolation assertions to pass tests.
-- Before committing, read `plugins/autorun/commands/commit.md`; use a concrete
+- Before committing, read `plugins/autorun/skills/commit/SKILL.md`; use a concrete
   `<files>:` subject for few/grouped files or `type(scope):` for many files.
   Cover previous behavior, exact changes, rationale, files, and verification.
 - Full invariants, regression checks, and recovery guidance:
@@ -175,7 +175,7 @@ Built-in protections for: `rm` → `trash`, `git reset --hard` → `git stash`, 
 
 See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS list.
 
-**Hook Error Prevention**: See `plugins/autorun/CLAUDE.md` "Hook Error Prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
+**Hook Error Prevention**: See `plugins/autorun/AGENTS.md` "Hook error prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
 
 **Never print outside CLI entry points**: stdout is the hook response and stderr reads as a hook failure that disables every hook — log via `logging_utils.get_logger()`.
 
