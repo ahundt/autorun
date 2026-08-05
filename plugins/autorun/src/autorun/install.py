@@ -4318,7 +4318,11 @@ def _install_markdown_commands_harness(
     print()
     print(f"✓ {display_name} commands installed at {base}/commands/")
     print(f"✓ Advisory safety guidance written to {base}/AGENTS.md")
-    print(f"  Note: {display_name} has no external hooks — guards run advisory only.")
+    # The advisory caveat holds only where no enforcement surface exists;
+    # OpenCode shares this markdown-commands install shape but its plugin
+    # bridge vetoes tools, so the registry decides which note is true.
+    if memory_platform is None or not memory_platform.has_hooks:
+        print(f"  Note: {display_name} has no external hooks — guards run advisory only.")
     return (True, "success")
 
 
@@ -6260,7 +6264,10 @@ def show_status(
     print(f"  commands: {'✓ installed' if opencode_command_count else '✗ not installed'} ({opencode_command_count})")
     print(f"  AGENTS.md: {'✓ installed' if opencode_agents.is_file() else '✗ not installed'}")
     print("  skills: shared ~/.agents/skills route (read natively by OpenCode)")
-    print("  hooks: advisory only (OpenCode's hook surface is JS plugins)")
+    opencode_shim = opencode_base / "plugin" / "autorun.js"
+    print(
+        f"  hooks: {'✓ plugin bridge installed (tool vetoes enforced in-process)' if opencode_shim.is_file() else '✗ plugin bridge not installed'}"
+    )
 
     try:
         merged_custom = merge_custom_harness_specs(custom_harnesses)

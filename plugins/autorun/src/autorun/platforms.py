@@ -468,6 +468,15 @@ CODEX_HOOKS = CodexHookProtocol(
 )
 NO_HOOKS = HookProtocol("none", stop_response_uses_only_decision_and_reason=True)
 
+# OpenCode's events arrive over the daemon socket from the in-process JS
+# plugin, not from an external hook command. The shim reads the Claude-shaped
+# JSON (`hookSpecificOutput.permissionDecision`, falling back to root
+# `decision`) and vetoes by throwing, so the base dual-shape response is the
+# contract; there is no exit-code channel and no ask dialog to answer, and
+# Claude's deny-blanking specialization exists only for its exit-2 stderr
+# duplication, which a socket does not have.
+OPENCODE_HOOKS = HookProtocol("opencode")
+
 
 @dataclass(frozen=True, slots=True)
 class Platform:
@@ -709,6 +718,26 @@ _GEMINI_TOOLS = {
     "task_list": "tracker_list_tasks",
     "task_progress": "write_todos",
     "task_title": "title",
+    "task_id_param": "id",
+}
+
+# OpenCode's model-facing tool ids are lowercase (probed against 1.18.13; the
+# shim forwards `input.tool` verbatim in PreToolUse frames). todowrite/todoread
+# are its todo-list tools; they matter only once the shim sends PostToolUse,
+# so verify them live when that lands.
+_OPENCODE_TOOLS = {
+    "grep": "grep",
+    "glob": "glob",
+    "read": "read",
+    "write": "write",
+    "edit": "edit",
+    "bash": "bash",
+    "ls": "list",
+    "task_create": "todowrite",
+    "task_update": "todowrite",
+    "task_list": "todoread",
+    "task_progress": "todowrite",
+    "task_title": "content",
     "task_id_param": "id",
 }
 
@@ -1097,14 +1126,17 @@ OPENCODE = register(
         # AUTORUN_SESSION_ID like the Claude fallback.
         detect_env_vars=("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"),
         detect_path_hints=(".opencode", ".config/opencode"),
-        has_hooks=False,
-        # Hook surface is JS plugins, not external hook commands. autorun ships
-        # one plugin file for this harness only: OpenCode runs on Bun and loads
-        # it in-process, so its users already have that runtime. No other
-        # platform may pull in a second runtime — Python is the only one autorun
-        # requires everywhere else.
-        schema_type="none",
-        hook_protocol=NO_HOOKS,
+        # Enforced through the installed JS plugin: `tool.execute.before`
+        # carries every tool call to the daemon socket and throws on deny, in
+        # the role external hook commands play elsewhere. autorun ships one
+        # plugin file for this harness only: OpenCode runs on Bun and loads it
+        # in-process, so its users already have that runtime. No other
+        # platform may pull in a second runtime — Python is the only one
+        # autorun requires everywhere else.
+        has_hooks=True,
+        schema_type="strict",
+        hook_protocol=OPENCODE_HOOKS,
+        tool_names=_OPENCODE_TOOLS,
         config_dir="~/.config/opencode/",
         # Probed against opencode 1.18.13: with OPENCODE_CONFIG_DIR pointed at
         # an empty directory, `opencode serve` still loaded
@@ -1121,13 +1153,15 @@ OPENCODE = register(
         # so skills arrive through the shared route with no per-harness link.
         loads_shared_agents_skills=True,
         # Commands are Claude-format markdown ($ARGUMENTS, $1..$N, !`cmd`,
-        # @path) copied from the portable bundle; no hooks, advisory only.
-        # Those files are named ar-<cmd>.md, so guidance teaches /ar-<cmd>
-        # until the plugin bridge makes ar:<cmd> dispatch here.
+        # @path) copied from the portable bundle; the files are named
+        # ar-<cmd>.md, so typed invocation stays /ar-<cmd>, and every other
+        # control command reaches the daemon through the plugin's registered
+        # `autorun` tool.
         command_display_prefix="/ar-",
         command_invocation_hint=(
-            "Type /ar:<command>. OpenCode delivers no events to autorun, so "
-            "only the installed command files run and guards stay advisory."
+            "Type /ar:<command> for the installed files; every other control "
+            "command reaches autorun through the `autorun` tool. Blocked "
+            "tools are vetoed in-process by the autorun plugin."
         ),
         # OpenCode also reaches skills through its native `skill` tool.
         skill_invocation_format="the {name} skill",

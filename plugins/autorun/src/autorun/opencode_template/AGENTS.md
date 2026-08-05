@@ -1,10 +1,10 @@
 # autorun safety guidance (OpenCode)
 
-OpenCode's hook surface is JavaScript plugins rather than external hook
-events, so autorun cannot intercept tool calls the way it does in Claude
-Code or Codex. The guidance below is therefore advisory — you (the AI
-agent) are expected to read and follow it before taking destructive or
-irreversible actions.
+autorun's OpenCode plugin intercepts every tool call in-process and asks the
+autorun daemon before it runs: a blocked command fails with the daemon's
+reason instead of executing — the same enforcement Claude Code and Codex get
+from hooks. The guidance below still matters: follow it before destructive
+or irreversible actions rather than waiting to be blocked.
 
 ## Use these autorun commands when relevant
 
@@ -15,6 +15,12 @@ irreversible actions.
 - `/ar-find` — restrict edits to existing files only.
 - `/ar-commit` — refresh git commit guidelines before staging.
 - `/ar-ph` — refresh the universal system design philosophy.
+
+Every other autorun control command reaches the daemon through the
+registered `autorun` tool — invoke it with the command's name and arguments
+(status, ok, no, task, cache, planexport, help, ...) whenever the user types
+an autorun command in any spelling or asks about autorun state. `help`
+lists everything.
 
 ## Safety guardrails
 
@@ -30,7 +36,7 @@ irreversible actions.
 ## Stop semantics
 
 OpenCode delivers no stop event to autorun, so autorun holds nothing open
-here and no emergency-stop or task command is installed — the six commands
-above are the whole surface. Never say autorun blocked or cleared a stop.
-When you stop with work outstanding, name what is left and let the user
-decide.
+when you finish a turn — never say autorun blocked or cleared a stop. The
+emergency stop still has teeth here: after an emergency stop the plugin
+refuses further tool calls, so honor it immediately. When you stop with
+work outstanding, name what is left and let the user decide.

@@ -1182,11 +1182,11 @@ autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|al
 autorun --conductor                  # Install Conductor extension for Gemini (default)
 autorun --no-conductor               # Skip Conductor extension
 autorun --install --antigravity      # Install Google Antigravity plugin (native bundle, importer fallback)
-autorun --cli claude                 # Hook identity: claude|gemini|antigravity|qwen|codex
+autorun --cli claude                 # Hook identity: claude|gemini|antigravity|qwen|codex|opencode
 ```
 
 Accepted values: `--exit2-mode: auto|always|never`;
-`--cli: claude|gemini|antigravity|qwen|codex`;
+`--cli: claude|gemini|antigravity|qwen|codex|opencode`;
 `--update-method: auto|plugin|uv|pip`.
 
 > `--exit2-mode` works around a Claude Code bug ([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669)). Controls whether hook deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI).

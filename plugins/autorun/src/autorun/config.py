@@ -26,17 +26,20 @@ Usage:
     from autorun import CONFIG
 """
 
-# Tool name sets for different CLIs (Claude Code, Gemini CLI, Codex CLI)
+# Tool name sets for different CLIs (Claude Code, Gemini CLI, Codex CLI,
+# OpenCode). OpenCode's model-facing tool ids are lowercase; its plugin
+# forwards them verbatim in PreToolUse frames.
 BASH_TOOLS = {
     "Bash",
+    "bash",
     "bash_command",
     "run_shell_command",
     "exec_command",
     "functions.exec_command",
     "shell",
 }
-WRITE_TOOLS = {"Write", "write_file"}
-EDIT_TOOLS = {"Edit", "edit_file", "replace"}
+WRITE_TOOLS = {"Write", "write_file", "write"}
+EDIT_TOOLS = {"Edit", "edit_file", "replace", "edit"}
 FILE_TOOLS = WRITE_TOOLS | EDIT_TOOLS
 PLAN_TOOLS = {"ExitPlanMode", "exit_plan_mode"}
 
@@ -802,6 +805,9 @@ CONFIG = {
         "qwen": 3.5,
         "claude": 4.0,
         "codex": 4.0,
+        # The OpenCode shim spawns hook_entry only as its daemon-down
+        # fallback and bounds the whole call at its own 5s timer.
+        "opencode": 4.0,
     },
     "hook_wrapper_timeouts_seconds": {
         # Gemini-family hooks are configured with a 5s outer timeout, so the
@@ -816,6 +822,9 @@ CONFIG = {
         # ForgeCode has no active hooks today; retained for hook_entry fallback
         # compatibility if a user invokes the wrapper with --cli forgecode.
         "forgecode": 5.0,
+        # OpenCode reaches hook_entry through the shim's fallback spawn; the
+        # shim kills the child at 5s, so the wrapper must finish first.
+        "opencode": 4.5,
     },
     # ─── Plan Acceptance ───────────────────────────────────────────────────
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool

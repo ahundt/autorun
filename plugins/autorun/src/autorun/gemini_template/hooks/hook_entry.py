@@ -48,6 +48,7 @@ HOOK_TIMEOUT_BY_CLI = {
     "claude": 5.0,
     "codex": 5.0,
     "forgecode": 5.0,
+    "opencode": 4.5,
 }
 HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
 BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
