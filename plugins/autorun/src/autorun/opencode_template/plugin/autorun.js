@@ -172,6 +172,33 @@ function denialReason(response) {
   return specific.permissionDecisionReason ?? response.reason ?? "blocked by autorun"
 }
 
+/**
+ * Answer one ar:* control command through the daemon.
+ *
+ * Exported on its own so tests drive it under bare Bun; the registered tool
+ * below wraps it and only exists when @opencode-ai/plugin resolves, which
+ * happens in-process inside a real OpenCode session. Command dispatch gates
+ * nothing, so unlike the veto this fails OPEN: a dead daemon answers with
+ * the way out, never a blocked tool call.
+ */
+export async function runArCommand(command, directory) {
+  // Accept every spelling the other harnesses tolerate: /ar:st, ar:st,
+  // ar-st, ar st, or the bare name. The daemon's canonicalizer owns the
+  // real grammar; this only strips the prefix so "ar:" can be re-applied.
+  const name = String(command ?? "").trim().replace(/^\/?ar[:\- ]\s*/i, "")
+  const response = await askDaemon({
+    hook_event_name: "UserPromptSubmit",
+    prompt: "ar:" + name,
+    cwd: String(directory ?? ""),
+  })
+  return (
+    response?.systemMessage ??
+    response?.hookSpecificOutput?.additionalContext ??
+    "autorun daemon unreachable; command dispatch is fail-open. " +
+      "Run `autorun --restart-daemon`, then retry."
+  )
+}
+
 export const AutorunPlugin = async ({ serverUrl, directory }) => {
   // The inversion: hand Python the server address so the long-lived daemon can
   // be the SDK client. Losing this frame costs the daemon-side features, not
@@ -182,7 +209,7 @@ export const AutorunPlugin = async ({ serverUrl, directory }) => {
     cwd: String(directory ?? ""),
   })
 
-  return {
+  const hooks = {
     "tool.execute.before": async (input, output) => {
       const frame = {
         hook_event_name: "PreToolUse",
@@ -209,4 +236,35 @@ export const AutorunPlugin = async ({ serverUrl, directory }) => {
       await askDaemon({ hook_event_name: "OpenCodeDetach", cwd: String(directory ?? "") })
     },
   }
+
+  // The command tool needs @opencode-ai/plugin's schema helper, which only
+  // resolves in-process inside OpenCode (its Bun carries the package). Under
+  // bare Bun — this shim's own test rig — it is absent, and the veto must
+  // not die with it, so the import is dynamic and its failure costs only
+  // the tool.
+  try {
+    const { tool } = await import("@opencode-ai/plugin")
+    hooks.tool = {
+      autorun: tool({
+        description:
+          "Run an autorun control command: st (status), allow/justify/find, " +
+          "ok/no/blocks/clear guards, task, cache, planexport, stop/estop, " +
+          "help. Use when the user types ar:<command> in any spelling or " +
+          "asks about autorun status or control.",
+        args: {
+          command: tool.schema
+            .string()
+            .describe("the command with its arguments, e.g. 'st' or 'ok git push 5m'"),
+        },
+        async execute({ command }) {
+          return runArCommand(command, directory)
+        },
+      }),
+    }
+  } catch {
+    // bare Bun: no package, no tool; the veto and lifecycle hooks above
+    // still work, which is the part that must never depend on packaging.
+  }
+
+  return hooks
 }

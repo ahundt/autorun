@@ -64,6 +64,12 @@ class TestShimSourceIsSelfContained:
         text = SHIM_SOURCE.read_text(encoding="utf-8")
         assert "tool.execute.before" in text
         assert "OpenCodeAttach" in text, "attach hands the daemon the serverUrl"
+        assert "runArCommand" in text, "the command tool's executor must exist"
+        assert '@opencode-ai/plugin' in text, "the tool registers through the plugin helper"
+        assert "await import(" in text, (
+            "the helper must load dynamically: bare Bun (these tests) has no "
+            "node_modules, so a static import would crash the whole shim"
+        )
 
 
 class TestInstallerPlacesTheShim:
@@ -217,6 +223,46 @@ class TestDaemonSocketFrames:
         assert "restart-daemon" in result.stdout, "the block must name the way out"
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    def test_command_tool_executor_returns_the_daemon_reply(self, tmp_path, short_socket_dir):
+        """`runArCommand("st")` is a UserPromptSubmit frame, answered in text.
+
+        The registered tool is how ar:* commands dispatch on OpenCode beyond
+        the six static ar-*.md files. Its executor is a plain exported
+        function so this test can drive it under bare Bun; the tool wrapper
+        around it only exists when @opencode-ai/plugin resolves, which
+        requires a real OpenCode process.
+        """
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {"UserPromptSubmit": {"systemMessage": "AutoFile policy: allow-all"}},
+            connections=1,
+        )
+        result = _run_shim(tmp_path, socket_path, "command")
+        thread.join(timeout=25)
+
+        assert result.returncode == 0, result.stderr
+        assert "AutoFile policy: allow-all" in result.stdout
+
+        (frame,) = frames
+        assert frame["hook_event_name"] == "UserPromptSubmit"
+        assert frame["prompt"] == "ar:st", "every input spelling canonicalizes to ar:<cmd>"
+        assert frame["cli_type"] == "opencode"
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    def test_command_tool_executor_fails_open_when_daemon_is_down(self, tmp_path):
+        """Command dispatch gates nothing, so unlike the veto it fails OPEN.
+
+        A dead daemon must not turn `ar:st` into a blocked tool call; the
+        reply names the way out instead.
+        """
+        result = _run_shim(tmp_path, tmp_path / "nothing.sock", "command")
+
+        assert result.returncode == 0, result.stderr
+        assert "unreachable" in result.stdout
+        assert "restart-daemon" in result.stdout
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     def test_wedged_hook_entry_fallback_times_out_and_blocks(self, tmp_path):
         """A fallback interpreter that never answers must not hang the tool call.
 
@@ -318,7 +364,14 @@ def _run_shim(tmp_path, socket_path, mode, hook_entry_command="[]"):
     driver = tmp_path / "driver.js"
     driver.write_text(
         """
-import { AutorunPlugin } from "./autorun.js"
+import { AutorunPlugin, runArCommand } from "./autorun.js"
+
+if (process.argv[2] === "command") {
+  // The executor stands alone: no plugin init, so no attach frame precedes
+  // the command frame and the stub server sees exactly one connection.
+  console.log(await runArCommand("/ar:st", process.cwd()))
+  process.exit(0)
+}
 
 const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd() })
 try {
@@ -331,7 +384,7 @@ try {
         encoding="utf-8",
     )
     return subprocess.run(
-        ["bun", "run", str(driver)],
+        ["bun", "run", str(driver), mode],
         capture_output=True,
         text=True,
         timeout=60,
