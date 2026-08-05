@@ -881,11 +881,18 @@ class TestWheelPluginAssets:
                 "autorun/hooks/hook_entry.py",
                 "autorun/hooks/hooks.json",
                 "autorun/scripts/task_lifecycle_cli.py",
-                "autorun/skills/autorun-maintainer/SKILL.md",
+                "autorun/skills/cache/SKILL.md",
                 "autorun/gemini_template/gemini-extension.json",
                 "autorun/gemini_template/hooks/hooks.json",
             }
             assert required <= names, f"wheel missing plugin assets: {required - names}"
+            # autorun-maintainer documents maintaining this repository and lives
+            # at .agents/skills/. build_support.py maps plugins/autorun/skills/
+            # wholesale, so location is the only thing keeping it out of a user's
+            # install; assert the exclusion rather than trusting the move.
+            assert not [n for n in names if "skills/autorun-maintainer/" in n], (
+                "repo-internal autorun-maintainer skill leaked into the wheel"
+            )
             assert archive.read("autorun/hooks/hook_entry.py") == HOOK_ENTRY_PY.read_bytes()
             assert json.loads(archive.read("autorun/hooks/hooks.json")) == load_hooks_json(HOOKS_JSON)
             assert json.loads(archive.read("autorun/gemini_template/hooks/hooks.json")) == load_hooks_json(GEMINI_HOOKS_JSON)

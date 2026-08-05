@@ -284,7 +284,6 @@ assume a skill is an `/ar:*` command. The read-only
 
 | Skill | Purpose |
 |-------|---------|
-| `autorun-maintainer` | Diagnose, install, and validate autorun across harnesses |
 | `cache` | Configure cache-miss and compaction protection |
 | `ai-skill-builder` | Create and review portable Agent Skills |
 | `cli-demo-recorder` | Record reproducible CLI and TUI demos |

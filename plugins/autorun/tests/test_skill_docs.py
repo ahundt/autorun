@@ -8,6 +8,17 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = PLUGIN_ROOT / "skills"
 AUDIT_SCRIPT = SKILLS_ROOT / "ai-skill-builder" / "scripts" / "audit-skill.sh"
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+AGENTS_SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
+CLAUDE_SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
+
+# Skills that document how to maintain autorun itself. They read the git
+# checkout - plugins/autorun/src/, the test layout, this repository's install
+# flow - none of which exists where the plugin is installed, so shipping them
+# gives users a skill whose every instruction points at absent paths. Users get
+# plugins/autorun/TROUBLESHOOTING.md, which is written for an installed copy.
+REPO_INTERNAL_SKILLS = ("autorun-maintainer",)
+
 
 def _skill_entrypoints() -> list[Path]:
     """Return installed skill entrypoint docs, excluding reference material."""
@@ -181,9 +192,52 @@ def test_user_invocable_skills_do_not_advertise_slash_as_skill_invocation():
     assert offenders == []
 
 
+@pytest.mark.parametrize("name", REPO_INTERNAL_SKILLS)
+def test_repo_internal_skill_is_not_packaged_for_users(name):
+    """A repo-internal skill must not sit under the plugin's skills/ directory.
+
+    Both manifests declare `"skills": "./skills/"` as a directory and
+    build_support.py maps skills/ into the wheel, so anything placed there
+    reaches users through the Claude plugin, the Codex bundle, the
+    Gemini-family extensions, and the capability snapshot at once. Location is
+    the whole packaging decision; there is no per-skill exclude.
+    """
+    assert not (SKILLS_ROOT / name).exists(), (
+        f"{name} is repo-internal but sits in the packaged skills directory. "
+        f"Move it: git mv plugins/autorun/skills/{name} .agents/skills/{name}"
+    )
+    assert (AGENTS_SKILLS_ROOT / name / "SKILL.md").is_file(), (
+        f"{name} must live at .agents/skills/{name}/SKILL.md, the shared root "
+        "Codex, OpenCode, and Antigravity read directly."
+    )
+
+
+@pytest.mark.parametrize("name", REPO_INTERNAL_SKILLS)
+def test_repo_internal_skill_is_linked_into_claude_skills(name):
+    """Claude Code reads .claude/skills/ only, so the shared copy needs a link.
+
+    The link is per skill directory, never the skills/ directory itself:
+    Claude Code stops loading skills when that directory is a symlink
+    (anthropics/claude-code#38051).
+    """
+    link = CLAUDE_SKILLS_ROOT / name
+    assert link.is_symlink(), (
+        f".claude/skills/{name} must be a symlink so one copy serves every "
+        f"harness. Create it: ln -s ../../.agents/skills/{name} .claude/skills/{name}"
+    )
+    assert not CLAUDE_SKILLS_ROOT.is_symlink(), (
+        ".claude/skills/ itself must be a real directory; Claude Code stops "
+        "loading skills when it is a symlink (anthropics/claude-code#38051)"
+    )
+    assert link.resolve() == (AGENTS_SKILLS_ROOT / name).resolve(), (
+        f".claude/skills/{name} must resolve to .agents/skills/{name}, "
+        f"got {link.resolve()}"
+    )
+
+
 def test_autorun_maintainer_skill_covers_current_harnesses_and_scoped_restarts():
     """Maintainer guidance should reflect current multi-harness install safety."""
-    text = (SKILLS_ROOT / "autorun-maintainer" / "SKILL.md").read_text(encoding="utf-8")
+    text = (AGENTS_SKILLS_ROOT / "autorun-maintainer" / "SKILL.md").read_text(encoding="utf-8")
 
     for required in [
         "Codex CLI",

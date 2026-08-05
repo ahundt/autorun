@@ -85,7 +85,6 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 
 | File | Notes |
 |------|-------|
-| `plugins/autorun/skills/autorun-maintainer/SKILL.md` | 3 version references |
 | `plugins/pdf-extractor/skills/pdf-extractor/SKILL.md` | 2 refs — do NOT change `pdfplumber>=0.10.0` in install commands! |
 | `plugins/pdf-extractor/skills/pdf-extractor/references/backends.md` | Do NOT change `pdfplumber>=0.10.0`! |
 

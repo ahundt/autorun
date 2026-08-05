@@ -1158,7 +1158,7 @@ def _autorun_marketplace_entry(marketplace: dict) -> dict:
 def test_install_for_codex_creates_personal_plugin_marketplace(tmp_path, monkeypatch):
     """Default install exposes a skills plugin without plugin-bundled hooks."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["autorun-maintainer", "cache"])
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["tmux-automation", "cache"])
     fake_hooks = fake_marketplace / "plugins" / "autorun" / "hooks" / "hooks.json"
     fake_hooks.write_text(
         json.dumps(
