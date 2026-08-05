@@ -1125,48 +1125,25 @@ After every step and substep you must say "Wait," and execute this sequential th
     "custom_harnesses": (),
     # Command documents Codex may migrate into model-visible skill entries.
     #
-    # `.codex-plugin/plugin.json` used to omit `commands`, so Codex fell back to
-    # scanning the whole `commands/` directory and generated 29 always-loaded
-    # catalog entries costing an estimated 1,021 o200k_base tokens. Eleven of
-    # those were short aliases and legacy spellings of commands already in the
-    # list — 391 tokens advertising a second name for the same behavior.
+    # Empty ON PURPOSE — and it must STAY DECLARED. codex-rs core-plugins
+    # manifest.rs load_plugin_command_paths returns None when the manifest has
+    # NO "commands" key, and None re-enables the whole-directory fallback scan
+    # of commands/ (29 always-loaded catalog entries, ~1,021 o200k_base tokens
+    # per turn). An explicit empty list returns Some([]) and migrates nothing.
+    # `.codex-plugin/plugin.json` mirrors this as `"commands": []`;
+    # test_codex_install.py pins the two empty surfaces to each other.
     #
-    # Declaring canonical names here dropped those eleven (29 -> 18); removing
-    # tmux.md and ttest.md, which Codex's own migration filter rejects, left the
-    # 16 entries below. Listing a name does NOT remove any command: every alias
-    # stays registered in plugins.py and every document stays in commands/ for
-    # human completion.
-    #
-    # Codex converts each listed document into a skill entry at plugin install
-    # (codex-rs core-plugins command_migration) and SILENTLY DROPS any document
-    # that uses $ARGUMENTS, $0-$9, {{...}}, backtick-! shell blocks, @word
-    # tokens, or renders over 4,000 bytes. Only documents that pass that filter
-    # belong here. tmux.md and ttest.md fail it (dynamic ! status line,
-    # $ARGUMENTS, >4KB); Codex tmux capability ships as the tmux-automation
-    # plugin skill instead, which Codex loads natively and which shadows any
-    # migrated command of the same name.
+    # The 17 documents previously listed here cost 533 o200k_base tokens of
+    # always-on catalog every turn. One Codex-native skill entry replaces
+    # them: `.codex-plugin/skills/ar/SKILL.md` (the `$ar` mention, ~82 catalog
+    # tokens) teaches the full `ar:<command>` grammar. The daemon dispatches
+    # `ar:*` prompt text regardless of the catalog, so no command behavior
+    # changed; every document stays in commands/ for human completion and
+    # every alias stays registered in plugins.py.
     #
     # Measured against Codex 0.146.0; receipt:
     # ~/.agents/notes/2026-08-03-0335-codex-skills-live-catalog-context-cost-assessment.md
-    "codex_canonical_commands": (
-        "allow",
-        "blocks",
-        "clear",
-        "estop",
-        "find",
-        "globalclear",
-        "globalno",
-        "globalok",
-        "globalstatus",
-        "help",
-        "justify",
-        "no",
-        "ok",
-        "reload",
-        "status",
-        "stop",
-        "test",
-    ),
+    "codex_canonical_commands": (),
 }
 
 

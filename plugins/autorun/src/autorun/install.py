@@ -3574,15 +3574,38 @@ def _copy_codex_plugin_source(
         "htmlcov",
         "hooks",
     ]
-    if not include_skills:
-        ignored.append("skills")
-    shutil.copytree(plugin_dir, target, ignore=shutil.ignore_patterns(*ignored))
+    base_ignore = shutil.ignore_patterns(*ignored)
+
+    def _ignore(directory, names):
+        skipped = set(base_ignore(directory, names))
+        # Only the TOP-LEVEL skills/ is the shared-route copy to drop; the
+        # manifest's second root .codex-plugin/skills/ is Codex-native-only
+        # (the $ar control skill would collide with Claude's /ar: namespace
+        # on the shared route) and must ride inside the staged plugin on
+        # every route. A name pattern prunes at any depth, so the check is
+        # anchored to the plugin root.
+        if not include_skills and Path(directory) == Path(plugin_dir):
+            skipped.add("skills")
+        return skipped
+
+    shutil.copytree(plugin_dir, target, ignore=_ignore)
 
     if not include_skills:
         manifest_path = target / ".codex-plugin" / "plugin.json"
         if manifest_path.is_file():
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if manifest.pop("skills", None) is not None:
+            declared = manifest.get("skills")
+            # Drop only the shared-root entry; other roots keep loading.
+            if isinstance(declared, list):
+                kept = [entry for entry in declared if entry != "./skills/"]
+                changed = kept != declared
+                if kept:
+                    manifest["skills"] = kept
+                else:
+                    manifest.pop("skills", None)
+            else:
+                changed = manifest.pop("skills", None) is not None
+            if changed:
                 atomic_write_text(
                     manifest_path, json.dumps(manifest, indent=2) + "\n"
                 )

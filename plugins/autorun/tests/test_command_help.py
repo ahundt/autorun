@@ -252,5 +252,11 @@ class TestHelpIsInEveryHarnessCatalog:
         assert doc.is_file()
         assert "description:" in doc.read_text(encoding="utf-8")
 
-    def test_codex_migrates_help_into_its_catalog(self):
-        assert "help" in CONFIG["codex_canonical_commands"]
+    def test_codex_catalog_teaches_help_through_the_ar_skill(self):
+        """codex_canonical_commands is empty on purpose — each migrated
+        command document costs always-on catalog tokens every turn — so the
+        $ar skill is Codex's catalog surface now, and IT must be what makes
+        `ar:help` discoverable there."""
+        assert CONFIG["codex_canonical_commands"] == ()
+        ar_skill = PLUGIN_ROOT / ".codex-plugin" / "skills" / "ar" / "SKILL.md"
+        assert "ar:help" in ar_skill.read_text(encoding="utf-8")

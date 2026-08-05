@@ -18,26 +18,11 @@
     "automation",
     "safety-guards"
   ],
-  "commands": [
-    "./commands/allow.md",
-    "./commands/blocks.md",
-    "./commands/clear.md",
-    "./commands/estop.md",
-    "./commands/find.md",
-    "./commands/globalclear.md",
-    "./commands/globalno.md",
-    "./commands/globalok.md",
-    "./commands/globalstatus.md",
-    "./commands/help.md",
-    "./commands/justify.md",
-    "./commands/no.md",
-    "./commands/ok.md",
-    "./commands/reload.md",
-    "./commands/status.md",
-    "./commands/stop.md",
-    "./commands/test.md"
+  "commands": [],
+  "skills": [
+    "./skills/",
+    "./.codex-plugin/skills/"
   ],
-  "skills": "./skills/",
   "interface": {
     "displayName": "Autorun",
     "shortDescription": "Safety hooks and reusable automation workflows.",

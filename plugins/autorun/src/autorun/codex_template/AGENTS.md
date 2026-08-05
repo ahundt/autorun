@@ -29,6 +29,10 @@ plugin selection such as `@autorun`. Autorun installs skills like
 `$mermaid-diagrams` and `$tmux-automation`, but Codex
 does not expose them as slash commands like `/mermaid`.
 
+The `$ar` skill carries the full `ar:<command>` control grammar (policy,
+guards, task tracking, cache gate, plan export); `ar:help` prints the live
+command list.
+
 ## Safety guardrails
 
 1. Prefer `trash` over `rm` for any path you did not just create.

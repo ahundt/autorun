@@ -1511,7 +1511,9 @@ def test_codex_plugin_manifest_exists_for_packaged_skills():
     manifest = Path(__file__).parents[1] / ".codex-plugin" / "plugin.json"
     data = json.loads(manifest.read_text())
     assert data["name"] == "autorun"
-    assert data["skills"] == "./skills/"
+    # Two declared roots: the shared skills plus the Codex-native root that
+    # carries the $ar command-grammar skill (codex-rs accepts a path list).
+    assert data["skills"] == ["./skills/", "./.codex-plugin/skills/"]
     assert "hooks" not in data, "Codex plugin packaging should not duplicate user-level hooks from ~/.codex/hooks.json"
 
 
@@ -1823,20 +1825,70 @@ def test_install_for_codex_names_the_untouched_user_skill(tmp_path, monkeypatch,
 
 
 def test_codex_manifest_declares_the_canonical_command_surface():
-    """Omitting `commands` makes Codex scan the whole commands/ directory and
-    migrate 29 always-loaded catalog entries — 11 of them alias spellings of
-    commands already listed. CONFIG owns the canonical names so the manifest
-    and the measurement cannot drift apart."""
+    """The `commands` key must EXIST and be exactly []. codex-rs core-plugins
+    manifest.rs load_plugin_command_paths returns None when the key is absent,
+    and None re-enables the whole-directory fallback scan of commands/ — 29
+    always-loaded catalog entries (~1,021 o200k_base tokens per turn). An
+    explicit empty list returns Some([]) and migrates nothing. Both surfaces
+    are empty because the command grammar now ships as the single $ar skill
+    entry (~82 catalog tokens vs 533 for the 17 documents it replaced); CONFIG
+    still owns the canonical names so the manifest cannot drift from it."""
     from autorun.config import CONFIG
 
     manifest = Path(__file__).parents[1] / ".codex-plugin" / "plugin.json"
     data = json.loads(manifest.read_text())
     expected = [f"./commands/{name}.md" for name in CONFIG["codex_canonical_commands"]]
 
+    assert "commands" in data, (
+        "deleting the key would re-enable Codex's whole-directory fallback scan"
+    )
+    assert data["commands"] == []
     assert data["commands"] == expected
-    # 16 control commands plus help, which is the entry that makes the other
-    # 16 discoverable on a harness with no autorun completion menu.
-    assert len(expected) == 17
+
+
+def _parse_skill_frontmatter(text):
+    """Return the frontmatter's name and description for a SKILL.md."""
+    frontmatter = text.split("---")[1]
+    fields = {}
+    for line in frontmatter.splitlines():
+        key, sep, value = line.partition(":")
+        if sep:
+            fields[key.strip()] = value.strip().strip('"')
+    return fields
+
+
+def test_codex_native_ar_skill_lives_where_the_manifest_points():
+    """The $ar skill replaces the 17 migrated command catalog entries. It must
+    stay OUT of plugins/autorun/skills/ — that directory publishes through the
+    shared ~/.agents/skills route to every harness, and Claude Code would
+    namespace it as /ar:ar — so the manifest names a second, Codex-native
+    skills root inside .codex-plugin/. Codex accepts a string or a list for
+    `skills` (codex-rs RawPluginManifestPaths) and derives the $ar mention
+    from the directory name."""
+    plugin_root = Path(__file__).parents[1]
+    data = json.loads((plugin_root / ".codex-plugin" / "plugin.json").read_text())
+    roots = data["skills"]
+    roots = [roots] if isinstance(roots, str) else list(roots)
+
+    native_roots = [root for root in roots if root != "./skills/"]
+    assert native_roots, "the ar skill needs a manifest root outside the shared route"
+
+    skill_files = [
+        plugin_root / root.removeprefix("./") / "ar" / "SKILL.md"
+        for root in native_roots
+    ]
+    existing = [path for path in skill_files if path.is_file()]
+    assert existing, f"no ar/SKILL.md under any of {native_roots}"
+
+    fields = _parse_skill_frontmatter(existing[0].read_text(encoding="utf-8"))
+    assert fields["name"] == "ar", "name must match the directory-derived mention"
+    assert fields["description"]
+    # codex-rs core-skills loader.rs MAX_DESCRIPTION_LEN: longer is rejected.
+    assert len(fields["description"]) <= 1024
+
+    # The shared route must never see it: /ar:ar on Claude, doubled catalog
+    # entries everywhere else.
+    assert not (plugin_root / "skills" / "ar").exists()
 
 
 def test_every_canonical_codex_command_document_exists():
@@ -1858,8 +1910,11 @@ def test_canonical_codex_commands_survive_codex_command_migration_filter():
     plugin install and silently drops any document that uses $ARGUMENTS,
     numbered $N placeholders, {{...}} templates, inline backtick-! shell
     blocks, @word tokens, or renders over 4,000 bytes (codex-rs core-plugins
-    command_migration). A listed document that fails the filter is a catalog
-    entry that silently never exists on Codex."""
+    command_migration). The canonical tuple is empty on purpose — the $ar
+    skill carries the command grammar instead — so this loop must iterate
+    zero items, and the manifest's explicit `"commands": []` is what marks
+    that emptiness as intentional rather than a lost declaration (an absent
+    key would re-enable the fallback scan this filter exists to police)."""
     import re
 
     from autorun.config import CONFIG
@@ -1885,6 +1940,11 @@ def test_canonical_codex_commands_survive_codex_command_migration_filter():
             dropped[name] = reasons
 
     assert dropped == {}
+    # Zero iterations is the intended state; the manifest pin below proves the
+    # emptiness is a declared choice, not a missing key.
+    assert list(CONFIG["codex_canonical_commands"]) == []
+    manifest = Path(__file__).parents[1] / ".codex-plugin" / "plugin.json"
+    assert json.loads(manifest.read_text())["commands"] == []
 
 
 def test_canonical_codex_commands_exclude_alias_spellings():
@@ -1917,6 +1977,41 @@ def test_staged_codex_plugin_omits_skills_when_the_shared_route_is_authoritative
     assert not (staged / "skills").exists()
     # Commands are a separate surface and must survive the skill routing.
     assert (staged / "commands").is_dir()
+
+
+def test_staged_shared_route_keeps_the_codex_native_skills_root(tmp_path):
+    """Dropping the shared-root copy must not orphan the $ar control skill.
+
+    The manifest now declares two skills roots: "./skills/" (published through
+    ~/.agents/skills under `auto`, so the staged copy drops it) and
+    "./.codex-plugin/skills/" (Codex-native-only — the $ar skill would collide
+    with Claude's /ar: namespace on the shared route, so this root must ride
+    inside the staged plugin on EVERY route). The old behavior popped the
+    whole key and ignore_patterns("skills") pruned the directory at any
+    depth, which silently removed the native root too.
+    """
+    from autorun.install import _copy_codex_plugin_source
+
+    plugin_dir = _make_fake_plugin_with_skills(tmp_path, ["cache"]) / "plugins" / "autorun"
+    native_root = plugin_dir / ".codex-plugin" / "skills" / "ar"
+    native_root.mkdir(parents=True)
+    (native_root / "SKILL.md").write_text(
+        "---\nname: ar\ndescription: control commands\n---\n# ar\n", encoding="utf-8"
+    )
+    manifest_path = plugin_dir / ".codex-plugin" / "plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["skills"] = ["./skills/", "./.codex-plugin/skills/"]
+    manifest_path.write_text(json.dumps(manifest))
+    staged = tmp_path / "staged-shared"
+
+    _copy_codex_plugin_source(plugin_dir, staged, include_skills=False)
+
+    data = json.loads((staged / ".codex-plugin" / "plugin.json").read_text())
+    assert data["skills"] == ["./.codex-plugin/skills/"]
+    assert not (staged / "skills").exists()
+    assert (staged / ".codex-plugin" / "skills" / "ar" / "SKILL.md").is_file(), (
+        "the Codex-native skills root was pruned from the staged plugin"
+    )
 
 
 def test_staged_codex_plugin_keeps_skills_for_the_native_route(tmp_path):
