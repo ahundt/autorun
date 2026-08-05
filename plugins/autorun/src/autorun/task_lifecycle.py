@@ -346,8 +346,14 @@ _MARKER_SESSION_KEYWORDS = ("agent_session_id", "session")
 # share the parent session id (anthropics/claude-code#7881), so this ledger
 # is the only reliable identity source for the returned gate.
 _AGENT_SPAWN_TOOL_NAMES = frozenset({"Agent", "Task"})
-# Derived from the captured result text: "agentId: <lowercase-hex-ish id>".
-_AGENT_SPAWN_ID_RE = re.compile(r"\bagentId:\s*([A-Za-z0-9]{8,})")
+# The id arrives in two shapes and both must parse. A live claude -p fan-out
+# on 2026-08-05 sent PostToolUse tool_response as the structured launch record
+#   {"isAsync": true, "status": "async_launched", "agentId": "<id>", ...}
+# which reaches here JSON-encoded as '"agentId": "<id>"', while the transcript
+# and older builds carry the prose line 'agentId: <id>'. One pattern with
+# optional quotes covers both, and covers a nested id too, instead of a
+# dict-shape reader that would miss the prose form.
+_AGENT_SPAWN_ID_RE = re.compile(r'\bagentId"?\s*:\s*"?([A-Za-z0-9]{8,})')
 # A SubagentStop's transcript_path names the child: .../agent-<id>.jsonl.
 _AGENT_TRANSCRIPT_RE = re.compile(r"agent-([A-Za-z0-9]{8,})\.jsonl$")
 # Ring-buffer bound on remembered spawns; fan-outs beyond this simply lose

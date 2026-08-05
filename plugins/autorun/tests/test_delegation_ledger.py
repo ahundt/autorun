@@ -50,6 +50,21 @@ SPAWN_RESULT = (
 )
 SPAWN_ID = "a1b2c3d4e5f6a7b8c"
 
+# What a live `claude -p` fan-out actually put in PostToolUse tool_response on
+# 2026-08-05 (ids, paths, and model generalized). The prose form above is what
+# the transcript records; the hook is handed this structured launch record, so
+# an extractor that only reads the prose silently records nothing.
+SPAWN_RESULT_STRUCTURED = {
+    "isAsync": True,
+    "status": "async_launched",
+    "agentId": SPAWN_ID,
+    "description": "Delegated sweep",
+    "resolvedModel": "example-model",
+    "prompt": "Reply with the single word done",
+    "outputFile": f"/tmp/example-session/tasks/{SPAWN_ID}.output",
+    "canReadOutputFile": True,
+}
+
 
 @pytest.fixture
 def isolated_state(tmp_path, monkeypatch):
@@ -122,6 +137,18 @@ class TestSpawnLedger:
         entries = _ledger("dl-record")
         assert [entry["id"] for entry in entries] == [SPAWN_ID]
         assert entries[0]["claimed"] is False
+
+    def test_structured_launch_record_is_recorded(self, isolated_state, cfg):
+        """The live wire shape: tool_response is a dict, not the prose text.
+
+        A live fan-out recorded nothing because the extractor only matched
+        "agentId: <id>" while the hook was handed {"agentId": "<id>", ...},
+        which reaches the extractor JSON-encoded as '"agentId": "<id>"'.
+        """
+        store = ThreadSafeDB()
+        _spawn("dl-structured", store, cfg, result=SPAWN_RESULT_STRUCTURED)
+
+        assert [entry["id"] for entry in _ledger("dl-structured")] == [SPAWN_ID]
 
     def test_non_spawn_tools_never_touch_the_ledger(self, isolated_state, cfg):
         """Forgery discipline: a Bash result QUOTING a spawn payload is noise."""

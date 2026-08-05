@@ -2273,6 +2273,66 @@ class TestClaudeE2ERealMoney:
             )
 
 
+    def test_claude_live_fanout_populates_the_spawn_ledger(
+        self, tmp_path, claude_cli_check
+    ):
+        """Two live subagents must land in the delegation ledger (< $0.01).
+
+        The recorded fan-out test drives the whole lifecycle from a
+        generalized fixture; the one thing it cannot prove is that the
+        fixture still matches what the harness actually sends. This spawns a
+        real parent session that fans out two innocuous subagents, then
+        asserts autorun's PostToolUse capture recorded their ids — the
+        capture-derived regex against the live wire. SubagentStop also fires
+        for real here; the session must exit cleanly through it.
+        """
+        result, log_path = self._run_claude(
+            tmp_path,
+            "live_fanout_ledger",
+            [
+                "Use the Agent tool exactly twice, one after the other, each "
+                "with subagent_type general-purpose and the prompt: Reply "
+                "with the single word done. Do not use any other tool. After "
+                "both agents finish, reply with exactly: FANOUT-COMPLETE",
+            ],
+            timeout=300,
+        )
+
+        assert result.returncode == 0, (
+            f"live fan-out session failed (rc={result.returncode}); log: {log_path}"
+        )
+
+        # The spawned session inherits the test run's isolated AUTORUN_HOME,
+        # so its hooks persisted state where this process can read it.
+        state_root = Path(os.environ["AUTORUN_TEST_STATE_DIR"])
+        spawn_ids: set[str] = set()
+        for state_file in state_root.rglob("*.json"):
+            try:
+                data = json.loads(state_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            stack = [data]
+            while stack:
+                node = stack.pop()
+                if isinstance(node, dict):
+                    for entry in node.get("agent_spawns", []) or []:
+                        if isinstance(entry, dict) and entry.get("id"):
+                            spawn_ids.add(str(entry["id"]))
+                    stack.extend(node.values())
+                elif isinstance(node, list):
+                    stack.extend(node)
+
+        assert spawn_ids, (
+            "no agent_spawns ledger entries were captured from the live "
+            f"session — the fixture-derived extraction no longer matches the "
+            f"harness's real spawn payloads; log: {log_path}"
+        )
+        assert len(spawn_ids) >= 2, (
+            f"expected both fan-out subagents in the ledger, found {spawn_ids}; "
+            f"log: {log_path}"
+        )
+
+
 # =============================================================================
 # STATE DURABILITY THROUGH THE REAL HOOK PATH ($0.000 — no API calls)
 # =============================================================================
