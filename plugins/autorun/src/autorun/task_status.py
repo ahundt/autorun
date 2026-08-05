@@ -17,6 +17,11 @@ STATUS_POLICY = MappingProxyType({
     "in_progress": TaskStatusPolicy(blocks_stop=True, prunable=False),
     "paused": TaskStatusPolicy(blocks_stop=False, prunable=False),
     "delegated": TaskStatusPolicy(blocks_stop=False, prunable=False),
+    # A delegated task whose subagent finished: blocking again, because the
+    # parent must verify the child's results before completing — child-side
+    # claims never drive parent state. Set by autorun's SubagentStop gate,
+    # never via the harness task tools.
+    "delegation-returned": TaskStatusPolicy(blocks_stop=True, prunable=False),
     "completed": TaskStatusPolicy(
         blocks_stop=False, prunable=True, completed=True
     ),

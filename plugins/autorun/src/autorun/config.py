@@ -1132,6 +1132,11 @@ After every step and substep you must say "Wait," and execute this sequential th
     # install and status, CLI winning by name. Multiple entries may share one
     # flavor with different config dirs, e.g. codex-home + codex-work.
     "custom_harnesses": (),
+    # A delegated task whose subagent produced no SubagentStop within this
+    # many seconds reverts to pending at the next Stop check, so a dead child
+    # cannot exempt work forever. Only ledger-linked delegations are subject;
+    # a marker printed with no recorded spawn keeps today's manual semantics.
+    "delegation_ttl_seconds": 3600.0,
     # Command documents Codex may migrate into model-visible skill entries.
     #
     # Empty ON PURPOSE — and it must STAY DECLARED. codex-rs core-plugins

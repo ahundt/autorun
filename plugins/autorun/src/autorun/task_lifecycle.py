@@ -338,6 +338,23 @@ _MARKER_ARGUMENT = r"[A-Za-z0-9_.=-]+"
 # parent hook session when a marker is copied into a child-agent prompt.
 _MARKER_SESSION_KEYWORDS = ("agent_session_id", "session")
 
+# Agent-spawn identity capture. "Agent" is the spawn tool's name captured
+# from a live Claude Code tool result (2026-08-05); "Task" is the same tool's
+# name in other Claude Code builds. Only these tools' results are parsed —
+# a Bash result merely QUOTING a spawn payload must never seed the ledger,
+# the same forgery discipline the marker parser applies. Parallel subagents
+# share the parent session id (anthropics/claude-code#7881), so this ledger
+# is the only reliable identity source for the returned gate.
+_AGENT_SPAWN_TOOL_NAMES = frozenset({"Agent", "Task"})
+# Derived from the captured result text: "agentId: <lowercase-hex-ish id>".
+_AGENT_SPAWN_ID_RE = re.compile(r"\bagentId:\s*([A-Za-z0-9]{8,})")
+# A SubagentStop's transcript_path names the child: .../agent-<id>.jsonl.
+_AGENT_TRANSCRIPT_RE = re.compile(r"agent-([A-Za-z0-9]{8,})\.jsonl$")
+# Ring-buffer bound on remembered spawns; fan-outs beyond this simply lose
+# the oldest identities, which degrades to the AMBIGUOUS (return-everything)
+# path rather than to wrong completions.
+_MAX_TRACKED_SPAWNS = 16
+
 
 @cache
 def _marker_regex(template: str) -> re.Pattern:
@@ -1688,11 +1705,176 @@ class TaskLifecycle:
         # (separate event name) still enforce task completion, so auto-resume is
         # completely unaffected by this early return.
         if ctx.event == "SubagentStop":
+            # Never blocks (blocking here deadlocks the parent waiting for the
+            # child), but a finishing child ends its delegation: matching
+            # tasks flip to the blocking delegation-returned status so the
+            # parent's own next Stop asks for verification.
+            try:
+                self._return_delegations(ctx)
+            except Exception as exc:  # noqa: BLE001 - the gate must stay non-blocking
+                logger.warning("Could not process returned delegations: %s", exc)
             return None
         if task_pause_allows_stop(ctx):
             return ctx.allow()
 
+        try:
+            self._revert_expired_delegations(ctx)
+        except Exception as exc:  # noqa: BLE001 - liveness fallback must not break Stop
+            logger.warning("Could not check delegation TTLs: %s", exc)
         return self._check_stop_with_delegation(ctx)
+
+    def _return_delegations(self, ctx) -> list[str]:
+        """Flip delegated tasks whose subagent finished to delegation-returned.
+
+        Identity, in order (claude-code#7881 bars session-id identity): the
+        SubagentStop transcript_path's ``agent-<id>.jsonl`` name; else the
+        single live ledger entry; else AMBIGUOUS — flip EVERY ledger-linked
+        delegation, because over-asking for verification is safe and
+        wrong-completing is not. One state commit, O(tasks), idempotent, so
+        fan-outs firing SubagentStop repeatedly re-flip nothing.
+        """
+        finished = None
+        match = _AGENT_TRANSCRIPT_RE.search(str(ctx.transcript_path or ""))
+        if match:
+            finished = match.group(1)
+
+        returned: list[str] = []
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            metadata = copy.deepcopy(state.get("session_metadata", {}))
+            ledger = list(metadata.get("agent_spawns", []))
+            live_ids = {
+                str(entry.get("id"))
+                for entry in ledger
+                if entry.get("claimed") and not entry.get("returned")
+            }
+            if finished is None and len(live_ids) == 1:
+                finished = next(iter(live_ids))
+            target_ids = {finished} if finished else live_ids
+            if not target_ids:
+                return []
+
+            tasks = state.get("tasks", {})
+            now = time.time()
+            for task_id, task in tasks.items():
+                if not isinstance(task, dict) or task.get("status") != "delegated":
+                    continue
+                agent = (task.get("metadata") or {}).get("delegated_to_session")
+                if agent not in target_ids:
+                    continue
+                task["status"] = "delegation-returned"
+                task["updated_at"] = now
+                returned.append(str(task_id))
+                if repository is not None:
+                    repository.put_task(self.global_key, str(task_id), task, self._state_lock_timeout)
+
+            if returned:
+                for entry in ledger:
+                    if str(entry.get("id")) in target_ids:
+                        entry["returned"] = True
+                metadata["agent_spawns"] = ledger
+                state["tasks"] = tasks
+                state["session_metadata"] = metadata
+
+        for task_id in returned:
+            self.log_event(
+                "DELEGATION_RETURNED",
+                f"task#{task_id}",
+                "subagent finished; verification required",
+                "delegation-returned",
+            )
+        if returned:
+            ctx.add_chain_notification(
+                "Subagent returned — critically assess its results before "
+                "accepting them; subagents make mistakes. Then TaskUpdate("
+                'status="completed") with the evidence, or re-delegate, or '
+                "ignore if no longer needed: "
+                + ", ".join(f"#{task_id}" for task_id in returned),
+                channel="both",
+            )
+        return returned
+
+    def _revert_expired_delegations(self, ctx) -> list[str]:
+        """Liveness fallback: a dead subagent cannot exempt its task forever.
+
+        A ledger-linked delegation whose spawn produced no SubagentStop within
+        the TTL reverts to pending with a notice. Manual delegations (no
+        recorded spawn) keep their open-ended semantics.
+        """
+        ttl = float(CONFIG.get("delegation_ttl_seconds", 0) or 0)
+        if ttl <= 0:
+            return []
+        now = time.time()
+        reverted: list[str] = []
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            metadata = copy.deepcopy(state.get("session_metadata", {}))
+            ledger = {
+                str(entry.get("id")): entry
+                for entry in metadata.get("agent_spawns", [])
+            }
+            tasks = state.get("tasks", {})
+            for task_id, task in tasks.items():
+                if not isinstance(task, dict) or task.get("status") != "delegated":
+                    continue
+                task_metadata = task.get("metadata") or {}
+                agent = task_metadata.get("delegated_to_session")
+                entry = ledger.get(str(agent)) if agent else None
+                if entry is None or entry.get("returned"):
+                    continue
+                delegated_at = task_metadata.get("delegated_at") or entry.get("at") or now
+                if now - float(delegated_at) < ttl:
+                    continue
+                task["status"] = "pending"
+                task["updated_at"] = now
+                reverted.append(str(task_id))
+                if repository is not None:
+                    repository.put_task(self.global_key, str(task_id), task, self._state_lock_timeout)
+            if reverted:
+                state["tasks"] = tasks
+        for task_id in reverted:
+            self.log_event(
+                "DELEGATION_EXPIRED",
+                f"task#{task_id}",
+                "no SubagentStop within delegation_ttl_seconds; reverted to pending",
+                "pending",
+            )
+        if reverted:
+            ctx.add_chain_notification(
+                "Delegated subagent produced no completion within the TTL; "
+                "reverted to pending: " + ", ".join(f"#{task_id}" for task_id in reverted),
+                channel="both",
+            )
+        return reverted
+
+    def record_agent_spawn(self, ctx) -> None:
+        """Remember which child agent took work — Python-side, no transcription.
+
+        Runs on every PostToolUse, so the tool-name allowlist gates BEFORE any
+        state I/O: non-spawn events cost one frozenset lookup. The recorded id
+        is what lets a later delegation marker attach automatically and the
+        SubagentStop gate know which delegation returned.
+        """
+        if ctx.tool_name not in _AGENT_SPAWN_TOOL_NAMES:
+            return
+        match = _AGENT_SPAWN_ID_RE.search(ctx.tool_result_str)
+        if not match:
+            return
+        agent_id = match.group(1)
+        try:
+            with self._session_state() as state:
+                metadata = copy.deepcopy(state.get("session_metadata", {}))
+                ledger = list(metadata.get("agent_spawns", []))
+                if any(entry.get("id") == agent_id for entry in ledger):
+                    return
+                ledger.append(
+                    {"id": agent_id, "at": time.time(), "claimed": False, "returned": False}
+                )
+                del ledger[:-_MAX_TRACKED_SPAWNS]
+                metadata["agent_spawns"] = ledger
+                state["session_metadata"] = metadata
+        except Exception as exc:  # noqa: BLE001 - capture must never break the hook
+            logger.warning("Could not record agent spawn: %s", exc)
 
     def apply_delegation_markers(self, ctx, blocking_tasks: "List[Dict] | None" = None):
         """Honor any delegation markers in what the AI just said.
@@ -1873,7 +2055,12 @@ class TaskLifecycle:
             tid = t["id"]
             subject = t["subject"]
             status = t["status"]
-            status_icon = {"in_progress": "🔄", "pending": "⏸️", "delegated": "🤝"}.get(status, "❓")
+            status_icon = {
+                "in_progress": "🔄",
+                "pending": "⏸️",
+                "delegated": "🤝",
+                "delegation-returned": "📥",
+            }.get(status, "❓")
             task_lines.append(f"{len(task_lines) + 1}. #{tid}: {subject} ({status_icon})")
 
         task_list = " ".join(task_lines)
@@ -1885,6 +2072,19 @@ class TaskLifecycle:
             f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
             f"7. {_stale_escape_sentence(_task_cli_hint(ctx), threshold=min_consecutive, marker=_stale_clear_marker_example())}\n"
         )
+
+        returned_tasks = [t for t in incomplete_tasks if t.get("status") == "delegation-returned"]
+        if returned_tasks:
+            task_ignore = format_command_for_cli("/ar:task ignore <id>", ctx.cli_type)
+            injection += (
+                "Delegation returned (📥): critically assess each returned "
+                "task's results — subagents make mistakes — and verify before "
+                'accepting. Then TaskUpdate(status="completed") with the '
+                "evidence, or re-delegate by printing the delegation marker "
+                f"again, or ignore it with {task_ignore} if no longer needed: "
+                + ", ".join(f"#{t['id']}" for t in returned_tasks[:max_tasks])
+                + "\n"
+            )
 
         if ghost_enabled and consecutive >= min_consecutive:
             marker_template = CONFIG["ghost_clear_marker_template"]
@@ -2060,6 +2260,25 @@ class TaskLifecycle:
             if marker_identity in consumed:
                 return []
 
+            # A marker with no explicit id claims the latest unclaimed spawn:
+            # the ledger is the reliable identity source, since the AI rarely
+            # has the child id to transcribe (claude-code#7881 bars session
+            # identity too). No spawn recorded → today's manual semantics.
+            ledger = list(metadata.get("agent_spawns", []))
+            if session is None:
+                unclaimed = [entry for entry in ledger if not entry.get("claimed")]
+                if unclaimed:
+                    claimed_entry = unclaimed[-1]
+                    claimed_entry["claimed"] = True
+                    session = str(claimed_entry["id"])
+                    metadata["agent_spawns"] = ledger
+            else:
+                for entry in ledger:
+                    if str(entry.get("id")) == str(session):
+                        entry["claimed"] = True
+                        metadata["agent_spawns"] = ledger
+                        break
+
             tasks = state.get("tasks", {}) if repository is None else None
             for task_id in requested:
                 if allowed is not None and task_id not in allowed:
@@ -2074,6 +2293,7 @@ class TaskLifecycle:
                 task["status"] = "delegated"
                 task["updated_at"] = now
                 task_metadata = task.setdefault("metadata", {})
+                task_metadata["delegated_at"] = now
                 if session:
                     task_metadata["delegated_to_session"] = str(session)
                 else:
@@ -2917,6 +3137,14 @@ def register_hooks(app_instance) -> None:
             reset_stop_sequence(ctx)
         except Exception as error:
             logger.warning(f"Task Stop-sequence prompt reset error: {error}")
+        return None
+
+    @app_instance.on("PostToolUse")
+    def record_agent_spawn_identity(ctx: EventContext) -> Optional[Dict]:
+        """Capture the child id from an agent-spawn tool result (ledger)."""
+        if not is_enabled():
+            return None
+        TaskLifecycle(ctx=ctx).record_agent_spawn(ctx)
         return None
 
     @app_instance.on("PostToolUse")
