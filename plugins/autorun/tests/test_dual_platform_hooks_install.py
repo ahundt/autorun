@@ -1787,3 +1787,87 @@ class TestGeminiFamilySharedSkillRoute:
 
         assert keep_native is True
         assert not (tmp_path / ".agents" / "skills" / "cache").exists()
+
+
+class TestAssetOnlySkillDirsNeverShip:
+    """No route may publish a skills/<name>/ directory lacking SKILL.md.
+
+    Every harness reads each child of skills/ as a skill and warns when
+    SKILL.md is absent — the 2026-08-05 harness incident. main's e838707e fixed
+    that for the Codex bundle only. The Gemini-family route copied the whole
+    tree unfiltered, and _count_skill_dirs counts only VALID directories, so the
+    reported number stayed correct while the directory content was wrong: the
+    count could never surface this.
+
+    Verified live before the fix: the empty untracked directory
+    plugins/autorun/skills/ai-session-search, left behind when f0d1a1a4 deleted
+    a SKILL.md (git removes files, not directories), was present in
+    ~/.gemini/extensions/ar/skills, ~/.qwen/extensions/ar/skills, and
+    ~/.claude/plugins/cache/autorun/ar/<version>/skills.
+    """
+
+    def _plugin_with_an_asset_only_dir(self, tmp_path):
+        from autorun import install as inst
+
+        plugin_dir = tmp_path / "plugins" / "autorun"
+        (plugin_dir / "skills" / "real").mkdir(parents=True)
+        (plugin_dir / "skills" / "real" / "SKILL.md").write_text(
+            "---\nname: real\ndescription: a real skill\n---\n", encoding="utf-8"
+        )
+        (plugin_dir / "skills" / "asset-only").mkdir()
+        (plugin_dir / "skills" / "asset-only" / "reference.md").write_text("x", encoding="utf-8")
+        (plugin_dir / "skills" / "empty-leftover").mkdir()
+        return inst, plugin_dir
+
+    def test_the_shared_predicate_rejects_both_shapes(self, tmp_path):
+        inst, plugin_dir = self._plugin_with_an_asset_only_dir(tmp_path)
+        skills = plugin_dir / "skills"
+
+        assert inst.is_shippable_skill_dir(skills / "real")
+        assert not inst.is_shippable_skill_dir(skills / "asset-only")
+        assert not inst.is_shippable_skill_dir(skills / "empty-leftover")
+
+    def test_gemini_family_sync_prunes_directories_without_a_skill_md(self, tmp_path):
+        """The route main's Codex fix never reached."""
+        inst, plugin_dir = self._plugin_with_an_asset_only_dir(tmp_path)
+        ext_dir = tmp_path / "ext"
+        ext_dir.mkdir()
+
+        _commands, synced = inst._sync_gemini_extension_resources(
+            plugin_dir, ext_dir, "ar", "gemini", include_skills=True
+        )
+
+        shipped = {p.name for p in (ext_dir / "skills").iterdir() if p.is_dir()}
+        assert shipped == {"real"}, f"unshippable directories reached the extension: {shipped}"
+        assert synced == 1
+
+    def test_codex_bundle_still_excludes_them(self, tmp_path):
+        """main's original fix must survive the shared-predicate refactor."""
+        inst, plugin_dir = self._plugin_with_an_asset_only_dir(tmp_path)
+        staged = tmp_path / "staged"
+
+        inst._copy_codex_plugin_source(plugin_dir, staged, include_skills=True)
+
+        shipped = {p.name for p in (staged / "skills").iterdir() if p.is_dir()}
+        assert shipped == {"real"}, f"unshippable directories reached the Codex bundle: {shipped}"
+
+    def test_shared_agents_root_excludes_them(self, tmp_path):
+        """The ~/.agents/skills publisher is the third route."""
+        inst, plugin_dir = self._plugin_with_an_asset_only_dir(tmp_path)
+
+        sources = inst._collect_plugin_skill_sources([plugin_dir])
+
+        assert set(sources) == {"real"}, f"unshippable directories would be published: {set(sources)}"
+
+    def test_the_repository_ships_no_asset_only_skill_directory(self):
+        """Source hygiene: an empty directory here reaches every unfiltered route."""
+        offenders = sorted(
+            child.name
+            for child in (REPO_ROOT / "plugins" / "autorun" / "skills").iterdir()
+            if child.is_dir() and not (child / "SKILL.md").is_file()
+        )
+        assert not offenders, (
+            "plugins/autorun/skills/ has directories with no SKILL.md. Deleting a "
+            "skill's SKILL.md leaves the directory behind, and any route without a "
+            f"filter publishes it as a broken skill: {offenders}"
+        )

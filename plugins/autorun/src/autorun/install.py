@@ -1315,6 +1315,25 @@ def staged_replacement(
                 raise
 
 
+def is_shippable_skill_dir(path: Path) -> bool:
+    """Return whether ``path`` is a directory a harness may load as a skill.
+
+    One predicate for every route. A harness reads each child of ``skills/`` as
+    a skill and warns when ``SKILL.md`` is absent, so an asset-only or empty
+    directory must never be published. Deleting a skill's ``SKILL.md`` leaves
+    the directory behind — git removes files, not directories — which is how
+    ``skills/ai-session-search/`` survived as an empty directory and reached
+    three installed roots.
+
+    Named without a leading underscore because the copy paths, the shared-root
+    publisher, and the bridge all gate on it; a per-caller re-implementation is
+    what let the Codex route get fixed while its siblings did not.
+
+    Complexity: O(1), one stat.
+    """
+    return path.is_dir() and (path / "SKILL.md").is_file()
+
+
 def _copy_tree(src: Path, dst: Path) -> bool:
     """Mirror a plugin-owned resource tree into an installed location."""
     if not src.is_dir():
@@ -1349,7 +1368,7 @@ def _skill_dir_names(skills_dir: Path, *, owned_only: bool = False) -> set[str]:
     return {
         child.name
         for child in skills_dir.iterdir()
-        if child.is_dir() and (child / "SKILL.md").is_file() and (not owned_only or read_owned_marker(child) is not None)
+        if is_shippable_skill_dir(child) and (not owned_only or read_owned_marker(child) is not None)
     }
 
 
@@ -1418,6 +1437,14 @@ def _sync_gemini_extension_resources(
     skills_synced = 0
     if include_skills:
         if _copy_tree(plugin_dir / "skills", skills_dir):
+            # Gemini-family harnesses read every child of skills/ as a skill, so
+            # prune the ones without a SKILL.md exactly as the Codex bundle does.
+            # _count_skill_dirs below counts only valid directories, which means
+            # an unpruned tree reports a correct number while shipping a broken
+            # directory — the count cannot detect this and never could.
+            for child in sorted(skills_dir.iterdir()):
+                if child.is_dir() and not is_shippable_skill_dir(child):
+                    shutil.rmtree(child)
             skills_synced = _count_skill_dirs(skills_dir)
     else:
         if skills_dir.is_dir():
@@ -2928,7 +2955,7 @@ def _collect_plugin_skill_sources(
         if not src_root.is_dir():
             continue
         for skill_src in sorted(src_root.iterdir()):
-            if not skill_src.is_dir() or not (skill_src / "SKILL.md").is_file():
+            if not is_shippable_skill_dir(skill_src):
                 continue
             previous = skill_sources.get(skill_src.name)
             if previous is not None and previous.resolve() != skill_src.resolve():
@@ -3473,7 +3500,7 @@ def bridge_agents_skills(
     fell_back = False
 
     for source in sorted(source_root.iterdir()):
-        if not source.is_dir() or not (source / "SKILL.md").is_file():
+        if not is_shippable_skill_dir(source):
             continue
         name = source.name
         destination = skills_dir / name
@@ -3672,7 +3699,7 @@ def _copy_codex_plugin_source(
             skipped.update(
                 name
                 for name in names
-                if (source / name).is_dir() and not (source / name / "SKILL.md").is_file()
+                if (source / name).is_dir() and not is_shippable_skill_dir(source / name)
             )
         return skipped
 
