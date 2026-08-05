@@ -109,12 +109,11 @@ def claim_message_delivery(
         return True
 
     try:
-        claimed_at = time.time() if now is None else float(now)
+        explicit_now = None if now is None else float(now)
     except (TypeError, ValueError):
         return True
-    if not math.isfinite(claimed_at):
+    if explicit_now is not None and not math.isfinite(explicit_now):
         return True
-    expires_at = claimed_at + window
     digest = _digest(ctx, delivery, message)
     cap = _entry_cap()
     if cap is None:
@@ -122,6 +121,17 @@ def claim_message_delivery(
     outcome = {"deliver": True}
 
     def claim(current):
+        # The clock is read HERE, after state_update holds the store lock. A
+        # pre-lock time.time() plus a lock wait made the stored claim look
+        # like it came from the future: the backward-travel guard below
+        # discarded it, the warning delivered again, and the replacement
+        # claim carried an older timestamp inviting a third delivery
+        # (reproduced 2026-08-04 — three deliveries of one git warning from
+        # four concurrent hook processes). Read under the lock, timestamp
+        # order matches lock order, so the guard fires only on genuine
+        # wall-clock steps. The explicit ``now`` stays for tests.
+        claimed_at = time.time() if explicit_now is None else explicit_now
+        expires_at = claimed_at + window
         raw = current if isinstance(current, dict) else {}
         active: dict[str, list[float]] = {}
         for key, entry in raw.items():

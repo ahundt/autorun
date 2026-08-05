@@ -106,6 +106,46 @@ def test_exactly_one_process_claim_wins(delivery_config):
     assert outcomes.count(False) == 3
 
 
+def test_claim_timestamp_is_read_inside_the_locked_updater(delivery_config, monkeypatch):
+    """time.time() must run under the store lock, not before it.
+
+    A pre-lock timestamp plus a lock wait makes the stored claim look like it
+    came from the future: the backward-clock guard discards it, the same
+    warning delivers again, and the replacement claim carries an OLDER
+    timestamp that invites a third delivery. Reproduced 2026-08-04 with four
+    real hook processes racing one git warning — three deliveries. Timestamp
+    order equals lock order only when the clock is read inside the updater;
+    the explicit ``now`` parameter remains for deterministic tests.
+    """
+    from autorun import message_delivery as md
+
+    calls = {"inside": 0, "outside": 0}
+    state = {"updating": False}
+
+    class TrackingContext(AtomicContext):
+        def state_update(self, name, updater, default=None):
+            def tracked(current):
+                state["updating"] = True
+                try:
+                    return updater(current)
+                finally:
+                    state["updating"] = False
+
+            return super().state_update(name, tracked, default)
+
+    class ClockShim:
+        @staticmethod
+        def time():
+            calls["inside" if state["updating"] else "outside"] += 1
+            return 1000.0
+
+    monkeypatch.setattr(md, "time", ClockShim)
+
+    assert claim_message_delivery(TrackingContext(), _warning(), "Git commit rules") is True
+    assert calls["outside"] == 0, "claim timestamp was captured before the lock"
+    assert calls["inside"] >= 1, "claim never read the clock at all"
+
+
 def test_expiry_reenables_delivery(delivery_config):
     ctx = AtomicContext()
 
