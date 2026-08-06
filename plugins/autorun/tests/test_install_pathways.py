@@ -255,6 +255,38 @@ class TestInstallToCachePathResolution:
     which contains plugins/ subdirectory with individual plugin directories.
     """
 
+    def test_install_to_cache_leaves_no_backup_behind(self, tmp_path, monkeypatch):
+        """A successful cache install must not retain the previous version.
+
+        The old form moved the existing cache to `<version>.backup`, copied the
+        new tree in, and returned — so every reinstall permanently kept a full
+        copy of the version before it. staged_replacement already implements
+        this transaction and cleans up on every exit path, including failure.
+        """
+        from autorun import install
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        source = tmp_path / "marketplace" / "plugins" / "autorun"
+        (source / ".claude-plugin").mkdir(parents=True)
+        (source / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "ar", "version": "9.9.9"}), encoding="utf-8"
+        )
+        (source / "payload.txt").write_text("one\n", encoding="utf-8")
+
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: tmp_path / "marketplace")
+        monkeypatch.setattr(install, "_register_in_json", lambda *a, **k: True)
+
+        assert install._install_to_cache("autorun")
+        (source / "payload.txt").write_text("two\n", encoding="utf-8")
+        assert install._install_to_cache("autorun")
+
+        cache_root = tmp_path / ".claude" / "plugins" / "cache" / install.MARKETPLACE / "autorun"
+        leftovers = [p.name for p in cache_root.iterdir() if p.name.endswith(".backup")]
+        assert not leftovers, f"cache install kept {leftovers}"
+        assert (cache_root / "9.9.9" / "payload.txt").read_text(encoding="utf-8") == "two\n"
+
     def test_install_to_cache_finds_own_plugin(self):
         """Verify _install_to_cache resolves autorun plugin directory correctly."""
         install = get_install_module()
@@ -1328,7 +1360,11 @@ class TestAntigravityImportSync:
         (target / "version.txt").write_text("previous\n", encoding="utf-8")
         monkeypatch.setattr(install.Path, "home", lambda: home)
 
-        def fake_stage(_plugin, staged):
+        # Accepts the plugin name because the bundle stager is always called
+        # with it now: the caller used to branch on plugin_name == "ar" and
+        # drop the argument, but both branches produced the same call since
+        # the parameter already defaults to "ar".
+        def fake_stage(_plugin, staged, _name="ar"):
             staged.mkdir(parents=True)
             (staged / "version.txt").write_text("next\n", encoding="utf-8")
             return (1, 1)
@@ -1382,7 +1418,9 @@ class TestAntigravityImportSync:
 
         synced = []
 
-        def fake_sync(plugin):
+        # Same reason as fake_stage: the caller no longer drops the plugin
+        # name for "ar", because the parameter already defaults to it.
+        def fake_sync(plugin, _name="ar"):
             synced.append(plugin)
             return (0, 0)
 

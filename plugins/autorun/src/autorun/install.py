@@ -357,21 +357,12 @@ def get_python_runner() -> list[str]:
 # =============================================================================
 
 
-@dataclass(frozen=True)
-class ErrorFormatter:
-    """Centralized error message formatting with actionable remediation.
+# Error templates and their formatters. These were a frozen dataclass that was
+# never instantiated, holding two constants and two staticmethods — a class
+# bought nothing over module-level names, and cost every caller a lookup
+# through a type that had no state.
 
-    All error messages follow WOLOG principle: easy to use correctly,
-    hard to use incorrectly. Each error includes:
-    1. Clear description of the problem
-    2. Multiple solution options (ordered by recommendation)
-    3. Troubleshooting section with common pitfalls
-
-    This is a frozen dataclass to ensure immutability and prevent
-    accidental modification of error templates.
-    """
-
-    MARKETPLACE_NOT_FOUND = """
+_MARKETPLACE_NOT_FOUND = """
 Could not find marketplace root (.claude-plugin/marketplace.json).
 
 This usually means autorun is installed as a package, not from source.
@@ -398,7 +389,7 @@ If you're seeing this after 'pip install autorun':
 Need help? https://github.com/ahundt/autorun/issues
 """
 
-    UV_NOT_FOUND = """
+_UV_NOT_FOUND = """
 UV not found in PATH.
 
 ━━━ INSTALL UV ━━━
@@ -418,28 +409,17 @@ Alternatively, use pip fallback:
 Docs: https://docs.astral.sh/uv/getting-started/installation/
 """
 
-    @staticmethod
-    def marketplace_not_found() -> str:
-        """Format marketplace root not found error with UV/pip pathways.
+def marketplace_not_found() -> str:
+    """Return the marketplace-root failure with both install pathways."""
+    install_cmd = " ".join(
+        [*get_python_runner(), "-m", "plugins.autorun.src.autorun.install", "--install", "--force"]
+    )
+    return _MARKETPLACE_NOT_FOUND.format(install_command=install_cmd)
 
-        Returns:
-            Formatted error message with installation commands
-        """
-        runner = get_python_runner()
-        install_cmd = " ".join([*runner, "-m", "plugins.autorun.src.autorun.install", "--install", "--force"])
-        return ErrorFormatter.MARKETPLACE_NOT_FOUND.format(install_command=install_cmd)
 
-    @staticmethod
-    def uv_not_found(pip_fallback: str) -> str:
-        """Format UV not found error with installation instructions.
-
-        Args:
-            pip_fallback: Pip fallback command to show
-
-        Returns:
-            Formatted error message with UV install instructions
-        """
-        return ErrorFormatter.UV_NOT_FOUND.format(pip_fallback_command=pip_fallback)
+def uv_not_found(pip_fallback: str) -> str:
+    """Return the missing-uv failure with per-platform install instructions."""
+    return _UV_NOT_FOUND.format(pip_fallback_command=pip_fallback)
 
 
 # =============================================================================
@@ -493,8 +473,6 @@ def find_marketplace_root() -> Path:
         for dist_info in dist_info_dirs:
             direct_url_file = dist_info / "direct_url.json"
             if direct_url_file.exists():
-                import json
-
                 data = json.loads(direct_url_file.read_text())
                 if "dir_info" in data and "editable" in data["dir_info"]:
                     # This is an editable install - get the source directory
@@ -644,7 +622,7 @@ def find_marketplace_root() -> Path:
                 return version_dir
 
     # No marketplace root found - provide clear guidance
-    raise FileNotFoundError(ErrorFormatter.marketplace_not_found())
+    raise FileNotFoundError(marketplace_not_found())
 
 
 def _read_plugin_version(plugin_dir: Path) -> str:
@@ -744,8 +722,6 @@ def _parse_selection(selection: str) -> list[str]:
         root = find_marketplace_root()
         manifest = root / ".claude-plugin" / "marketplace.json"
         if manifest.exists():
-            import json
-
             with open(manifest, encoding="utf-8") as f:
                 data = json.load(f)
                 valid_plugins = [p["name"] for p in data.get("plugins", [])]
@@ -784,7 +760,7 @@ def _check_uv_env(plugin_dir: Path) -> CmdResult:
     if not shutil.which("uv"):
         return CmdResult(
             False,
-            ErrorFormatter.uv_not_found("pip install -e . && python -m autorun --install"),
+            uv_not_found("pip install -e . && python -m autorun --install"),
         )
 
     if not (plugin_dir / "pyproject.toml").exists():
@@ -909,8 +885,6 @@ def _sync_dependencies() -> CmdResult:
 
     # Fallback: use pip install with current python (works for any environment)
     try:
-        import subprocess
-
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", "bashlex"],
             capture_output=True,
@@ -1315,6 +1289,44 @@ def staged_replacement(
                 raise
 
 
+def remove_owned_tree(target: Path) -> bool:
+    """Delete a directory autorun owns, restoring it if the delete fails.
+
+    The removal twin of :func:`staged_replacement`, and the same transaction:
+    move the target aside under the install lock, delete the copy, and move it
+    back if deletion raises. The harness therefore never observes a
+    half-deleted directory at the path it reads from.
+
+    Written once because it existed three times — ``_prune_retired_shared_skills``
+    and ``_migrate_owned_shared_skill_names`` each inlined this exact sequence,
+    and ``prune_owned_skills`` inlined a ``shutil.rmtree(..., ignore_errors=True)``
+    instead, which silently reported success when the delete failed and left
+    the directory behind.
+
+    Complexity: O(bytes) for the deleted tree; one rename in and at most one
+    rename back.
+
+    Returns:
+        True when the directory was removed, False when it was already absent.
+    """
+    parent = target.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(parent / _INSTALL_LOCK_NAME):
+        if not target.is_dir() or target.is_symlink():
+            return False
+        with tempfile.TemporaryDirectory(
+            prefix=f".autorun-remove-{target.name}-", dir=parent
+        ) as tmp:
+            quarantined = Path(tmp) / target.name
+            os.replace(target, quarantined)
+            try:
+                shutil.rmtree(quarantined)
+            except Exception:
+                os.replace(quarantined, target)
+                raise
+    return True
+
+
 def is_shippable_skill_dir(path: Path) -> bool:
     """Return whether ``path`` is a directory a harness may load as a skill.
 
@@ -1439,19 +1451,9 @@ def prune_owned_skills(
         marker = read_owned_marker(entry)
         if marker is None or (marker.plugin and marker.plugin != plugin_name):
             continue
-        shutil.rmtree(entry, ignore_errors=True)
-        removed.append(entry.name)
+        if remove_owned_tree(entry):
+            removed.append(entry.name)
     return tuple(removed)
-
-
-def _count_skill_dirs(skills_dir: Path) -> int:
-    """Count top-level skill directories in a copied skills tree.
-
-    Deliberately thin: "what counts as a skill directory" is decided in exactly
-    one place, :func:`_skill_dir_names`, so a change to that rule cannot leave
-    the count and the listing disagreeing.
-    """
-    return len(_skill_dir_names(skills_dir))
 
 
 def _skill_dir_names(skills_dir: Path, *, owned_only: bool = False) -> set[str]:
@@ -1550,41 +1552,58 @@ def _sync_gemini_extension_resources(
     return (commands_generated, skills_synced)
 
 
-def _publish_shared_skills_for_route(
+def publish_shared_skills(
     plugin_dirs: Path | list[Path] | tuple[Path, ...],
+    placement: "SkillPlacement | str",
+    cli_names: Iterable[str],
     *,
-    publish_shared: bool,
-) -> bool:
-    """Publish shared skills when the route calls for it; report keep-native.
+    platforms: Mapping[str, Platform] | None = None,
+) -> tuple[str, ...]:
+    """Publish the shared skills root once, for the whole install.
 
-    Install order is publish, verify, then remove the other route. Returning
-    True means the caller must keep its native copy: either the route never
-    used the shared root, or a user-authored skill of the same name blocked
-    publication. Dropping the native copy in that second case would leave the
-    harness with no route to that skill at all.
+    The shared root is shared, so it belongs to the install rather than to any
+    one harness. It was previously written from inside two harness installers,
+    which meant ForgeCode and OpenCode — whose only route is that root and
+    whose installers write no skills at all — received skills solely as a side
+    effect of Codex, Gemini or Qwen being installed in the same run. Targeting
+    only those two published nothing and reported success.
 
-    Complexity: O(S) skills; delegates the copy to
-    :func:`_install_shared_agent_skills`.
+    Publishes when at least one named harness resolves to the shared route, so
+    an install that touches only native-route harnesses leaves the directory
+    alone.
+
+    Complexity: O(H + S) for H harnesses and S skills.
+
+    Returns:
+        Names left untouched because a user authored something with that name.
+        A caller whose harness would have used the shared route must keep its
+        native copy for those, or the skill reaches it by no route at all.
     """
-    if not publish_shared:
-        return True
+    registry = PLATFORMS if platforms is None else platforms
+    if isinstance(placement, str):
+        placement = SkillPlacement(default=placement)
+
+    wanted = any(
+        resolve_skill_routes(platform, placement.for_harness(name))[0]
+        for name in cli_names
+        if (platform := registry.get(name)) is not None
+    )
+    if not wanted:
+        return ()
 
     installed, conflicts = _install_shared_agent_skills(plugin_dirs)
     if installed:
-        shared_root = shared_agents_skills_dir()
         print(
-            f"✓ Published {len(installed)} skill(s) to {shared_root}/: "
-            f"{', '.join(installed)}"
+            f"✓ Published {len(installed)} skill(s) to "
+            f"{shared_agents_skills_dir()}/: {', '.join(installed)}"
         )
     if conflicts:
-        print(
-            f"  Left untouched (user-authored, same name): {', '.join(conflicts)}"
-        )
+        print(f"  Left untouched (user-authored, same name): {', '.join(conflicts)}")
         print(
             "  Keeping the harness-native skill copy so those skills stay "
             "reachable. Rename or move one side, then re-run the install."
         )
-    return bool(conflicts)
+    return conflicts
 
 
 def _drop_gemini_manifest_skills(ext_dir: Path) -> None:
@@ -1645,11 +1664,7 @@ def _install_antigravity_cli_bundle(
         raise OSError("antigravity platform declares no extensions directory")
     target = extensions_dir / plugin_name
     with staged_replacement(target, prefix=".autorun-antigravity-") as staged:
-        counts = (
-            _stage_antigravity_native_bundle(plugin_dir, staged)
-            if plugin_name == "ar"
-            else _stage_antigravity_native_bundle(plugin_dir, staged, plugin_name)
-        )
+        counts = _stage_antigravity_native_bundle(plugin_dir, staged, plugin_name)
         # Claimed inside the staging scope so the marker is published in the
         # same atomic rename as the bundle it describes.
         write_owned_marker(staged, plugin=_plugin_registry_name(plugin_dir))
@@ -1774,16 +1789,19 @@ def _install_to_cache(plugin_name: str) -> bool:
     cache_dir = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / plugin_name / version
     cache_dir.parent.mkdir(parents=True, exist_ok=True)
 
-    # Backup existing cache
-    if cache_dir.exists():
-        backup = cache_dir.with_suffix(".backup")
-        if backup.exists():
-            shutil.rmtree(backup)
-        shutil.move(str(cache_dir), str(backup))
-
-    # Copy plugin to cache (ignore build artifacts)
+    # staged_replacement, not a hand-rolled backup. The previous form moved the
+    # existing cache to `cache_dir.with_suffix(".backup")` and never removed it,
+    # so every reinstall permanently retained a full copy of the version before
+    # it. with_suffix was also wrong for a dotted version: "9.9.9" became
+    # "9.9.backup", and two versions differing only in the last segment shared
+    # one backup name. The transaction handles both, and rolls back on failure.
     try:
-        shutil.copytree(plugin_dir, cache_dir, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".coverage", ".venv", ".pytest_cache"))
+        with staged_replacement(cache_dir, prefix=f".autorun-cache-{version}-") as staged:
+            shutil.copytree(
+                plugin_dir,
+                staged,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".coverage", ".venv", ".pytest_cache"),
+            )
     except OSError as e:
         logger.error(f"Failed to copy {plugin_name} to cache: {e}")
         return False
@@ -1962,6 +1980,7 @@ def _install_for_gemini(
     plugins: list[str],
     force: bool = False,
     skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
+    shared_conflicts: tuple[str, ...] = (),
 ) -> tuple[bool, str]:
     """Install selected plugins for the legacy Gemini CLI.
 
@@ -1976,6 +1995,7 @@ def _install_for_gemini(
         Tuple of (success: bool, message: str)
     """
     return _install_gemini_family_extensions(
+        shared_conflicts=shared_conflicts,
         marketplace_root=marketplace_root,
         plugins=plugins,
         force=force,
@@ -1992,6 +2012,7 @@ def _install_for_qwen(
     plugins: list[str],
     force: bool = False,
     skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
+    shared_conflicts: tuple[str, ...] = (),
 ) -> tuple[bool, str]:
     """Install selected plugins for Qwen Code.
 
@@ -2001,6 +2022,7 @@ def _install_for_qwen(
     commands, hooks, and skills stay single-owned.
     """
     return _install_gemini_family_extensions(
+        shared_conflicts=shared_conflicts,
         marketplace_root=marketplace_root,
         plugins=plugins,
         force=force,
@@ -2105,6 +2127,7 @@ def _install_gemini_family_extensions(
     install_hint: str,
     hook_cli_name: str | None = None,
     skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
+    shared_conflicts: tuple[str, ...] = (),
     refresh_only: bool = False,
 ) -> tuple[bool, str]:
     """Install Gemini-compatible extensions into Gemini-family CLIs.
@@ -2165,10 +2188,8 @@ def _install_gemini_family_extensions(
     marketplace_json = marketplace_root / ".claude-plugin" / "marketplace.json"
     if marketplace_json.exists():
         try:
-            import json as _json
-
             with open(marketplace_json, encoding="utf-8") as _f:
-                _mdata = _json.load(_f)
+                _mdata = json.load(_f)
             for _entry in _mdata.get("plugins", []):
                 _entry_name = _entry.get("name", "")
                 _source = _entry.get("source", "")
@@ -2240,12 +2261,11 @@ def _install_gemini_family_extensions(
     print()
     print(f"Installing {len(plugins_to_install)} plugin(s) for {display_name}...")
 
-    # Publish the shared route before any native copy is dropped, and keep the
-    # native copy if publication was blocked by a user-authored skill.
-    if _publish_shared_skills_for_route(
-        [plugin_dir for plugin_dir, _src in plugins_to_install],
-        publish_shared=publish_shared,
-    ):
+    # The shared root is published once by install_plugins, before any harness
+    # installer runs. Publication is blocked for a name the user authored
+    # there, and this extension must then keep its own copy or the skill
+    # reaches the harness by no route at all.
+    if shared_conflicts:
         include_skills = True
 
     success_count = 0
@@ -2734,7 +2754,7 @@ def probe_hook_python_architecture(
         return RuntimeArchitectureProbe(
             ok=False,
             uv_path="",
-            reason=ErrorFormatter.uv_not_found("pip install -e . && python -m autorun --install").strip(),
+            reason=uv_not_found("pip install -e . && python -m autorun --install").strip(),
         )
 
     settings = settings or resolve_runtime_architecture_settings()
@@ -2924,6 +2944,7 @@ def _install_for_codex(
     codex_dir: Path | None = None,
     install_global_assets: bool = True,
     skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
+    shared_conflicts: tuple[str, ...] = (),
 ) -> tuple[bool, str]:
     """Install autorun for Codex with an explicit hook source mode.
 
@@ -3001,9 +3022,10 @@ def _install_for_codex(
     if not install_global_assets:
         publish_shared, package_native = (False, True)
 
-    if _publish_shared_skills_for_route(
-        selected_plugin_dirs, publish_shared=publish_shared
-    ):
+    # The shared root is published once by install_plugins. A user-authored
+    # name there blocks publication, and this harness must then keep its
+    # packaged copy or that skill reaches it by no route at all.
+    if shared_conflicts or not publish_shared:
         package_native = True
     if codex_plugin_marketplace == "personal" and install_global_assets:
         plugin_marketplace = _install_codex_plugin_marketplace(
@@ -3035,7 +3057,7 @@ def _install_for_codex(
     if agents_written:
         print(f"✓ Advisory safety guidance written to {codex_dir / 'AGENTS.md'}")
     # Shared skill publication (and any user-authored name it stepped around)
-    # is reported by _publish_shared_skills_for_route at the moment it happens.
+    # is reported by publish_shared_skills at the moment it happens.
     if plugin_marketplace.marketplace_ready:
         if codex_plugin_marketplace == "personal":
             print("✓ Codex plugin marketplace entry written to ~/.agents/plugins/marketplace.json")
@@ -3088,24 +3110,10 @@ def _migrate_owned_shared_skill_names(
 
         old_path = dst_root / old_name
         expected_plugin = _plugin_registry_name(replacement.parent.parent)
-        with FileLock(dst_root / _INSTALL_LOCK_NAME):
-            if not old_path.is_dir() or old_path.is_symlink():
-                continue
-            marker = read_owned_marker(old_path)
-            if marker is None or (marker.plugin and marker.plugin != expected_plugin):
-                continue
-
-            with tempfile.TemporaryDirectory(
-                prefix=f".autorun-migrate-{old_name}-",
-                dir=dst_root,
-            ) as tmp:
-                quarantined = Path(tmp) / old_name
-                os.replace(old_path, quarantined)
-                try:
-                    shutil.rmtree(quarantined)
-                except Exception:
-                    os.replace(quarantined, old_path)
-                    raise
+        marker = read_owned_marker(old_path)
+        if marker is None or (marker.plugin and marker.plugin != expected_plugin):
+            continue
+        remove_owned_tree(old_path)
 
 
 def _install_shared_agent_skills(
@@ -3208,20 +3216,8 @@ def _prune_retired_shared_skills(
             continue  # user-authored
         if marker.plugin and marker.plugin not in expected_plugins:
             continue  # belongs to a plugin this install did not select
-        with FileLock(dst_root / _INSTALL_LOCK_NAME):
-            if not entry.is_dir() or read_owned_marker(entry) is None:
-                continue
-            with tempfile.TemporaryDirectory(
-                prefix=f".autorun-prune-{entry.name}-", dir=dst_root
-            ) as tmp:
-                quarantined = Path(tmp) / entry.name
-                os.replace(entry, quarantined)
-                try:
-                    shutil.rmtree(quarantined)
-                except Exception:
-                    os.replace(quarantined, entry)
-                    raise
-        pruned.append(entry.name)
+        if remove_owned_tree(entry):
+            pruned.append(entry.name)
     return tuple(pruned)
 
 
@@ -3719,6 +3715,27 @@ def bridge_destination(platform: Platform) -> Path | None:
     for path in skill_search_paths(platform):
         return path
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessInstallResult:
+    """One harness's install outcome and the words describing it.
+
+    The summary used to be a second pass of `if "<harness>" in target_clis`
+    blocks mirroring the dispatch pass — fourteen harness-name branches to say
+    what seven installs did, and a harness could be installed without being
+    reported, or reported without being installed, with nothing to catch it.
+
+    Each install records its own lines here instead, the same contract
+    :class:`AgentsSkillsBridge` uses. Adding a harness adds no branch.
+    """
+
+    name: str
+    ok: bool
+    # Lines for the summary block. Empty means the install said nothing.
+    summary: tuple[str, ...] = ()
+    # One line for the "Available commands" block, e.g. a verification command.
+    verify_hint: str = ""
 
 
 def bridgeable_platforms(
@@ -4441,7 +4458,7 @@ def _count_latest_codex_plugin_cache_skills() -> int:
     cache_root = Path.home() / ".codex" / "plugins" / "cache" / _CODEX_PERSONAL_MARKETPLACE_NAME / _CODEX_PLUGIN_NAME
     if not cache_root.is_dir():
         return 0
-    counts = [_count_skill_dirs(child / "skills") for child in cache_root.iterdir() if child.is_dir()]
+    counts = [len(_skill_dir_names(child / "skills")) for child in cache_root.iterdir() if child.is_dir()]
     return max(counts, default=0)
 
 
@@ -4940,12 +4957,6 @@ def _install_for_antigravity(
     if not expected_names:
         expected_names = ["ar" if name in {"ar", "autorun"} else name for name in plugins]
 
-    def sync_cli(plugin_dir: Path, plugin_name: str) -> tuple[int, int]:
-        # Keep the historical one-argument seam for ar test and downstream wrappers.
-        if plugin_name == "ar":
-            return _install_antigravity_cli_bundle(plugin_dir)
-        return _install_antigravity_cli_bundle(plugin_dir, plugin_name)
-
     native_installed: list[str] = []
     for plugin_dir, plugin_name in plugin_targets:
         with tempfile.TemporaryDirectory(prefix="autorun-antigravity-plugin-") as tmp:
@@ -4965,7 +4976,7 @@ def _install_for_antigravity(
             if not verify.ok or plugin_name not in verify.output:
                 break
             try:
-                sync_cli(plugin_dir, plugin_name)
+                _install_antigravity_cli_bundle(plugin_dir, plugin_name)
             except OSError as exc:
                 return (
                     False,
@@ -4995,7 +5006,7 @@ def _install_for_antigravity(
 
     for plugin_dir, plugin_name in plugin_targets:
         try:
-            sync_cli(plugin_dir, plugin_name)
+            _install_antigravity_cli_bundle(plugin_dir, plugin_name)
         except OSError as exc:
             return (
                 False,
@@ -5101,8 +5112,6 @@ def _update_package_metadata(plugin_dir: Path) -> None:
         # 3. Write metadata with robust error handling
         try:
             meta_file.parent.mkdir(parents=True, exist_ok=True)
-            import json
-
             data = {"version": _read_plugin_version(plugin_dir), "commit": commit, "build_time": build_time}
             new_text = json.dumps(data, indent=2) + "\n"
             if meta_file.exists() and meta_file.read_text(encoding="utf-8") == new_text:
@@ -5130,6 +5139,38 @@ def _install_autorun_uv_tool(plugin_root: Path) -> CmdResult:
 # =============================================================================
 # Main Function - Installation
 # =============================================================================
+
+
+def _codex_summary_lines(
+    ok: bool,
+    hook_source: str,
+    plugin_ok: bool,
+    plugin_marketplace: str,
+) -> tuple[str, ...]:
+    """Return Codex's install summary.
+
+    Codex reports more than the other harnesses — which hook surface was
+    written, whether the plugin package landed — and inlining that in the
+    summary pass is what made the pass a branch forest. Named here so the
+    wording is testable without running an install.
+    """
+    if not ok:
+        return ("✗ Codex CLI: hooks install failed",)
+    headline = {
+        "user": "✓ Codex CLI: user hooks installed at ~/.codex/hooks.json",
+        "plugin": "✓ Codex CLI: plugin hooks packaged in autorun@personal",
+        "both": "✓ Codex CLI: user hooks and plugin hooks installed",
+    }.get(hook_source, "✓ Codex CLI: hooks removed; skills and guidance installed")
+    lines = [headline]
+    if hook_source != "none":
+        lines.append("  Run /hooks inside Codex to trust hook definitions")
+    lines.append(
+        f"✓ Codex CLI: plugin installed as "
+        f"autorun@{_codex_plugin_marketplace_name(plugin_marketplace)}"
+        if plugin_ok
+        else "✗ Codex CLI: plugin install failed"
+    )
+    return tuple(lines)
 
 
 def install_plugins(
@@ -5335,6 +5376,26 @@ def install_plugins(
         if not dry_run:
             return 1
 
+    # The shared root belongs to the install, not to whichever harness happens
+    # to be installed alongside. Published before the harness installers so
+    # each one can see whether a user-authored name blocked publication and
+    # keep its native copy for that skill.
+    shared_conflicts: tuple[str, ...] = ()
+    if not dry_run:
+        try:
+            shared_conflicts = publish_shared_skills(
+                _resolve_selected_plugin_dirs(marketplace_root, plugins),
+                placement,
+                target_clis,
+            )
+        except ValueError as exc:
+            # Two selected plugins claiming one skill name is a packaging
+            # error, not something to resolve by picking a winner. Reported
+            # here because publication is the install's step; while it lived
+            # inside the Codex installer, that installer caught it.
+            print(f"Error: {exc}")
+            return 1
+
     if dry_run:
         print("DRY RUN: install preview only")
         print(f"  Plugins: {', '.join(plugins)}")
@@ -5399,6 +5460,10 @@ def install_plugins(
     custom_results: list[tuple[CustomHarnessInstall, bool, str]] = []
 
     # Install for Claude Code
+    # Each harness records its own outcome and wording here; the summary is
+    # one loop over this list rather than a second pass of name branches.
+    harness_results: list[HarnessInstallResult] = []
+
     if "claude" in target_clis:
         print()
         print("Adding autorun marketplace for Claude Code...")
@@ -5469,6 +5534,15 @@ def install_plugins(
                 claude_failed.append(name)
 
         claude_success = len(claude_succeeded) == len(plugins)
+        claude_lines = [
+            f"{'✓' if claude_success else '✗'} Claude Code: Installed "
+            f"{len(claude_succeeded)}/{len(plugins)} plugins"
+        ]
+        if not claude_success and claude_failed:
+            claude_lines.append(f"  Failed: {', '.join(claude_failed)}")
+        harness_results.append(
+            HarnessInstallResult("claude", claude_success, tuple(claude_lines))
+        )
         all_succeeded = all_succeeded and claude_success
 
         # --- BUG #54673 WORKAROUND START --- DELETE WHEN FIXED ---
@@ -5494,28 +5568,55 @@ def install_plugins(
                 print("✓ autorun guidance written to ~/.claude/CLAUDE.md")
         # --- END --- DELETE WHEN FIXED ---
 
-
     # Install for Gemini CLI
     if "gemini" in target_clis:
-        gemini_success, gemini_msg = _install_for_gemini(
+        gemini_success, _ = _install_for_gemini(
             marketplace_root,
             plugins,
             force,
             skill_placement=placement.for_harness("gemini"),
+            shared_conflicts=shared_conflicts,
         )
         all_succeeded = all_succeeded and gemini_success
 
         # Install Conductor if requested and Gemini install succeeded
         if conductor and gemini_success:
-            conductor_success, conductor_msg = _install_conductor(force)
-            # Note: Conductor failure doesn't affect overall success
-            # (it's an optional enhancement)
+            _install_conductor(force)
+
+        gemini_lines = [f"✓ Gemini CLI: Plugins installed ({', '.join(plugins)})"]
+        if gemini_success and conductor:
+            gemini_lines.append(
+                "✓ Gemini CLI: Conductor extension installed"
+                if _verify_conductor_installation()
+                else "⚠️  Gemini CLI: Conductor installation failed (optional)"
+            )
+        harness_results.append(
+            HarnessInstallResult(
+                "gemini",
+                gemini_success,
+                tuple(gemini_lines) if gemini_success else ("✗ Gemini CLI: Installation failed",),
+                "/conductor:*      - Conductor plan mode (Gemini only)" if conductor else "",
+            )
+        )
 
     if "antigravity" in target_clis:
         antigravity_success, antigravity_msg = _install_for_antigravity(marketplace_root, plugins, force)
         if not antigravity_success:
             print(f"   Antigravity install failed: {antigravity_msg}")
         all_succeeded = all_succeeded and antigravity_success
+        harness_results.append(
+            HarnessInstallResult(
+                "antigravity",
+                antigravity_success,
+                (
+                    f"✓ Google Antigravity: Plugins installed ({', '.join(plugins)}) "
+                    "with native commands and skills",
+                )
+                if antigravity_success
+                else ("✗ Google Antigravity: install failed",),
+                "agy plugin list   - verify installed Antigravity plugins",
+            )
+        )
 
     if "qwen" in target_clis:
         qwen_success, qwen_msg = _install_for_qwen(
@@ -5523,10 +5624,21 @@ def install_plugins(
             plugins,
             force,
             skill_placement=placement.for_harness("qwen"),
+            shared_conflicts=shared_conflicts,
         )
         if not qwen_success:
             print(f"   Qwen Code install failed: {qwen_msg}")
         all_succeeded = all_succeeded and qwen_success
+        harness_results.append(
+            HarnessInstallResult(
+                "qwen",
+                qwen_success,
+                (f"✓ Qwen Code: Plugins installed ({', '.join(plugins)})",)
+                if qwen_success
+                else ("✗ Qwen Code: Installation failed",),
+                "qwen extensions list - verify installed Qwen extensions",
+            )
+        )
 
     # A family member left out of target_clis still has whatever autorun
     # materialized for it earlier, and those files keep executing on every one
@@ -5549,6 +5661,7 @@ def install_plugins(
             config_dir=platform_config_dir(family_platform),
             install_hint="",
             skill_placement=placement.for_harness(family_cli),
+            shared_conflicts=shared_conflicts,
             refresh_only=True,
         )
 
@@ -5582,6 +5695,19 @@ def install_plugins(
                 hook_cli_name=custom.flavor,
             )
         custom_results.append((custom, custom_success, custom_msg))
+        harness_results.append(
+            HarnessInstallResult(
+                custom.name,
+                custom_success,
+                (
+                    f"✓ {custom.display_name}: Plugins installed "
+                    f"({', '.join(plugins)}) using {custom.flavor} hook flavor "
+                    f"at {custom.config_dir}",
+                )
+                if custom_success
+                else (f"✗ {custom.display_name}: Installation failed",),
+            )
+        )
         if not custom_success:
             print(f"   Custom harness {custom.name} install failed: {custom_msg}")
         all_succeeded = all_succeeded and custom_success
@@ -5593,13 +5719,14 @@ def install_plugins(
     codex_plugin_success = False
     codex_plugin_msg = ""
     if "codex" in target_clis:
-        codex_success, codex_msg = _install_for_codex(
+        codex_success, _ = _install_for_codex(
             marketplace_root,
             plugins,
             force,
             codex_hook_source=codex_hook_source,
             codex_plugin_marketplace=codex_plugin_marketplace,
             skill_placement=placement.for_harness(CODEX.name),
+            shared_conflicts=shared_conflicts,
         )
         all_succeeded = all_succeeded and codex_success
         if codex_success:
@@ -5620,16 +5747,47 @@ def install_plugins(
                 print(f"   Codex plugin add failed: {codex_plugin_msg}")
             all_succeeded = all_succeeded and codex_plugin_success
 
+        harness_results.append(
+            HarnessInstallResult("codex", codex_success, _codex_summary_lines(
+                codex_success, codex_hook_source, codex_plugin_success,
+                codex_plugin_marketplace,
+            ))
+        )
+
     # Install for ForgeCode (template-only — commands + AGENTS.md, no hooks)
     forge_success = False
     if "forgecode" in target_clis:
-        forge_success, forge_msg = _install_for_forgecode(marketplace_root, plugins, force)
+        forge_success, _ = _install_for_forgecode(marketplace_root, plugins, force)
+        harness_results.append(
+            HarnessInstallResult(
+                "forgecode",
+                forge_success,
+                (
+                    "✓ ForgeCode: commands + AGENTS.md installed "
+                    "(advisory — no hook enforcement)",
+                )
+                if forge_success
+                else ("✗ ForgeCode: install failed",),
+            )
+        )
         all_succeeded = all_succeeded and forge_success
 
     # Install for OpenCode (portable bundle — commands + AGENTS.md, no hooks)
     opencode_success = False
     if "opencode" in target_clis:
-        opencode_success, opencode_msg = _install_for_opencode(marketplace_root, plugins, force)
+        opencode_success, _ = _install_for_opencode(marketplace_root, plugins, force)
+        harness_results.append(
+            HarnessInstallResult(
+                "opencode",
+                opencode_success,
+                (
+                    "✓ OpenCode: commands + AGENTS.md installed "
+                    "(advisory — no hook enforcement)",
+                )
+                if opencode_success
+                else ("✗ OpenCode: install failed",),
+            )
+        )
         all_succeeded = all_succeeded and opencode_success
 
     # Bridge shared skills into every selected harness that cannot read the
@@ -5667,85 +5825,16 @@ def install_plugins(
     print()
     print("=" * 60)
 
-    if "claude" in target_clis:
-        if claude_success:
-            print(f"✓ Claude Code: Installed {len(claude_succeeded)}/{len(plugins)} plugins")
-        else:
-            print(f"✗ Claude Code: Installed {len(claude_succeeded)}/{len(plugins)} plugins")
-            if claude_failed:
-                print(f"  Failed: {', '.join(claude_failed)}")
-
-    if "gemini" in target_clis:
-        if gemini_success:
-            print(f"✓ Gemini CLI: Plugins installed ({', '.join(plugins)})")
-            if conductor:
-                conductor_ok = _verify_conductor_installation()
-                if conductor_ok:
-                    print("✓ Gemini CLI: Conductor extension installed")
-                else:
-                    print("⚠️  Gemini CLI: Conductor installation failed (optional)")
-        else:
-            print("✗ Gemini CLI: Installation failed")
-
-    if "antigravity" in target_clis:
-        if antigravity_success:
-            print(f"✓ Google Antigravity: Plugins installed ({', '.join(plugins)}) with native commands and skills")
-        else:
-            print("✗ Google Antigravity: install failed")
-
-    if "qwen" in target_clis:
-        if qwen_success:
-            print(f"✓ Qwen Code: Plugins installed ({', '.join(plugins)})")
-        else:
-            print("✗ Qwen Code: Installation failed")
-
-    for custom, custom_success, _custom_msg in custom_results:
-        if custom_success:
-            print(f"✓ {custom.display_name}: Plugins installed ({', '.join(plugins)}) using {custom.flavor} hook flavor at {custom.config_dir}")
-        else:
-            print(f"✗ {custom.display_name}: Installation failed")
-
-    if "codex" in target_clis:
-        if codex_success:
-            if codex_hook_source == "user":
-                print("✓ Codex CLI: user hooks installed at ~/.codex/hooks.json")
-            elif codex_hook_source == "plugin":
-                print("✓ Codex CLI: plugin hooks packaged in autorun@personal")
-            elif codex_hook_source == "both":
-                print("✓ Codex CLI: user hooks and plugin hooks installed")
-            else:
-                print("✓ Codex CLI: hooks removed; skills and guidance installed")
-            if codex_hook_source != "none":
-                print("  Run /hooks inside Codex to trust hook definitions")
-            if codex_plugin_success:
-                print(f"✓ Codex CLI: plugin installed as autorun@{_codex_plugin_marketplace_name(codex_plugin_marketplace)}")
-            else:
-                print("✗ Codex CLI: plugin install failed")
-        else:
-            print("✗ Codex CLI: hooks install failed")
-
-    if "forgecode" in target_clis:
-        if forge_success:
-            print("✓ ForgeCode: commands + AGENTS.md installed (advisory — no hook enforcement)")
-        else:
-            print("✗ ForgeCode: install failed")
-
-    if "opencode" in target_clis:
-        if opencode_success:
-            print("✓ OpenCode: commands + AGENTS.md installed (advisory — no hook enforcement)")
-        else:
-            print("✗ OpenCode: install failed")
+    for result in harness_results:
+        for line in result.summary:
+            print(line)
 
     print()
     print("Available commands:")
     print("  /ar:*             - autorun commands (autorun, file policies, plan export, tmux)")
     print("  /pdf-extractor:*  - PDF extraction commands")
-    if "gemini" in target_clis and conductor:
-        print("  /conductor:*      - Conductor plan mode (Gemini only)")
-    if "antigravity" in target_clis:
-        print("  agy plugin list   - verify installed Antigravity plugins")
-    if "qwen" in target_clis:
-        print("  qwen extensions list - verify installed Qwen extensions")
+    for hint in (r.verify_hint for r in harness_results if r.verify_hint):
+        print(f"  {hint}")
     print()
     print("Run '/help' to see all available commands.")
 
@@ -6636,7 +6725,7 @@ def show_status(
     user_skill_count = len(user_skill_names)
     expected_codex_skills = set().union(*skill_requirements.values()) if skill_requirements else set()
     missing_codex_skills = sorted(expected_codex_skills - user_skill_names)
-    plugin_source_skill_count = _count_skill_dirs(_codex_plugin_source_dir() / "skills")
+    plugin_source_skill_count = len(_skill_dir_names(_codex_plugin_source_dir() / "skills"))
     plugin_cache_skill_count = _count_latest_codex_plugin_cache_skills()
     skills_ok = not missing_codex_skills and user_skill_count > 0 and plugin_source_skill_count > 0
     print(f"  skills: {'✓' if skills_ok else '✗'} {user_skill_count} user, {plugin_source_skill_count} plugin source, {plugin_cache_skill_count} plugin cache")

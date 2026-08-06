@@ -514,6 +514,57 @@ def test_invalid_env_value_falls_open_to_the_default_without_aborting():
     assert placement.for_harness("codex") == "auto"
 
 
+def test_the_shared_root_is_published_for_a_harness_that_only_reads_it(
+    tmp_path, monkeypatch
+):
+    """ForgeCode and OpenCode read ~/.agents/skills and write nothing.
+
+    Their installers never published it — _install_for_forgecode contains no
+    reference to skills at all — so both received skills only as a side effect
+    of Codex, Gemini or Qwen being installed in the same run. An install
+    targeting just those two published nothing and reported success.
+    """
+    from autorun.install import publish_shared_skills, shared_agents_skills_dir
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    plugin_dir = tmp_path / "plugins" / "autorun"
+    skill = plugin_dir / "skills" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: d\n---\n", encoding="utf-8"
+    )
+
+    publish_shared_skills([plugin_dir], "auto", ["forgecode", "opencode"])
+
+    published = shared_agents_skills_dir() / "demo" / "SKILL.md"
+    assert published.is_file(), (
+        "a harness whose only route is the shared root must have that root "
+        "written by the install, not by another harness's installer"
+    )
+
+
+def test_the_shared_root_is_left_alone_when_no_target_reads_it(tmp_path, monkeypatch):
+    """Claude and Antigravity use native routes; publishing anyway would create
+    a directory the install has no reason to touch."""
+    from autorun.install import publish_shared_skills, shared_agents_skills_dir
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    plugin_dir = tmp_path / "plugins" / "autorun"
+    skill = plugin_dir / "skills" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: d\n---\n", encoding="utf-8"
+    )
+
+    publish_shared_skills([plugin_dir], "auto", ["claude", "antigravity"])
+
+    assert not (shared_agents_skills_dir() / "demo").exists()
+
+
 def test_route_report_lists_every_destination_directory():
     """A harness with more than one skill root must not have the second one
     silently dropped by an `or`."""

@@ -109,6 +109,15 @@ class HomeDirSkills(SkillRoute):
     subdir: str = ""
 
     def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+        """Resolve against the process home.
+
+        ``Path.home()`` honours ``$HOME``, which is this repository's isolation
+        seam: install tests redirect it with ``monkeypatch.setenv("HOME", ...)``
+        and the sandboxed-install recipe does the same. Threading a separate
+        home argument through every route would add a second mechanism for one
+        question, and an optional one at that — a caller omitting it would
+        silently get the real home instead of a type error.
+        """
         return (Path.home() / self.subdir,) if self.subdir else ()
 
     def describe(self) -> str:
@@ -1204,10 +1213,21 @@ QWEN = register(
         # SKILL_PROVIDER_CONFIG_DIRS = [".qwen", ".agents"] over os.homedir(),
         # so ~/.agents/skills is a user-scope discovery root alongside
         # ~/.qwen/skills (verified in the shipped 0.21.1 bundle; upstream
-        # QwenLM/qwen-code#2042, closed completed 2026-03-03). Without this the
-        # extension copy and the shared root both reach Qwen and can drift.
+        # QwenLM/qwen-code#2042, closed completed 2026-03-03).
         loads_shared_agents_skills=True,
         list_cmd=("qwen", "extensions", "list"),
+        # Declared alongside loads_shared_agents_skills on purpose. The two are
+        # a capability and a fact, not a contradiction: `auto` resolves to
+        # exactly one route (the shared root, because Qwen reads it), and this
+        # field says where a native copy goes when one is actually needed —
+        # under `--skill-placement native`/`both`, or as the per-name fallback
+        # when a user-authored skill of the same name blocks the shared route.
+        #
+        # Retiring it was tried and reverted: it made a blocked name reach Qwen
+        # by no route at all, silently dropping that skill. The duplicate
+        # exposure that prompted it had a different cause — `if shared_conflicts:
+        # include_skills = True` republished *every* skill of *every* plugin
+        # natively after a single collision — and that is fixed per name.
         native_skills=ExtensionSkills("extensions"),
         extensions_subdir="extensions",
         uninstall_cmd=("qwen", "extensions", "uninstall", "{name}"),

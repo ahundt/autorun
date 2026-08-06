@@ -640,6 +640,37 @@ def test_shared_agents_skills_capability_is_declared_per_platform():
     assert claiming == {"codex", "forgecode", "gemini", "opencode", "qwen"}
 
 
+def test_declaring_both_a_shared_read_and_a_native_route_is_allowed():
+    """Both fields together are a capability plus a fact, not a contradiction.
+
+    An earlier version of this test asserted the opposite and drove a change
+    that broke skill delivery: retiring Qwen's native route left a name blocked
+    on the shared root — by a skill the user wrote there — with nowhere to go,
+    so that skill silently reached Qwen by no route at all.
+
+    The invariant that actually matters is enforced by
+    `test_skill_placement_routes_cover_every_platform_and_mode`: `auto` yields
+    exactly one route per harness, so the default never duplicates. `native` and
+    `both` are explicit user choices, and the native declaration is also the
+    per-name fallback when the shared route is blocked.
+
+    The duplicate exposure that prompted the wrong rule had a different cause:
+    `if shared_conflicts: include_skills = True` republished every skill of
+    every plugin natively after one collision. That is fixed per name in
+    installer/skills.py.
+    """
+    both = {
+        p.name
+        for p in PLATFORMS.values()
+        if p.loads_shared_agents_skills
+        and not isinstance(p.native_skills, NoNativeSkillRoute)
+    }
+
+    # Recorded so a change here is deliberate. Each of these reads the shared
+    # root and can also place a native copy when asked or when blocked.
+    assert both == {"codex", "gemini", "qwen"}, both
+
+
 def test_skill_placement_routes_cover_every_platform_and_mode():
     """Route matrix: `auto` yields exactly one route for every registered
     platform; `native` never publishes shared; `both` duplicates only where

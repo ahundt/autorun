@@ -3,7 +3,7 @@
 Test Coverage:
 - has_uv() caching and detection
 - get_python_runner() returns correct command based on UV availability
-- ErrorFormatter produces UV-first error messages with pip fallback
+- the error formatters produce UV-first messages with a pip fallback
 
 TDD Methodology:
 - RED: These tests will FAIL until we implement the functions
@@ -101,12 +101,12 @@ class TestUVPipFallback:
             assert result == ["python"]
 
     def test_error_formatter_marketplace_not_found_with_uv(self):
-        """Test: ErrorFormatter.marketplace_not_found() includes UV commands when UV available."""
+        """Test: marketplace_not_found() includes UV commands when UV available."""
         # Arrange
         with patch("autorun.install.has_uv", return_value=True):
             # Act
-            from autorun.install import ErrorFormatter
-            error_msg = ErrorFormatter.marketplace_not_found()
+            from autorun.install import marketplace_not_found
+            error_msg = marketplace_not_found()
 
             # Assert
             assert "uv run python" in error_msg
@@ -117,12 +117,12 @@ class TestUVPipFallback:
             assert "TROUBLESHOOTING" in error_msg
 
     def test_error_formatter_marketplace_not_found_without_uv(self):
-        """Test: ErrorFormatter.marketplace_not_found() uses pip command when UV unavailable."""
+        """Test: marketplace_not_found() uses pip command when UV unavailable."""
         # Arrange
         with patch("autorun.install.has_uv", return_value=False):
             # Act
-            from autorun.install import ErrorFormatter
-            error_msg = ErrorFormatter.marketplace_not_found()
+            from autorun.install import marketplace_not_found
+            error_msg = marketplace_not_found()
 
             # Assert
             assert "python -m plugins.autorun.src.autorun.install" in error_msg
@@ -131,13 +131,13 @@ class TestUVPipFallback:
             assert error_msg.count("uv run python") == 0 or "If UV not available" in error_msg
 
     def test_error_formatter_uv_not_found(self):
-        """Test: ErrorFormatter.uv_not_found() provides installation instructions."""
+        """Test: uv_not_found() provides installation instructions."""
         # Arrange
         pip_fallback = "pip install -e . && python -m autorun --install"
 
         # Act
-        from autorun.install import ErrorFormatter
-        error_msg = ErrorFormatter.uv_not_found(pip_fallback)
+        from autorun.install import uv_not_found
+        error_msg = uv_not_found(pip_fallback)
 
         # Assert
         assert "UV not found in PATH" in error_msg
@@ -149,38 +149,24 @@ class TestUVPipFallback:
         assert "https://docs.astral.sh/uv" in error_msg
 
 
-class TestErrorFormatterStructure:
-    """Test ErrorFormatter dataclass structure and immutability."""
+class TestErrorTemplates:
+    """The templates must keep the placeholders their formatters substitute.
 
-    def test_error_formatter_is_frozen(self):
-        """Test: ErrorFormatter is immutable (frozen dataclass)."""
-        from autorun.install import ErrorFormatter
+    These were four tests against a frozen dataclass that was never
+    instantiated: one asserted the class could not take a new attribute, which
+    told a user nothing. What matters is that each template still carries the
+    placeholder its formatter fills, so a reworded message cannot silently
+    start printing a literal ``{install_command}``.
+    """
 
-        # Should not be able to set attributes on class instance
-        formatter = ErrorFormatter()
-        with pytest.raises(AttributeError):
-            formatter.new_attribute = "should fail"  # type: ignore
+    def test_each_template_keeps_its_placeholder(self):
+        from autorun.install import _MARKETPLACE_NOT_FOUND, _UV_NOT_FOUND
 
-    def test_error_formatter_has_required_templates(self):
-        """Test: ErrorFormatter has all required error message templates."""
-        from autorun.install import ErrorFormatter
+        assert "{install_command}" in _MARKETPLACE_NOT_FOUND
+        assert "{pip_fallback_command}" in _UV_NOT_FOUND
 
-        # Check that templates exist as class attributes
-        assert hasattr(ErrorFormatter, "MARKETPLACE_NOT_FOUND")
-        assert hasattr(ErrorFormatter, "UV_NOT_FOUND")
-        assert isinstance(ErrorFormatter.MARKETPLACE_NOT_FOUND, str)
-        assert isinstance(ErrorFormatter.UV_NOT_FOUND, str)
+    def test_formatters_leave_no_unsubstituted_placeholder(self):
+        from autorun.install import marketplace_not_found, uv_not_found
 
-    def test_error_formatter_marketplace_template_has_placeholders(self):
-        """Test: MARKETPLACE_NOT_FOUND template has {install_command} placeholder."""
-        from autorun.install import ErrorFormatter
-
-        # Template should contain placeholder
-        assert "{install_command}" in ErrorFormatter.MARKETPLACE_NOT_FOUND
-
-    def test_error_formatter_uv_template_has_placeholders(self):
-        """Test: UV_NOT_FOUND template has {pip_fallback_command} placeholder."""
-        from autorun.install import ErrorFormatter
-
-        # Template should contain placeholder
-        assert "{pip_fallback_command}" in ErrorFormatter.UV_NOT_FOUND
+        for rendered in (marketplace_not_found(), uv_not_found("pip install -e .")):
+            assert "{" not in rendered, rendered

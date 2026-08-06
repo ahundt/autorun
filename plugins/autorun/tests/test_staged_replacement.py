@@ -278,6 +278,48 @@ def test_a_skill_removed_from_source_is_pruned_from_the_shared_root(tmp_path, mo
     )
 
 
+def test_a_failed_prune_restores_the_directory_it_was_removing(tmp_path, monkeypatch):
+    """Removal is a transaction, the same as replacement.
+
+    Two pruners beside this one — _migrate_owned_shared_skill_names and
+    _prune_retired_shared_skills — quarantine the target with os.replace,
+    delete the quarantined copy, and move it back if the delete raises.
+    prune_owned_skills was added with a bare shutil.rmtree(ignore_errors=True),
+    so an interrupted prune left a half-deleted skill and no way back. The
+    newest of the four removal policies was the weakest, and it is the one the
+    extension route uses.
+    """
+    from autorun import install as inst
+
+    owned = tmp_path / "retiree"
+    owned.mkdir()
+    (owned / "SKILL.md").write_text("---\nname: retiree\n---\n", encoding="utf-8")
+    inst.write_owned_marker(owned, plugin="ar")
+
+    real_rmtree = shutil.rmtree
+
+    def _explode(path, *args, ignore_errors=False, **kwargs):
+        # Honour ignore_errors exactly as shutil.rmtree does. That is what
+        # discriminates the two implementations: the bare-rmtree version passed
+        # ignore_errors=True, so this failure vanished and the name was still
+        # reported as pruned. A quarantine transaction passes no such flag.
+        if Path(path).name == "retiree":
+            if ignore_errors:
+                return
+            raise OSError("simulated failure mid-delete")
+        return real_rmtree(path, *args, ignore_errors=ignore_errors, **kwargs)
+
+    monkeypatch.setattr(inst.shutil, "rmtree", _explode)
+
+    with pytest.raises(OSError):
+        inst.prune_owned_skills(tmp_path, "ar")
+
+    assert (owned / "SKILL.md").is_file(), (
+        "a prune that fails partway must restore the directory, not leave the "
+        "user with a half-removed skill"
+    )
+
+
 def test_switching_a_harness_to_the_shared_route_keeps_user_skills(tmp_path):
     """Dropping the native copy must prune ours, not the whole directory.
 

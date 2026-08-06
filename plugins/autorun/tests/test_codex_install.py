@@ -36,7 +36,7 @@ from autorun.install import (
     _install_for_qwen,
     _install_codex_plugin_with_cli,
     _install_shared_agent_skills,
-    _install_for_codex,
+    _install_for_codex as _install_for_codex_only,
     _render_uv_hook_command,
     probe_hook_python_architecture,
     resolve_runtime_architecture_settings,
@@ -45,6 +45,56 @@ from autorun.install import (
     install_plugins,
     show_status,
 )
+
+
+def _install_for_codex(
+    marketplace_root,
+    plugins,
+    force=False,
+    codex_hook_source="user",
+    codex_plugin_marketplace="personal",
+    codex_dir=None,
+    install_global_assets=True,
+    skill_placement=None,
+    shared_conflicts=None,
+):
+    """Run the same two steps install_plugins runs for Codex.
+
+    The shared ~/.agents/skills root belongs to the install, not to any one
+    harness, so install_plugins publishes it once before the harness
+    installers run and hands each one the names a user-authored skill blocked.
+    These tests exercise Codex end to end, so they need both steps; calling the
+    harness installer alone would assert on half a sequence.
+    """
+    from autorun.install import (
+        _SKILL_PLACEMENT_DEFAULT,
+        _resolve_selected_plugin_dirs,
+        publish_shared_skills,
+    )
+
+    placement = _SKILL_PLACEMENT_DEFAULT if skill_placement is None else skill_placement
+    if shared_conflicts is None and install_global_assets:
+        try:
+            shared_conflicts = publish_shared_skills(
+                _resolve_selected_plugin_dirs(marketplace_root, plugins),
+                placement,
+                ["codex"],
+            )
+        except ValueError as exc:
+            # install_plugins reports a duplicate skill name and stops; mirror
+            # that so these tests see the same contract they always did.
+            return (False, str(exc))
+    return _install_for_codex_only(
+        marketplace_root,
+        plugins,
+        force,
+        codex_hook_source,
+        codex_plugin_marketplace,
+        codex_dir,
+        install_global_assets,
+        placement,
+        shared_conflicts or (),
+    )
 
 
 def _read_codex_hooks(home: Path) -> dict:

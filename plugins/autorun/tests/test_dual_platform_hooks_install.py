@@ -1749,7 +1749,7 @@ class TestGeminiFamilySharedSkillRoute:
         ext_dir = tmp_path / ".gemini" / "extensions" / "ar"
         ext_dir.mkdir(parents=True)
 
-        install_mod._publish_shared_skills_for_route(plugin_dir, publish_shared=True)
+        install_mod.publish_shared_skills(plugin_dir, "auto", ["gemini"])
         install_mod._sync_gemini_extension_resources(
             plugin_dir, ext_dir, "ar", "gemini", include_skills=False
         )
@@ -1768,11 +1768,12 @@ class TestGeminiFamilySharedSkillRoute:
         unowned.mkdir(parents=True)
         (unowned / "SKILL.md").write_text("USER AUTHORED\n", encoding="utf-8")
 
-        keep_native = install_mod._publish_shared_skills_for_route(
-            plugin_dir, publish_shared=True
-        )
+        conflicts = install_mod.publish_shared_skills(plugin_dir, "auto", ["gemini"])
 
-        assert keep_native is True
+        assert conflicts == ("cache",), (
+            "a user-authored name blocks publication, and the caller must keep "
+            "its native copy or the skill reaches the harness by no route"
+        )
         assert (unowned / "SKILL.md").read_text(encoding="utf-8") == "USER AUTHORED\n"
 
     def test_native_route_publishes_nothing_shared(self, tmp_path, monkeypatch):
@@ -1781,11 +1782,9 @@ class TestGeminiFamilySharedSkillRoute:
         monkeypatch.setenv("HOME", str(tmp_path))
         plugin_dir = self._plugin(tmp_path)
 
-        keep_native = install_mod._publish_shared_skills_for_route(
-            plugin_dir, publish_shared=False
-        )
+        conflicts = install_mod.publish_shared_skills(plugin_dir, "native", ["gemini"])
 
-        assert keep_native is True
+        assert conflicts == ()
         assert not (tmp_path / ".agents" / "skills" / "cache").exists()
 
 
@@ -1795,7 +1794,7 @@ class TestAssetOnlySkillDirsNeverShip:
     Every harness reads each child of skills/ as a skill and warns when
     SKILL.md is absent — the 2026-08-05 harness incident. main's e838707e fixed
     that for the Codex bundle only. The Gemini-family route copied the whole
-    tree unfiltered, and _count_skill_dirs counts only VALID directories, so the
+    tree unfiltered, and _skill_dir_names lists only VALID directories, so the
     reported number stayed correct while the directory content was wrong: the
     count could never surface this.
 
