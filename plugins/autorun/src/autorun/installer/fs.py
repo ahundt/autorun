@@ -103,6 +103,7 @@ __all__ = [
     "withdrawn",
     "withdraw_files",
     "dereference_links",
+    "replace_tree",
     "json_document",
     "atomic_write",
     "OWNED_MARKER_NAME",
@@ -479,6 +480,41 @@ def published(target: Path, *, plugin: str = "", **settings: str) -> Iterator[Pa
                 if backup.exists() or backup.is_symlink():
                     os.replace(backup, target)
                 raise
+
+
+def replace_tree(source: Path, target: Path) -> Path:
+    """The transaction without the ownership claim. Use only where noted.
+
+    Every other write here records a marker, which is what makes a user edit
+    detectable and a retirement possible. This one deliberately does not, and
+    there is exactly one legitimate caller: the fallback that fills a harness's
+    *own* plugin cache when that harness's CLI failed to.
+
+    Leaving no marker is the point. That cache belongs to the harness, it is
+    keyed by version, the harness's installer writes and prunes it, and a marker
+    there would make autorun's retirement sweep offer to delete state the
+    harness still tracks. Ownership is established by the path instead — nothing
+    but a plugin cache is at ``<harness>/plugins/cache/<market>/<name>/<ver>``.
+
+    Atomicity and rollback are identical to :func:`published`, because an
+    interrupted write to a harness's cache is exactly as bad there.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+        with tempfile.TemporaryDirectory(
+            prefix=f".autorun-cache-{target.name}-", dir=target.parent
+        ) as tmp:
+            staged, backup = Path(tmp) / "next", Path(tmp) / "previous"
+            shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
+            if target.exists() or target.is_symlink():
+                os.replace(target, backup)
+            try:
+                os.replace(staged, target)
+            except BaseException:
+                if backup.exists() or backup.is_symlink():
+                    os.replace(backup, target)
+                raise
+    return target
 
 
 def withdrawn(target: Path, *, plugin: str | None = None) -> bool:

@@ -290,14 +290,50 @@ def prepared(
             )
             native = skills.shippable_skills(plugin_dir) if placement != "auto" else {}
             try:
-                staged[plugin] = extension.stage_extension(
+                directory = extension.stage_extension(
                     template, plugin_dir, Path(tmp) / plugin, manifest, skills=native
                 )
+                stage_toml_commands(directory, plugin)
             except OSError:
                 # One plugin that cannot be staged does not stop the others, and
                 # every non-extension route for it still runs.
                 continue
+            staged[plugin] = directory
         yield _with(ctx, _staged_extensions=staged)
+
+
+def stage_toml_commands(extension_dir: Path, namespace: str) -> tuple[str, ...]:
+    """Write the Gemini-family TOML twin of each markdown command.
+
+    The family reads ``commands/<namespace>/<name>.toml``; Claude reads
+    ``commands/<name>.md``. One source, two renderings, generated here so the
+    command set cannot drift between harnesses — which is what happened while
+    each format had its own list.
+
+    The namespace directory is what makes the command ``/ar:status`` rather
+    than ``/status``, so it is the plugin's registered name and not a literal.
+
+    Returns the names written. Generated into the staging directory, never into
+    an installed one: publication stays a single atomic rename.
+    """
+    from ..command_docs import iter_command_docs
+    from .harness import Command, render_toml_command
+
+    source = extension_dir / "commands"
+    if not source.is_dir():
+        return ()
+    destination = source / namespace
+    destination.mkdir(parents=True, exist_ok=True)
+    written = []
+    for doc in iter_command_docs(source):
+        # The filename, not the declared name: the file's stem is what the
+        # harness turns into the command, and the two differ for aliases.
+        command = Command(doc.path.stem, doc.description, doc.body)
+        (destination / f"{command.name}.toml").write_text(
+            render_toml_command(command), encoding="utf-8"
+        )
+        written.append(command.name)
+    return tuple(written)
 
 
 def _manifest_field(plugin_dir: Path, key: str, default: str) -> str:
