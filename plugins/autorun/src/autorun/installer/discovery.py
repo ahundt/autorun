@@ -34,12 +34,15 @@ __all__ = [
     "resolve_plugins",
     "is_marketplace_root",
     "config_dir", "extensions_dir", "expand_home", "build_timestamp",
-    "skill_destinations", "shared_root",
+    "skill_destinations", "shared_root", "plugin_name", "PLUGIN_MANIFEST",
     "python_too_old", "MINIMUM_PYTHON",
 ]
 
 #: The file that makes a directory a marketplace root. One name, one authority.
 MARKETPLACE_MANIFEST = Path(".claude-plugin") / "marketplace.json"
+
+#: The manifest inside one plugin, which declares the name it registers under.
+PLUGIN_MANIFEST = Path(".claude-plugin") / "plugin.json"
 
 #: Copies kept for reference are not the thing to install from. A root is only
 #: skipped when we are *not* running out of it: a developer working inside a
@@ -227,6 +230,22 @@ def plugin_dir(root: Path, name: str) -> Path | None:
         ),
         None,
     )
+
+
+def plugin_name(directory: Path) -> str:
+    """The name a plugin directory registers under, not the directory's own.
+
+    The two differ — ``plugins/autorun`` registers as ``ar`` — and it is the
+    registered name that ``--uninstall ar`` selects on and that every ownership
+    marker records. Recording the directory name instead is what left a Codex
+    tree unremovable under the name every other route used.
+    """
+    manifest = directory / PLUGIN_MANIFEST
+    try:
+        declared = json.loads(manifest.read_text(encoding="utf-8")).get("name")
+    except (OSError, AttributeError, json.JSONDecodeError):
+        declared = None
+    return declared if isinstance(declared, str) and declared else directory.name
 
 
 def resolve_plugins(root: Path, names: Sequence[str]) -> tuple[tuple[Path, ...], tuple[str, ...]]:
