@@ -279,6 +279,13 @@ def expand_home(value: str | Path, *, home: Path | None = None) -> Path:
     One function, so a test that patches ``Path.home`` moves every path at once.
     Scattered ``expanduser`` calls read the real home directly and are why an
     isolated test could still reach the developer's own configuration.
+
+    ``~`` and ``~/…`` resolve through the seam. ``~otheruser/…`` cannot — it
+    names a home this process is not running as — so it is handed to
+    ``expanduser``, which the installer being replaced also used. A name with no
+    such user is returned verbatim rather than raising, because the value came
+    from configuration and refusing to build a path is not the installer's call
+    to make; the caller sees a path that plainly does not exist.
     """
     text = str(value)
     root = home or Path.home()
@@ -286,6 +293,11 @@ def expand_home(value: str | Path, *, home: Path | None = None) -> Path:
         return root
     if text.startswith("~/"):
         return root / text[2:]
+    if text.startswith("~"):
+        try:
+            return Path(text).expanduser()
+        except RuntimeError:
+            return Path(text)
     return Path(text)
 
 
@@ -532,7 +544,18 @@ def demo() -> None:
         assert expand_home("~", home=fake_home) == fake_home
         assert expand_home("~/x/y", home=fake_home) == fake_home / "x" / "y"
         assert expand_home("/abs/path", home=fake_home) == Path("/abs/path")
+        # A name with no such user is returned verbatim rather than raising.
         assert expand_home("~not-a-user/x", home=fake_home) == Path("~not-a-user/x")
+        # A real other user resolves through expanduser: the seam moves *this*
+        # process's home, and ~someone-else names a home it is not running as.
+        # Returning a relative path called `~root` under the CWD, which the
+        # first draft did, is the one answer that is certainly wrong.
+        import pwd
+
+        other = next((u.pw_name for u in pwd.getpwall() if u.pw_dir.startswith("/")), "")
+        if other:
+            resolved = expand_home(f"~{other}/x", home=fake_home)
+            assert resolved.is_absolute(), resolved
 
         # Reproducible metadata: same epoch in, same string out.
         assert build_timestamp({"SOURCE_DATE_EPOCH": "1700000000"}) == \

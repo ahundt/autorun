@@ -238,6 +238,51 @@ def test_an_unset_boolean_flag_leaves_the_other_tiers_their_turn():
     assert parser.parse_args([]).conductor is None
 
 
+def _cli(argv: list[str]):
+    """Parse with the plugin vocabulary supplied, as the entry point does."""
+    parser = build_parser(INSTALL_SETTINGS, prog="autorun", description="install",
+                          targets=harness_names(), selections=("ar", "pdf-extractor"))
+    return parser.parse_args(argv)
+
+
+def test_a_value_after_a_boolean_flag_is_an_error_not_a_plugin_name():
+    """`--conductor false` reads as "install Conductor, and install the plugin
+    called false". With an unconstrained positional argparse accepted it in
+    silence: Conductor stayed on and the install proceeded on a bogus
+    selection. The spelling that turns it off is `--no-conductor`."""
+    with pytest.raises(SystemExit):
+        _cli(["--conductor", "false"])
+
+    assert _cli(["--no-conductor"]).conductor == "false"
+    assert _cli(["--conductor"]).conductor == "true"
+
+
+def test_an_unknown_plugin_selection_is_rejected():
+    with pytest.raises(SystemExit):
+        _cli(["nosuchplugin"])
+
+    assert _cli(["ar"]).selection == "ar"
+    assert _cli([]).selection == "all"
+
+
+def test_the_short_form_of_tool_still_works():
+    """`--tool` has always also been `-t`. A generated parser emitting only the
+    long form silently breaks the one people type."""
+    assert _cli(["-t"]).tool == "true"
+    assert _cli(["--tool"]).tool == "true"
+
+
+def test_a_typo_exits_through_argparse_rather_than_a_traceback():
+    """A setting with no fixed vocabulary still has a parser that can reject.
+    Routing that through argparse gives the usual usage message and exit 2;
+    letting it reach resolve_all gives the user a stack trace."""
+    with pytest.raises(SystemExit):
+        _cli(["--skill-placement", "nosuchharness=both"])
+
+    with pytest.raises(SystemExit):
+        _cli(["--hook-python", ""])
+
+
 def test_the_config_mapping_form_of_placement_resolves():
     """install.py accepted a mapping of harness to mode with an optional
     "default" key. Stringifying it to its repr dropped the whole entry."""

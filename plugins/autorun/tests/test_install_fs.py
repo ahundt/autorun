@@ -131,6 +131,29 @@ def test_a_shared_directory_takes_a_changed_source(tmp_path):
     assert (destination / "ar-go.md").read_text(encoding="utf-8") == "v2\n"
 
 
+def test_a_directory_we_do_not_own_never_reaches_the_lock(tmp_path):
+    """Taking the install lock writes a file into the parent. Reading ownership
+    only inside the lock turned a read-only parent holding someone else's
+    commands/ into a PermissionError that aborted the whole uninstall instead
+    of skipping one directory."""
+    import os
+    import stat
+
+    from autorun.installer.fs import withdraw_files
+
+    parent = tmp_path / "readonly"
+    theirs = parent / "commands"
+    theirs.mkdir(parents=True)
+    (theirs / "their-command.md").write_text("hand written\n", encoding="utf-8")
+    os.chmod(parent, stat.S_IRUSR | stat.S_IXUSR)
+    try:
+        assert withdraw_files(theirs, plugin="ar") == ()
+    finally:
+        os.chmod(parent, 0o755)
+
+    assert (theirs / "their-command.md").is_file()
+
+
 def publish_marker_for_shared(directory: Path, plugin: str, names: tuple[str, ...]) -> None:
     """Claim only ``names`` inside a directory autorun shares with the user."""
     from autorun.installer.fs import TreeManifest, atomic_write, _fingerprint

@@ -99,6 +99,7 @@ class Setting(Generic[T]):
     default: T
     help: str
     flag: str = ""                       # defaults to --name-with-dashes
+    short: str = ""                      # e.g. -t, kept because people type it
     choices: tuple[str, ...] = ()        # argparse validation + help rendering
     repeatable: bool = False
     aliases: tuple[str, ...] = ()        # retired env vars and config keys
@@ -106,6 +107,30 @@ class Setting(Generic[T]):
     @property
     def option(self) -> str:
         return self.flag or "--" + self.name.replace("_", "-")
+
+    @property
+    def options(self) -> tuple[str, ...]:
+        """Every spelling argparse should accept, long form first.
+
+        ``short`` exists because ``--tool`` has always also been ``-t``, and a
+        generated parser that emits only the long form silently breaks the
+        shorter one people actually type.
+        """
+        return (self.option, *((self.short,) if self.short else ()))
+
+    def checked(self, raw: str) -> str:
+        """Validate one CLI token, for argparse's ``type=``.
+
+        Returns the token unchanged rather than the parsed value: resolution
+        happens once, later, in :meth:`resolve`, and a value parsed here would
+        arrive there already transformed. This exists only to move the failure
+        from a traceback to argparse's own error path.
+        """
+        if self.parse(raw) is None:
+            raise argparse.ArgumentTypeError(
+                f"{raw!r} is not valid for {self.option}. {self.rendered_help()}"
+            )
+        return raw
 
     @property
     def env(self) -> str:
@@ -286,6 +311,7 @@ def build_parser(
     description: str,
     flags: Mapping[str, str] = {},
     targets: Iterable[str] = (),
+    selections: Iterable[str] = (),
 ) -> argparse.ArgumentParser:
     """Build an argparse parser from declarations.
 
@@ -296,11 +322,22 @@ def build_parser(
     ``default=None`` on every setting-backed option is load-bearing: an
     argparse-supplied default is indistinguishable from an explicit choice and
     would outrank the environment.
+
+    ``selections`` are the installable plugin names. Passing them is what makes
+    a stray word an error: ``--conductor false`` is a boolean flag followed by a
+    token, and with an unconstrained positional argparse silently accepted
+    ``false`` as the plugin to install while leaving ``--conductor`` on.
     """
     parser = argparse.ArgumentParser(
         prog=prog, description=description, formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument("selection", nargs="?", default="all")
+    installable = sorted({*selections, "all"}) if selections else None
+    parser.add_argument(
+        "selection", nargs="?", default="all", choices=installable, metavar="PLUGIN",
+        help="Plugin to install"
+             + (f". One of: {', '.join(installable)}" if installable else "")
+             + ". Default: all.",
+    )
     for flag, help_text in flags.items():
         parser.add_argument(flag, action="store_true", help=help_text)
     if names := sorted(targets):
@@ -319,7 +356,7 @@ def build_parser(
             # the environment and CONFIG still get their turn, and both halves
             # route through the same `truthy` parser as every other tier.
             parser.add_argument(
-                setting.option, dest=setting.name, action="store_const", const="true",
+                *setting.options, dest=setting.name, action="store_const", const="true",
                 default=None, help=setting.rendered_help(),
             )
             parser.add_argument(
@@ -329,10 +366,15 @@ def build_parser(
             )
             continue
         parser.add_argument(
-            setting.option,
+            *setting.options,
             dest=setting.name,
             action="append" if setting.repeatable else "store",
             choices=list(setting.choices) or None,
+            # A setting with a fixed vocabulary is validated by `choices`.
+            # One without still has a parser that can reject, and routing that
+            # through argparse turns a typo into the usual `usage: … error: …`
+            # and exit 2 rather than a traceback out of `resolve_all`.
+            type=None if setting.choices else setting.checked,
             default=None,
             help=setting.rendered_help(),
         )
@@ -555,13 +597,15 @@ INSTALL_UV_TOOL = Setting(
     name="tool",
     parse=truthy,
     default=False,
+    short="-t",
     help="Also run 'uv tool install' for global CLI availability",
 )
 
 #: Conductor is a separate Gemini extension autorun installs alongside its own.
-#: Default True matches the flag it replaces; `--conductor false` is the
-#: `--no-conductor` half of the old pair, which is why one declaration covers
-#: both and neither can drift from the other.
+#: On by default, and turned off with `--no-conductor`. Not `--conductor false`:
+#: a boolean setting generates a flag pair, so a value after the flag is a
+#: separate token, and the one declaration covering both halves is what stops
+#: them drifting.
 CONDUCTOR = Setting(
     name="conductor",
     parse=truthy,

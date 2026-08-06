@@ -752,6 +752,18 @@ def withdraw_link(target: Path, inside: Path) -> bool:
     return True
 
 
+def _mine(directory: Path, plugin: str | None) -> bool:
+    """A lock-free "could this be ours?" — never the authoritative answer.
+
+    Used only to keep a directory that is plainly not ours out of the lock,
+    which matters because taking the lock writes a file into its parent.
+    """
+    if not directory.is_dir():
+        return False
+    marker = read_marker(directory)
+    return marker is not None and (plugin is None or owns(marker, plugin))
+
+
 def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, ...]:
     """Remove only the files autorun recorded, leaving the directory and the
     user's own files in place.
@@ -765,12 +777,16 @@ def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, 
     A file whose fingerprint no longer matches is left alone: the user edited
     it, so it is theirs now. Returns the names actually removed.
     """
-    if not directory.is_dir():
+    # Two reads, the shape `withdrawn` uses. The first is a cheap negative that
+    # keeps a directory we do not own out of the lock entirely — taking it
+    # creates a lock file in the parent, so locking first turned a read-only
+    # parent holding someone else's `commands/` into a PermissionError that
+    # aborted the whole uninstall instead of skipping one directory. The second
+    # is the authoritative one: checking, releasing, then deleting leaves a
+    # window in which a concurrent install republishes what is about to go.
+    if not _mine(directory, plugin):
         return ()
     with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
-        # Inside the lock, for the reason `withdrawn` gives: checking ownership,
-        # releasing, then deleting leaves a window in which a concurrent install
-        # republishes the files this call is about to remove.
         manifest = read_marker(directory)
         if manifest is None or (plugin is not None and not owns(manifest, plugin)):
             return ()
