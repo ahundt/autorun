@@ -102,6 +102,7 @@ __all__ = [
     "BACKUP_SUFFIX",
     "withdrawn",
     "withdraw_files",
+    "dereference_links",
     "json_document",
     "atomic_write",
     "OWNED_MARKER_NAME",
@@ -616,11 +617,14 @@ def publish_files(
     file.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    previous = read_marker(directory)
-    ours = dict(previous.files) if owns(previous, plugin) else {}
-
     kept, written, backed_up = [], {}, []
     with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+        # Read ownership *inside* the lock, the rule `withdrawn` states. A
+        # concurrent install that lands between the read and the lock leaves
+        # `ours` describing files it has already replaced, and every name it
+        # rewrote then looks like a user edit and is moved to .autorun-backup.
+        previous = read_marker(directory)
+        ours = dict(previous.files) if owns(previous, plugin) else {}
         for candidate in sorted(p for p in source.iterdir() if p.is_file()):
             destination = directory / candidate.name
             if destination.exists() and (
@@ -761,10 +765,15 @@ def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, 
     A file whose fingerprint no longer matches is left alone: the user edited
     it, so it is theirs now. Returns the names actually removed.
     """
-    manifest = read_marker(directory)
-    if manifest is None or (plugin is not None and not owns(manifest, plugin)):
+    if not directory.is_dir():
         return ()
     with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+        # Inside the lock, for the reason `withdrawn` gives: checking ownership,
+        # releasing, then deleting leaves a window in which a concurrent install
+        # republishes the files this call is about to remove.
+        manifest = read_marker(directory)
+        if manifest is None or (plugin is not None and not owns(manifest, plugin)):
+            return ()
         removed = tuple(
             name
             for name in sorted(manifest.files)
@@ -821,6 +830,43 @@ def publish_tree(source: Path, target: Path, *, plugin: str = "", **settings: st
     with published(target, plugin=plugin, **settings) as staged:
         shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
     return decision
+
+
+def dereference_links(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Replace every symlink under ``root`` with what it points at.
+
+    The inverse of :func:`publish_tree`'s ``symlinks=True``, and here rather
+    than in a harness module for that reason: nothing about flattening a tree is
+    harness-specific, and this module is the only one allowed to mutate a tree.
+
+    The caller that needs it is a packager whose consumer ignores symlinks — the
+    Codex plugin cache does, so a staged ``SKILL.md`` that is a link is simply
+    absent from the packaged plugin and the skill ships with no content, with
+    nothing reporting it. Autorun creates such links deliberately (the
+    shared-skills bridge), so staging has to flatten them.
+
+    A link whose target is missing is left in place and named: replacing it with
+    nothing would hide a broken bridge instead of surfacing it.
+
+    Returns ``(replaced, broken)``, both relative to ``root``. Callers have
+    wanted each: the count for a report, the names for a warning.
+    """
+    replaced, broken = [], []
+    for path in sorted(root.rglob("*")):
+        if not path.is_symlink():
+            continue
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            broken.append(str(path.relative_to(root)))
+            continue
+        path.unlink()
+        if resolved.is_dir():
+            shutil.copytree(resolved, path, symlinks=False)
+        else:
+            shutil.copy2(resolved, path)
+        replaced.append(str(path.relative_to(root)))
+    return tuple(replaced), tuple(broken)
 
 
 def demo() -> None:

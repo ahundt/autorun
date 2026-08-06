@@ -135,6 +135,35 @@ def test_a_user_authored_name_blocks_only_itself(plugin, shared, ctx):
     assert len(intents) == 2, "no skill lost, none published twice"
 
 
+def test_both_places_a_skill_on_both_routes(plugin, shared, ctx):
+    """`both` exists precisely to show one skill twice. An unconditional
+    `continue` after the shared yield made it identical to `auto`, so the mode
+    the user chose to get a native copy delivered exactly what `auto` does."""
+    reader = FakePlatform("reader", True, native_skills=Route("skills"))
+
+    intents = list(
+        skill_intents(reader, ctx, {"ar": plugin}, placement="both", shared_root_override=shared)
+    )
+
+    for name in shippable_skills(plugin):
+        parents = {i.target.parent for i in intents if i.target.name == name}
+        assert shared in parents, f"{name} missing the shared route"
+        assert len(parents) == 2, f"{name} reached {len(parents)} route(s), want both"
+
+
+def test_auto_still_places_a_skill_once(plugin, shared, ctx):
+    """The companion to the above: widening `both` must not widen `auto`, which
+    is the default and where a duplicate would double every harness's listing."""
+    reader = FakePlatform("reader", True, native_skills=Route("skills"))
+
+    intents = list(
+        skill_intents(reader, ctx, {"ar": plugin}, placement="auto", shared_root_override=shared)
+    )
+
+    assert len(intents) == len(shippable_skills(plugin))
+    assert {i.target.parent for i in intents} == {shared}
+
+
 def test_collision_detection_is_case_folded(plugin, shared):
     """macOS would silently alias `Commit` onto `commit` while Linux would not.
     A route that works on one machine and clobbers on the other is worse than

@@ -108,6 +108,29 @@ def test_a_shared_directory_is_emptied_per_file_not_wholesale(tmp_path):
     assert shared.is_dir(), "a shared directory is never removed"
 
 
+def test_a_shared_directory_takes_a_changed_source(tmp_path):
+    """decide_files compared the destination against the manifest and never the
+    source, so a shipped file that changed still read as "already current".
+    _perform acts on PUBLISH and not SKIP, which froze ForgeCode's and
+    OpenCode's commands/ at whatever the first install wrote — forever, with
+    every later run reporting success."""
+    from autorun.installer.fs import decide_files, publish_files
+
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "ar-go.md").write_text("v1\n", encoding="utf-8")
+    destination = tmp_path / "forge" / "commands"
+
+    assert publish_files(source, destination, plugin="ar").verdict is Verdict.PUBLISH
+    assert decide_files(source, destination, plugin="ar").verdict is Verdict.SKIP
+
+    (source / "ar-go.md").write_text("v2\n", encoding="utf-8")
+
+    assert decide_files(source, destination, plugin="ar").verdict is Verdict.PUBLISH
+    publish_files(source, destination, plugin="ar")
+    assert (destination / "ar-go.md").read_text(encoding="utf-8") == "v2\n"
+
+
 def publish_marker_for_shared(directory: Path, plugin: str, names: tuple[str, ...]) -> None:
     """Claim only ``names`` inside a directory autorun shares with the user."""
     from autorun.installer.fs import TreeManifest, atomic_write, _fingerprint

@@ -26,11 +26,10 @@ Complexity: O(E) in existing entries, one read and one atomic write.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .fs import json_document
+from .fs import dereference_links as fs_dereference_links, json_document
 
 __all__ = [
     "ALLOWED_TOP_LEVEL",
@@ -261,32 +260,15 @@ def withdraw_from_marketplace(path: Path, plugin: str) -> bool:
 
 
 def dereference_links(root: Path) -> tuple[str, ...]:
-    """Replace symlinks under ``root`` with the files they point at.
+    """Flatten a staged tree for the Codex plugin cache, naming broken links.
 
-    The Codex plugin cache ignores symlinks, so a staged ``SKILL.md`` that is a
-    link is simply absent from the packaged plugin — the skill ships with no
-    content and nothing reports it. Autorun deliberately creates such links
-    (the shared-skills bridge), so staging has to flatten them.
-
-    A link whose target is missing is left alone and named, because replacing it
-    with nothing would hide a broken bridge instead of surfacing it.
+    The cache ignores symlinks, so a staged ``SKILL.md`` that is a link ships
+    with no content and nothing reports it. The flattening itself is
+    harness-neutral and lives in :func:`fs.dereference_links`, the only module
+    allowed to mutate a tree; Codex keeps just the knowledge that it needs it.
     """
-    replaced, broken = [], []
-    for path in sorted(root.rglob("*")):
-        if not path.is_symlink():
-            continue
-        try:
-            resolved = path.resolve(strict=True)
-        except (OSError, RuntimeError):
-            broken.append(str(path.relative_to(root)))
-            continue
-        path.unlink()
-        if resolved.is_dir():
-            shutil.copytree(resolved, path, symlinks=False)
-        else:
-            shutil.copy2(resolved, path)
-        replaced.append(str(path.relative_to(root)))
-    return tuple(broken)
+    _replaced, broken = fs_dereference_links(root)
+    return broken
 
 
 def demo() -> None:

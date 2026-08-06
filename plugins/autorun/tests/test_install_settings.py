@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from autorun.installer.settings import (  # noqa: E402
     CODEX_HOOK_SOURCE,
     CODEX_PLUGIN_MARKETPLACE,
+    CONDUCTOR,
     HOOK_NO_SYNC,
     INSTALL_SETTINGS,
     Resolved,
@@ -172,6 +173,102 @@ def test_the_harness_vocabulary_comes_from_the_registry():
     from autorun.platforms import PLATFORMS
 
     assert set(harness_names()) == set(PLATFORMS)
+
+
+# ─── A repeated flag is a list, and stringifying one destroys it ─────────────
+
+
+def _parsed(argv: list[str], name: str):
+    parser = build_parser(INSTALL_SETTINGS, prog="autorun", description="install",
+                          targets=harness_names())
+    return resolve_all(INSTALL_SETTINGS, parser.parse_args(argv), config={})[name].value
+
+
+def test_a_placement_flag_survives_the_parser():
+    """argparse `append` hands resolve() a list. `str(["native"])` is
+    "['native']", which no parser accepts, so the flag resolved to the default
+    and the install proceeded on a layout the user did not ask for."""
+    assert _parsed(["--skill-placement", "native"], "skill_placement") == {"": "native"}
+    assert _parsed(["--skill-placement", "codex=both"], "skill_placement") == {"codex": "both"}
+
+
+def test_repeating_the_placement_flag_merges_rather_than_replaces():
+    value = _parsed(
+        ["--skill-placement", "codex=both", "--skill-placement", "claude=native"],
+        "skill_placement",
+    )
+
+    assert value == {"codex": "both", "claude": "native"}
+
+
+def test_a_custom_harness_spec_is_not_mangled_into_a_directory_it_would_create():
+    """The stringified-list form parsed, which is worse than failing: the name
+    became "['mine" and config_dir "~/.mine']", a path starting with ~/ that the
+    installer would expand and write a harness configuration into."""
+    harnesses = _parsed(["--custom-harness", "mine=claude:mybin:~/.mine"], "custom_harness")
+
+    assert len(harnesses) == 1
+    assert (harnesses[0].name, harnesses[0].config_dir) == ("mine", "~/.mine")
+
+
+def test_repeating_the_custom_harness_flag_keeps_both():
+    harnesses = _parsed(
+        ["--custom-harness", "a=claude:x:~/.a", "--custom-harness", "b=codex:y:~/.b"],
+        "custom_harness",
+    )
+
+    assert [h.name for h in harnesses] == ["a", "b"]
+
+
+def test_a_boolean_setting_is_a_flag_pair_not_a_flag_taking_a_value():
+    """`--tool` and `--no-conductor` are the spellings the CLI documents. With
+    action="store" both exited 2 at argparse."""
+    assert _parsed(["--tool"], "tool") is True
+    assert _parsed(["--conductor"], "conductor") is True
+    assert _parsed(["--no-conductor"], "conductor") is False
+    assert _parsed([], "conductor") is CONDUCTOR.default
+
+
+def test_an_unset_boolean_flag_leaves_the_other_tiers_their_turn():
+    """store_const rather than store_true: store_true would supply False for an
+    absent flag, which outranks the environment and CONFIG."""
+    parser = build_parser(INSTALL_SETTINGS, prog="autorun", description="install",
+                          targets=harness_names())
+
+    assert parser.parse_args([]).conductor is None
+
+
+def test_the_config_mapping_form_of_placement_resolves():
+    """install.py accepted a mapping of harness to mode with an optional
+    "default" key. Stringifying it to its repr dropped the whole entry."""
+    resolved = SKILL_PLACEMENT.resolve(
+        None, env={}, config={"skill_placement": {"default": "native", "codex": "both"}}
+    )
+
+    assert resolved.value == {"": "native", "codex": "both"}
+    assert resolved.source == "config"
+
+
+# ─── A typo the user just typed is an error; a stale export is not ───────────
+
+
+def test_a_typo_in_a_flag_names_the_problem():
+    """Silently dropping an unrecognised token installs a layout the caller did
+    not ask for and gives no signal that the override was ignored."""
+    with pytest.raises(ValueError, match="nosuchharness"):
+        SKILL_PLACEMENT.resolve(["nosuchharness=both"], env={}, config={})
+
+    with pytest.raises(ValueError, match="One of"):
+        CODEX_HOOK_SOURCE.resolve("typo", env={}, config={})
+
+
+@pytest.mark.parametrize("tier", ["env", "config"])
+def test_a_stale_export_falls_through_rather_than_aborting_the_install(tier):
+    """plugins/autorun/AGENTS.md lesson 7: fail open when data is unknown."""
+    env = {"AUTORUN_CODEX_HOOK_SOURCE": "typo"} if tier == "env" else {}
+    config = {} if tier == "env" else {"codex_hook_source": "typo"}
+
+    assert CODEX_HOOK_SOURCE.resolve(None, env=env, config=config).source == "default"
 
 
 # ─── The parsers cannot drift ────────────────────────────────────────────────

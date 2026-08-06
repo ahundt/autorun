@@ -29,7 +29,7 @@ from .fs import atomic_write
 
 __all__ = [
     "Block", "bounds", "splice", "strip", "foreign_slugs", "SENTINEL_RE",
-    "CONTEXT_GUIDANCE", "CONTEXT_GUIDANCE_FLAG",
+    "CONTEXT_GUIDANCE", "CONTEXT_GUIDANCE_FLAG", "context_guidance_enabled",
 ]
 
 #: Any autorun region, whoever wrote it. Used to find blocks from a version that
@@ -70,6 +70,18 @@ CONTEXT_GUIDANCE_FLAG = (
     "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED"
 )
 CONTEXT_GUIDANCE = Block("context-capacity")
+
+
+def context_guidance_enabled() -> bool:
+    """Whether to write the block. The reader for ``CONTEXT_GUIDANCE_FLAG``.
+
+    A documented disable switch that nothing consults is worse than no switch:
+    the env var is published, a user sets it to ``false``, and the workaround
+    keeps running with nothing to say why.
+    """
+    from .settings import workaround_enabled
+
+    return workaround_enabled(CONTEXT_GUIDANCE_FLAG)
 # --- BUG #54673 WORKAROUND END ---
 
 
@@ -243,6 +255,26 @@ def demo() -> None:
         assert strip(both, block) is True
         text = both.read_text()
         assert "second" in text and "first" not in text and "Keep this paragraph." in text
+
+        # The documented disable switch has a reader, and its tokens match the
+        # other bug gates. Restored around the check so a real environment is
+        # not left changed by a self-check.
+        import os
+
+        previous = os.environ.get(CONTEXT_GUIDANCE_FLAG)
+        try:
+            os.environ[CONTEXT_GUIDANCE_FLAG] = "false"
+            assert context_guidance_enabled() is False
+            os.environ[CONTEXT_GUIDANCE_FLAG] = "never"
+            assert context_guidance_enabled() is False, "never is the documented spelling"
+            os.environ[CONTEXT_GUIDANCE_FLAG] = "auto"
+            assert context_guidance_enabled() is True
+            del os.environ[CONTEXT_GUIDANCE_FLAG]
+            assert context_guidance_enabled() is True, "a workaround is on until turned off"
+        finally:
+            os.environ.pop(CONTEXT_GUIDANCE_FLAG, None)
+            if previous is not None:
+                os.environ[CONTEXT_GUIDANCE_FLAG] = previous
 
         # A block from a version we no longer ship is reported, not ignored.
         assert foreign_slugs(both, known=["guidance"]) == ("cache",)

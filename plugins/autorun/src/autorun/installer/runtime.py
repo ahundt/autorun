@@ -287,18 +287,39 @@ REPOSITORY = "git+https://github.com/ahundt/autorun.git"
 EXTENSION_NAMES = ("ar", "autorun-workspace", "autorun")
 
 
-def update_argv(method: str, *, extension: str = EXTENSION_NAMES[0]) -> tuple[str, ...]:
-    """The command that upgrades an installation made the given way.
+#: Re-registration after a language-package upgrade. Upgrading the Python
+#: package replaces the source but not what any harness loads: each keeps
+#: serving its own cached copy of the previous version, so the user sees no
+#: change and nothing reports why. Only the uv and pip routes need this — the
+#: harness CLIs update their own caches as part of their update command.
+_REREGISTER = (sys.executable, "-m", "autorun", "--install", "--force")
+
+
+def update_argv(
+    method: str, *, extension: str = EXTENSION_NAMES[0],
+    available: Callable[[str], bool] = shutil.which,
+) -> tuple[tuple[str, ...], ...]:
+    """The commands that upgrade an installation made the given way, in order.
 
     A table rather than a branch chain: each method is one row, so adding a
     packaging route is a row and not a new `elif` in a function that already
-    decides three other things.
+    decides three other things. A row is a *sequence* of commands because the
+    language-package routes are not done when the upgrade returns.
+
+    ``plugin`` is the retired spelling for "whichever harness CLI is here",
+    from before the two were told apart. It still resolves, because a user with
+    it in a script or a config file would otherwise get an error naming methods
+    they never chose.
     """
+    if method == "plugin":
+        method = next(
+            (name for name in ("claude", "gemini") if available(name)), "claude"
+        )
     return {
-        "claude": ("claude", "plugin", "update", "autorun"),
-        "gemini": ("gemini", "extensions", "update", extension),
-        "uv": ("uv", "pip", "install", "--upgrade", REPOSITORY),
-        "pip": (sys.executable, "-m", "pip", "install", "--upgrade", REPOSITORY),
+        "claude": ((("claude", "plugin", "update", "autorun")),),
+        "gemini": ((("gemini", "extensions", "update", extension)),),
+        "uv": (("uv", "pip", "install", "--upgrade", REPOSITORY), _REREGISTER),
+        "pip": ((sys.executable, "-m", "pip", "install", "--upgrade", REPOSITORY), _REREGISTER),
     }[method]
 
 
@@ -379,6 +400,7 @@ def self_update(
     method: str = "auto",
     extension: str = EXTENSION_NAMES[0],
     run: Runner = _spawn,
+    available: Callable[[str], bool] = shutil.which,
 ) -> Outcome:
     """Upgrade this installation, or say why it did not.
 
@@ -390,19 +412,19 @@ def self_update(
         return Outcome("self-update", True, version.describe())
     resolved = detect_update_method() if method == "auto" else method
     try:
-        argv = update_argv(resolved, extension=extension)
+        steps = update_argv(resolved, extension=extension, available=available)
     except KeyError:
         return Outcome("self-update", False, f"unknown update method {resolved!r}")
-    try:
-        result = run(argv)
-    except (OSError, subprocess.SubprocessError) as error:
-        return Outcome("self-update", False, f"{type(error).__name__}: {error}")
-    return Outcome(
-        "self-update",
-        result.returncode == 0,
-        version.describe() if result.returncode == 0
-        else _first_line(result.stderr or result.stdout),
-    )
+    for argv in steps:
+        try:
+            result = run(argv)
+        except (OSError, subprocess.SubprocessError) as error:
+            return Outcome("self-update", False, f"{type(error).__name__}: {error}")
+        # Stop at the first failure rather than re-registering after a failed
+        # upgrade, which would report success for a version that never landed.
+        if result.returncode != 0:
+            return Outcome("self-update", False, _first_line(result.stderr or result.stdout))
+    return Outcome("self-update", True, version.describe())
 
 
 def demo() -> None:
@@ -512,13 +534,34 @@ def demo() -> None:
     assert self_update(Version("1.0.0", "1.0.0"), run=ok).ok
     assert calls == [], "an up-to-date install runs no subprocess at all"
 
+    # A language-package upgrade re-registers afterwards. Without that second
+    # step the source is new and every harness still loads its cached copy of
+    # the old version, with nothing reporting the mismatch.
     calls.clear()
     assert self_update(Version("1.0.0", "1.0.1"), method="uv", run=ok).ok
-    assert calls == [("uv", "pip", "install", "--upgrade", REPOSITORY)], calls
+    assert calls == [("uv", "pip", "install", "--upgrade", REPOSITORY), _REREGISTER], calls
 
     calls.clear()
     self_update(Version("1.0.0", "1.0.1"), method="gemini", extension="autorun-workspace", run=ok)
     assert calls == [("gemini", "extensions", "update", "autorun-workspace")], calls
+    assert len(calls) == 1, "a harness CLI updates its own cache"
+
+    # The retired `plugin` spelling still resolves, to whichever CLI is here.
+    calls.clear()
+    self_update(Version("1.0.0", "1.0.1"), method="plugin", run=ok, available=lambda _: False)
+    assert calls == [("claude", "plugin", "update", "autorun")], calls
+    calls.clear()
+    self_update(
+        Version("1.0.0", "1.0.1"), method="plugin", run=ok,
+        available=lambda name: name == "gemini",
+    )
+    assert calls[0][0] == "gemini", calls
+
+    # A failed upgrade does not go on to re-register, which would report
+    # success for a version that never landed.
+    calls.clear()
+    assert not self_update(Version("1.0.0", "1.0.1"), method="uv", run=fails).ok
+    assert len(calls) == 1, "stopped at the failure"
 
     failed = self_update(Version("1.0.0", "1.0.1"), method="uv", run=fails)
     assert not failed.ok and "bashlex" in failed.detail

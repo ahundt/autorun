@@ -34,7 +34,7 @@ __all__ = [
     "resolve_plugins",
     "is_marketplace_root",
     "config_dir", "extensions_dir", "expand_home", "build_timestamp",
-    "skill_destinations",
+    "skill_destinations", "shared_root",
     "python_too_old", "MINIMUM_PYTHON",
 ]
 
@@ -295,6 +295,23 @@ def _configured_roots() -> Mapping[str, str]:
 
     roots = CONFIG.get("harness_config_dirs", {})
     return roots if isinstance(roots, Mapping) else {}
+
+
+def shared_root(*, home: Path | None = None) -> Path:
+    """The vendor-neutral skills root several harnesses read (default
+    ``~/.agents/skills``).
+
+    Not per-harness, so it is configuration rather than platform data, and it
+    belongs here beside :func:`config_dir` for the same reason: one authority
+    per location question. Both halves are configurable, and reading them
+    through CONFIG rather than hardcoding the path is what keeps install and
+    uninstall looking in the same directory — a literal here would leave
+    uninstall unable to find what install wrote under a user's override.
+    """
+    from ..config import CONFIG
+
+    base = expand_home(str(CONFIG.get("shared_agents_dir", "~/.agents")), home=home)
+    return base / str(CONFIG.get("shared_agents_skills_subdir", "skills"))
 
 
 def extensions_dir(platform: object, *, env: Mapping[str, str] | None = None,

@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping
 
+from . import discovery
 from .fs import read_marker
 from .traversal import Context, Intent, Kind
 
@@ -52,18 +53,12 @@ __all__ = [
     "retired_names",
 ]
 
-def shared_root() -> Path:
-    """The vendor-neutral user-scope skills root.
-
-    Resolved through the configured helper rather than hardcoded, so install and
-    uninstall read one configuration. A literal ``~/.agents/skills`` here would
-    ignore a user's override and leave uninstall unable to find what install
-    wrote — which is the asymmetry a spec test in this repository exists to
-    catch, and did catch when this was a module-level constant.
-    """
-    from ..install import shared_agents_skills_dir
-
-    return shared_agents_skills_dir()
+#: Re-exported so the routing code reads one name, while ``discovery`` stays the
+#: only module that answers "where is this directory". A second implementation
+#: here is what a spec test in this repository exists to catch: install and
+#: uninstall resolving the shared root differently leaves uninstall unable to
+#: find what install wrote.
+shared_root = discovery.shared_root
 
 
 def is_shippable(path: Path) -> bool:

@@ -36,7 +36,8 @@ from typing import Callable, Generic, Iterable, Mapping, Sequence, TypeVar
 T = TypeVar("T")
 
 __all__ = [
-    "Setting", "Resolved", "one_of", "truthy", "csv_of", "mapping_of",
+    "Setting", "Resolved", "one_of", "truthy", "csv_of", "into_tuple", "mapping_of",
+    "autorun_config", "workaround_enabled",
     "build_parser", "resolve_all", "INSTALL_SETTINGS", "harness_names",
     "CustomHarness", "parse_custom_harness", "synthesize", "steps_for_custom", "flavors",
 ]
@@ -51,6 +52,27 @@ def autorun_config() -> Mapping[str, object]:
     from ..config import CONFIG
 
     return CONFIG
+
+
+def workaround_enabled(key: str) -> bool:
+    """Whether one ``AUTORUN_BUG_*_WORKAROUND_ENABLED`` gate is on. Default on.
+
+    One resolver for every bug gate, so the accepted tokens cannot drift between
+    them: ``false``/``0``/``never`` disable, ``true``/``1``/``auto``/``always``
+    enable, and anything else falls through to CONFIG. Kept separate from
+    :func:`truthy` because the vocabularies differ and the default is the
+    opposite: a workaround is on until someone turns it off.
+
+    A key nothing reads is the failure this exists to prevent. The documented
+    disable switch silently stops working, and the workaround it names runs
+    forever with no way to turn it off.
+    """
+    value = os.environ.get(key, "").strip().lower()
+    if value in ("false", "0", "never"):
+        return False
+    if value in ("true", "1", "auto", "always"):
+        return True
+    return bool(autorun_config().get(key, True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,15 +572,17 @@ CONDUCTOR = Setting(
 #: How a self-update reaches this installation. `auto` detects it, and the
 #: detection order matters: a plugin installation upgraded with pip leaves the
 #: harness still loading the old copy from its own cache.
+#: `plugin` is the retired spelling for "whichever harness CLI is present",
+#: from before claude and gemini were told apart. It stays in the vocabulary
+#: because `aliases` carries retired *key* names, not retired *values* — a user
+#: with `plugin` in a script would otherwise be told to pick from methods they
+#: never chose. `runtime.update_argv` resolves it to whichever CLI is installed.
 UPDATE_METHOD = Setting(
     name="update_method",
-    parse=one_of("auto", "claude", "gemini", "uv", "pip"),
+    parse=one_of("auto", "claude", "gemini", "plugin", "uv", "pip"),
     default="auto",
     help="Force a specific self-update method rather than detecting one",
-    choices=("auto", "claude", "gemini", "uv", "pip"),
-    # The old vocabulary said `plugin` for what is now the specific harness that
-    # owns the plugin, so the retired spelling keeps resolving.
-    aliases=("AUTORUN_UPDATE_METHOD", "update_method"),
+    choices=("auto", "claude", "gemini", "plugin", "uv", "pip"),
 )
 
 #: Repeatable, so the parser must return a tuple: `_combine` accumulates tuples

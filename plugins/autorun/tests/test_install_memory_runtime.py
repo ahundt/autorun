@@ -10,6 +10,7 @@ everything still looks healthy.
 from __future__ import annotations
 
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -408,6 +409,83 @@ def test_harness_clis_are_preferred_over_language_package_managers():
     assert detect_update_method(available=lambda b: b in {"gemini", "uv"}) == "gemini"
     assert detect_update_method(available=lambda b: b == "uv") == "uv"
     assert detect_update_method(available=lambda b: False) == "pip"
+
+
+def test_a_language_package_upgrade_reregisters_afterwards():
+    """Upgrading the Python package replaces the source but not what any
+    harness loads: each keeps serving its own cached copy of the previous
+    version, so the user sees no change and nothing reports why."""
+    from autorun.installer.runtime import REPOSITORY, Version, self_update
+
+    run, calls = _recorder()
+
+    assert self_update(Version("1.0.0", "1.0.1"), method="uv", run=run).ok
+
+    assert calls[0] == ("uv", "pip", "install", "--upgrade", REPOSITORY)
+    assert calls[1][-2:] == ("--install", "--force"), calls
+    assert len(calls) == 2
+
+
+def test_a_harness_cli_update_needs_no_second_step():
+    from autorun.installer.runtime import Version, self_update
+
+    run, calls = _recorder()
+
+    self_update(Version("1.0.0", "1.0.1"), method="claude", run=run)
+
+    assert calls == [("claude", "plugin", "update", "autorun")]
+
+
+def test_a_failed_upgrade_does_not_go_on_to_reregister():
+    """Re-registering after a failed upgrade reports success for a version that
+    never landed."""
+    from autorun.installer.runtime import Version, self_update
+
+    def fails(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 1, "", "network unreachable")
+
+    calls: list[tuple[str, ...]] = []
+
+    outcome = self_update(Version("1.0.0", "1.0.1"), method="pip", run=fails)
+
+    assert not outcome.ok
+    assert "network unreachable" in outcome.detail
+    assert len(calls) == 1, "stopped at the failure"
+
+
+@pytest.mark.parametrize(
+    "present, expected",
+    [({"claude"}, "claude"), ({"gemini"}, "gemini"), (set(), "claude")],
+    ids=["claude", "gemini", "neither-installed"],
+)
+def test_the_retired_plugin_method_still_resolves(present, expected):
+    """`plugin` predates telling the two harness CLIs apart. A user with it in
+    a script would otherwise be told to pick from methods they never chose."""
+    from autorun.installer.runtime import Version, self_update
+
+    run, calls = _recorder()
+
+    self_update(
+        Version("1.0.0", "1.0.1"), method="plugin", run=run,
+        available=lambda name: name in present,
+    )
+
+    assert calls[0][0] == expected
+
+
+def test_the_disable_switch_for_the_context_guidance_block_has_a_reader(monkeypatch):
+    """A documented env var that nothing consults is worse than no switch: the
+    user sets it and the workaround keeps running with nothing to say why."""
+    from autorun.installer.memory import CONTEXT_GUIDANCE_FLAG, context_guidance_enabled
+
+    assert context_guidance_enabled() is True, "a workaround is on until turned off"
+    for token in ("false", "0", "never"):
+        monkeypatch.setenv(CONTEXT_GUIDANCE_FLAG, token)
+        assert context_guidance_enabled() is False, token
+    for token in ("true", "1", "auto", "always"):
+        monkeypatch.setenv(CONTEXT_GUIDANCE_FLAG, token)
+        assert context_guidance_enabled() is True, token
 
 
 def test_the_daemon_restart_goes_through_the_cli():
