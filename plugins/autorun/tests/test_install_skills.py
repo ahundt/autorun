@@ -46,6 +46,19 @@ class FakePlatform:
     skill_search_routes: tuple = ()
 
 
+def _home_context(tmp_path, monkeypatch, marketplace_root):
+    """A Context whose `home` agrees with `$HOME`, which is the only seam.
+
+    Setting the field alone moves some routes and not others: anything anchored
+    at `Path.home()` reads `$HOME` directly. `Context` refuses the mismatch, so
+    a test that wants an isolated home redirects the variable.
+    """
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    return Context(marketplace_root=marketplace_root, home=home)
+
+
 @pytest.fixture
 def plugin(tmp_path: Path) -> Path:
     root = tmp_path / "plugins" / "ar"
@@ -62,8 +75,8 @@ def shared(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def ctx(tmp_path: Path) -> Context:
-    return Context(marketplace_root=tmp_path, home=tmp_path / "home")
+def ctx(tmp_path: Path, monkeypatch) -> Context:
+    return _home_context(tmp_path, monkeypatch, tmp_path)
 
 
 # ─── What counts as a skill ──────────────────────────────────────────────────

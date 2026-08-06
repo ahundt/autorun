@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Sequence
@@ -35,6 +36,7 @@ __all__ = [
     "is_marketplace_root",
     "config_dir", "extensions_dir", "expand_home", "build_timestamp",
     "skill_destinations", "shared_root", "plugin_name", "PLUGIN_MANIFEST",
+    "redirected_home",
     "python_too_old", "MINIMUM_PYTHON",
 ]
 
@@ -326,6 +328,29 @@ def _configured_roots() -> Mapping[str, str]:
 
     roots = CONFIG.get("harness_config_dirs", {})
     return roots if isinstance(roots, Mapping) else {}
+
+
+@contextmanager
+def redirected_home(home: Path) -> Iterator[Path]:
+    """Point ``$HOME`` at ``home`` for the duration, then put it back.
+
+    The one correct way to isolate anything that installs. ``Path.home()`` reads
+    ``$HOME``, so redirecting it moves *every* route together; setting a
+    ``home`` argument while leaving ``$HOME`` alone moves some and not others,
+    which is a walk that reads a sandbox and writes a real home. That is not
+    hypothetical — it uninstalled 16 skills from a live machine during a
+    self-check that looked isolated, which is why ``Context`` now refuses the
+    mismatch and why this exists to make the right form the easy one.
+    """
+    previous = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    try:
+        yield home
+    finally:
+        if previous is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = previous
 
 
 def shared_root(*, home: Path | None = None) -> Path:

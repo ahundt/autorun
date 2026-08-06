@@ -37,11 +37,13 @@ one marker read, plus a tree hash only when the target is about to change.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
+from .discovery import redirected_home
 from .fs import (
     Decision,
     Verdict,
@@ -80,6 +82,29 @@ class Context:
     #: caller that changes only this field gets a partly-relocated result — some
     #: paths moved, some not. Redirect ``$HOME`` and let this default.
     home: Path = field(default_factory=Path.home)
+
+    def __post_init__(self) -> None:
+        """Refuse a ``home`` that disagrees with ``$HOME``.
+
+        Setting this field alone relocates *some* paths and not others: a skill
+        route anchored at ``Path.home()`` reads ``$HOME`` directly, so a caller
+        who redirects only this one gets a walk that reads a sandbox and writes
+        a real home. That is not a hypothetical — it uninstalled 16 skills from
+        a live machine during a self-check that looked isolated.
+
+        Raising is the only safe answer. Silently correcting the field would
+        hide the caller's mistaken belief, and honouring it would keep the split
+        that caused the damage. ``$HOME`` is the seam; redirect it and let this
+        default.
+        """
+        declared = Path(os.environ["HOME"]) if "HOME" in os.environ else None
+        if declared is not None and self.home != declared:
+            raise ValueError(
+                f"Context(home={self.home}) disagrees with $HOME={declared}. "
+                "Home-anchored routes resolve through Path.home(), which reads "
+                "$HOME, so this would read one home and write another. Set the "
+                "HOME environment variable instead and leave `home` to default."
+            )
     settings: Mapping[str, object] = field(default_factory=dict)
     force: bool = False
 
@@ -337,6 +362,12 @@ def report(decisions: Iterable[Decision]) -> str:
     return "\n".join(lines + detail)
 
 
+
+def _made(path: Path) -> Path:
+    """Create a directory and return it, so a `with` header stays one line."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 def demo() -> None:
     """Self-check: one synthetic harness, no branches, all three modes."""
     import tempfile
@@ -362,7 +393,9 @@ def demo() -> None:
             kind=Kind.FILES,
         )]
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, redirected_home(
+        _made(Path(tmp) / "home")
+    ):
         root = Path(tmp)
         for name in ("alpha", "beta"):
             skill = root / "market" / "skills" / name
@@ -418,8 +451,7 @@ def demo() -> None:
 
         # Adding a harness adds no branch to this module.
         second = Fake("other", (skills_step,))
-        both = run([harness, second], Context(marketplace_root=root / "market",
-                                              home=root / "home2"), Mode.PREVIEW)
+        both = run([harness, second], ctx, Mode.PREVIEW)
         assert len(both) == 5, "3 intents + 2 intents, no special cases"
 
         # The real registry pairs the same way, and a harness with no declared
@@ -431,7 +463,7 @@ def demo() -> None:
         assert sum(len(t.install_steps) for t in paired) == 1, "only claude declared steps"
         walked = run(
             paired,
-            Context(marketplace_root=root / "market", home=root / "home3"),
+            ctx,
             Mode.PREVIEW,
         )
         assert len(walked) == 2, "one harness x one step x two skills"

@@ -50,6 +50,19 @@ class Fake:
     install_steps: tuple[Step, ...]
 
 
+def _home_context(tmp_path, monkeypatch, marketplace_root):
+    """A Context whose `home` agrees with `$HOME`, which is the only seam.
+
+    Setting the field alone moves some routes and not others: anything anchored
+    at `Path.home()` reads `$HOME` directly. `Context` refuses the mismatch, so
+    a test that wants an isolated home redirects the variable.
+    """
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    return Context(marketplace_root=marketplace_root, home=home)
+
+
 @pytest.fixture
 def source(tmp_path: Path) -> Path:
     root = tmp_path / "src" / "demo"
@@ -59,8 +72,8 @@ def source(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def ctx(tmp_path: Path) -> Context:
-    return Context(marketplace_root=tmp_path, home=tmp_path / "home")
+def ctx(tmp_path: Path, monkeypatch) -> Context:
+    return _home_context(tmp_path, monkeypatch, tmp_path)
 
 
 # ─── Steps that behave unusually ────────────────────────────────────────────
@@ -566,7 +579,7 @@ def test_a_marker_with_no_recorded_plugin_belongs_to_whoever_asks(tmp_path, sour
     assert owns(read_marker(target), "ar") is True
 
 
-def test_an_unmarked_tree_is_never_ours_whatever_the_name(tmp_path):
+def test_an_unmarked_tree_is_never_ours_whatever_the_name(tmp_path, monkeypatch):
     from autorun.installer.fs import owns
 
     assert owns(None, "ar") is False
@@ -585,7 +598,7 @@ def test_a_moved_harness_config_dir_moves_the_native_skill_route(monkeypatch, tm
 
     # $HOME is the seam; Context.home must agree with it rather than replace it.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    ctx = Context(marketplace_root=tmp_path, home=tmp_path / "home")
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
 
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     assert skills._native_roots(PLATFORMS["claude"], ctx) == (
@@ -654,13 +667,13 @@ def test_a_harness_with_several_skill_search_routes_reports_all_of_them():
     assert len(found) >= 2, found
 
 
-def test_an_extensions_subdir_is_relative_to_the_resolved_config_dir(tmp_path):
+def test_an_extensions_subdir_is_relative_to_the_resolved_config_dir(tmp_path, monkeypatch):
     """Gemini, Qwen and Antigravity keep extensions under their config dir, so
     moving that dir must move the extensions with it."""
     from autorun.installer.extension import extension_dir
     from autorun.platforms import PLATFORMS
 
-    ctx = Context(marketplace_root=tmp_path, home=tmp_path / "home")
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
 
     assert extension_dir(ctx, PLATFORMS["qwen"], "ar") == (
         tmp_path / "home" / ".qwen" / "extensions" / "ar"

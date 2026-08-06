@@ -126,8 +126,11 @@ env HOME="$SB/home" AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state
 ```
 
 `HOME` is the seam. `Path.home()` honours it, so redirecting it moves every path
-together. Never add a `home` parameter doing the same job: a partial mechanism
-moves some paths and not others. `AUTORUN_HOME` must be short, because the
+together. `Context.home` must **agree** with it and is checked: setting the
+field while leaving `$HOME` alone reads a sandbox and writes the real home, and
+that uninstalled 16 skills from a live machine during a self-check that looked
+isolated. Use `discovery.redirected_home(path)` — a context manager — in any
+demo or test that needs an isolated home. `AUTORUN_HOME` must be short, because the
 daemon socket lives under it and `sun_path` is 104 bytes on macOS; overflow
 looks like a hook timeout. Prove isolation by diffing a full listing rather than
 a digest, since these trees also hold harness session logs.

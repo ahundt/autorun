@@ -38,6 +38,7 @@ from typing import Iterable, Iterator, Mapping
 
 from . import discovery
 from .fs import read_marker
+from .discovery import redirected_home
 from .traversal import Context, Intent, Kind
 
 __all__ = [
@@ -332,6 +333,12 @@ def bridge_intents(
             )
 
 
+
+def _made(path: Path) -> Path:
+    """Create a directory and return it, so a `with` header stays one line."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 def demo() -> None:
     """Self-check: one route per harness, per-name fallback, bridge refusal."""
     import tempfile
@@ -355,7 +362,9 @@ def demo() -> None:
         def __init__(self, sub): self.sub = sub
         def destinations(self, config): return (config / self.sub,)
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, redirected_home(
+        _made(Path(tmp) / "home")
+    ):
         root = Path(tmp)
         plugin = root / "plugins" / "ar"
         (plugin / "skills").mkdir(parents=True)

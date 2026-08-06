@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, Mapping, Sequence
 
 from . import codex, discovery, extension, memory, skills
+from .discovery import redirected_home
 from .traversal import Context, Intent, Kind, Mode, Step
 
 __all__ = [
@@ -447,6 +448,12 @@ def _placement(ctx: Context, harness: str) -> str:
     return str(placement.get(harness) or placement.get("") or "auto")
 
 
+
+def _made(path: Path) -> Path:
+    """Create a directory and return it, so a `with` header stays one line."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 def demo() -> None:
     """Self-check: the table is data, and both extra phases preview cleanly."""
     from .traversal import targets
@@ -467,7 +474,9 @@ def demo() -> None:
     paired = targets(PLATFORMS.values(), STEPS)
     assert all(t.install_steps for t in paired), "every harness runs something"
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, redirected_home(
+        _made(Path(tmp) / "home")
+    ):
         root = Path(tmp)
         ctx = Context(marketplace_root=root, home=root / "home")
 

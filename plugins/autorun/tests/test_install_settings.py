@@ -18,6 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from autorun.installer.traversal import Context  # noqa: E402
 from autorun.installer.settings import (  # noqa: E402
     CODEX_HOOK_SOURCE,
     CODEX_PLUGIN_MARKETPLACE,
@@ -35,6 +36,19 @@ from autorun.installer.settings import (  # noqa: E402
 
 
 # ─── One precedence rule, shared by every setting ────────────────────────────
+
+
+def _home_context(tmp_path, monkeypatch, marketplace_root):
+    """A Context whose `home` agrees with `$HOME`, which is the only seam.
+
+    Setting the field alone moves some routes and not others: anything anchored
+    at `Path.home()` reads `$HOME` directly. `Context` refuses the mismatch, so
+    a test that wants an isolated home redirects the variable.
+    """
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    return Context(marketplace_root=marketplace_root, home=home)
 
 
 def test_cli_outranks_env_outranks_default():
@@ -410,7 +424,7 @@ def test_a_custom_harness_inherits_its_flavors_protocol():
     assert platform.config_dir_env_vars == (), "a custom root is not env-overridable"
 
 
-def test_a_custom_harness_needs_no_orchestrator_branch(tmp_path):
+def test_a_custom_harness_needs_no_orchestrator_branch(tmp_path, monkeypatch):
     """The installer this replaces dispatches on flavor with a three-way
     if/elif — claude to one path, codex to another, everything else to a third.
     A custom harness *is* its flavor with different paths, so cloning the
@@ -420,7 +434,7 @@ def test_a_custom_harness_needs_no_orchestrator_branch(tmp_path):
         steps_for_custom,
         synthesize,
     )
-    from autorun.installer.traversal import Context, Intent, Mode, run, targets
+    from autorun.installer.traversal import Intent, Mode, run, targets
 
     source = tmp_path / "skills" / "commit"
     source.mkdir(parents=True)
@@ -433,7 +447,7 @@ def test_a_custom_harness_needs_no_orchestrator_branch(tmp_path):
     custom = parse_custom_harness("mytool=gemini:mycli:~/.mytool::My Tool")
     table = steps_for_custom(custom, {"gemini": (skills_step,)})
     paired = targets([synthesize(custom)], table)
-    ctx = Context(marketplace_root=tmp_path, home=tmp_path / "home")
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
 
     assert [d.verdict.value for d in run(paired, ctx, Mode.INSTALL)] == ["publish"]
     assert (tmp_path / "home" / ".mytool" / "skills" / "commit" / "SKILL.md").is_file()
