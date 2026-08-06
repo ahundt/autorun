@@ -128,6 +128,68 @@ Patching `autorun.plugins.session_state` does not isolate `ThreadSafeDB` and can
 leak global blocks or allows into later tests. Every fake context manager must
 accept persistence keyword arguments such as `timeout`.
 
+## Running a real install without touching the live machine
+
+Unit tests are not the only thing that must be isolated. `--install` writes to
+every harness config directory, replaces plugin caches, and restarts the daemon,
+so dogfooding it against a developer's own home directory risks the user's
+skills, commands and hook configuration. Redirect `HOME` along with the two
+runtime variables:
+
+```bash
+SB=/tmp/arsb                      # short: see the socket headroom section
+mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"
+env HOME="$SB/home" \
+    AUTORUN_HOME="$SB/ar-home" \
+    AUTORUN_TEST_STATE_DIR="$SB/state" \
+    UV_CACHE_DIR="$(uv cache dir)" \
+    uv run --project plugins/autorun python -m autorun --install --force
+```
+
+`HOME` is the seam every path resolves through, which is why the install tests
+use `monkeypatch.setenv("HOME", ...)`. Keep the sandbox path short for the same
+`sun_path` reason as above: a scratch directory nested a few levels deep already
+exceeds the budget. Sharing `UV_CACHE_DIR` with the real cache avoids
+re-downloading the dependency set into the sandbox; it is a read-mostly cache,
+not install state.
+
+Harnesses whose config directory does not exist in the sandbox fail loudly and
+are skipped, which is correct — `Qwen Code install failed: <sandbox>/.qwen/ not
+found`. Create the directory first if that harness is the one under test.
+
+Prove the isolation rather than assuming it. Record the full listing, not just
+a digest, so a difference can be *diffed* rather than merely detected:
+
+```bash
+snapshot() {
+  for p in ~/.agents/skills ~/.claude/plugins ~/.qwen/extensions \
+           ~/.codex ~/forge ~/.config/opencode; do
+    [ -e "$p" ] && find "$p" -print0 | sort -z | xargs -0 stat -f "%N %m %z"
+  done > "$1"
+}
+snapshot /tmp/live-before.txt
+# ... run the sandboxed install ...
+snapshot /tmp/live-after.txt
+diff /tmp/live-before.txt /tmp/live-after.txt && echo "live tree untouched"
+```
+
+A digest alone answers "did anything change?" but not "what?", and these trees
+also hold session logs a harness writes on its own schedule, so an unexplained
+digest change is common and uninformative. When a listing is unavailable, the
+decisive check is a modification-time window covering the run:
+
+```bash
+find ~/.agents/skills ~/.claude/plugins ~/.codex -newermt "-90 minutes"
+```
+
+Empty output over a window that contains the sandboxed run proves nothing in
+those trees was written, regardless of what a digest taken at some other
+moment says.
+
+One caveat this check catches: install output abbreviates the sandbox home back
+to `~`, so a line reading `written to ~/.agents/plugins/marketplace.json` is not
+evidence of a leak on its own. Compare the fingerprint, not the message.
+
 ## Regression Specification
 
 Changes to state, daemon lifecycle, hooks, or cache-backed features must retain

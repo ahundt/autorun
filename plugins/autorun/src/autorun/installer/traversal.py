@@ -1,0 +1,443 @@
+#!/usr/bin/env python3
+"""One walk that serves status, dry run, install, uninstall and prune.
+
+The old installer treats these as five subsystems: ``install_plugins`` (679
+lines, 7 harness branches), ``uninstall_plugins`` (71), ``show_status`` plus two
+helpers (504), a ``dry_run`` flag threaded through the call graph, and three
+separate pruners (132). They are one traversal over (target, source, plugin)
+triples, differing only in what happens to the answer.
+
+    status / dry run   print the decision, write nothing
+    install            act on PUBLISH and RETIRE
+    uninstall          the same walk with source=None, so everything is RETIRE
+    prune              that same source=None walk, scoped to skills
+
+Status *is* dry run. Both ask "what would install do?" and neither writes, so
+there is no third code path — the reason ``show_status`` grew its own per-harness
+reporting is that nobody noticed it was recomputing what install already knew.
+
+TWO IDEAS CARRY THIS
+====================
+
+**Steps are data.** A step yields :class:`Intent` objects and performs no I/O.
+Which steps a harness runs is a field on its registry entry, so the orchestrator
+has no harness branches at all — it is a comprehension. Adding a harness is a
+registry entry; adding a capability is a function plus the harnesses that list
+it. Neither touches this file.
+
+**Intents are pure.** Because a step only *describes* what it wants, the same
+step serves all three modes. That is what removes the ``dry_run`` parameter from
+every function it currently threads through: dry run stops being an argument and
+becomes one branch, here, at the top.
+
+Complexity: O(H x S x I) decisions for H harnesses, S steps each and I intents
+per step — the traversal itself is linear and does no I/O. Each decision costs
+one marker read, plus a tree hash only when the target is about to change.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Callable, Iterable, Iterator, Mapping, Protocol, Sequence
+
+from .fs import (
+    Decision,
+    Verdict,
+    decide,
+    decide_files,
+    decide_link,
+    publish_files,
+    publish_link,
+    publish_tree,
+    read_marker,
+    withdraw_files,
+    withdraw_link,
+    withdrawn,
+)
+
+__all__ = [
+    "Intent", "Mode", "Step", "Harness", "Context", "Target",
+    "run", "walk", "report", "targets", "retirements", "Kind",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class Context:
+    """Everything a step needs, resolved once at the entry point.
+
+    Re-resolving a setting inside a callee re-applies the environment over the
+    caller's explicit intent, which is the bug that made the custom-harness path
+    fail under ``AUTORUN_CODEX_HOOK_SOURCE=plugin``. Resolve once, pass down.
+    """
+
+    marketplace_root: Path
+    plugin_dirs: tuple[Path, ...] = ()
+    #: The home this run targets. It must agree with ``$HOME``, and defaults to
+    #: it. Setting this alone does *not* relocate an install: home-anchored
+    #: skill routes resolve through ``Path.home()``, which reads ``$HOME``, so a
+    #: caller that changes only this field gets a partly-relocated result — some
+    #: paths moved, some not. Redirect ``$HOME`` and let this default.
+    home: Path = field(default_factory=Path.home)
+    settings: Mapping[str, object] = field(default_factory=dict)
+    force: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Intent:
+    """One thing autorun wants at one path. Pure data — a step does no I/O.
+
+    ``source is None`` already means "no longer shipped", so uninstall does not
+    need its own intent type: it is the install walk with every source dropped.
+
+    ``kind`` picks which publish/withdraw pair applies. Three, not a boolean:
+    a flag could express two and the bridge needs a third, and a second flag
+    beside it would admit a state that means nothing.
+    """
+
+    target: Path
+    source: Path | None = None
+    plugin: str = ""
+    settings: Mapping[str, str] = field(default_factory=dict)
+    kind: "Kind" = None  # defaults to Kind.TREE in __post_init__
+
+    def __post_init__(self):
+        if self.kind is None:
+            object.__setattr__(self, "kind", Kind.TREE)
+
+
+class Kind(Enum):
+    """How one intent is published, and therefore how it is removed.
+
+    TREE  a directory autorun owns outright: swap it whole.
+    FILES a directory shared with the user: per file, against the manifest.
+    LINK  a symlink into the shared root, so one edit applies everywhere.
+    """
+
+    TREE = "tree"
+    FILES = "files"
+    LINK = "link"
+
+
+Step = Callable[["Harness", Context], Iterable[Intent]]
+
+
+class Harness(Protocol):
+    """What the traversal needs from a registry entry, and nothing more.
+
+    Deliberately narrower than ``Platform``: the traversal is testable against a
+    synthetic harness without touching the registry, which is what makes the
+    zero-new-branches claim checkable rather than asserted.
+    """
+
+    name: str
+    install_steps: tuple[Step, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Target:
+    """A registry entry paired with the steps that install it.
+
+    The sequence lives here rather than as a ``Platform`` field for two reasons.
+    Steps are defined in the install modules, which import ``platforms``, so a
+    field holding them would close an import cycle. And encoding them as *names*
+    for later lookup is the defect already found in this registry:
+    ``install_fn_name`` named a function nobody had written and was published as
+    a capability. Holding the callables themselves cannot express that.
+
+    ``platform`` stays reachable so a step can read the harness facts it needs —
+    config dir, skill routes, hook protocol — without a second lookup.
+    """
+
+    platform: object
+    install_steps: tuple[Step, ...] = ()
+
+    @property
+    def name(self) -> str:
+        return getattr(self.platform, "name", str(self.platform))
+
+
+def targets(
+    platforms: Iterable[object], steps: Mapping[str, tuple[Step, ...]]
+) -> tuple[Target, ...]:
+    """Pair each selected harness with its declared steps.
+
+    A harness with no entry gets no steps and contributes no intents, which is
+    how an unsupported harness stays out of the walk without a branch testing
+    for it.
+    """
+    return tuple(
+        Target(p, steps.get(getattr(p, "name", ""), ())) for p in platforms
+    )
+
+
+class Mode(Enum):
+    """What to do with each decision. Three, not five."""
+
+    PREVIEW = "preview"      # status and dry run: identical, and neither writes
+    INSTALL = "install"
+    UNINSTALL = "uninstall"
+
+    @property
+    def retiring(self) -> bool:
+        """Uninstall asks the install question with every source dropped.
+
+        **The mode does not decide scope.** "Every source" means every source
+        *in this walk*, and the walk contains only the intents the selected
+        plugins produced. Which trees may actually be removed is decided one
+        level down, by ``decide(target, None, plugin=intent.plugin)`` and
+        ``fs.owns`` — so ``--uninstall pdf-extractor`` cannot touch autorun's
+        artifacts even though every source in its walk is dropped.
+
+        Stated here because reading this property alone suggests otherwise, and
+        an auditor did in fact read it that way and report a data-loss bug that
+        does not exist.
+        """
+        return self is Mode.UNINSTALL
+
+    @property
+    def writes(self) -> bool:
+        return self is not Mode.PREVIEW
+
+
+def _perform(intent: Intent, decision: Decision) -> Decision:
+    """Carry out one decision. The only place this module touches the disk.
+
+    A shared directory takes the per-file pair; an exclusive one takes the
+    whole-tree pair. Choosing between them is the only thing an ``Intent``
+    flag decides, because everything else about the two is identical.
+    """
+    publishers = {Kind.TREE: publish_tree, Kind.FILES: publish_files, Kind.LINK: publish_link}
+    if decision.verdict is Verdict.PUBLISH and intent.source is not None:
+        return publishers[intent.kind](
+            intent.source, intent.target, plugin=intent.plugin, **intent.settings
+        )
+    if decision.verdict is Verdict.RETIRE:
+        if intent.kind is Kind.FILES:
+            removed = bool(withdraw_files(intent.target, plugin=intent.plugin))
+        elif intent.kind is Kind.LINK and intent.source is not None:
+            removed = withdraw_link(intent.target, intent.source.parent)
+        else:
+            removed = withdrawn(intent.target, plugin=intent.plugin)
+        # Report what happened. `withdrawn` returns False for a symlink, a
+        # foreign marker or a failed delete, and discarding that made a refused
+        # removal read exactly like a clean one.
+        if not removed:
+            return Decision(Verdict.KEEP, intent.target, "could not remove", decision.edited)
+    return decision
+
+
+def walk(harnesses: Sequence[Harness], ctx: Context) -> Iterator[Intent]:
+    """Every intent every selected harness declares, in registry order.
+
+    No branch here names a harness. That is the whole point: a harness's
+    sequence is data on its registry entry, so this loop never learns about one.
+    """
+    return (
+        intent
+        for harness in harnesses
+        for step in harness.install_steps
+        for intent in step(harness, ctx)
+    )
+
+
+def retirements(
+    roots: Iterable[Path], claimed: Iterable[Path], *, plugins: Iterable[str]
+) -> Iterator[Intent]:
+    """Retire every tree we own that no current intent claims.
+
+    The upgrade path. A step yields intents for where its capability writes
+    *today*, so anything a previous version wrote somewhere else is never
+    visited, never decided about, and never removed — while still carrying our
+    marker. Retiring Qwen's native skill route left 17 marked directories behind
+    for exactly this reason, and the current registry cannot even name that
+    location, so enumerating routes would not have found them.
+
+    Sweeping for our own marker is what makes this correct as routes change
+    rather than correct on the day it was written. Everything downstream is
+    unchanged: ``source=None`` is already the retirement question, so
+    :func:`decide` returns RETIRE for ours-and-unchanged and KEEP for a tree the
+    user has edited, with no new policy anywhere.
+
+    ``plugins`` is required, not optional, and that is deliberate. Ownership
+    comparison treats an empty plugin name as "belongs to whoever asks", so a
+    defaulted scope would sweep *every* plugin's trees — harmless during a full
+    install and data loss during ``--uninstall pdf-extractor``, which must leave
+    autorun's own artifacts alone. Making the caller name the scope turns that
+    into a missing argument rather than a silent over-reach.
+
+    This sweep is half of the upgrade story, and only half. Stale content
+    *inside* a tree that is still published is cleared by the republish itself,
+    because :func:`publish_tree` swaps the whole directory — an extension that
+    used to carry a ``skills/`` directory loses it the moment a staging tree
+    without one is published, while its commands survive. The sweep covers the
+    other case: a tree that is no longer published *anywhere*, which nothing
+    would otherwise visit. Neither mechanism subsumes the other, and a claimed
+    tree is skipped here precisely because the republish already owns it.
+    """
+    from .fs import owned_trees
+
+    scope = [name for name in plugins if name]
+    if not scope:
+        raise ValueError(
+            "retirements() needs at least one plugin name: an empty scope would "
+            "sweep every plugin's trees, which is data loss during a partial "
+            "uninstall."
+        )
+    keep = {path.resolve() for path in claimed}
+    seen: set[Path] = set()
+    for root in roots:
+        for plugin in scope:
+            for tree in owned_trees(root, plugin=plugin):
+                resolved = tree.resolve()
+                if resolved in keep or resolved in seen:
+                    continue
+                seen.add(resolved)
+                yield Intent(target=tree, source=None, plugin=plugin)
+
+
+def run(harnesses: Sequence[Harness], ctx: Context, mode: Mode = Mode.PREVIEW) -> list[Decision]:
+    """The installer, the uninstaller, the status pass and the dry run.
+
+    Callers pick a mode; nothing below this line knows which one, because a
+    decision is the same object whether it is printed or acted on.
+    """
+    decisions = []
+    for intent in walk(harnesses, ctx):
+        source = None if mode.retiring else intent.source
+        if intent.kind is Kind.LINK:
+            # A link's ownership is its target, not a marker; `decide` reads a
+            # live symlink as user-authored and would refuse it forever.
+            inside = (intent.source or intent.target).parent
+            decision = decide_link(source, intent.target, inside, plugin=intent.plugin)
+        elif intent.kind is Kind.FILES and source is not None:
+            decision = decide_files(source, intent.target, plugin=intent.plugin)
+        else:
+            decision = decide(intent.target, source, plugin=intent.plugin)
+        decisions.append(_perform(intent, decision) if mode.writes else decision)
+    return decisions
+
+
+def report(decisions: Iterable[Decision]) -> str:
+    """Render decisions for a human, grouped so the actionable ones lead.
+
+    KEEP is first because it is the only verdict that asks the user to do
+    something: a name collided, or they edited a file autorun installed. A count
+    nobody can act on is what the old status pass printed instead.
+    """
+    order = (Verdict.KEEP, Verdict.PUBLISH, Verdict.RETIRE, Verdict.SKIP)
+    grouped = {v: [d for d in decisions if d.verdict is v] for v in order}
+    lines = [
+        f"{verdict.value}: {len(found)}"
+        for verdict, found in grouped.items()
+        if found
+    ]
+    detail = [f"  {d.describe()}" for d in grouped[Verdict.KEEP]]
+    return "\n".join(lines + detail)
+
+
+def demo() -> None:
+    """Self-check: one synthetic harness, no branches, all three modes."""
+    import tempfile
+
+    @dataclass(frozen=True, slots=True)
+    class Fake:
+        name: str
+        install_steps: tuple[Step, ...]
+
+    def skills_step(harness: Fake, ctx: Context) -> Iterable[Intent]:
+        root = ctx.marketplace_root / "skills"
+        return [
+            Intent(target=ctx.home / ".fake" / "skills" / p.name, source=p, plugin="ar")
+            for p in sorted(root.iterdir())
+            if p.is_dir()
+        ]
+
+    def commands_step(harness: Fake, ctx: Context) -> Iterable[Intent]:
+        return [Intent(
+            target=ctx.home / ".fake" / "commands",
+            source=ctx.marketplace_root / "commands",
+            plugin="ar",
+            kind=Kind.FILES,
+        )]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for name in ("alpha", "beta"):
+            skill = root / "market" / "skills" / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+        cmds = root / "market" / "commands"
+        cmds.mkdir(parents=True)
+        (cmds / "go.md").write_text("go\n", encoding="utf-8")
+
+        harness = Fake("fake", (skills_step, commands_step))
+        ctx = Context(marketplace_root=root / "market", home=root / "home")
+
+        # A shared directory the user already owns still accepts our files.
+        # decide() would call the whole directory user-authored and refuse.
+        (ctx.home / ".fake" / "commands").mkdir(parents=True)
+        (ctx.home / ".fake" / "commands" / "theirs.md").write_text("pre\n", encoding="utf-8")
+
+        # PREVIEW writes nothing, and says so before anything exists.
+        preview = run([harness], ctx, Mode.PREVIEW)
+        assert len(preview) == 3, preview
+        assert all(d.verdict is Verdict.PUBLISH for d in preview)
+        assert not (ctx.home / ".fake" / "skills").exists(), "preview must not write"
+        assert not (ctx.home / ".fake" / "commands" / "go.md").exists(), "preview must not write"
+        assert read_marker(ctx.home / ".fake" / "commands") is None, "preview must not claim"
+
+        # INSTALL acts on exactly what PREVIEW described.
+        installed = run([harness], ctx, Mode.INSTALL)
+        assert [d.verdict for d in installed] == [d.verdict for d in preview]
+        assert (ctx.home / ".fake" / "skills" / "alpha" / "SKILL.md").is_file()
+        assert (ctx.home / ".fake" / "commands" / "go.md").is_file()
+
+        # A second install is a no-op, and status is the same call.
+        again = run([harness], ctx, Mode.INSTALL)
+        assert all(d.verdict is Verdict.SKIP for d in again), again
+        assert [d.verdict for d in run([harness], ctx, Mode.PREVIEW)] == [Verdict.SKIP] * 3
+
+        # A user edit is kept, named, and survives.
+        edited = ctx.home / ".fake" / "skills" / "alpha" / "SKILL.md"
+        edited.write_text("MINE\n", encoding="utf-8")
+        (root / "market" / "skills" / "alpha" / "SKILL.md").write_text("v2\n", encoding="utf-8")
+        kept = run([harness], ctx, Mode.INSTALL)
+        assert any(d.verdict is Verdict.KEEP for d in kept)
+        assert edited.read_text() == "MINE\n"
+        assert "SKILL.md" in report(kept), report(kept)
+
+        # A user's own file beside ours is never removed by uninstall.
+        (ctx.home / ".fake" / "commands" / "mine.md").write_text("theirs\n", encoding="utf-8")
+        removed = run([harness], ctx, Mode.UNINSTALL)
+        assert (ctx.home / ".fake" / "commands" / "mine.md").is_file(), "shared dir keeps user files"
+        assert not (ctx.home / ".fake" / "skills" / "beta").exists(), "unedited skill retired"
+        assert edited.read_text() == "MINE\n", "an edited skill is kept, not retired"
+        assert any(d.verdict is Verdict.RETIRE for d in removed)
+
+        # Adding a harness adds no branch to this module.
+        second = Fake("other", (skills_step,))
+        both = run([harness, second], Context(marketplace_root=root / "market",
+                                              home=root / "home2"), Mode.PREVIEW)
+        assert len(both) == 5, "3 intents + 2 intents, no special cases"
+
+        # The real registry pairs the same way, and a harness with no declared
+        # steps drops out of the walk without anything testing for its name.
+        from ..platforms import PLATFORMS
+
+        paired = targets(PLATFORMS.values(), {"claude": (skills_step,)})
+        assert {t.name for t in paired} == set(PLATFORMS)
+        assert sum(len(t.install_steps) for t in paired) == 1, "only claude declared steps"
+        walked = run(
+            paired,
+            Context(marketplace_root=root / "market", home=root / "home3"),
+            Mode.PREVIEW,
+        )
+        assert len(walked) == 2, "one harness x one step x two skills"
+
+    print("installer.traversal: all self-checks passed")
+
+
+if __name__ == "__main__":
+    demo()

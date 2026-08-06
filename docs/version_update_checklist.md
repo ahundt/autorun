@@ -99,6 +99,10 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `plugins/autorun/tests/test_bootstrap_config.py` | Version in config |
 | `plugins/autorun/tests/test_claude_e2e_real_money.py` | Cache path version dirs |
 | `plugins/autorun/tests/test_codex_install.py` | Codex cache path version dirs |
+| `plugins/autorun/tests/test_install_extension.py` | Extension manifest fixture. **See Gotcha #6** — comparison data, not a version reference. |
+| `plugins/autorun/tests/test_install_memory_runtime.py` | Prerelease ordering pairs. **See Gotcha #6** and #2 — pairs must stay distinct. |
+| `plugins/autorun/src/autorun/installer/extension.py` | Self-check manifest fixture. **See Gotcha #6**. |
+| `plugins/autorun/src/autorun/installer/runtime.py` | Prerelease ordering assertions and the comment citing them. **See Gotcha #6**. |
 
 ## Gotchas (learned from 0.10.0 → 0.10.1 release)
 
@@ -140,6 +144,20 @@ Unchecked replacement turns ALL three into `("0.10.1", "v0.10.1", ...)` — coll
 ### Gotcha 5: Block message scope hint must be on separate line
 
 `config.py` DEFAULT_INTEGRATIONS "To allow" lines end with the command, then `\nScope: [N|5m|permanent]` on a new line. If the scope hint is on the **same line** as the `/ar:ok` command (e.g. `/ar:ok 'git push' [N|5m|permanent]`), it breaks `test_actual_command_blocking::TestArOkQuotingInSuggestions` because the test parses everything after `/ar:ok` as the copy-pasteable pattern.
+
+### Gotcha 6: Installer fixtures that merely happen to match the current version
+
+Four files carry `1.0.0rc1` as *test data*, not as a version reference:
+`installer/runtime.py` and `test_install_memory_runtime.py` compare
+release-candidate ordering (`1.0.0rc1` against `1.0.0`, `1.0.1`, `1.0.0rc2`),
+and `installer/extension.py` and `test_install_extension.py` stamp a manifest
+fixture. They are listed above only because the coverage test requires every
+file holding the current version to appear here.
+
+**Fix:** Leave them alone. They need no bump, and replacing them would collapse
+the ordering pairs the same way Gotcha #2 describes. Substituting an invented
+version is also wrong: it becomes a real release number later and the fixture
+silently starts asserting something else.
 
 ## Historical References (DO NOT CHANGE)
 

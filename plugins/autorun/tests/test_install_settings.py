@@ -1,0 +1,335 @@
+"""One declaration drives resolution, validation, help text and both parsers.
+
+The installer this replaces resolves settings three ways: `resolve_choice_setting`
+for fixed vocabularies, a hand-rolled ladder for runtime architecture, and
+`_truthy_env` for booleans. The first two agree; the third does not, and the
+disagreement is a live defect — `_truthy_env` returns True for *anything* it
+does not recognise, so a typo silently enables the flag it was meant to set.
+
+These tests pin the shared precedence rule, the fall-through the third resolver
+got wrong, and the property that makes the two parsers unable to drift.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from autorun.installer.settings import (  # noqa: E402
+    CODEX_HOOK_SOURCE,
+    CODEX_PLUGIN_MARKETPLACE,
+    HOOK_NO_SYNC,
+    INSTALL_SETTINGS,
+    Resolved,
+    SHARED_SKILLS_BRIDGE,
+    SKILL_PLACEMENT,
+    WRITE_SOURCE_METADATA,
+    build_parser,
+    harness_names,
+    resolve_all,
+)
+
+
+# ─── One precedence rule, shared by every setting ────────────────────────────
+
+
+def test_cli_outranks_env_outranks_default():
+    env = {"AUTORUN_SHARED_SKILLS_BRIDGE": "copy"}
+
+    assert SHARED_SKILLS_BRIDGE.resolve("link", env=env, config={}).value == "link"
+    assert SHARED_SKILLS_BRIDGE.resolve(None, env=env, config={}).value == "copy"
+    assert SHARED_SKILLS_BRIDGE.resolve(None, env={}, config={}).value == "none"
+
+
+def test_config_is_consulted_after_env_and_before_the_default():
+    assert SHARED_SKILLS_BRIDGE.resolve(
+        None, env={}, config={"shared_skills_bridge": "copy"}
+    ).value == "copy"
+    assert SHARED_SKILLS_BRIDGE.resolve(
+        None, env={"AUTORUN_SHARED_SKILLS_BRIDGE": "link"},
+        config={"shared_skills_bridge": "copy"},
+    ).value == "link"
+
+
+def test_the_resolved_source_says_where_a_value_came_from():
+    """--status has to explain why a setting has the value it has; a bare
+    value cannot."""
+    resolved = SHARED_SKILLS_BRIDGE.resolve(None, env={"AUTORUN_SHARED_SKILLS_BRIDGE": "link"}, config={})
+
+    assert resolved.value == "link"
+    assert "AUTORUN_SHARED_SKILLS_BRIDGE" in resolved.source
+
+
+# ─── Retired spellings keep working ──────────────────────────────────────────
+
+
+def test_a_retired_env_var_still_resolves():
+    """The bridge was named for Claude when Claude was the only harness it
+    could reach. Ignoring the old spelling would silently drop a setting a user
+    already has exported."""
+    assert SHARED_SKILLS_BRIDGE.resolve(
+        None, env={"AUTORUN_CLAUDE_AGENTS_SKILLS": "link"}, config={}
+    ).value == "link"
+
+
+def test_the_current_spelling_outranks_its_alias():
+    assert SHARED_SKILLS_BRIDGE.resolve(
+        None,
+        env={"AUTORUN_SHARED_SKILLS_BRIDGE": "copy", "AUTORUN_CLAUDE_AGENTS_SKILLS": "link"},
+        config={},
+    ).value == "copy"
+
+
+def test_a_retired_config_key_still_resolves():
+    assert SHARED_SKILLS_BRIDGE.resolve(
+        None, env={}, config={"claude_agents_skills": "copy"}
+    ).value == "copy"
+
+
+# ─── The divergence this closes ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("raw", ["garbage", "typo", "maybe", "TRUE-ish", "2"])
+def test_an_unrecognised_boolean_falls_through_instead_of_enabling(raw):
+    """`_truthy_env` returns True for anything it does not recognise, so
+    `AUTORUN_WRITE_SOURCE_METADATA=typo` enables a flag whose default is False.
+    One rule for every tier: a value this setting does not accept is not a
+    value, so the next tier answers."""
+    resolved = WRITE_SOURCE_METADATA.resolve(
+        None, env={"AUTORUN_WRITE_SOURCE_METADATA": raw}, config={}
+    )
+
+    assert resolved.value is False
+    assert resolved.source == "default"
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("1", True), ("true", True), ("yes", True), ("on", True),
+     ("0", False), ("false", False), ("no", False), ("off", False),
+     ("  TRUE  ", True)],
+)
+def test_documented_boolean_spellings_are_accepted(raw, expected):
+    resolved = HOOK_NO_SYNC.resolve(None, env={"AUTORUN_HOOK_NO_SYNC": raw}, config={})
+
+    assert resolved.value is expected
+    assert resolved.source != "default"
+
+
+@pytest.mark.parametrize("raw", ["typo", "", "  "])
+def test_an_unrecognised_choice_falls_through_rather_than_aborting(raw):
+    """A bad environment value must not abort an install that a flag or the
+    default could still satisfy."""
+    assert SHARED_SKILLS_BRIDGE.resolve(None, env={"AUTORUN_SHARED_SKILLS_BRIDGE": raw},
+                                        config={}).source == "default"
+
+
+def test_it_agrees_with_the_current_choice_resolver():
+    """The replacement must reach the same answers as the resolver in use for
+    every case that resolver handles."""
+    from autorun.install import (
+        _AGENTS_SKILLS_SETTING,
+        _CODEX_HOOK_SOURCE_SETTING,
+        resolve_choice_setting,
+    )
+
+    pairs = [(_AGENTS_SKILLS_SETTING, SHARED_SKILLS_BRIDGE),
+             (_CODEX_HOOK_SOURCE_SETTING, CODEX_HOOK_SOURCE)]
+    envs = [
+        {}, {"AUTORUN_SHARED_SKILLS_BRIDGE": "link"}, {"AUTORUN_CLAUDE_AGENTS_SKILLS": "copy"},
+        {"AUTORUN_SHARED_SKILLS_BRIDGE": "typo"}, {"AUTORUN_CODEX_HOOK_SOURCE": "plugin"},
+        {"AUTORUN_CODEX_HOOK_SOURCE": "garbage"},
+        {"AUTORUN_SHARED_SKILLS_BRIDGE": "copy", "AUTORUN_CLAUDE_AGENTS_SKILLS": "link"},
+    ]
+    for current, replacement in pairs:
+        for env in envs:
+            assert (
+                resolve_choice_setting(current, env=env, config={}).value
+                == replacement.resolve(None, env=env, config={}).value
+            ), (replacement.name, env)
+
+
+# ─── Per-harness placement ───────────────────────────────────────────────────
+
+
+def test_placement_accepts_a_bare_mode_and_per_harness_overrides():
+    assert SKILL_PLACEMENT.parse("native") == {"": "native"}
+    assert SKILL_PLACEMENT.parse("codex=both claude=native") == {
+        "codex": "both", "claude": "native"
+    }
+
+
+def test_placement_rejects_an_unregistered_harness():
+    """The vocabulary is read from the registry at parse time, so a name that
+    parses cannot be one nothing installs."""
+    assert SKILL_PLACEMENT.parse("nosuchharness=native") is None
+
+
+def test_the_harness_vocabulary_comes_from_the_registry():
+    from autorun.platforms import PLATFORMS
+
+    assert set(harness_names()) == set(PLATFORMS)
+
+
+# ─── The parsers cannot drift ────────────────────────────────────────────────
+
+
+def test_every_setting_reaches_the_generated_parser():
+    """Two hand-written parsers declaring the same flag is why
+    `skill_placement_help()` was factored out. Generating both from one tuple
+    removes the reason for the workaround rather than maintaining it."""
+    parser = build_parser(INSTALL_SETTINGS, prog="autorun", description="install",
+                          targets=harness_names())
+    namespace = parser.parse_args([])
+
+    for setting in INSTALL_SETTINGS:
+        assert hasattr(namespace, setting.name), setting.name
+        assert getattr(namespace, setting.name) is None, (
+            f"{setting.name}: an argparse default is indistinguishable from an "
+            "explicit choice and would outrank the environment"
+        )
+
+
+def test_declarations_have_distinct_names_flags_and_env_vars():
+    """A collision on any tier means one setting silently shadows another."""
+    for attribute in ("name", "option", "env"):
+        seen = [getattr(s, attribute) for s in INSTALL_SETTINGS]
+        assert len(seen) == len(set(seen)), f"duplicate {attribute}: {seen}"
+
+
+def test_help_text_carries_the_machine_checkable_parts():
+    """The choices, the default and the env var are generated rather than
+    retyped, so help cannot disagree with behaviour."""
+    rendered = SHARED_SKILLS_BRIDGE.rendered_help()
+
+    assert "link, copy, none" in rendered
+    assert "Default: none" in rendered
+    assert "AUTORUN_SHARED_SKILLS_BRIDGE" in rendered
+    assert "AUTORUN_CLAUDE_AGENTS_SKILLS" in rendered, "retired spellings are documented"
+
+
+# ─── Custom harnesses ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "spec, expected",
+    [
+        ("mytool=gemini:mycli:~/.mytool", ("mytool", "gemini", "mycli", "~/.mytool", "mytool")),
+        # `::` separates the display name so a config dir containing a literal
+        # colon stays unambiguous — which is why this is not a plain split.
+        ("t=claude:c:~/.my:tool::My Tool", ("t", "claude", "c", "~/.my:tool", "My Tool")),
+    ],
+)
+def test_a_well_formed_spec_parses(spec, expected):
+    from autorun.installer.settings import parse_custom_harness
+
+    custom = parse_custom_harness(spec)
+
+    assert (custom.name, custom.flavor, custom.binary,
+            custom.config_dir, custom.display_name) == expected
+
+
+@pytest.mark.parametrize(
+    "spec",
+    ["no-equals-sign", "n=nosuchflavor:bin:~/dir", "n=gemini:missing-third-part", "=gemini:b:~/d"],
+)
+def test_a_malformed_spec_returns_none_rather_than_aborting(spec):
+    """Every Setting parser follows the same contract: an unusable value is not
+    a value, so the next tier answers instead of the install dying."""
+    from autorun.installer.settings import parse_custom_harness
+
+    assert parse_custom_harness(spec) is None
+
+
+def test_the_flavor_vocabulary_comes_from_the_registry():
+    from autorun.installer.settings import flavors
+    from autorun.platforms import CUSTOM_HARNESS_FLAVOR_ALIASES
+
+    assert set(flavors()) == set(CUSTOM_HARNESS_FLAVOR_ALIASES)
+
+
+def test_a_custom_harness_inherits_its_flavors_protocol():
+    """The flavor is the hook identity. Getting it wrong does not fail loudly —
+    it sends one harness's response schema to another."""
+    from autorun.installer.settings import parse_custom_harness, synthesize
+    from autorun.platforms import PLATFORMS
+
+    custom = parse_custom_harness("mytool=gemini:mycli:~/.mytool::My Tool")
+
+    platform = synthesize(custom)
+
+    assert platform.name == "mytool"
+    assert platform.binary == "mycli"
+    assert platform.config_dir == "~/.mytool"
+    assert platform.hook_protocol is PLATFORMS["gemini"].hook_protocol
+    assert platform.config_dir_env_vars == (), "a custom root is not env-overridable"
+
+
+def test_a_custom_harness_needs_no_orchestrator_branch(tmp_path):
+    """The installer this replaces dispatches on flavor with a three-way
+    if/elif — claude to one path, codex to another, everything else to a third.
+    A custom harness *is* its flavor with different paths, so cloning the
+    registry entry and reusing the flavor's steps removes the branch entirely."""
+    from autorun.installer.settings import (
+        parse_custom_harness,
+        steps_for_custom,
+        synthesize,
+    )
+    from autorun.installer.traversal import Context, Intent, Mode, run, targets
+
+    source = tmp_path / "skills" / "commit"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("# commit\n", encoding="utf-8")
+
+    def skills_step(harness, ctx):
+        base = Path(harness.platform.config_dir.replace("~", str(ctx.home)))
+        return [Intent(target=base / "skills" / "commit", source=source, plugin="ar")]
+
+    custom = parse_custom_harness("mytool=gemini:mycli:~/.mytool::My Tool")
+    table = steps_for_custom(custom, {"gemini": (skills_step,)})
+    paired = targets([synthesize(custom)], table)
+    ctx = Context(marketplace_root=tmp_path, home=tmp_path / "home")
+
+    assert [d.verdict.value for d in run(paired, ctx, Mode.INSTALL)] == ["publish"]
+    assert (tmp_path / "home" / ".mytool" / "skills" / "commit" / "SKILL.md").is_file()
+    assert [d.verdict.value for d in run(paired, ctx, Mode.INSTALL)] == ["skip"]
+    assert [d.verdict.value for d in run(paired, ctx, Mode.UNINSTALL)] == ["retire"]
+    assert not (tmp_path / "home" / ".mytool" / "skills" / "commit").exists()
+
+
+def test_resolve_all_resolves_once_at_the_entry_point():
+    """Re-resolving in a callee re-applies the environment over the caller's
+    explicit intent — the bug that made the custom-harness path fail under
+    AUTORUN_CODEX_HOOK_SOURCE=plugin."""
+    parser = build_parser(INSTALL_SETTINGS, prog="autorun", description="install",
+                          targets=harness_names())
+    namespace = parser.parse_args(["--codex-hook-source", "plugin"])
+
+    resolved = resolve_all(INSTALL_SETTINGS, namespace, config={})
+
+    assert resolved["codex_hook_source"].value == "plugin"
+    assert resolved["codex_hook_source"].source == "cli"
+    assert resolved["codex_plugin_marketplace"].value == CODEX_PLUGIN_MARKETPLACE.default
+
+
+def test_a_config_entry_decides_without_the_caller_passing_config(monkeypatch):
+    """The installer being replaced defaulted the config tier to {} and made
+    every call site pass CONFIG by hand. A setting one of them missed lost the
+    tier in silence, so a user's CONFIG entry did nothing and nothing said so."""
+    from autorun.installer.settings import autorun_config
+
+    monkeypatch.setitem(autorun_config(), CODEX_HOOK_SOURCE.name, "both")
+
+    assert CODEX_HOOK_SOURCE.resolve(env={}) == Resolved("both", "config")
+
+
+def test_the_flag_and_the_environment_still_outrank_a_config_entry(monkeypatch):
+    from autorun.installer.settings import autorun_config
+
+    monkeypatch.setitem(autorun_config(), CODEX_HOOK_SOURCE.name, "both")
+
+    assert CODEX_HOOK_SOURCE.resolve("none", env={}).value == "none"
+    assert CODEX_HOOK_SOURCE.resolve(env={"AUTORUN_CODEX_HOOK_SOURCE": "user"}).value == "user"
