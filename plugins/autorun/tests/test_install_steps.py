@@ -188,6 +188,82 @@ def test_a_hooks_merge_keeps_the_users_own_entries(tmp_path):
     assert json.loads(hooks.read_text())["hooks"]["Stop"] == [theirs]
 
 
+# ─── Generated artifacts, staged before the walk ─────────────────────────────
+
+
+def test_the_gemini_family_gets_a_toml_twin_of_every_markdown_command(tmp_path):
+    """The family reads commands/<namespace>/<name>.toml, Claude reads
+    commands/<name>.md. One source, two renderings, or the two command sets
+    drift — which is what happened while each format had its own list."""
+    extension_dir = tmp_path / "ext"
+    (extension_dir / "commands").mkdir(parents=True)
+    (extension_dir / "commands" / "go.md").write_text(
+        "---\nname: go\ndescription: start a run\n---\n\nDo the thing with $ARGUMENTS.\n",
+        encoding="utf-8",
+    )
+
+    written = steps.stage_toml_commands(extension_dir, "ar")
+
+    assert written == ("go",)
+    rendered = (extension_dir / "commands" / "ar" / "go.toml").read_text(encoding="utf-8")
+    assert 'description = "start a run"' in rendered
+    assert "{{args}}" in rendered, "the family's own placeholder, or it never expands"
+
+
+def test_the_namespace_directory_is_what_makes_the_command_prefixed(tmp_path):
+    extension_dir = tmp_path / "ext"
+    (extension_dir / "commands").mkdir(parents=True)
+    (extension_dir / "commands" / "st.md").write_text(
+        "---\nname: st\ndescription: status\n---\n\nbody\n", encoding="utf-8"
+    )
+
+    steps.stage_toml_commands(extension_dir, "ar")
+
+    assert (extension_dir / "commands" / "ar" / "st.toml").is_file()
+
+
+def test_a_plugin_with_no_commands_is_not_an_error(tmp_path):
+    assert steps.stage_toml_commands(tmp_path / "nothing-here", "ar") == ()
+
+
+def test_the_opencode_shim_substitutes_both_values_absolutely(tmp_path):
+    """The plugin runs inside OpenCode's process, so a path resolved through
+    the host PATH mid-session picks up whatever the user's shell has."""
+    plugin = tmp_path / "plugins" / "autorun"
+    template = plugin / steps.OPENCODE_TEMPLATE_SUBDIR
+    template.mkdir(parents=True)
+    (template / "autorun.js").write_text(
+        "const socket = '__AUTORUN_SOCKET__';\nconst cmd = __AUTORUN_HOOK_ENTRY_COMMAND__;\n",
+        encoding="utf-8",
+    )
+
+    shims = steps.stage_opencode_shim(
+        tmp_path / "staged", {"ar": plugin},
+        socket="/tmp/ar.sock", command='uv run "hook entry.py"',
+    )
+
+    text = (shims["ar"] / "autorun.js").read_text(encoding="utf-8")
+    assert "__AUTORUN_SOCKET__" not in text and "/tmp/ar.sock" in text
+    assert "__AUTORUN_HOOK_ENTRY_COMMAND__" not in text
+    assert r'"uv run \"hook entry.py\""' in text, "a quote in the path must not break the module"
+
+
+def test_a_plugin_without_the_shim_template_stages_nothing(tmp_path):
+    assert steps.stage_opencode_shim(
+        tmp_path / "staged", {"ar": tmp_path / "empty"}, socket="s", command="c"
+    ) == {}
+
+
+def test_only_opencode_receives_the_javascript_bridge():
+    """Every other harness's users need Python alone and must not be handed a
+    second runtime requirement."""
+    receiving = [
+        name for name, tuple_ in steps.STEPS.items() if steps.opencode_shim_step in tuple_
+    ]
+
+    assert receiving == ["opencode"], receiving
+
+
 def test_a_harness_with_no_memory_file_gets_no_region(sandbox):
     """`None` is a real answer, not a missing case."""
 

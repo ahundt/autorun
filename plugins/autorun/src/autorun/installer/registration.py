@@ -42,6 +42,7 @@ from .runtime import Outcome, Runner, _spawn
 
 __all__ = [
     "Registration", "REGISTRATIONS", "register", "withdraw", "substitute",
+    "register_entry", "withdraw_entry", "COMPANIONS", "companions",
     "ALREADY",
 ]
 
@@ -126,6 +127,65 @@ REGISTRATIONS: Mapping[str, Registration] = {
 }
 
 
+#: Extensions autorun offers to install *alongside* itself, keyed by the
+#: harness that hosts them. Not autorun's own artifacts: nothing here is
+#: removed on uninstall unless the user asked for it, because a tool that
+#: uninstalls a second product as a side effect is not one to trust.
+#:
+#: Conductor is a Gemini-family planning extension (Context → Spec → Plan →
+#: Implement). It is opt-out rather than opt-in because it was installed by
+#: default before the setting existed, and quietly dropping it on upgrade would
+#: take away something users already have.
+COMPANIONS: Mapping[str, Mapping[str, Registration]] = {
+    "gemini": {
+        "conductor": Registration(
+            binary="gemini",
+            install=(
+                (
+                    "gemini", "extensions", "install",
+                    "https://github.com/gemini-cli-extensions/conductor",
+                    # --auto-update keeps it current without autorun tracking a
+                    # second product's versions; --consent because the install
+                    # is non-interactive and would otherwise block on a prompt.
+                    "--auto-update", "--consent",
+                ),
+            ),
+            remove=(("gemini", "extensions", "uninstall", "conductor"),),
+        ),
+    },
+}
+
+
+def companions(
+    harness: str,
+    wanted: Iterable[str],
+    values: Mapping[str, str],
+    *,
+    removing: bool = False,
+    run: Runner = _spawn,
+    available: Iterable[str] | None = None,
+) -> Mapping[str, tuple[Outcome, ...]]:
+    """Install or remove the extensions this harness hosts alongside autorun.
+
+    Keyed by companion name so a caller reports which one failed. A companion
+    that fails never fails the install: it is an optional second product, and
+    autorun works without it.
+    """
+    asked = set(wanted)
+    done = {
+        name: (
+            withdraw_entry(entry, values, run=run, available=available, label=name)
+            if removing
+            else register_entry(entry, values, run=run, available=available, label=name)
+        )
+        for name, entry in COMPANIONS.get(harness, {}).items()
+        if name in asked
+    }
+    # A companion whose host CLI is absent ran nothing, so it is left out
+    # entirely rather than reported as an empty result a caller must interpret.
+    return {name: outcomes for name, outcomes in done.items() if outcomes}
+
+
 def _ran(result: subprocess.CompletedProcess) -> bool:
     """Whether a command achieved its goal, including "it was already done"."""
     if result.returncode == 0:
@@ -191,14 +251,32 @@ def register(
     ``refresh`` is tried first and, when it succeeds, ``install`` is skipped.
     """
     entry = REGISTRATIONS.get(harness)
-    if entry is None:
-        return ()
+    return () if entry is None else register_entry(
+        entry, values, run=run, available=available, label=harness
+    )
+
+
+def register_entry(
+    entry: Registration,
+    values: Mapping[str, str],
+    *,
+    run: Runner = _spawn,
+    available: Iterable[str] | None = None,
+    label: str = "",
+) -> tuple[Outcome, ...]:
+    """Run one registration's install path. The shared half of the two tables.
+
+    Written once because ``REGISTRATIONS`` and ``COMPANIONS`` hold the same
+    kind of value and must behave identically; a second copy would be where
+    "already installed is success" quietly stopped applying to companions.
+    """
     if available is not None and entry.binary not in available:
         return ()
-    refreshed = _sequence(entry.refresh, values, run, harness, stop=True)
+    name = label or entry.binary
+    refreshed = _sequence(entry.refresh, values, run, name, stop=True)
     if refreshed and all(outcome.ok for outcome in refreshed):
         return refreshed
-    return _sequence(entry.install, values, run, harness, stop=True)
+    return _sequence(entry.install, values, run, name, stop=True)
 
 
 def withdraw(
@@ -214,11 +292,23 @@ def withdraw(
     plugin is not an error, and stopping would leave later commands unrun.
     """
     entry = REGISTRATIONS.get(harness)
-    if entry is None:
-        return ()
+    return () if entry is None else withdraw_entry(
+        entry, values, run=run, available=available, label=harness
+    )
+
+
+def withdraw_entry(
+    entry: Registration,
+    values: Mapping[str, str],
+    *,
+    run: Runner = _spawn,
+    available: Iterable[str] | None = None,
+    label: str = "",
+) -> tuple[Outcome, ...]:
+    """Run one registration's removal path, never stopping at a failure."""
     if available is not None and entry.binary not in available:
         return ()
-    return _sequence(entry.remove, values, run, harness, stop=False)
+    return _sequence(entry.remove, values, run, label or entry.binary, stop=False)
 
 
 def demo() -> None:
@@ -292,10 +382,31 @@ def demo() -> None:
     crashed = register("codex", values, run=explodes)
     assert crashed and not crashed[0].ok and "FileNotFoundError" in crashed[0].detail
 
+    # A companion is a second product: it installs alongside, is keyed by name
+    # so a caller can say which one failed, and is only touched when asked for.
+    calls.clear()
+    done = companions("gemini", ["conductor"], values, run=ok)
+    assert set(done) == {"conductor"} and all(o.ok for o in done["conductor"])
+    assert calls[0][:3] == ("gemini", "extensions", "install"), calls
+    assert "--consent" in calls[0], "a non-interactive install would block on a prompt"
+
+    assert companions("gemini", [], values, run=ok) == {}, "only what was asked for"
+    assert companions("codex", ["conductor"], values, run=ok) == {}
+    assert companions("gemini", ["conductor"], values, run=ok, available=()) == {}
+
+    calls.clear()
+    companions("gemini", ["conductor"], values, removing=True, run=ok)
+    assert calls == [("gemini", "extensions", "uninstall", "conductor")], calls
+
+    # A failing companion is reported, never fatal: autorun works without it.
+    failed = companions("gemini", ["conductor"], values, run=fails)
+    assert not failed["conductor"][0].ok
+
     # Every registration names a harness the registry knows.
     from ..platforms import PLATFORMS
 
     assert not set(REGISTRATIONS) - set(PLATFORMS)
+    assert not set(COMPANIONS) - set(PLATFORMS)
 
     print("installer.registration: all self-checks passed")
 

@@ -47,6 +47,7 @@ from .traversal import Context, Intent, Kind, Mode, Step
 __all__ = [
     "STEPS",
     "skills_step", "bridge_step", "commands_step", "extension_step",
+    "opencode_shim_step", "stage_opencode_shim", "stage_toml_commands",
     "Region", "Hooks", "regions_for", "hooks_for",
     "apply_regions", "apply_hooks",
     "prepared",
@@ -116,6 +117,38 @@ def extension_step(harness: object, ctx: Context) -> Iterable[Intent]:
     )
 
 
+#: OpenCode loads plugins from `<config>/plugin/` (singular, verified against
+#: opencode 1.18.13) as plain ES modules with no build step.
+OPENCODE_TEMPLATE_SUBDIR = Path("src") / "autorun" / "opencode_template" / "plugin"
+OPENCODE_PLUGIN_SUBDIR = "plugin"
+
+
+def opencode_shim_step(harness: object, ctx: Context) -> Iterable[Intent]:
+    """Publish the JavaScript bridge OpenCode loads in-process.
+
+    ``Kind.FILES``, because users keep their own plugins in that directory.
+
+    This is the only install route that writes JavaScript, and deliberately so:
+    OpenCode runs on Bun and loads the plugin in-process, so its users already
+    have that runtime. Claude, Codex, Qwen, Gemini and ForgeCode users need
+    Python alone and must not be handed a second runtime requirement.
+
+    The staged copy already has the daemon socket path substituted absolutely,
+    so nothing resolves through the host PATH while a session is running.
+    """
+    staged = ctx.settings.get("_staged_opencode")
+    base = discovery.config_dir(getattr(harness, "platform", harness), home=ctx.home)
+    if not isinstance(staged, Mapping) or base is None:
+        return
+    for plugin, source in staged.items():
+        yield Intent(
+            target=base / OPENCODE_PLUGIN_SUBDIR,
+            source=source,
+            plugin=plugin,
+            kind=Kind.FILES,
+        )
+
+
 #: The one place a harness is named. A harness absent here contributes no
 #: intents, which is how an unsupported one stays out of the walk without a
 #: branch testing for it. A custom harness reuses its flavor's tuple through
@@ -127,7 +160,7 @@ STEPS: Mapping[str, tuple[Step, ...]] = {
     "qwen": (skills_step, extension_step),
     "antigravity": (skills_step, bridge_step, extension_step),
     "forgecode": (skills_step, commands_step),
-    "opencode": (skills_step, commands_step),
+    "opencode": (skills_step, commands_step, opencode_shim_step),
 }
 
 
@@ -299,7 +332,44 @@ def prepared(
                 # every non-extension route for it still runs.
                 continue
             staged[plugin] = directory
-        yield _with(ctx, _staged_extensions=staged)
+        shims = stage_opencode_shim(
+            Path(tmp) / "_opencode", plugins,
+            socket=str(ctx.settings.get("_daemon_socket", "") or ""),
+            command=str(ctx.settings.get("_hook_command", "") or ""),
+        )
+        yield _with(ctx, _staged_extensions=staged, _staged_opencode=shims)
+
+
+def stage_opencode_shim(
+    staging: Path, plugins: Mapping[str, Path], *, socket: str, command: str
+) -> Mapping[str, Path]:
+    """Write the substituted JavaScript bridge, ready to publish.
+
+    Both values are substituted absolutely at install time rather than resolved
+    at runtime: the plugin runs inside OpenCode's process, so a path resolved
+    through the host ``PATH`` mid-session picks up whatever the user's shell
+    happens to have, which is how one machine's session reached a different
+    autorun than the one installed.
+    """
+    import json
+
+    shims: dict[str, Path] = {}
+    for plugin, plugin_dir in plugins.items():
+        source = plugin_dir / OPENCODE_TEMPLATE_SUBDIR / "autorun.js"
+        if not source.is_file():
+            continue
+        directory = staging / plugin
+        directory.mkdir(parents=True, exist_ok=True)
+        text = (
+            source.read_text(encoding="utf-8")
+            .replace("__AUTORUN_SOCKET__", socket)
+            # JSON-encoded: the command is embedded in a JS literal, and a path
+            # containing a quote or backslash would otherwise break the module.
+            .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(command))
+        )
+        (directory / "autorun.js").write_text(text, encoding="utf-8")
+        shims[plugin] = directory
+    return shims
 
 
 def stage_toml_commands(extension_dir: Path, namespace: str) -> tuple[str, ...]:
