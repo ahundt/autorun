@@ -188,6 +188,39 @@ def test_a_hooks_merge_keeps_the_users_own_entries(tmp_path):
     assert json.loads(hooks.read_text())["hooks"]["Stop"] == [theirs]
 
 
+def test_an_eighth_harness_needs_no_module_edited(sandbox):
+    """The claim the whole design rests on, tested rather than asserted.
+
+    Adding a harness to the installer this replaces meant a new `_install_for_*`
+    function, a dispatch branch, a summary branch, an uninstall branch and a
+    status branch. Here it is a registry entry cloned from a flavor and one row
+    in the step table: no module changes, and the walk never learns it exists.
+    """
+    from dataclasses import replace
+
+    newcomer = replace(
+        PLATFORMS["codex"], name="acme", display_name="Acme Code",
+        binary="acme", config_dir="~/.acme", config_dir_env_vars=(),
+    )
+    table = {**steps.STEPS, "acme": steps.STEPS["codex"]}
+
+    dirs, _ = discovery.resolve_plugins(REPO, ["ar"])
+    ctx = Context(
+        marketplace_root=REPO, plugin_dirs=dirs, home=sandbox,
+        settings={"skill_placement": {"": "auto"}},
+    )
+    named = {discovery.plugin_name(d): d for d in dirs}
+    with steps.prepared(ctx, plugins=named) as staged:
+        landed = run(targets([newcomer], table), staged, Mode.INSTALL)
+        assert any(d.verdict.value == "publish" for d in landed)
+        assert (sandbox / ".acme").is_dir(), "the new harness's own config dir"
+
+        gone = run(targets([newcomer], table), staged, Mode.UNINSTALL)
+
+    assert any(d.verdict.value == "retire" for d in gone)
+    assert owned(sandbox) == [], "a harness added without code removes without code"
+
+
 # ─── Generated artifacts, staged before the walk ─────────────────────────────
 
 
