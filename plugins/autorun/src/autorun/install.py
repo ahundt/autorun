@@ -2500,8 +2500,22 @@ def _autorun_plugin_dir(marketplace_root: Path, plugins: list[str]) -> Path | No
 
 
 _CODEX_AUTORUN_COMMAND_MARK = "/hooks/hook_entry.py --cli codex"
-_CODEX_PLUGIN_NAME = "autorun"
+#: The registered plugin name, the same one every other harness uses and the
+#: one written into every ownership marker. Codex was the sole holdout at
+#: `autorun`, and one product recorded under two names is what made a 362-file
+#: Codex tree survive every uninstall: `decide(tree, None, plugin="ar")`
+#: returned KEEP because the marker said `autorun`.
+#:
+#: This is not the command prefix. On Codex `ar:st` arrives through autorun's
+#: own prompt parsing rather than a plugin command namespace, so the spelling
+#: users type is unaffected by this name.
+_CODEX_PLUGIN_NAME = "ar"
 _CODEX_PLUGIN_SOURCE_PATH = "./plugins/autorun"
+
+#: Names this plugin has been published under before. An install removes each
+#: of these from the marketplace and retires its source directory, or the user
+#: is left with both entries listed and Codex offering the same product twice.
+_CODEX_RETIRED_PLUGIN_NAMES = ("autorun",)
 _CODEX_PERSONAL_MARKETPLACE_NAME = "personal"
 _CODEX_GITHUB_MARKETPLACE_NAME = "autorun"
 _CODEX_GITHUB_MARKETPLACE_SOURCE = "ahundt/autorun"
@@ -2952,7 +2966,7 @@ def _install_for_codex(
     installs exactly the selected source by default:
 
     - user: ~/.codex/hooks.json only (default, stable global enforcement)
-    - plugin: autorun@personal bundled hooks only
+    - plugin: ar@personal bundled hooks only
     - both: both sources, intentionally duplicate/concurrent
     - none: no Codex hooks, plugin/skills/advisory files only
 
@@ -3053,7 +3067,7 @@ def _install_for_codex(
     else:
         print(f"✓ Codex user hooks removed from {hooks_path}")
     if _codex_uses_plugin_hooks(codex_hook_source):
-        print("✓ Codex plugin hooks packaged in autorun@personal")
+        print(f"✓ Codex plugin hooks packaged in {_CODEX_PLUGIN_NAME}@{_CODEX_PERSONAL_MARKETPLACE_NAME}")
     if agents_written:
         print(f"✓ Advisory safety guidance written to {codex_dir / 'AGENTS.md'}")
     # Shared skill publication (and any user-authored name it stepped around)
@@ -3976,7 +3990,7 @@ def _copy_codex_plugin_source(
     Codex's local plugin cache copier copies regular files and directories but
     ignores symbolic links. Autorun keeps a few cross-harness skill entrypoints
     as `SKILL.md` symlinks, so the personal Codex plugin source must
-    dereference those links before `codex plugin add autorun@personal` copies
+    dereference those links before `codex plugin add ar@personal` copies
     the bundle into `~/.codex/plugins/cache/...`.
 
     Codex loads plugin-bundled `hooks/hooks.json` alongside user hooks, so
@@ -4170,6 +4184,53 @@ def _upsert_codex_plugin_entry(marketplace: dict) -> tuple[dict, str | None]:
     return (updated, None)
 
 
+def _retire_codex_plugin_names(marketplace: dict) -> dict:
+    """Drop entries this plugin published under a name it no longer uses.
+
+    Renaming without this leaves both entries listed, so Codex offers the same
+    product twice and `codex plugin install` picks by whichever the user clicks.
+    Only an entry pointing at *our* source path is removed: a third-party plugin
+    that happens to be called ``autorun`` is not ours to delete.
+    """
+    plugins = marketplace.get("plugins")
+    if not isinstance(plugins, list):
+        return marketplace
+    kept = [
+        plugin for plugin in plugins
+        if not (
+            isinstance(plugin, dict)
+            and plugin.get("name") in _CODEX_RETIRED_PLUGIN_NAMES
+            and isinstance(plugin.get("source"), dict)
+            and plugin["source"].get("path") == _CODEX_PLUGIN_SOURCE_PATH
+        )
+    ]
+    if len(kept) == len(plugins):
+        return marketplace
+    retired = dict(marketplace)
+    retired["plugins"] = kept
+    return retired
+
+
+def _retire_codex_plugin_sources() -> tuple[str, ...]:
+    """Remove the plugin source directories published under a retired name.
+
+    Left behind they are a second copy of the whole plugin that Codex may still
+    resolve through a marketplace file the user edited by hand. Removal goes
+    through :func:`remove_owned_tree`, so a directory autorun does not own — one
+    the user created at that path — is left exactly as it is.
+    """
+    base = _configured_path("codex_plugin_source_dir", "~/plugins")
+    removed = []
+    for name in _CODEX_RETIRED_PLUGIN_NAMES:
+        stale = base / name
+        marker = read_owned_marker(stale)
+        if marker is None or (marker.plugin and marker.plugin not in (name, _CODEX_PLUGIN_NAME)):
+            continue
+        if remove_owned_tree(stale):
+            removed.append(str(stale))
+    return tuple(removed)
+
+
 def _install_codex_plugin_marketplace(
     plugin_dir: Path,
     *,
@@ -4209,6 +4270,7 @@ def _install_codex_plugin_marketplace(
             reason=error,
         )
 
+    marketplace = _retire_codex_plugin_names(marketplace)
     marketplace, conflict = _upsert_codex_plugin_entry(marketplace)
     if conflict:
         return CodexPluginMarketplaceInstall(
@@ -4220,6 +4282,10 @@ def _install_codex_plugin_marketplace(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(marketplace, indent=2) + "\n", encoding="utf-8")
+    # After the manifest is written, so a failed write leaves the old entry
+    # pointing at a directory that still exists.
+    for stale in _retire_codex_plugin_sources():
+        print(f"✓ Removed the plugin directory published under the previous name: {stale}")
     return CodexPluginMarketplaceInstall(
         source_ready=True,
         marketplace_ready=True,
@@ -4245,6 +4311,14 @@ def _install_codex_plugin_with_cli(
             upgrade = run_cmd(["codex", "plugin", "marketplace", "upgrade", marketplace_name], timeout=120)
             if not (upgrade.ok or upgrade.has_text("already")):
                 return upgrade
+
+    # Withdraw the identity this plugin used to publish under, through Codex's
+    # own command: `~/.codex/config.toml` holds a `[plugins."<id>@<market>"]`
+    # section that Codex writes and owns, so hand-editing it is not ours to do.
+    # Best effort — a stale section for a plugin whose files are gone is inert,
+    # and failing the install over it would be worse than leaving it.
+    for retired in _CODEX_RETIRED_PLUGIN_NAMES:
+        run_cmd(["codex", "plugin", "uninstall", f"{retired}@{marketplace_name}"], timeout=60)
 
     plugin_id = f"{_CODEX_PLUGIN_NAME}@{marketplace_name}"
     # Codex stages and replaces its cache in `plugin add`. Removing first
@@ -5158,7 +5232,7 @@ def _codex_summary_lines(
         return ("✗ Codex CLI: hooks install failed",)
     headline = {
         "user": "✓ Codex CLI: user hooks installed at ~/.codex/hooks.json",
-        "plugin": "✓ Codex CLI: plugin hooks packaged in autorun@personal",
+        "plugin": f"✓ Codex CLI: plugin hooks packaged in {_CODEX_PLUGIN_NAME}@{_CODEX_PERSONAL_MARKETPLACE_NAME}",
         "both": "✓ Codex CLI: user hooks and plugin hooks installed",
     }.get(hook_source, "✓ Codex CLI: hooks removed; skills and guidance installed")
     lines = [headline]
@@ -5166,7 +5240,7 @@ def _codex_summary_lines(
         lines.append("  Run /hooks inside Codex to trust hook definitions")
     lines.append(
         f"✓ Codex CLI: plugin installed as "
-        f"autorun@{_codex_plugin_marketplace_name(plugin_marketplace)}"
+        f"{_CODEX_PLUGIN_NAME}@{_codex_plugin_marketplace_name(plugin_marketplace)}"
         if plugin_ok
         else "✗ Codex CLI: plugin install failed"
     )
@@ -5742,7 +5816,7 @@ def install_plugins(
             codex_plugin_success = codex_plugin_result.ok
             codex_plugin_msg = codex_plugin_result.output
             if codex_plugin_success:
-                print(f"   autorun@{codex_plugin_marketplace_name} installed/enabled")
+                print(f"   {_CODEX_PLUGIN_NAME}@{codex_plugin_marketplace_name} installed/enabled")
             else:
                 print(f"   Codex plugin add failed: {codex_plugin_msg}")
             all_succeeded = all_succeeded and codex_plugin_success
@@ -6047,11 +6121,16 @@ def _uninstall_codex_plugin_package() -> None:
     """Withdraw autorun from the Codex personal marketplace it published to.
 
     Two artifacts, both written by :func:`_install_codex_plugin_marketplace`:
-    the ``autorun`` entry in the home marketplace manifest, and the plugin
-    source directory that entry points at. The manifest is the user's file —
-    other plugins' entries and any surrounding keys stay exactly as they are.
+    this plugin's entry in the home marketplace manifest, and the plugin source
+    directory that entry points at. The manifest is the user's file — other
+    plugins' entries and any surrounding keys stay exactly as they are.
+
+    Every name this plugin has published under is withdrawn, not only today's.
+    A user who last installed before the rename still has an ``autorun`` entry,
+    and removing only ``ar`` would leave them uninstalled but still listed.
     """
     path = _codex_personal_marketplace_path()
+    ours = (_CODEX_PLUGIN_NAME, *_CODEX_RETIRED_PLUGIN_NAMES)
     if path.is_file():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -6059,20 +6138,26 @@ def _uninstall_codex_plugin_package() -> None:
             print(f"   warning: could not clean {path}: {exc}")
             data = None
         if isinstance(data, dict) and isinstance(data.get("plugins"), list):
-            remaining = [
-                plugin
+            removed = [
+                plugin.get("name")
                 for plugin in data["plugins"]
-                if not (isinstance(plugin, dict) and plugin.get("name") == _CODEX_PLUGIN_NAME)
+                if isinstance(plugin, dict) and plugin.get("name") in ours
             ]
-            if len(remaining) != len(data["plugins"]):
-                data["plugins"] = remaining
+            if removed:
+                data["plugins"] = [
+                    plugin
+                    for plugin in data["plugins"]
+                    if not (isinstance(plugin, dict) and plugin.get("name") in ours)
+                ]
                 atomic_write_text(path, json.dumps(data, indent=2) + "\n")
-                print(f"   Removed marketplace entry: {_CODEX_PLUGIN_NAME} in {path}")
+                print(f"   Removed marketplace entry: {', '.join(removed)} in {path}")
 
-    source = _codex_plugin_source_dir()
-    if source.is_dir() and not source.is_symlink() and read_owned_marker(source) is not None:
-        shutil.rmtree(source, ignore_errors=True)
-        if not source.exists():
+    base = _configured_path("codex_plugin_source_dir", "~/plugins")
+    for name in ours:
+        source = base / name
+        # remove_owned_tree, not rmtree(ignore_errors=True): the latter reports
+        # success when the delete fails and leaves the directory behind.
+        if read_owned_marker(source) is not None and remove_owned_tree(source):
             print(f"   Removed Codex plugin source: {source}")
 
 
@@ -7165,7 +7250,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Codex hook install source: user (~/.codex/hooks.json), plugin "
-            "(autorun@personal bundled hooks), both, or none. "
+            "(ar@personal bundled hooks), both, or none. "
             "Default: user. AUTORUN_CODEX_HOOK_SOURCE can also set this."
         ),
     )
@@ -7176,7 +7261,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Codex plugin marketplace mode: personal writes ~/.agents/plugins/"
-            "marketplace.json and installs autorun@personal; github adds "
+            "marketplace.json and installs ar@personal; github adds "
             "ahundt/autorun and installs autorun@autorun. "
             "Default: personal. AUTORUN_CODEX_PLUGIN_MARKETPLACE can also set this."
         ),

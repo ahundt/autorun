@@ -85,11 +85,11 @@ and metadata only. `plugin` mode generates a Codex-specific
 duplicates: Codex merges hooks from all active sources, so duplicate
 `PreToolUse`, `UserPromptSubmit`, `Stop`, and task lifecycle hooks all run.
 
-The local development plugin identity is `autorun@personal`: `autorun` is the
-plugin name and `personal` is the generated local marketplace name. Repo-backed
+The local development plugin identity is `ar@personal`: `ar` is the plugin
+name and `personal` is the generated local marketplace name. Repo-backed
 installs use `.agents/plugins/marketplace.json` from `ahundt/autorun`, whose
 display name is `Autorun` and whose marketplace name is `autorun`, so the plugin identity is
-`autorun@autorun`.
+`ar@autorun`.
 
 Path variables available inside hook commands:
 

@@ -102,7 +102,9 @@ def test_marketplace_path_honors_the_override(relocated):
 
 
 def test_codex_plugin_source_dir_honors_the_override(relocated):
-    assert _codex_plugin_source_dir() == relocated / "custom-src" / "autorun"
+    from autorun.install import _CODEX_PLUGIN_NAME
+
+    assert _codex_plugin_source_dir() == relocated / "custom-src" / _CODEX_PLUGIN_NAME
 
 
 def test_a_tilde_value_is_expanded(monkeypatch, tmp_path):

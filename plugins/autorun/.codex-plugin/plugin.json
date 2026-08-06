@@ -1,5 +1,5 @@
 {
-  "name": "autorun",
+  "name": "ar",
   "version": "1.0.0rc1",
   "description": "Lifecycle safety hooks and reusable automation skills for AI coding assistants",
   "author": {

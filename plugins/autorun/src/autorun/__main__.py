@@ -464,7 +464,7 @@ For more information: https://github.com/ahundt/autorun
         default=None,
         help=(
             "Codex hook install source: user (~/.codex/hooks.json), plugin "
-            "(autorun@personal bundled hooks), both, or none. Default: user. "
+            "(ar@personal bundled hooks), both, or none. Default: user. "
             "AUTORUN_CODEX_HOOK_SOURCE also sets this; the flag wins."
         ),
     )
@@ -474,7 +474,7 @@ For more information: https://github.com/ahundt/autorun
         # None so the env var can win; see --codex-hook-source above.
         default=None,
         help=(
-            "Codex plugin marketplace mode: personal installs autorun@personal "
+            "Codex plugin marketplace mode: personal installs ar@personal "
             "from a local personal marketplace; github adds ahundt/autorun "
             "and installs autorun@autorun. Default: personal. "
             "AUTORUN_CODEX_PLUGIN_MARKETPLACE also sets this; the flag wins."

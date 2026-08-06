@@ -26,6 +26,7 @@ import pytest
 
 from autorun.install import (
     CmdResult,
+    _CODEX_PLUGIN_NAME,
     _build_codex_hook_block,
     _build_codex_plugin_hooks_json,
     _codex_owned_plugin_hook_source,
@@ -604,7 +605,9 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     }
     (codex_dir / "hooks.json").write_text(json.dumps(codex_hooks))
     (codex_dir / "AGENTS.md").write_text("autorun safety guidance")
-    (codex_dir / "config.toml").write_text('[plugins."autorun@personal"]\nenabled = true\n')
+    (codex_dir / "config.toml").write_text(
+        f'[plugins."{_CODEX_PLUGIN_NAME}@personal"]\nenabled = true\n'
+    )
     skills_root = tmp_path / ".agents" / "skills"
     for name in ("mermaid-diagrams", "parallel-subagent"):
         skill_dir = skills_root / name
@@ -623,7 +626,7 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
                 "interface": {"displayName": "Personal"},
                 "plugins": [
                     {
-                        "name": "autorun",
+                        "name": _CODEX_PLUGIN_NAME,
                         "source": {"source": "local", "path": "./plugins/autorun"},
                         "policy": {
                             "installation": "AVAILABLE",
@@ -635,15 +638,19 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
             }
         )
     )
-    plugin_source_root = tmp_path / "plugins" / "autorun"
-    plugin_source = plugin_source_root / ".codex-plugin"
-    plugin_source.mkdir(parents=True)
-    (plugin_source / "plugin.json").write_text('{"name":"autorun","skills":"./skills/"}')
-    plugin_cache_root = tmp_path / ".codex" / "plugins" / "cache" / "personal" / "autorun" / "0.11.0"
-    plugin_cache = plugin_cache_root / ".codex-plugin"
-    plugin_cache.mkdir(parents=True)
-    (plugin_cache / "plugin.json").write_text('{"name":"autorun","skills":"./skills/"}')
-    for root in (plugin_source_root, plugin_cache_root):
+    # Three roots that used to be two. find_marketplace_root is patched to
+    # tmp_path, so `plugins/autorun` is the repository layout and keeps its
+    # directory name, while the Codex plugin source is `~/plugins/<plugin>` and
+    # moved with the rename. They were the same path only while the Codex
+    # plugin happened to be called `autorun` too.
+    marketplace_plugin_root = tmp_path / "plugins" / "autorun"
+    codex_source_root = tmp_path / "plugins" / _CODEX_PLUGIN_NAME
+    plugin_cache_root = tmp_path / ".codex" / "plugins" / "cache" / "personal" / _CODEX_PLUGIN_NAME / "0.11.0"
+    manifest = json.dumps({"name": _CODEX_PLUGIN_NAME, "skills": "./skills/"})
+    for root in (marketplace_plugin_root, codex_source_root, plugin_cache_root):
+        (root / ".codex-plugin").mkdir(parents=True, exist_ok=True)
+        (root / ".codex-plugin" / "plugin.json").write_text(manifest)
+    for root in (marketplace_plugin_root, codex_source_root, plugin_cache_root):
         for name in ("mermaid-diagrams", "parallel-subagent"):
             skill_dir = root / "skills" / name
             skill_dir.mkdir(parents=True)
@@ -1200,8 +1207,8 @@ def _read_personal_marketplace(home: Path) -> dict:
 
 
 def _autorun_marketplace_entry(marketplace: dict) -> dict:
-    entries = [p for p in marketplace.get("plugins", []) if p.get("name") == "autorun"]
-    assert len(entries) == 1
+    entries = [p for p in marketplace.get("plugins", []) if p.get("name") == _CODEX_PLUGIN_NAME]
+    assert len(entries) == 1, marketplace.get("plugins")
     return entries[0]
 
 
@@ -1243,7 +1250,7 @@ def test_install_for_codex_creates_personal_plugin_marketplace(tmp_path, monkeyp
     }
     assert entry["category"] == "Productivity"
 
-    plugin_source = tmp_path / "plugins" / "autorun"
+    plugin_source = tmp_path / "plugins" / _CODEX_PLUGIN_NAME
     assert plugin_source.exists()
     assert (plugin_source / ".codex-plugin" / "plugin.json").is_file()
     # Default placement is `auto`, and Codex reads ~/.agents/skills directly, so
@@ -1298,7 +1305,7 @@ def test_install_for_codex_plugin_hook_source_packages_codex_hooks_only(tmp_path
 
     user_hooks = _read_codex_hooks(tmp_path)
     assert "hook_entry.py --cli codex" not in json.dumps(user_hooks)
-    plugin_source = tmp_path / "plugins" / "autorun"
+    plugin_source = tmp_path / "plugins" / _CODEX_PLUGIN_NAME
     plugin_hooks = plugin_source / "hooks" / "hooks.json"
     assert plugin_hooks.is_file()
     assert (plugin_source / "hooks" / "hook_entry.py").is_file()
@@ -1324,13 +1331,13 @@ def test_install_for_codex_both_hook_source_installs_user_and_plugin_hooks(tmp_p
 
     user_hooks = _read_codex_hooks(tmp_path)
     assert "hook_entry.py --cli codex" in json.dumps(user_hooks)
-    plugin_hooks = tmp_path / "plugins" / "autorun" / "hooks" / "hooks.json"
+    plugin_hooks = tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "hooks" / "hooks.json"
     assert plugin_hooks.is_file()
     assert "--cli codex" in plugin_hooks.read_text(encoding="utf-8")
     # Asserted through the accessor rather than the file text: the marker's
     # storage format is an implementation detail, and pinning it here is what
     # made the switch to a shared marker look like a behavior regression.
-    assert _codex_owned_plugin_hook_source(tmp_path / "plugins" / "autorun") == "both"
+    assert _codex_owned_plugin_hook_source(tmp_path / "plugins" / _CODEX_PLUGIN_NAME) == "both"
 
 
 def test_install_for_codex_user_mode_removes_owned_plugin_hooks_and_keeps_user_hooks(tmp_path, monkeypatch):
@@ -1365,7 +1372,7 @@ def test_install_for_codex_user_mode_removes_owned_plugin_hooks_and_keeps_user_h
         codex_hook_source="both",
     )
     assert ok
-    assert (tmp_path / "plugins" / "autorun" / "hooks" / "hooks.json").is_file()
+    assert (tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "hooks" / "hooks.json").is_file()
 
     ok, _msg = _install_for_codex(
         fake_marketplace,
@@ -1379,7 +1386,7 @@ def test_install_for_codex_user_mode_removes_owned_plugin_hooks_and_keeps_user_h
     serialized = json.dumps(user_hooks)
     assert "hook_entry.py --cli codex" in serialized
     assert "user-post-tool-use.sh" in serialized
-    plugin_source = tmp_path / "plugins" / "autorun"
+    plugin_source = tmp_path / "plugins" / _CODEX_PLUGIN_NAME
     assert not (plugin_source / "hooks" / "hooks.json").exists()
     assert _codex_owned_plugin_hook_source(plugin_source) == "user"
 
@@ -1431,7 +1438,7 @@ def test_install_for_codex_none_hook_source_removes_user_and_plugin_hooks(tmp_pa
     serialized = json.dumps(hooks)
     assert "hook_entry.py --cli codex" not in serialized
     assert "user-post-tool-use.sh" in serialized
-    assert not (tmp_path / "plugins" / "autorun" / "hooks" / "hooks.json").exists()
+    assert not (tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "hooks" / "hooks.json").exists()
 
 
 def test_install_for_codex_rejects_github_plugin_hook_source(tmp_path, monkeypatch):
@@ -1478,7 +1485,7 @@ def test_install_for_codex_materializes_linked_skill_entrypoints(tmp_path, monke
     )
     assert ok
 
-    copied_entrypoint = tmp_path / "plugins" / "autorun" / "skills" / "parallel-subagent" / "SKILL.md"
+    copied_entrypoint = tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "skills" / "parallel-subagent" / "SKILL.md"
     assert copied_entrypoint.is_file()
     assert not copied_entrypoint.is_symlink()
     assert "link-backed skill" in copied_entrypoint.read_text(encoding="utf-8")
@@ -1504,7 +1511,7 @@ def test_install_for_codex_omits_incomplete_skill_directories(tmp_path, monkeypa
     )
 
     assert ok, message
-    copied_skills = tmp_path / "plugins" / "autorun" / "skills"
+    copied_skills = tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "skills"
     assert (copied_skills / "cache" / "SKILL.md").is_file()
     assert not (copied_skills / "asset-only").exists()
 
@@ -1537,14 +1544,119 @@ def test_install_for_codex_preserves_existing_personal_marketplace_entries(tmp_p
 
     marketplace = _read_personal_marketplace(tmp_path)
     names = [entry["name"] for entry in marketplace["plugins"]]
-    assert names == ["existing", "autorun"]
+    assert names == ["existing", _CODEX_PLUGIN_NAME]
     assert _autorun_marketplace_entry(marketplace)["source"]["path"] == "./plugins/autorun"
+
+
+def test_the_entry_published_under_the_previous_name_is_retired(tmp_path, monkeypatch):
+    """Codex was the last harness registering this plugin as `autorun` while
+    every other one registers `ar`. Renaming without removing the old entry
+    lists the same product twice, and `codex plugin install` then installs
+    whichever the user happens to click."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    personal_dir = tmp_path / ".agents" / "plugins"
+    personal_dir.mkdir(parents=True)
+    (personal_dir / "marketplace.json").write_text(
+        json.dumps({
+            "name": "personal",
+            "plugins": [{
+                "name": "autorun",
+                "source": {"source": "local", "path": "./plugins/autorun"},
+                "category": "Productivity",
+            }],
+        })
+    )
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    names = [entry["name"] for entry in _read_personal_marketplace(tmp_path)["plugins"]]
+    assert names == [_CODEX_PLUGIN_NAME], "exactly one entry for one product"
+
+
+def test_a_third_party_plugin_sharing_the_old_name_is_not_ours_to_delete(tmp_path, monkeypatch):
+    """The retirement matches our source path, not just the name. Someone
+    else's plugin called `autorun` stays exactly where it is."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    personal_dir = tmp_path / ".agents" / "plugins"
+    personal_dir.mkdir(parents=True)
+    theirs = {
+        "name": "autorun",
+        "source": {"source": "local", "path": "./somewhere/else"},
+        "category": "Productivity",
+    }
+    (personal_dir / "marketplace.json").write_text(
+        json.dumps({"name": "personal", "plugins": [theirs]})
+    )
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    _install_for_codex(fake_marketplace, ["autorun"], force=False)
+
+    plugins = _read_personal_marketplace(tmp_path)["plugins"]
+    assert theirs in plugins
+    assert [entry["name"] for entry in plugins] == ["autorun", _CODEX_PLUGIN_NAME]
+
+
+def test_the_plugin_directory_from_the_previous_name_is_removed_when_ours(tmp_path, monkeypatch):
+    """Left behind it is a second full copy of the plugin that Codex can still
+    resolve through a marketplace file the user edited by hand."""
+    from autorun.install import _retire_codex_plugin_sources, write_owned_marker
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    stale = tmp_path / "plugins" / "autorun"
+    (stale / "skills").mkdir(parents=True)
+    write_owned_marker(stale, plugin="ar")
+
+    assert _retire_codex_plugin_sources() == (str(stale),)
+    assert not stale.exists()
+
+
+def test_a_plugin_directory_we_do_not_own_is_left_alone(tmp_path, monkeypatch):
+    from autorun.install import _retire_codex_plugin_sources
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    theirs = tmp_path / "plugins" / "autorun"
+    theirs.mkdir(parents=True)
+    (theirs / "README.md").write_text("hand written\n", encoding="utf-8")
+
+    assert _retire_codex_plugin_sources() == ()
+    assert (theirs / "README.md").is_file()
+
+
+def test_uninstall_withdraws_every_name_this_plugin_has_published_under(tmp_path, monkeypatch):
+    """A user who last installed before the rename still has an `autorun`
+    entry. Withdrawing only `ar` leaves them uninstalled but still listed, and
+    Codex still offering a plugin whose files are gone."""
+    from autorun.install import _uninstall_codex_plugin_package, write_owned_marker
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    personal = tmp_path / ".agents" / "plugins"
+    personal.mkdir(parents=True)
+    (personal / "marketplace.json").write_text(
+        json.dumps({"name": "personal", "plugins": [
+            {"name": "autorun", "source": {"source": "local", "path": "./plugins/autorun"}},
+            {"name": _CODEX_PLUGIN_NAME, "source": {"source": "local", "path": "./plugins/autorun"}},
+            {"name": "someone-else", "source": {"source": "local", "path": "./plugins/theirs"}},
+        ]})
+    )
+    for name in ("autorun", _CODEX_PLUGIN_NAME):
+        directory = tmp_path / "plugins" / name
+        directory.mkdir(parents=True)
+        write_owned_marker(directory, plugin="ar")
+
+    _uninstall_codex_plugin_package()
+
+    remaining = json.loads((personal / "marketplace.json").read_text())["plugins"]
+    assert [entry["name"] for entry in remaining] == ["someone-else"]
+    assert not (tmp_path / "plugins" / "autorun").exists()
+    assert not (tmp_path / "plugins" / _CODEX_PLUGIN_NAME).exists()
 
 
 def test_install_for_codex_does_not_clobber_user_owned_personal_plugin_dir(tmp_path, monkeypatch):
     """A user-authored ~/plugins/autorun directory must be left untouched."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    user_plugin = tmp_path / "plugins" / "autorun"
+    user_plugin = tmp_path / "plugins" / _CODEX_PLUGIN_NAME
     (user_plugin / ".codex-plugin").mkdir(parents=True)
     user_manifest = user_plugin / ".codex-plugin" / "plugin.json"
     user_manifest.write_text('{"name":"autorun","description":"USER OWNED"}\n')
@@ -1567,7 +1679,7 @@ def test_codex_plugin_source_upgrade_preserves_previous_copy_on_stage_failure(tm
     plugin_dir = fake_marketplace / "plugins" / "autorun"
 
     assert _ensure_codex_plugin_source(plugin_dir)[0]
-    installed_skill = tmp_path / "plugins" / "autorun" / "skills" / "cache" / "SKILL.md"
+    installed_skill = tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "skills" / "cache" / "SKILL.md"
     previous = installed_skill.read_text(encoding="utf-8")
 
     def fail_copy(*_args, **_kwargs):
@@ -1585,7 +1697,7 @@ def test_codex_plugin_manifest_exists_for_packaged_skills():
     """The source plugin must include Codex's required manifest file."""
     manifest = Path(__file__).parents[1] / ".codex-plugin" / "plugin.json"
     data = json.loads(manifest.read_text())
-    assert data["name"] == "autorun"
+    assert data["name"] == _CODEX_PLUGIN_NAME
     # Two declared roots: the shared skills plus the Codex-native root that
     # carries the $ar command-grammar skill (codex-rs accepts a path list).
     assert data["skills"] == ["./skills/", "./.codex-plugin/skills/"]
@@ -1596,9 +1708,11 @@ def test_repo_codex_marketplace_targets_autorun_plugin():
     """GitHub marketplace installs need a repo-scoped Codex marketplace file."""
     marketplace = Path(__file__).parents[3] / ".agents" / "plugins" / "marketplace.json"
     data = json.loads(marketplace.read_text(encoding="utf-8"))
+    # The marketplace is named `autorun`; the plugin inside it is `ar`, the same
+    # name every other harness registers and the one written into every marker.
     assert data["name"] == "autorun"
     assert data["interface"]["displayName"] == "Autorun"
-    entries = [plugin for plugin in data["plugins"] if plugin["name"] == "autorun"]
+    entries = [plugin for plugin in data["plugins"] if plugin["name"] == _CODEX_PLUGIN_NAME]
     assert len(entries) == 1
     assert entries[0]["source"] == {"source": "local", "path": "./plugins/autorun"}
 
@@ -1622,7 +1736,10 @@ def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
 
     assert result.ok
     assert calls == [
-        (["codex", "plugin", "add", "autorun@personal"], 120),
+        # The identity published before the rename is withdrawn through Codex's
+        # own command, because ~/.codex/config.toml is Codex's file to edit.
+        (["codex", "plugin", "uninstall", "autorun@personal"], 60),
+        (["codex", "plugin", "add", f"{_CODEX_PLUGIN_NAME}@personal"], 120),
     ]
 
 
@@ -1649,7 +1766,8 @@ def test_install_codex_plugin_with_cli_uses_github_marketplace(monkeypatch):
     assert result.ok
     assert calls == [
         (["codex", "plugin", "marketplace", "add", "ahundt/autorun"], 120),
-        (["codex", "plugin", "add", "autorun@autorun"], 120),
+        (["codex", "plugin", "uninstall", "autorun@autorun"], 60),
+        (["codex", "plugin", "add", f"{_CODEX_PLUGIN_NAME}@autorun"], 120),
     ]
 
 
@@ -1672,7 +1790,10 @@ def test_install_codex_plugin_with_cli_force_refreshes_cache(monkeypatch):
 
     assert result.ok
     assert calls == [
-        (["codex", "plugin", "add", "autorun@personal"], 120),
+        # The identity published before the rename is withdrawn through Codex's
+        # own command, because ~/.codex/config.toml is Codex's file to edit.
+        (["codex", "plugin", "uninstall", "autorun@personal"], 60),
+        (["codex", "plugin", "add", f"{_CODEX_PLUGIN_NAME}@personal"], 120),
     ]
 
 
@@ -1697,7 +1818,10 @@ def test_install_codex_plugin_with_cli_refreshes_cache_by_default(monkeypatch):
 
     assert result.ok
     assert calls == [
-        (["codex", "plugin", "add", "autorun@personal"], 120),
+        # The identity published before the rename is withdrawn through Codex's
+        # own command, because ~/.codex/config.toml is Codex's file to edit.
+        (["codex", "plugin", "uninstall", "autorun@personal"], 60),
+        (["codex", "plugin", "add", f"{_CODEX_PLUGIN_NAME}@personal"], 120),
     ]
 
 
@@ -1715,7 +1839,7 @@ def test_codex_plugin_marketplace_status_flags_cached_plugin_hooks(tmp_path, mon
                 "interface": {"displayName": "Personal"},
                 "plugins": [
                     {
-                        "name": "autorun",
+                        "name": _CODEX_PLUGIN_NAME,
                         "source": {"source": "local", "path": "./plugins/autorun"},
                         "policy": {
                             "installation": "AVAILABLE",
@@ -1727,9 +1851,9 @@ def test_codex_plugin_marketplace_status_flags_cached_plugin_hooks(tmp_path, mon
             }
         )
     )
-    source_manifest = tmp_path / "plugins" / "autorun" / ".codex-plugin" / "plugin.json"
+    source_manifest = tmp_path / "plugins" / _CODEX_PLUGIN_NAME / ".codex-plugin" / "plugin.json"
     source_manifest.parent.mkdir(parents=True)
-    source_manifest.write_text('{"name":"autorun","skills":"./skills/"}')
+    source_manifest.write_text(json.dumps({"name": _CODEX_PLUGIN_NAME, "skills": "./skills/"}))
     codex_hooks = tmp_path / ".codex" / "hooks.json"
     codex_hooks.parent.mkdir(parents=True)
     codex_hooks.write_text(
@@ -1750,9 +1874,9 @@ def test_codex_plugin_marketplace_status_flags_cached_plugin_hooks(tmp_path, mon
             }
         )
     )
-    cache_manifest = tmp_path / ".codex" / "plugins" / "cache" / "personal" / "autorun" / "0.12.0" / ".codex-plugin" / "plugin.json"
+    cache_manifest = tmp_path / ".codex" / "plugins" / "cache" / "personal" / _CODEX_PLUGIN_NAME / "0.12.0" / ".codex-plugin" / "plugin.json"
     cache_manifest.parent.mkdir(parents=True)
-    cache_manifest.write_text('{"name":"autorun","skills":"./skills/"}')
+    cache_manifest.write_text(json.dumps({"name": _CODEX_PLUGIN_NAME, "skills": "./skills/"}))
     cache_hooks = cache_manifest.parents[1] / "hooks" / "hooks.json"
     cache_hooks.parent.mkdir()
     cache_hooks.write_text('{"hooks":{"PreToolUse":[{"hooks":[]}]}}')
@@ -1778,7 +1902,7 @@ def test_codex_plugin_marketplace_status_allows_explicit_both_hook_source(tmp_pa
                 "interface": {"displayName": "Personal"},
                 "plugins": [
                     {
-                        "name": "autorun",
+                        "name": _CODEX_PLUGIN_NAME,
                         "source": {"source": "local", "path": "./plugins/autorun"},
                         "policy": {
                             "installation": "AVAILABLE",
@@ -1790,10 +1914,10 @@ def test_codex_plugin_marketplace_status_allows_explicit_both_hook_source(tmp_pa
             }
         )
     )
-    source_dir = tmp_path / "plugins" / "autorun"
+    source_dir = tmp_path / "plugins" / _CODEX_PLUGIN_NAME
     source_manifest = source_dir / ".codex-plugin" / "plugin.json"
     source_manifest.parent.mkdir(parents=True)
-    source_manifest.write_text('{"name":"autorun","skills":"./skills/"}')
+    source_manifest.write_text(json.dumps({"name": _CODEX_PLUGIN_NAME, "skills": "./skills/"}))
     (source_dir / ".autorun-owned").write_text(
         "Autorun-owned Codex plugin source copy.\ncodex_hook_source=both\n",
         encoding="utf-8",
@@ -1818,9 +1942,9 @@ def test_codex_plugin_marketplace_status_allows_explicit_both_hook_source(tmp_pa
             }
         )
     )
-    cache_manifest = tmp_path / ".codex" / "plugins" / "cache" / "personal" / "autorun" / "0.12.0" / ".codex-plugin" / "plugin.json"
+    cache_manifest = tmp_path / ".codex" / "plugins" / "cache" / "personal" / _CODEX_PLUGIN_NAME / "0.12.0" / ".codex-plugin" / "plugin.json"
     cache_manifest.parent.mkdir(parents=True)
-    cache_manifest.write_text('{"name":"autorun","skills":"./skills/"}')
+    cache_manifest.write_text(json.dumps({"name": _CODEX_PLUGIN_NAME, "skills": "./skills/"}))
     cache_hooks = cache_manifest.parents[1] / "hooks" / "hooks.json"
     cache_hooks.parent.mkdir()
     cache_hooks.write_text('{"hooks":{"PreToolUse":[{"hooks":[]}]}}')
@@ -2115,9 +2239,9 @@ def test_codex_auto_placement_publishes_shared_and_stages_no_plugin_skills(
 
     assert ok
     assert (tmp_path / ".agents" / "skills" / "cache" / "SKILL.md").is_file()
-    staged_manifest = tmp_path / "plugins" / "autorun" / ".codex-plugin" / "plugin.json"
+    staged_manifest = tmp_path / "plugins" / _CODEX_PLUGIN_NAME / ".codex-plugin" / "plugin.json"
     assert "skills" not in json.loads(staged_manifest.read_text())
-    assert not (tmp_path / "plugins" / "autorun" / "skills").exists()
+    assert not (tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "skills").exists()
 
 
 def test_codex_native_placement_stages_plugin_skills_and_skips_the_shared_root(
@@ -2132,7 +2256,7 @@ def test_codex_native_placement_stages_plugin_skills_and_skips_the_shared_root(
 
     assert ok
     assert not (tmp_path / ".agents" / "skills" / "cache").exists()
-    staged = tmp_path / "plugins" / "autorun"
+    staged = tmp_path / "plugins" / _CODEX_PLUGIN_NAME
     assert json.loads((staged / ".codex-plugin" / "plugin.json").read_text())["skills"]
     assert (staged / "skills" / "cache" / "SKILL.md").is_file()
 
@@ -2148,7 +2272,7 @@ def test_codex_both_placement_publishes_shared_and_stages_plugin_skills(
 
     assert ok
     assert (tmp_path / ".agents" / "skills" / "cache" / "SKILL.md").is_file()
-    assert (tmp_path / "plugins" / "autorun" / "skills" / "cache" / "SKILL.md").is_file()
+    assert (tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "skills" / "cache" / "SKILL.md").is_file()
 
 
 def test_codex_auto_keeps_plugin_skills_when_shared_publication_is_blocked(
@@ -2166,4 +2290,4 @@ def test_codex_auto_keeps_plugin_skills_when_shared_publication_is_blocked(
 
     assert ok
     assert (unowned / "SKILL.md").read_text(encoding="utf-8") == "USER AUTHORED\n"
-    assert (tmp_path / "plugins" / "autorun" / "skills" / "cache" / "SKILL.md").is_file()
+    assert (tmp_path / "plugins" / _CODEX_PLUGIN_NAME / "skills" / "cache" / "SKILL.md").is_file()

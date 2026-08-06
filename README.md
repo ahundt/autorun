@@ -209,16 +209,16 @@ Codex loads matching hooks from every active source, including user config and p
 
 ```bash
 autorun --install --codex --codex-hook-source user    # default: ~/.codex/hooks.json only
-autorun --install --codex --codex-hook-source plugin  # autorun@personal bundled hooks only
+autorun --install --codex --codex-hook-source plugin  # ar@personal bundled hooks only
 autorun --install --codex --codex-hook-source both    # install both sources intentionally
 autorun --install --codex --codex-hook-source none    # remove autorun Codex hooks, keep skills/guidance
 autorun --install --codex --codex-plugin-marketplace github
-                                                        # install plugin from ahundt/autorun as autorun@autorun
+                                                        # install plugin from ahundt/autorun as ar@autorun
 ```
 
-`AUTORUN_CODEX_HOOK_SOURCE` can set the same mode for unattended reinstalls. Reinstalls refresh the selected Codex plugin (`autorun@personal` or `autorun@autorun`) so changing modes clears stale hook files from previous cache versions instead of leaving duplicate PreToolUse/PostToolUse hooks behind.
+`AUTORUN_CODEX_HOOK_SOURCE` can set the same mode for unattended reinstalls. Reinstalls refresh the selected Codex plugin (`ar@personal` or `ar@autorun`) so changing modes clears stale hook files from previous cache versions instead of leaving duplicate PreToolUse/PostToolUse hooks behind.
 
-`autorun@personal` is the local development plugin identity: `autorun` is the plugin name and `personal` is the generated local marketplace name in `~/.agents/plugins/marketplace.json`. For repo-backed Codex installs, the repository ships `.agents/plugins/marketplace.json` with marketplace name `autorun` and display name `Autorun`; use `--codex-plugin-marketplace github` to add `ahundt/autorun` through `codex plugin marketplace add` and install `autorun@autorun`.
+`ar@personal` is the local development plugin identity: `ar` is the plugin name, the same one every harness registers, and `personal` is the generated local marketplace name in `~/.agents/plugins/marketplace.json`. For repo-backed Codex installs, the repository ships `.agents/plugins/marketplace.json` with marketplace name `autorun` and display name `Autorun`; use `--codex-plugin-marketplace github` to add `ahundt/autorun` through `codex plugin marketplace add` and install `ar@autorun`. An install made before the plugin was renamed removes its own `autorun` entry, so the marketplace lists one entry per product.
 
 Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`. Autorun skills use Codex's native skill surfaces: run `/skills`, mention the skill as `$mermaid-diagrams`, or select the installed `@autorun` plugin. Codex does not turn arbitrary skills into slash commands such as `/mermaid`.
 
@@ -622,7 +622,7 @@ python -m plugins.autorun.src.autorun.install --install --force
 ## Available Commands
 
 - **Project/Repo name**: `autorun`
-- **Marketplace name**: `autorun` (used for `/plugin install autorun@autorun`)
+- **Marketplace name**: `autorun` (used for `/plugin install ar@autorun`)
 - **Command prefix**: `ar` (short forms like `/ar:st` for speed, long forms like `/ar:status` for discoverability)
 - **Live list**: `/ar:help` prints every command with its description, `/ar:help <command>` prints one command's arguments, and typing `ar` alone opens the same list
 
@@ -1072,11 +1072,11 @@ autorun --install --gemini           # Explicitly register the legacy Gemini CLI
 autorun --install --qwen             # Register for Qwen Code only
 autorun --install --codex            # Register for Codex CLI only
 autorun --install --codex --codex-hook-source plugin
-                                      # Package Codex hooks in autorun@personal instead of ~/.codex/hooks.json
+                                      # Package Codex hooks in ar@personal instead of ~/.codex/hooks.json
 autorun --install --codex --codex-plugin-marketplace github
-                                      # Install Codex plugin from ahundt/autorun as autorun@autorun
+                                      # Install Codex plugin from ahundt/autorun as ar@autorun
 autorun --install --codex --codex-plugin-marketplace personal
-                                      # Install local development plugin as autorun@personal
+                                      # Install local development plugin as ar@personal
 autorun --install-dry-run --codex     # Preview all writes without changing user config
 autorun --install --custom-harness 'lab=qwen:qwen-lab:/path/to/config::Qwen Lab'
                                       # Install a flavored custom harness; option is repeatable
@@ -1420,7 +1420,7 @@ claude --debug
 # Reinstall plugin (local development version)
 /plugin uninstall autorun
 /plugin marketplace add ./autorun
-/plugin install autorun@autorun
+/plugin install ar@autorun
 
 # Check plugin structure after installation
 ls -la ~/.claude/plugins/autorun/.claude-plugin/
@@ -1438,7 +1438,7 @@ ls -la ~/.claude/plugins/autorun/commands/
 /plugin uninstall autorun                                 # Uninstall
 /plugin                                                   # List installed plugins
 /plugin marketplace add ./autorun                         # Add local marketplace (dev)
-/plugin install autorun@autorun                           # Install local version (dev)
+/plugin install ar@autorun                           # Install local version (dev)
 uv run python -m autorun --install --force                # Install/reinstall via UV
 ```
 

@@ -5,7 +5,7 @@
   },
   "plugins": [
     {
-      "name": "autorun",
+      "name": "ar",
       "source": {
         "source": "local",
         "path": "./plugins/autorun"
