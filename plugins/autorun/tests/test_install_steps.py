@@ -557,6 +557,203 @@ def test_force_withdraws_registration_before_readding_it(sandbox):
     ]
 
 
+def test_force_retries_a_failed_extension_registration_without_second_withdraw(
+    sandbox,
+):
+    """A forced CLI uninstall can leave a registered but empty extension.
+
+    The old Gemini-family path retried the install once after the destructive
+    uninstall, but never repeated that uninstall.  Without this edge case a
+    transient install failure strands the user's extension in the half-removed
+    state and a second run reports ``already installed``.
+    """
+    import subprocess
+
+    from autorun.installer.orchestrate import install
+
+    calls = []
+    install_attempts = 0
+
+    def record(argv):
+        nonlocal install_attempts
+        call = tuple(argv)
+        calls.append(call)
+        if call[:3] == ("gemini", "extensions", "install"):
+            install_attempts += 1
+            if install_attempts == 1:
+                return subprocess.CompletedProcess(argv, 1, "", "network unreachable")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}, "conductor": False},
+        home=sandbox,
+        harnesses=(PLATFORMS["gemini"],),
+        run_command=record,
+        available=("gemini",),
+        state_dir=sandbox / ".state",
+        force=True,
+    )
+
+    assert result.ok is True
+    assert calls == [
+        ("gemini", "extensions", "uninstall", "ar"),
+        ("gemini", "extensions", "install", calls[1][-1]),
+        ("gemini", "extensions", "install", calls[1][-1]),
+    ]
+
+
+@pytest.mark.parametrize("message", ["already installed", "up-to-date"])
+def test_force_does_not_accept_existing_extension_after_withdraw(sandbox, message):
+    """After forced removal, an existing-state reply means the files are gone."""
+    import subprocess
+
+    from autorun.installer.orchestrate import install
+
+    calls = []
+
+    def record(argv):
+        call = tuple(argv)
+        calls.append(call)
+        if call[:3] == ("gemini", "extensions", "install"):
+            return subprocess.CompletedProcess(argv, 1, "", message)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}, "conductor": False},
+        home=sandbox,
+        harnesses=(PLATFORMS["gemini"],),
+        run_command=record,
+        available=("gemini",),
+        state_dir=sandbox / ".state",
+        force=True,
+    )
+
+    assert result.ok is False
+    assert calls == [
+        ("gemini", "extensions", "uninstall", "ar"),
+        ("gemini", "extensions", "install", calls[1][-1]),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("harness", "binary", "uninstall", "install"),
+    [
+        ("gemini", "gemini", ("gemini", "extensions", "uninstall", "ar"),
+         ("gemini", "extensions", "install")),
+        ("qwen", "qwen", ("qwen", "extensions", "uninstall", "ar"),
+         ("qwen", "extensions", "install")),
+        ("antigravity", "agy", ("agy", "plugin", "uninstall", "ar"),
+         ("agy", "plugin", "install")),
+    ],
+)
+def test_force_retry_policy_is_shared_by_all_extension_flavors(
+    harness, binary, uninstall, install
+):
+    """The retry belongs to the registration contract, not a harness branch."""
+    import subprocess
+
+    from autorun.installer import registration
+
+    calls = []
+    attempts = 0
+
+    def record(argv):
+        nonlocal attempts
+        call = tuple(argv)
+        calls.append(call)
+        if call[:3] == install:
+            attempts += 1
+            if attempts == 1:
+                return subprocess.CompletedProcess(argv, 1, "", "network unreachable")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    values = {
+        "name": "ar", "market": "autorun", "root": "/repo",
+        "extension": "/staged",
+    }
+    withdrawn = registration.withdraw(
+        harness, values, run=record, available=(binary,)
+    )
+    outcomes = registration.register(
+        harness,
+        values,
+        run=record,
+        available=(binary,),
+        force=True,
+    )
+
+    assert all(outcome.ok for outcome in withdrawn)
+    assert all(outcome.ok for outcome in outcomes)
+    install_call = calls[1]
+    assert calls == [uninstall, install_call, install_call]
+    assert install_call[:3] == install
+
+
+def test_forced_extension_failure_keeps_cli_recovery_detail_and_user_store(
+    sandbox,
+):
+    """The CLI's integrity-store remedy survives the compact result API."""
+    import subprocess
+
+    from autorun.installer.orchestrate import install
+
+    integrity = sandbox / ".gemini" / "extension_integrity.json"
+    integrity.parent.mkdir(parents=True)
+    integrity.write_text("{}", encoding="utf-8")
+    message = (
+        "Extension integrity store cannot be verified. Please delete "
+        f"{integrity} to reset it."
+    )
+
+    def record(argv):
+        if tuple(argv)[:3] == ("gemini", "extensions", "install"):
+            return subprocess.CompletedProcess(argv, 1, "", message)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}, "conductor": False},
+        home=sandbox,
+        harnesses=(PLATFORMS["gemini"],),
+        run_command=record,
+        available=("gemini",),
+        state_dir=sandbox / ".state",
+        force=True,
+    )
+
+    assert result.ok is False
+    assert any("extension_integrity.json" in line for line in result.lines())
+    assert integrity.read_text(encoding="utf-8") == "{}"
+
+
+def test_nonforced_extension_failure_is_not_retried(sandbox):
+    """Only a destructive forced uninstall earns a second install attempt."""
+    import subprocess
+
+    from autorun.installer import registration
+
+    calls = []
+
+    def record(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 1, "", "network unreachable")
+
+    outcomes = registration.register(
+        "gemini",
+        {"name": "ar", "market": "autorun", "extension": "/staged"},
+        run=record,
+        available=("gemini",),
+    )
+
+    assert len(outcomes) == 1
+    assert len(calls) == 1
+
+
 # ─── Generated artifacts, staged before the walk ─────────────────────────────
 
 

@@ -28,8 +28,9 @@ second install fail; matching the word is what the installer being replaced
 did, and the behaviour is preserved because it is what these CLIs were tested
 against.
 
-Complexity: O(commands) subprocesses, each bounded by ``timeout``. Nothing here
-retries, so a hung CLI costs one timeout rather than several.
+Complexity: O(commands) subprocesses, each bounded by ``timeout``. A forced
+extension registration gets at most one install retry; a hung CLI still costs
+one timeout rather than several.
 """
 
 from __future__ import annotations
@@ -76,6 +77,9 @@ class Registration:
     #: Tried before ``install``; success skips the rest of ``install``.
     refresh: tuple[tuple[str, ...], ...] = ()
     binary: str = ""
+    #: A forced extension uninstall can leave the harness registered but empty.
+    #: Retry one failed install without repeating the destructive uninstall.
+    retry_after_force: bool = False
 
 
 def with_binary(entry: Registration, binary: str) -> Registration:
@@ -88,6 +92,7 @@ def with_binary(entry: Registration, binary: str) -> Registration:
         remove=commands(entry.remove),
         refresh=commands(entry.refresh),
         binary=binary,
+        retry_after_force=entry.retry_after_force,
     )
 
 
@@ -151,16 +156,19 @@ REGISTRATIONS: Mapping[str, Registration] = {
         binary="gemini",
         install=(("gemini", "extensions", "install", "{extension}"),),
         remove=(("gemini", "extensions", "uninstall", "{name}"),),
+        retry_after_force=True,
     ),
     "qwen": Registration(
         binary="qwen",
         install=(("qwen", "extensions", "install", "{extension}"),),
         remove=(("qwen", "extensions", "uninstall", "{name}"),),
+        retry_after_force=True,
     ),
     "antigravity": Registration(
         binary="agy",
         install=(("agy", "plugin", "install", "{extension}"),),
         remove=(("agy", "plugin", "uninstall", "{name}"),),
+        retry_after_force=True,
     ),
 }
 
@@ -224,12 +232,23 @@ def companions(
     return {name: outcomes for name, outcomes in done.items() if outcomes}
 
 
-def _ran(result: subprocess.CompletedProcess, *, absent: bool = False) -> bool:
+def _ran(
+    result: subprocess.CompletedProcess,
+    *,
+    absent: bool = False,
+    already: bool = True,
+) -> bool:
     """Whether a command achieved its goal, including "it was already done"."""
     if result.returncode == 0:
         return True
     text = f"{result.stdout or ''}{result.stderr or ''}".lower()
-    return any(word in text for word in (*ALREADY, *(ABSENT if absent else ())))
+    accepted = (ALREADY if already else ()) + (ABSENT if absent else ())
+    return _contains_any(text, accepted)
+
+
+def _contains_any(text: str, words: Iterable[str]) -> bool:
+    """Match CLI status vocabulary without coupling callers to one spelling."""
+    return any(word in text.lower() for word in words)
 
 
 def _first_line(text: str) -> str:
@@ -238,14 +257,14 @@ def _first_line(text: str) -> str:
 
 def _perform(
     argv: Sequence[str], values: Mapping[str, str], run: Runner, step: str,
-    *, absent: bool = False,
+    *, absent: bool = False, already: bool = True,
 ) -> Outcome:
     filled = substitute(argv, values)
     try:
         result = run(filled)
     except (OSError, subprocess.SubprocessError) as error:
         return Outcome(step, False, f"{type(error).__name__}: {error}")
-    if _ran(result, absent=absent):
+    if _ran(result, absent=absent, already=already):
         return Outcome(step, True, "")
     return Outcome(step, False, _first_line(result.stderr or result.stdout))
 
@@ -258,6 +277,7 @@ def _sequence(
     *,
     stop: bool,
     absent: bool = False,
+    already: bool = True,
 ) -> tuple[Outcome, ...]:
     """Run commands in order, optionally stopping at the first failure.
 
@@ -268,7 +288,8 @@ def _sequence(
     done: list[Outcome] = []
     for argv in commands:
         outcome = _perform(
-            argv, values, run, f"{harness}: {' '.join(argv[:3])}", absent=absent
+            argv, values, run, f"{harness}: {' '.join(argv[:3])}",
+            absent=absent, already=already,
         )
         done.append(outcome)
         if stop and not outcome.ok:
@@ -282,6 +303,7 @@ def register(
     *,
     run: Runner = _spawn,
     available: Iterable[str] | None = None,
+    force: bool = False,
 ) -> tuple[Outcome, ...]:
     """Tell one harness about the plugin. Returns one outcome per command run.
 
@@ -294,7 +316,7 @@ def register(
     """
     entry = REGISTRATIONS.get(harness)
     return () if entry is None else register_entry(
-        entry, values, run=run, available=available, label=harness
+        entry, values, run=run, available=available, label=harness, force=force
     )
 
 
@@ -305,6 +327,7 @@ def register_entry(
     run: Runner = _spawn,
     available: Iterable[str] | None = None,
     label: str = "",
+    force: bool = False,
 ) -> tuple[Outcome, ...]:
     """Run one registration's install path. The shared half of the two tables.
 
@@ -318,7 +341,26 @@ def register_entry(
     refreshed = _sequence(entry.refresh, values, run, name, stop=True)
     if refreshed and all(outcome.ok for outcome in refreshed):
         return refreshed
-    return _sequence(entry.install, values, run, name, stop=True)
+    first = _sequence(
+        entry.install,
+        values,
+        run,
+        name,
+        stop=True,
+        already=not (force and entry.retry_after_force),
+    )
+    if not (force and entry.retry_after_force and first and any(not outcome.ok for outcome in first)):
+        return first
+    # A forced uninstall followed by "already installed" means the CLI kept a
+    # registration but lost its files; retrying cannot repair that state and
+    # would only hide the actionable failure. Other failures get one retry.
+    if any(
+        _contains_any(outcome.detail, ALREADY)
+        for outcome in first
+        if not outcome.ok
+    ):
+        return first
+    return _sequence(entry.install, values, run, name, stop=True, already=True)
 
 
 def withdraw(

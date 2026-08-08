@@ -363,18 +363,25 @@ def _registrations(
                         registration_name, values, run=run, available=available
                     ))
             if isinstance(custom_entry, registration.Registration):
-                call = (
-                    registration.withdraw_entry if removing
-                    else registration.register_entry
-                )
-                done.extend(call(
-                    custom_entry, values, run=run, available=available, label=name
-                ))
+                if removing:
+                    done.extend(registration.withdraw_entry(
+                        custom_entry, values, run=run, available=available, label=name
+                    ))
+                else:
+                    done.extend(registration.register_entry(
+                        custom_entry, values, run=run, available=available,
+                        label=name, force=ctx.force,
+                    ))
             else:
-                call = registration.withdraw if removing else registration.register
-                done.extend(call(
-                    registration_name, values, run=run, available=available
-                ))
+                if removing:
+                    done.extend(registration.withdraw(
+                        registration_name, values, run=run, available=available
+                    ))
+                else:
+                    done.extend(registration.register(
+                        registration_name, values, run=run, available=available,
+                        force=ctx.force,
+                    ))
         # Companions are separate products. Installing one when requested does
         # not authorize removing it as a side effect of uninstalling autorun.
         wanted = [] if removing else _companions_wanted(ctx)
