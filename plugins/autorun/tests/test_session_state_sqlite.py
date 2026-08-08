@@ -723,6 +723,7 @@ class TestSchemaGuards:
             "A refused database must not be modified on the way out."
         )
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows ignores POSIX directory mode bits")
     def test_an_unwritable_directory_reports_a_backend_error(self, tmp_path):
         directory = tmp_path / "readonly"
         directory.mkdir()

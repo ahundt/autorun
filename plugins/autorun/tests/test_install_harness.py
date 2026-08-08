@@ -100,12 +100,12 @@ def test_both_placeholder_spellings_are_substituted(text, expected):
     """A manifest written by hand uses whichever spelling the author
     remembered, and an unexpanded placeholder becomes a path that does not
     exist rather than an error anyone sees."""
-    assert substitute(text, Path("/opt/ar")) == expected.replace("/", os.sep)
+    assert substitute(text, Path("/opt/ar")).replace("/", os.sep) == expected.replace("/", os.sep)
 
 
 def test_another_harnesss_placeholder_is_honoured():
     assert substitute("${extensionPath}/h.py", Path("/opt/ar"),
-                      placeholder="${extensionPath}") == os.path.join("/opt/ar", "h.py")
+                      placeholder="${extensionPath}").replace("/", os.sep) == "/opt/ar/h.py".replace("/", os.sep)
 
 
 def test_the_claude_placeholder_constant_matches_what_manifests_use():
