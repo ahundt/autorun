@@ -196,43 +196,32 @@ autorun/                                      ← repo root / workspace
                   autorun --install
                         │
                         ▼
-        ┌─────────────────────────────────────┐
-        │  install.py install_plugins()       │
-        │  1. find_marketplace_root() → repo root
-        │  2. resolve plugin_root =           │
-        │     <repo>/plugins/autorun          │
-        │  3. _update_package_metadata(plugin_root)
-        │     → <plugin>/src/autorun/metadata.json
-│  4. Verify committed Claude and Gemini manifests/templates
-│     → plugin.json & template/gemini-extension.json stay in source control
-│     → hook_entry.py template drift is pinned by tests
-        └─────────────────────────────────────┘
+        ┌──────────────────────────────────────────┐
+        │  install.py compatibility forwarder     │
+        │                 │                        │
+        │                 ▼                        │
+        │  installer.entrypoint.install_plugins() │
+        │  1. discovery resolves source/config    │
+        │  2. settings resolves each input once   │
+        │  3. steps.prepared stages native assets │
+        │  4. traversal installs declared intents │
+        └──────────────────────────────────────────┘
                         │
-              ┌─────────┴─────────┐
-              │                   │
-              ▼                   ▼
-      Claude Code path      Gemini CLI path
-      ─────────────         ─────────────
-              │                   │
-   claude plugin install    _migrate_legacy_layout(plugin_root)
-      or _install_to_cache    → SystemExit if template + legacy manifest
-              │                 BOTH present
-              │                   │
-      backup+copytree        _gemini_source(plugin_root)
-      plugin_root →          returns template dir (or legacy root for
-      ~/.claude/plugins/     plugins that never migrated)
-      cache/autorun/ar/<ver>/     │
-              │                   │
-      _substitute_paths()     gemini extensions install <template_dir>
-      → expand               → copies template to ~/.gemini/extensions/ar/
-      ${CLAUDE_PLUGIN_ROOT}        │
-      in cache                _copy_hook_entry_to_gemini_ext(plugin_root, ext_dir)
-              │                   → ~/.gemini/extensions/ar/hooks/hook_entry.py
-              │                   │
-              │               _generate_gemini_toml_commands(ext_dir, name)
-              │                   → commands/ar/*.toml (77 files)
-              │                   │
-              └───────────────────┴─── restart daemon → pick up code changes
+              ┌─────────┴───────────────┐
+              ▼                         ▼
+      shared manifest walk       native extra phases
+      ────────────────────       ───────────────────
+      skills / commands /        Claude registration
+      plugin trees / links       Gemini-family extensions
+              │                  Codex hooks + marketplace
+              ▼                  memory sentinel regions
+      fingerprinted receipts            │
+      transactional publication          │
+      edit-preserving teardown           │
+              └──────────────┬───────────┘
+                             ▼
+                  registration outcomes +
+                  isolated daemon restart
 ```
 
 ### Runtime Flow (Slash Command → Hook → Daemon)

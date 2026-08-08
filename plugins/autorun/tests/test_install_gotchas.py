@@ -203,10 +203,10 @@ def test_a_recorded_file_that_became_a_directory(tmp_path, source):
     (target / "SKILL.md").unlink()
     (target / "SKILL.md").mkdir()
 
-    edited, missing = compare(target, read_marker(target))
+    edited, missing, extra = compare(target, read_marker(target))
 
     assert missing == ("SKILL.md",)
-    assert edited == ()
+    assert edited == () and extra == ()
 
 
 def test_a_recorded_file_that_became_a_symlink(tmp_path, source):
@@ -221,18 +221,18 @@ def test_a_recorded_file_that_became_a_symlink(tmp_path, source):
     assert "SKILL.md" in compare(target, read_marker(target))[0]
 
 
-def test_a_file_the_user_added_inside_an_owned_tree_is_not_an_edit(tmp_path, source):
-    """Only recorded files are compared. A note dropped beside our files does
-    not block an upgrade, though the tree swap will not preserve it — which is
-    why the marker records what we wrote, not what is there."""
+def test_a_file_the_user_added_inside_an_owned_tree_survives(tmp_path, source):
+    """An unrecorded file is user data, not disposable install residue."""
     target = tmp_path / "dest" / "demo"
     publish_tree(source, target, plugin="ar")
     (target / "their-note.md").write_text("mine\n", encoding="utf-8")
 
-    edited, missing = compare(target, read_marker(target))
+    edited, missing, extra = compare(target, read_marker(target))
 
-    assert edited == () and missing == ()
-    assert decide(target, source, plugin="ar").verdict is Verdict.SKIP
+    assert edited == () and missing == () and extra == ("their-note.md",)
+    assert publish_tree(source, target, plugin="ar").verdict is Verdict.KEEP
+    assert (target / "their-note.md").read_text(encoding="utf-8") == "mine\n"
+    assert withdrawn(target, plugin="ar") is False
 
 
 def test_a_deleted_file_we_recorded_is_reported_missing(tmp_path, source):
@@ -241,6 +241,9 @@ def test_a_deleted_file_we_recorded_is_reported_missing(tmp_path, source):
     (target / "SKILL.md").unlink()
 
     assert compare(target, read_marker(target))[1] == ("SKILL.md",)
+    assert publish_tree(source, target, plugin="ar").verdict is Verdict.KEEP
+    assert not (target / "SKILL.md").exists(), "reinstall preserves the user's deletion"
+    assert withdrawn(target, plugin="ar") is False
 
 
 def test_an_empty_source_tree_publishes_an_empty_owned_directory(tmp_path):
@@ -422,6 +425,112 @@ def test_uninstall_of_something_never_installed_is_a_no_op(ctx, source, tmp_path
     assert not target.exists()
 
 
+def test_uninstall_uses_receipts_when_the_marketplace_source_is_gone(tmp_path, monkeypatch):
+    import json
+    from autorun.installer import codex
+    from autorun.installer.orchestrate import uninstall
+    from autorun.platforms import PLATFORMS
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    installed = tmp_path / ".codex" / "skills" / "demo"
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "SKILL.md").write_text("installed\n", encoding="utf-8")
+    publish_tree(source, installed, plugin="ar")
+    hooks = tmp_path / ".codex" / "hooks.json"
+    hooks.parent.mkdir(parents=True, exist_ok=True)
+    hooks.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"hooks": [{"type": "command", "command": "echo user"}]}
+    ]}}), encoding="utf-8")
+    codex.merge_hooks(hooks, {"PreToolUse": ("uv run hook_entry.py --cli codex",)})
+
+    result = uninstall(
+        marketplace_root=tmp_path / "missing-marketplace",
+        plugins=("ar",),
+        harnesses=(PLATFORMS["codex"],),
+        home=tmp_path,
+        available=(),
+        state_dir=tmp_path / "state",
+    )
+
+    assert not installed.exists()
+    assert result.missing == (), "a receipt makes source-independent uninstall possible"
+    text = hooks.read_text(encoding="utf-8")
+    assert "echo user" in text and "hook_entry.py" not in text
+
+
+def test_retirement_of_shared_files_keeps_the_users_directory(tmp_path, monkeypatch):
+    from autorun.installer.traversal import retirements
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "ar-go.md").write_text("ours\n", encoding="utf-8")
+    shared = tmp_path / "commands"
+    publish_files(source, shared, plugin="ar")
+    (shared / "mine.md").write_text("user\n", encoding="utf-8")
+
+    intents = tuple(retirements((tmp_path,), (), plugins=("ar",)))
+    run((), Context(marketplace_root=tmp_path, home=tmp_path), Mode.UNINSTALL, extra=intents)
+
+    assert shared.is_dir()
+    assert (shared / "mine.md").read_text(encoding="utf-8") == "user\n"
+    assert not (shared / "ar-go.md").exists()
+
+
+def test_uninstall_never_removes_a_companion_product_as_a_side_effect(tmp_path, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+    from autorun.installer.orchestrate import _registrations
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    harness = SimpleNamespace(name="gemini")
+    plugins = {"ar": tmp_path / "ar", "pdf-extractor": tmp_path / "pdf"}
+
+    def exercise(conductor):
+        calls = []
+
+        def invoke(argv):
+            calls.append(tuple(argv))
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        context = Context(
+            marketplace_root=tmp_path,
+            home=tmp_path,
+            settings={"conductor": conductor},
+        )
+        _registrations(
+            (harness,), plugins, tmp_path, "autorun", context,
+            removing=True, run=invoke, available=("gemini",),
+        )
+        return calls
+
+    assert all("conductor" not in call for call in exercise(False))
+    assert all("conductor" not in call for call in exercise(True))
+
+
+def test_conductor_registration_is_noninteractive_and_idempotent():
+    import subprocess
+    from autorun.installer.registration import companions
+
+    calls = []
+
+    def already(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 1, "", "extension already installed")
+
+    outcomes = companions(
+        "gemini", ("conductor",), {}, run=already, available=("gemini",)
+    )["conductor"]
+
+    assert outcomes[0].ok
+    assert calls == [(
+        "gemini", "extensions", "install",
+        "https://github.com/gemini-cli-extensions/conductor",
+        "--auto-update", "--consent",
+    )]
+
+
 def test_an_intent_with_no_source_is_a_removal_in_every_mode(ctx, tmp_path, source):
     """`source is None` already means "no longer shipped", so a step can retire
     something without the walk being in UNINSTALL mode — that is how prune
@@ -474,6 +583,19 @@ def test_the_sweep_never_claims_another_plugins_tree(tmp_path, source):
     publish_tree(source, theirs, plugin="pdf-extractor")
 
     assert list(retirements([tmp_path / "harness"], [], plugins=["ar"])) == []
+
+
+def test_the_sweep_ignores_markers_copied_into_a_harness_plugin_cache(
+    tmp_path, source
+):
+    """Codex copies the owned source tree, including its marker, into cache."""
+    from autorun.installer.traversal import retirements
+
+    root = tmp_path / ".codex"
+    cached = root / "plugins" / "cache" / "personal" / "ar" / "1.0.0"
+    publish_tree(source, cached, plugin="ar")
+
+    assert list(retirements([root], [], plugins=["ar"])) == []
 
 
 def test_an_edited_tree_is_proposed_by_the_sweep_but_kept_by_the_decision(

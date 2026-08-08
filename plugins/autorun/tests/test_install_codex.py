@@ -265,18 +265,21 @@ def test_the_generated_entry_matches_the_one_on_disk():
     assert marketplace_entry("autorun", existing["source"]["path"]) == existing
 
 
-def test_a_changed_source_converges_instead_of_listing_the_plugin_twice(tmp_path):
-    """Two entries with the same name is the shape that makes Codex install
-    whichever it reads last."""
+def test_a_same_name_with_a_different_source_is_not_ours_to_replace(tmp_path):
+    """A name collision cannot establish ownership of another plugin."""
     from autorun.installer.codex import marketplace_entry, publish_marketplace
 
     market = tmp_path / "marketplace.json"
-    publish_marketplace(market, "personal", marketplace_entry("autorun", "./a"))
-    publish_marketplace(market, "personal", marketplace_entry("autorun", "./b"))
+    theirs = marketplace_entry("autorun", "./theirs")
+    publish_marketplace(market, "personal", theirs)
+
+    with pytest.raises(ValueError, match="different source"):
+        publish_marketplace(
+            market, "personal", marketplace_entry("autorun", "./plugins/autorun")
+        )
 
     plugins = json.loads(market.read_text())["plugins"]
-    assert len(plugins) == 1
-    assert plugins[0]["source"]["path"] == "./b"
+    assert plugins == [theirs]
 
 
 def test_republishing_an_unchanged_entry_writes_nothing(tmp_path):
@@ -302,10 +305,23 @@ def test_withdrawing_leaves_every_other_plugin(tmp_path):
     publish_marketplace(market, "personal", marketplace_entry("autorun", "./a"))
     publish_marketplace(market, "personal", marketplace_entry("their-tool", "./b"))
 
-    assert withdraw_from_marketplace(market, "autorun") is True
+    ours = marketplace_entry("autorun", "./a")
+    assert withdraw_from_marketplace(market, ours) is True
 
     assert [p["name"] for p in json.loads(market.read_text())["plugins"]] == ["their-tool"]
-    assert withdraw_from_marketplace(market, "autorun") is False
+    assert withdraw_from_marketplace(market, ours) is False
+
+
+def test_withdrawal_preserves_a_same_name_entry_from_another_source(tmp_path):
+    from autorun.installer.codex import marketplace_entry, withdraw_from_marketplace
+
+    market = tmp_path / "marketplace.json"
+    ours = marketplace_entry("autorun", "./plugins/autorun")
+    theirs = marketplace_entry("autorun", "./theirs")
+    market.write_text(json.dumps({"name": "personal", "plugins": [ours, theirs]}))
+
+    assert withdraw_from_marketplace(market, ours) is True
+    assert json.loads(market.read_text())["plugins"] == [theirs]
 
 
 # ─── Staging must flatten links the Codex cache cannot follow ───────────────

@@ -35,7 +35,8 @@ __all__ = [
     "resolve_plugins",
     "is_marketplace_root",
     "config_dir", "extensions_dir", "expand_home", "build_timestamp",
-    "skill_destinations", "shared_root", "plugin_name", "PLUGIN_MANIFEST",
+    "skill_destinations", "shared_root", "codex_plugin_source",
+    "personal_marketplace", "plugin_name", "PLUGIN_MANIFEST",
     "redirected_home",
     "python_too_old", "MINIMUM_PYTHON",
 ]
@@ -368,6 +369,19 @@ def shared_root(*, home: Path | None = None) -> Path:
 
     base = expand_home(str(CONFIG.get("shared_agents_dir", "~/.agents")), home=home)
     return base / str(CONFIG.get("shared_agents_skills_subdir", "skills"))
+
+
+def codex_plugin_source(name: str = "ar", *, home: Path | None = None) -> Path:
+    """One local Codex plugin tree named by the personal marketplace."""
+    from ..config import CONFIG
+
+    base = expand_home(str(CONFIG.get("codex_plugin_source_dir", "~/plugins")), home=home)
+    return base / name
+
+
+def personal_marketplace(*, home: Path | None = None) -> Path:
+    """Codex's implicit personal marketplace under the shared agents root."""
+    return shared_root(home=home).parent / "plugins" / "marketplace.json"
 
 
 def extensions_dir(platform: object, *, env: Mapping[str, str] | None = None,

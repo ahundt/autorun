@@ -127,6 +127,15 @@ def test_auto_gives_every_registered_harness_exactly_one_route():
         assert shared != native, f"{platform.name}: auto must yield one route"
 
 
+def test_codex_native_route_is_inside_the_plugin_skills_directory(ctx):
+    from autorun.installer.discovery import codex_plugin_source, skill_destinations
+    from autorun.platforms import PLATFORMS
+
+    assert skill_destinations(PLATFORMS["codex"]) == (
+        codex_plugin_source() / "skills",
+    )
+
+
 # ─── A blocked name is a fact about the name ─────────────────────────────────
 
 
@@ -339,3 +348,28 @@ def test_bridge_mode_none_produces_nothing(plugin, shared, ctx):
     assert list(bridge_intents(FakePlatform("w", False, native_skills=Route("plugins"),
                                  skill_search_routes=(Route("skills"),)),
                                ctx, mode="none", shared_root_override=shared)) == []
+
+
+def test_a_broken_bridge_for_a_retired_skill_is_planned_for_removal(
+    tmp_path, shared, ctx, monkeypatch
+):
+    shared.mkdir(parents=True)
+    destination = tmp_path / "claude" / "skills"
+    destination.mkdir(parents=True)
+    stale = destination / "retired"
+    stale.symlink_to(shared / "retired")
+    monkeypatch.setattr(
+        "autorun.installer.discovery.skill_destinations",
+        lambda _platform, reading=False: (destination,) if reading else (),
+    )
+
+    intents = list(
+        bridge_intents(
+            FakePlatform("w", False, native_skills=Route("plugins")),
+            ctx,
+            shared_root_override=shared,
+        )
+    )
+
+    retired = next(intent for intent in intents if intent.target == stale)
+    assert retired.source is None and retired.kind.value == "link"

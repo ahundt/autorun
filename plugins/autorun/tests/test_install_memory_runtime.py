@@ -167,28 +167,6 @@ def test_environment_assignments_prefix_only_the_shell_form():
     assert "AUTORUN_CLI=codex" not in command.argv()
 
 
-def test_it_renders_what_the_current_hook_manifest_builder_renders():
-    """The replacement must produce the same command as the builder in use,
-    because a hook manifest is read once at session start and never revalidated."""
-    from autorun.install import _render_uv_hook_command
-
-    for project, entry, cli, python, no_sync in [
-        ("/tmp/proj", "/tmp/proj/hooks/hook_entry.py", "claude", "", True),
-        ("/tmp/a proj", "/tmp/a proj/hooks/hook_entry.py", "codex", "", True),
-        ("/tmp/proj", "/tmp/proj/h.py", "qwen", "/usr/bin/python3", False),
-    ]:
-        current = _render_uv_hook_command(
-            project=project, hook_entry=entry, cli=cli, python=python,
-            no_sync=no_sync, extra_env=None,
-        )
-        replacement = UvCommand(
-            project=Path(project), script=Path(entry), args=("--cli", cli),
-            python=python, no_sync=no_sync,
-        ).shell()
-
-        assert shlex.split(current) == shlex.split(replacement), cli
-
-
 # ─── The probe reports rather than raises ────────────────────────────────────
 
 
@@ -285,15 +263,6 @@ def test_the_interpreter_is_pinned_rather_than_left_to_path_order():
 
     assert "--python" in argv
     assert argv[argv.index("--python") + 1] == "/usr/bin/python3.12"
-
-
-def test_it_builds_the_same_uv_tool_command_the_installer_uses():
-    from autorun.install import _editable_uv_tool_install_args
-    from autorun.installer.runtime import uv_tool_install_argv
-
-    package = Path("/p/plugins/autorun")
-
-    assert list(uv_tool_install_argv(package)) == _editable_uv_tool_install_args(package)
 
 
 # ─── Self-update ────────────────────────────────────────────────────────────

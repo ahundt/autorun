@@ -252,6 +252,66 @@ def test_a_failed_publish_restores_the_previous_contents(tmp_path, source):
     assert not (target / "partial").exists()
 
 
+def test_a_failed_shared_publish_restores_every_file_and_the_receipt(tmp_path, monkeypatch):
+    from autorun.installer import fs
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "a.md").write_text("v1\n", encoding="utf-8")
+    shared = tmp_path / "commands"
+    fs.publish_files(source, shared, plugin="ar")
+    (shared / "user.md").write_text("mine\n", encoding="utf-8")
+    before = {str(p.relative_to(shared)): p.read_bytes() for p in shared.rglob("*") if p.is_file()}
+
+    (source / "a.md").write_text("v2\n", encoding="utf-8")
+    (source / "b.md").write_text("v2\n", encoding="utf-8")
+    real_copy = fs.shutil.copy2
+    calls = 0
+
+    def fail_second_copy(src, dst, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("disk full")
+        return real_copy(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(fs.shutil, "copy2", fail_second_copy)
+    with pytest.raises(OSError, match="disk full"):
+        fs.publish_files(source, shared, plugin="ar")
+
+    after = {str(p.relative_to(shared)): p.read_bytes() for p in shared.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_a_failed_link_and_copy_fallback_restores_the_owned_tree(tmp_path, monkeypatch):
+    from autorun.installer import fs
+
+    old_source = tmp_path / "old"
+    old_source.mkdir()
+    (old_source / "SKILL.md").write_text("old\n", encoding="utf-8")
+    target = tmp_path / "bridge"
+    fs.publish_tree(old_source, target, plugin="ar")
+    before = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+
+    new_source = tmp_path / "new"
+    new_source.mkdir()
+    (new_source / "SKILL.md").write_text("new\n", encoding="utf-8")
+
+    def links_unavailable(*args, **kwargs):
+        raise OSError("links unavailable")
+
+    def copy_failed(*args, **kwargs):
+        raise OSError("copy failed")
+
+    monkeypatch.setattr(Path, "symlink_to", links_unavailable)
+    monkeypatch.setattr(fs.shutil, "copytree", copy_failed)
+    with pytest.raises(OSError, match="copy failed"):
+        fs.publish_link(new_source, target, plugin="ar")
+
+    after = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+    assert after == before
+
+
 def test_a_failed_removal_puts_the_directory_back(tmp_path, source, monkeypatch):
     """Edge case 10. Removal quarantines first and deletes the copy, so a
     failure mid-delete restores rather than leaving a half-emptied tree."""
@@ -355,7 +415,7 @@ def test_a_symlink_is_compared_by_target_not_by_content(tmp_path, source):
     publish_tree(source, target, plugin="ar")
     (target / "SKILL.md").write_text("upstream moved on\n", encoding="utf-8")
 
-    edited, _ = compare(target, read_marker(target))
+    edited, _, _ = compare(target, read_marker(target))
 
     assert "linked.md" not in edited, "the link itself is unchanged"
 

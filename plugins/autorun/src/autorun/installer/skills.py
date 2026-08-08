@@ -47,6 +47,7 @@ __all__ = [
     "shippable_skills",
     "routes_for",
     "blocked_names",
+    "skill_plan",
     "skill_intents",
     "bridge_intents",
     "unsatisfiable",
@@ -94,6 +95,10 @@ def routes_for(platform: object, placement: str = "auto") -> tuple[bool, bool]:
     which is the invariant a registry test now pins after Qwen was found
     declaring both and receiving every skill twice.
     """
+    from .settings import SKILL_PLACEMENT
+
+    if SKILL_PLACEMENT.parse(placement) != {"": placement}:
+        raise ValueError(f"invalid skill placement: {placement!r}")
     reads_shared = bool(getattr(platform, "loads_shared_agents_skills", False))
     return (
         reads_shared and placement in {"auto", "both"},
@@ -245,15 +250,17 @@ def retired_names(shipped: Iterable[str]) -> tuple[str, ...]:
     ))
 
 
-def skill_intents(
+def skill_plan(
     platform: object,
     ctx: Context,
     plugins: Mapping[str, Path],
     *,
     placement: str = "auto",
     shared_root_override: Path | None = None,
-) -> Iterator[Intent]:
-    """Every skill this harness should receive, by its one route.
+    include_native: bool = True,
+    packaged_native: bool = False,
+) -> tuple[tuple[Intent, ...], Placement]:
+    """Plan every skill route and retain names no route can serve.
 
     A name blocked on the shared root falls back to this harness's native route
     *for that name only*. That is the fix for the collision that republished
@@ -266,6 +273,10 @@ def skill_intents(
     shared_dir = shared_root_override if shared_root_override is not None else shared_root()
     want_shared, want_native = routes_for(platform, placement)
     natives = _native_roots(platform, ctx)
+    intents: list[Intent] = []
+    shared: list[str] = []
+    native: list[str] = []
+    refused: list[str] = []
 
     for plugin, plugin_dir in plugins.items():
         shipped = shippable_skills(plugin_dir)
@@ -274,17 +285,52 @@ def skill_intents(
         for name, source in shipped.items():
             reached_shared = want_shared and name not in blocked_shared
             if reached_shared:
-                yield Intent(target=shared_dir / name, source=source, plugin=plugin)
+                intents.append(Intent(target=shared_dir / name, source=source, plugin=plugin))
+                shared.append(name)
             # The native route runs when the user asked for it, and as the
             # per-name fallback when only this name lost the shared route. An
             # unconditional `continue` after the shared yield made `both`
             # identical to `auto`, though `both` exists precisely to place a
             # skill on both routes.
-            if not (want_native or not reached_shared):
-                continue
-            for root in natives:
-                if name not in blocked_names({name: source}, root, plugin):
-                    yield Intent(target=root / name, source=source, plugin=plugin)
+            reached_native = False
+            if want_native or not reached_shared:
+                if packaged_native:
+                    reached_native = True
+                elif include_native:
+                    for root in natives:
+                        if name not in blocked_names({name: source}, root, plugin):
+                            intents.append(Intent(target=root / name, source=source, plugin=plugin))
+                            reached_native = True
+                if reached_native:
+                    native.append(name)
+            if not reached_shared and not reached_native:
+                refused.append(f"{plugin}:{name}")
+
+    return (
+        tuple(intents),
+        Placement(tuple(shared), tuple(native), tuple(refused)),
+    )
+
+
+def skill_intents(
+    platform: object,
+    ctx: Context,
+    plugins: Mapping[str, Path],
+    *,
+    placement: str = "auto",
+    shared_root_override: Path | None = None,
+    include_native: bool = True,
+) -> Iterator[Intent]:
+    """Every skill this harness should receive, by its one route."""
+    intents, _ = skill_plan(
+        platform,
+        ctx,
+        plugins,
+        placement=placement,
+        shared_root_override=shared_root_override,
+        include_native=include_native,
+    )
+    yield from intents
 
 
 def bridge_intents(
@@ -323,7 +369,8 @@ def bridge_intents(
     for destination in skill_destinations(platform, reading=True):
         if destination.is_symlink():
             continue
-        for skill in sorted(p for p in source.iterdir() if is_shippable(p)):
+        shipped = {p.name: p for p in source.iterdir() if is_shippable(p)}
+        for skill in sorted(shipped.values()):
             yield Intent(
                 target=destination / skill.name,
                 source=skill,
@@ -331,6 +378,17 @@ def bridge_intents(
                 kind=Kind.LINK if mode == "link" else Kind.TREE,
                 settings={"bridge": mode},
             )
+        if destination.is_dir():
+            for stale in sorted(destination.iterdir()):
+                if stale.name in shipped or not stale.is_symlink():
+                    continue
+                try:
+                    pointed = Path(stale.readlink())
+                    pointed = pointed if pointed.is_absolute() else stale.parent / pointed
+                    pointed.resolve().relative_to(source.resolve())
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                yield Intent(target=stale, source=None, plugin="ar", kind=Kind.LINK)
 
 
 

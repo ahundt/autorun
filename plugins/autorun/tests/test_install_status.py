@@ -113,6 +113,61 @@ def test_a_registry_listing_one_product_once_is_clean():
     assert not any("duplicate" in f.detail for f in found)
 
 
+def test_two_real_copies_of_a_skill_are_reported(tmp_path):
+    shared = tmp_path / ".agents" / "skills"
+    native = tmp_path / ".qwen" / "skills"
+    for root in (shared, native):
+        skill = root / "collider"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# collider\n", encoding="utf-8")
+
+    found = status.health(
+        hook_command=("x",), skill_routes={"qwen": (shared, native)}, run=runner(0)
+    )
+
+    assert any("collider" in finding.detail for finding in found)
+
+
+def test_two_routes_to_one_skill_are_not_duplicates(tmp_path):
+    shared = tmp_path / ".agents" / "skills"
+    skill = shared / "linked"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# linked\n", encoding="utf-8")
+    native = tmp_path / ".qwen" / "skills"
+    native.mkdir(parents=True)
+    (native / "linked").symlink_to(skill)
+
+    found = status.health(
+        hook_command=("x",), skill_routes={"qwen": (shared, native)}, run=runner(0)
+    )
+
+    assert not any("linked" in finding.detail for finding in found)
+
+
+def test_nonblank_codex_override_shadowing_our_guidance_is_reported(tmp_path):
+    memory.splice(tmp_path / "AGENTS.md", "ours", memory.Block("codex-agents-md"))
+    (tmp_path / "AGENTS.override.md").write_text("# mine\n", encoding="utf-8")
+
+    found = status.health(
+        hook_command=("x",), codex_dir=tmp_path,
+        codex_guidance=memory.Block("codex-agents-md"), run=runner(0),
+    )
+
+    assert any("shadows" in finding.detail for finding in found)
+
+
+@pytest.mark.parametrize("content", ['{"$schema": "x", "hooks": {}}', "{not json"])
+def test_codex_hooks_that_codex_would_drop_are_broken(tmp_path, content):
+    (tmp_path / "hooks.json").write_text(content, encoding="utf-8")
+
+    found = status.health(hook_command=("x",), codex_dir=tmp_path, run=runner(0))
+
+    assert any(
+        finding.check == "Codex hooks" and finding.level is Level.BROKEN
+        for finding in found
+    )
+
+
 # ─── The report leads with outcomes ──────────────────────────────────────────
 
 

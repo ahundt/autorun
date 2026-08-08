@@ -212,7 +212,11 @@ def test_codex_install_metadata():
     # ${PLUGIN_ROOT} is Codex's primary path var; ${CLAUDE_PLUGIN_ROOT} is set
     # as a compat alias in the same environment.
     assert "PLUGIN_ROOT" in p.hooks_path_var
-    assert p.install_fn_name == "_install_for_codex"
+    from autorun.installer.steps import STEPS
+
+    assert [step.__name__ for step in STEPS["codex"]] == [
+        "skills_step", "commands_step", "codex_plugin_step"
+    ]
 
 
 def test_codex_response_capabilities_are_not_claude_clone():

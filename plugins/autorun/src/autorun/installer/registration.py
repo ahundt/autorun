@@ -38,18 +38,27 @@ import subprocess
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
+from . import codex
 from .runtime import Outcome, Runner, _spawn
 
 __all__ = [
     "Registration", "REGISTRATIONS", "register", "withdraw", "substitute",
     "register_entry", "withdraw_entry", "COMPANIONS", "companions",
-    "ALREADY",
+    "ALREADY", "with_binary",
 ]
 
 #: Words these CLIs use for "it is already there", which is success, not
 #: failure. Matched case-insensitively against both streams because they do not
 #: agree on which one carries it.
 ALREADY = ("already", "up to date", "up-to-date")
+ABSENT = ("not found", "not installed", "does not exist", "isn't installed")
+
+_CODEX_REMOVE = (
+    ("codex", "plugin", "remove", "{name}@personal"),
+    ("codex", "plugin", "remove", "autorun@personal"),
+    ("codex", "plugin", "remove", "{name}@autorun"),
+    ("codex", "plugin", "remove", "autorun@autorun"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +76,19 @@ class Registration:
     #: Tried before ``install``; success skips the rest of ``install``.
     refresh: tuple[tuple[str, ...], ...] = ()
     binary: str = ""
+
+
+def with_binary(entry: Registration, binary: str) -> Registration:
+    """Clone one flavor's registration commands for a custom binary."""
+    def commands(rows: tuple[tuple[str, ...], ...]) -> tuple[tuple[str, ...], ...]:
+        return tuple((binary, *row[1:]) for row in rows)
+
+    return Registration(
+        install=commands(entry.install),
+        remove=commands(entry.remove),
+        refresh=commands(entry.refresh),
+        binary=binary,
+    )
 
 
 def substitute(argv: Sequence[str], values: Mapping[str, str]) -> tuple[str, ...]:
@@ -107,7 +129,23 @@ REGISTRATIONS: Mapping[str, Registration] = {
     "codex": Registration(
         binary="codex",
         install=(("codex", "plugin", "add", "{name}@{market}"),),
-        remove=(("codex", "plugin", "uninstall", "{name}@{market}"),),
+        remove=_CODEX_REMOVE,
+    ),
+    "codex:personal": Registration(
+        binary="codex",
+        install=(("codex", "plugin", "add", "{name}@{market}"),),
+        remove=_CODEX_REMOVE,
+    ),
+    "codex:github": Registration(
+        binary="codex",
+        install=(
+            (
+                "codex", "plugin", "marketplace", "add",
+                codex.GITHUB_MARKETPLACE_SOURCE,
+            ),
+            ("codex", "plugin", "add", "{name}@{market}"),
+        ),
+        remove=_CODEX_REMOVE,
     ),
     "gemini": Registration(
         binary="gemini",
@@ -186,12 +224,12 @@ def companions(
     return {name: outcomes for name, outcomes in done.items() if outcomes}
 
 
-def _ran(result: subprocess.CompletedProcess) -> bool:
+def _ran(result: subprocess.CompletedProcess, *, absent: bool = False) -> bool:
     """Whether a command achieved its goal, including "it was already done"."""
     if result.returncode == 0:
         return True
     text = f"{result.stdout or ''}{result.stderr or ''}".lower()
-    return any(word in text for word in ALREADY)
+    return any(word in text for word in (*ALREADY, *(ABSENT if absent else ())))
 
 
 def _first_line(text: str) -> str:
@@ -199,14 +237,15 @@ def _first_line(text: str) -> str:
 
 
 def _perform(
-    argv: Sequence[str], values: Mapping[str, str], run: Runner, step: str
+    argv: Sequence[str], values: Mapping[str, str], run: Runner, step: str,
+    *, absent: bool = False,
 ) -> Outcome:
     filled = substitute(argv, values)
     try:
         result = run(filled)
     except (OSError, subprocess.SubprocessError) as error:
         return Outcome(step, False, f"{type(error).__name__}: {error}")
-    if _ran(result):
+    if _ran(result, absent=absent):
         return Outcome(step, True, "")
     return Outcome(step, False, _first_line(result.stderr or result.stdout))
 
@@ -218,6 +257,7 @@ def _sequence(
     harness: str,
     *,
     stop: bool,
+    absent: bool = False,
 ) -> tuple[Outcome, ...]:
     """Run commands in order, optionally stopping at the first failure.
 
@@ -227,7 +267,9 @@ def _sequence(
     """
     done: list[Outcome] = []
     for argv in commands:
-        outcome = _perform(argv, values, run, f"{harness}: {' '.join(argv[:3])}")
+        outcome = _perform(
+            argv, values, run, f"{harness}: {' '.join(argv[:3])}", absent=absent
+        )
         done.append(outcome)
         if stop and not outcome.ok:
             break
@@ -308,7 +350,9 @@ def withdraw_entry(
     """Run one registration's removal path, never stopping at a failure."""
     if available is not None and entry.binary not in available:
         return ()
-    return _sequence(entry.remove, values, run, label or entry.binary, stop=False)
+    return _sequence(
+        entry.remove, values, run, label or entry.binary, stop=False, absent=True
+    )
 
 
 def demo() -> None:

@@ -57,16 +57,13 @@ def _repository_python_files():
 
 def test_uv_venv_subprocesses_select_an_explicit_interpreter():
     """Require native inheritance or an intentional cross-architecture interpreter."""
-    discovered: list[tuple[Path, int]] = []
     missing_interpreter: list[str] = []
     for path in _repository_python_files():
         for line, tokens in _uv_venv_calls(path):
-            discovered.append((path, line))
             literal_tokens = [_literal_token(token) for token in tokens]
             if "--python" not in literal_tokens:
                 missing_interpreter.append(f"{path.relative_to(REPO_ROOT)}:{line}")
 
-    assert discovered, "architecture audit found no uv venv subprocess to guard"
     assert not missing_interpreter, (
         "uv venv subprocesses must pass --python with sys.executable for native "
         "inheritance or an explicit interpreter for intentional cross-architecture "

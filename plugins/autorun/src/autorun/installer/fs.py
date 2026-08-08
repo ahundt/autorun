@@ -52,8 +52,7 @@ WHY NOT A LIBRARY
 ``platforms.py`` already is the manifest — 78 typed fields over 8 harnesses,
 holding ``HookProtocol`` subclasses, ``SkillRoute`` objects and callables. A
 TOML/YAML manifest would force each of those into a name resolved at runtime,
-which is exactly the bug already found here: ``install_fn_name`` naming a
-function nobody wrote, published as a capability. ``pydantic-settings`` fits the
+which already published a nonexistent handler as a capability. ``pydantic-settings`` fits the
 settings ladder well but adds a runtime dependency to a plugin whose own
 guidance records that stderr from dependency resolution silently disables every
 hook. ``hashlib``, ``shutil`` and ``filelock`` (already a dependency) carry this
@@ -80,6 +79,8 @@ from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
 from filelock import FileLock
+
+from ..durable_io import atomic_write_text as atomic_write
 
 __all__ = [
     "FileState",
@@ -300,19 +301,20 @@ def read_marker(directory: Path) -> TreeManifest | None:
     return TreeManifest.from_marker(payload) if isinstance(payload, dict) else TreeManifest()
 
 
-def compare(root: Path, manifest: TreeManifest) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return (edited, missing) relative paths for a tree we recorded.
+def compare(
+    root: Path, manifest: TreeManifest
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return (edited, missing, extra) paths for a tree we recorded.
 
-    An empty manifest means the tree predates fingerprinting, so nothing is
-    reported: claiming a user edited a file we never measured would block every
-    upgrade on directories installed by an older autorun.
+    With an empty pre-fingerprint manifest, every present path is conservatively
+    extra: there is no byte receipt proving it is disposable.
     """
-    if not manifest.files:
-        return ((), ())
+    current = scan_tree(root)
     states = {p: manifest.state_of(root, p) for p in manifest.files}
     return (
         tuple(sorted(p for p, s in states.items() if s is FileState.EDITED)),
         tuple(sorted(p for p, s in states.items() if s is FileState.MISSING)),
+        tuple(sorted(set(current) - set(manifest.files))),
     )
 
 
@@ -373,8 +375,11 @@ def decide(
     if not owns(manifest, plugin):
         return Decision(Verdict.KEEP, target, f"belongs to {manifest.plugin}")
 
-    if edited := compare(target, manifest)[0]:
-        return Decision(Verdict.KEEP, target, "you edited files we installed", edited)
+    if not manifest.files and source is not None and scan_tree(target) == scan_tree(source):
+        return Decision(Verdict.PUBLISH, target, "recording legacy ownership")
+    edited, missing, extra = compare(target, manifest)
+    if changed := tuple(sorted((*edited, *missing, *extra))):
+        return Decision(Verdict.KEEP, target, "you edited files we installed", changed)
     if source is None:
         return Decision(Verdict.RETIRE, target, "no longer shipped")
     if scan_tree(source) == dict(manifest.files):
@@ -427,19 +432,24 @@ def owned_trees(root: Path, *, plugin: str = "", max_depth: int = 5) -> Iterator
                 stack.append((child, depth + 1))
 
 
-def atomic_write(path: Path, text: str) -> None:
-    """Write via a sibling temp file and one rename. Never a partial file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, staged = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-")
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(staged, path)
-    except BaseException:
-        Path(staged).unlink(missing_ok=True)
-        raise
+@contextmanager
+def _swapped(target: Path) -> Iterator[Path]:
+    """Yield a same-filesystem stage and atomically replace ``target`` on success."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+        with tempfile.TemporaryDirectory(
+            prefix=f".autorun-publish-{target.name}-", dir=target.parent
+        ) as tmp:
+            staged, backup = Path(tmp) / "next", Path(tmp) / "previous"
+            yield staged
+            if target.exists() or target.is_symlink():
+                os.replace(target, backup)
+            try:
+                os.replace(staged, target)
+            except BaseException:
+                if backup.exists() or backup.is_symlink():
+                    os.replace(backup, target)
+                raise
 
 
 @contextmanager
@@ -459,27 +469,14 @@ def published(target: Path, *, plugin: str = "", **settings: str) -> Iterator[Pa
     guarantees that only within a filesystem) and keeps the rollback local. The
     lock also lives in the parent, so it outlives the artifact being replaced.
     """
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
-        with tempfile.TemporaryDirectory(
-            prefix=f".autorun-publish-{target.name}-", dir=target.parent
-        ) as tmp:
-            staged, backup = Path(tmp) / "next", Path(tmp) / "previous"
-            yield staged
-            # Claim inside the staging scope so the marker lands in the same
-            # rename as the contents it describes.
-            atomic_write(
-                staged / OWNED_MARKER_NAME,
-                json.dumps(TreeManifest.of(staged, plugin, **settings).as_payload(), indent=2) + "\n",
-            )
-            if target.exists() or target.is_symlink():
-                os.replace(target, backup)
-            try:
-                os.replace(staged, target)
-            except BaseException:
-                if backup.exists() or backup.is_symlink():
-                    os.replace(backup, target)
-                raise
+    with _swapped(target) as staged:
+        yield staged
+        # Claim inside the staging scope so the marker lands in the same
+        # rename as the contents it describes.
+        atomic_write(
+            staged / OWNED_MARKER_NAME,
+            json.dumps(TreeManifest.of(staged, plugin, **settings).as_payload(), indent=2) + "\n",
+        )
 
 
 def replace_tree(source: Path, target: Path) -> Path:
@@ -538,6 +535,8 @@ def withdrawn(target: Path, *, plugin: str | None = None) -> bool:
             return False
         manifest = read_marker(target)
         if manifest is None or (plugin is not None and not owns(manifest, plugin)):
+            return False
+        if any(compare(target, manifest)):
             return False
         with tempfile.TemporaryDirectory(
             prefix=f".autorun-withdraw-{target.name}-", dir=target.parent
@@ -652,20 +651,25 @@ def publish_files(
     harness's native route) and wrong here, where nothing else can deliver the
     file.
     """
-    directory.mkdir(parents=True, exist_ok=True)
     kept, written, backed_up = [], {}, []
-    with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+    actual = directory.resolve() if directory.is_symlink() else directory
+    with _swapped(actual) as staged:
+        if actual.is_dir():
+            shutil.copytree(actual, staged, symlinks=True)
+        else:
+            staged.mkdir()
         # Read ownership *inside* the lock, the rule `withdrawn` states. A
         # concurrent install that lands between the read and the lock leaves
         # `ours` describing files it has already replaced, and every name it
         # rewrote then looks like a user edit and is moved to .autorun-backup.
-        previous = read_marker(directory)
+        previous = read_marker(actual)
         ours = dict(previous.files) if owns(previous, plugin) else {}
         for candidate in sorted(p for p in source.iterdir() if p.is_file()):
-            destination = directory / candidate.name
-            if destination.exists() and (
+            current = actual / candidate.name
+            destination = staged / candidate.name
+            if current.exists() and (
                 candidate.name not in ours
-                or _fingerprint(destination) != ours[candidate.name]
+                or _fingerprint(current) != ours[candidate.name]
             ):
                 if not backup:
                     kept.append(candidate.name)
@@ -677,11 +681,15 @@ def publish_files(
             written[candidate.name] = _fingerprint(destination)
         # Files we published before and no longer ship stop being ours.
         for stale in set(ours) - set(written) - set(kept):
-            if (directory / stale).exists() and _fingerprint(directory / stale) == ours[stale]:
-                (directory / stale).unlink()
+            current = actual / stale
+            if current.exists() and _fingerprint(current) == ours[stale]:
+                (staged / stale).unlink()
         atomic_write(
-            directory / OWNED_MARKER_NAME,
-            json.dumps(TreeManifest(plugin, written, settings).as_payload(), indent=2) + "\n",
+            staged / OWNED_MARKER_NAME,
+            json.dumps(
+                TreeManifest(plugin, written, {**settings, "kind": "files"}).as_payload(),
+                indent=2,
+            ) + "\n",
         )
     # Report what happened, not merely that something was skipped. Returning
     # KEEP whenever any file was kept says "installed nothing" while having
@@ -750,19 +758,29 @@ def publish_link(source: Path, target: Path, *, plugin: str = "", **settings: st
     developer mode, some network filesystems) and records ``bridge=copy`` in the
     marker, so the fallback is visible rather than assumed.
     """
-    if target.is_symlink() and Path(os.readlink(target)) == source:
-        return Decision(Verdict.SKIP, target, "already linked")
-    marker = read_marker(target) if target.is_dir() and not target.is_symlink() else None
-    if target.exists() or target.is_symlink():
-        if target.is_symlink() or owns(marker, plugin):
-            target.unlink() if target.is_symlink() else shutil.rmtree(target)
-        else:
+    if target.is_symlink():
+        decision = decide_link(source, target, source.parent, plugin=plugin)
+        if decision.verdict in (Verdict.KEEP, Verdict.SKIP):
+            return decision
+    elif target.exists():
+        marker = read_marker(target) if target.is_dir() else None
+        if not owns(marker, plugin) or any(compare(target, marker)):
             return Decision(Verdict.KEEP, target, "user-authored")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        target.symlink_to(source, target_is_directory=source.is_dir())
-    except (OSError, NotImplementedError):
-        publish_tree(source, target, plugin=plugin, **{**settings, "bridge": "copy"})
+    copied = False
+    with _swapped(target) as staged:
+        try:
+            staged.symlink_to(source, target_is_directory=source.is_dir())
+        except (OSError, NotImplementedError):
+            shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
+            atomic_write(
+                staged / OWNED_MARKER_NAME,
+                json.dumps(
+                    TreeManifest.of(staged, plugin, **{**settings, "bridge": "copy"}).as_payload(),
+                    indent=2,
+                ) + "\n",
+            )
+            copied = True
+    if copied:
         return Decision(Verdict.PUBLISH, target, "copied: this platform cannot create links")
     return Decision(Verdict.PUBLISH, target, f"linked to {source}")
 

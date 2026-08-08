@@ -37,7 +37,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping, Sequence
 
-from . import discovery, memory
+from . import codex, discovery, memory
 from .fs import Verdict, atomic_write
 from .runtime import Runner, _spawn
 
@@ -135,12 +135,81 @@ def _duplicate_products(entries: Mapping[str, Sequence[str]]) -> Iterator[Findin
             )
 
 
+def _duplicate_skills(routes: Mapping[str, Sequence[Path]]) -> Iterator[Finding]:
+    """Distinct copies of one skill visible to the same harness."""
+    for harness, roots in routes.items():
+        found: dict[str, dict[Path, Path]] = {}
+        for root in roots:
+            try:
+                candidates = tuple(root.iterdir())
+            except OSError:
+                continue
+            for candidate in candidates:
+                if not candidate.is_dir() or not (candidate / "SKILL.md").is_file():
+                    continue
+                found.setdefault(candidate.name.casefold(), {}).setdefault(
+                    candidate.resolve(), candidate
+                )
+        for name, copies in found.items():
+            if len(copies) > 1:
+                yield Finding(
+                    f"{harness} skills", Level.WARN,
+                    f"{name} appears at {', '.join(map(str, copies.values()))}",
+                    "keep one copy or replace the others with links to it",
+                )
+
+
+def _codex_files(codex_dir: Path, guidance: memory.Block | None) -> Iterator[Finding]:
+    """Failures Codex turns into silent absence rather than an error."""
+    agents = codex_dir / "AGENTS.md"
+    shadow = codex.shadowing_override(codex_dir)
+    if guidance is not None and shadow is not None and agents.is_file():
+        try:
+            installed = memory.bounds(agents.read_text(encoding="utf-8"), guidance)
+        except OSError:
+            installed = None
+        if installed is not None:
+            yield Finding(
+                "Codex guidance", Level.WARN,
+                f"{shadow} shadows autorun's block in {agents}",
+                "move the wanted text into AGENTS.override.md or remove the non-blank override",
+            )
+
+    hooks = codex_dir / "hooks.json"
+    if not hooks.is_file():
+        return
+    try:
+        document = json.loads(hooks.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        yield Finding(
+            "Codex hooks", Level.BROKEN, f"cannot parse {hooks}: {error}",
+            "repair hooks.json, then re-run the install",
+        )
+        return
+    if not isinstance(document, Mapping):
+        yield Finding(
+            "Codex hooks", Level.BROKEN, f"{hooks} must contain a JSON object",
+            "repair hooks.json, then re-run the install",
+        )
+        return
+    unknown = codex.unknown_top_level(document)
+    if unknown:
+        yield Finding(
+            "Codex hooks", Level.BROKEN,
+            f"{hooks} has rejected top-level keys: {', '.join(unknown)}",
+            "remove the rejected keys; Codex accepts only description and hooks",
+        )
+
+
 def health(
     *,
     hook_command: Sequence[str] = (),
     memory_files: Iterable[Path] = (),
     known_slugs: Sequence[str] = (),
     registry_entries: Mapping[str, Sequence[str]] | None = None,
+    skill_routes: Mapping[str, Sequence[Path]] | None = None,
+    codex_dir: Path | None = None,
+    codex_guidance: memory.Block | None = None,
     run: Runner = _spawn,
 ) -> tuple[Finding, ...]:
     """Every check, in one call. Inputs are passed in, never discovered here.
@@ -152,6 +221,9 @@ def health(
     findings = [_hook_runs(hook_command, run)]
     findings.extend(_foreign_blocks(memory_files, known_slugs))
     findings.extend(_duplicate_products(registry_entries or {}))
+    findings.extend(_duplicate_skills(skill_routes or {}))
+    if codex_dir is not None:
+        findings.extend(_codex_files(codex_dir, codex_guidance))
     return tuple(findings)
 
 

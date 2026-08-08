@@ -17,23 +17,56 @@ guidance a reader cannot act on is worse than none.
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from autorun.install import (  # noqa: E402
-    _claude_memory_workaround_enabled,
-    install_platform_memory,
-    platform_memory_sentinels,
-    strip_platform_memory,
-)
+from autorun.installer.memory import Block, context_guidance_enabled  # noqa: E402
+from autorun.installer.steps import apply_regions, regions_for  # noqa: E402
+from autorun.installer.traversal import Context, Mode  # noqa: E402
 from autorun.platforms import PLATFORMS  # noqa: E402
 
 MEMORY_PLATFORMS = ["claude", "codex", "forgecode"]
 
 REAL_PLUGIN_DIR = Path(__file__).resolve().parents[1]
+
+
+def platform_memory_sentinels(platform):
+    block = Block(platform.memory_sentinel_slug)
+    return block.start, block.end
+
+
+def _regions(platform, plugin_dir, config_dir, *, removing=False):
+    configured = replace(
+        platform,
+        config_dir=str(config_dir),
+        config_dir_env_vars=(),
+        config_dir_env_var_subdir="",
+    )
+    template = plugin_dir.joinpath("src", "autorun", *platform.memory_template.split("/"))
+    guidance = template.read_text(encoding="utf-8") if template.is_file() else ""
+    ctx = Context(
+        marketplace_root=plugin_dir.parent.parent,
+        plugin_dirs=(plugin_dir,),
+        settings={"_guidance": {platform.name: guidance}},
+    )
+    return regions_for(configured, ctx, removing=removing)
+
+
+def install_platform_memory(platform, plugin_dir, config_dir):
+    regions = _regions(platform, plugin_dir, config_dir)
+    return bool(apply_regions(regions, Mode.INSTALL))
+
+
+def strip_platform_memory(platform, config_dir):
+    regions = _regions(platform, REAL_PLUGIN_DIR, config_dir, removing=True)
+    return bool(apply_regions(regions, Mode.UNINSTALL))
+
+
+_claude_memory_workaround_enabled = context_guidance_enabled
 
 
 @pytest.fixture(params=MEMORY_PLATFORMS)

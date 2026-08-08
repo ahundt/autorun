@@ -28,8 +28,8 @@ sys.path.insert(0, str(plugin_root / 'src'))
 from filelock import FileLock, Timeout  # noqa: E402 - test path is inserted above for local src imports
 
 
-def _child_acquire_lock(lock_file: str, result_file: str, hold_seconds: float):
-    """Child process helper: acquire lock, write result, hold, release.
+def _child_acquire_lock(lock_file: str, result_file: str, acquired=None, release=None):
+    """Child process helper: acquire lock, report readiness, then release.
 
     Must be module-level for multiprocessing pickling (spawn start method).
     """
@@ -37,7 +37,10 @@ def _child_acquire_lock(lock_file: str, result_file: str, hold_seconds: float):
     try:
         lock.acquire()
         Path(result_file).write_text("acquired", encoding="utf-8")
-        time.sleep(hold_seconds)
+        if acquired is not None:
+            acquired.set()
+        if release is not None:
+            release.wait(timeout=5.0)
         lock.release()
     except Timeout:
         Path(result_file).write_text("blocked", encoding="utf-8")
@@ -193,22 +196,22 @@ class TestRestartLockFilelock:
         lock_file = str(self.lock_path)
         result1 = str(tmp_path / "result1.txt")
         result2 = str(tmp_path / "result2.txt")
+        acquired = multiprocessing.Event()
+        release = multiprocessing.Event()
 
-        # Process 1 acquires and holds for 1 second
         p1 = multiprocessing.Process(
-            target=_child_acquire_lock, args=(lock_file, result1, 1.0)
+            target=_child_acquire_lock, args=(lock_file, result1, acquired, release)
         )
         p1.start()
-        time.sleep(0.2)  # Let p1 acquire first
+        assert acquired.wait(timeout=5.0), "First process did not acquire the lock"
 
-        # Process 2 tries to acquire while p1 holds
         p2 = multiprocessing.Process(
-            target=_child_acquire_lock, args=(lock_file, result2, 0.0)
+            target=_child_acquire_lock, args=(lock_file, result2)
         )
         p2.start()
-
-        p1.join(timeout=5.0)
         p2.join(timeout=5.0)
+        release.set()
+        p1.join(timeout=5.0)
 
         r1 = Path(result1).read_text(encoding="utf-8")
         r2 = Path(result2).read_text(encoding="utf-8")
@@ -583,6 +586,9 @@ class TestPsutilProcessLifecycle:
                 f"sys.path.insert(0, r'{src_dir}'); from autorun.daemon import main; main()",
             ],
         }
+        current_proc.environ.return_value = {
+            "AUTORUN_HOME": str(restart_mod.ipc.AUTORUN_CONFIG_DIR)
+        }
         other_proc = mock.MagicMock()
         other_proc.info = {
             "pid": 222,
@@ -613,6 +619,36 @@ class TestPsutilProcessLifecycle:
         diagnostics.assert_called_once_with(src_dir)
         current_proc.kill.assert_called_once_with()
         other_proc.kill.assert_not_called()
+
+    def test_scoped_restart_finds_only_current_runtime_from_same_source(self, tmp_path):
+        """An isolated test runtime must not claim the live daemon from the same checkout."""
+        import autorun.restart_daemon as restart_mod
+
+        src_dir = tmp_path / "checkout" / "plugins" / "autorun" / "src"
+        test_runtime = tmp_path / "test-runtime"
+        live_home = tmp_path / "live-home"
+
+        def daemon(runtime_env):
+            proc = mock.MagicMock()
+            proc.info = {
+                "pid": 111,
+                "cmdline": [
+                    sys.executable,
+                    "-c",
+                    f"sys.path.insert(0, r'{src_dir}'); from autorun.daemon import main; main()",
+                ],
+            }
+            proc.environ.return_value = runtime_env
+            return proc
+
+        test_proc = daemon({"AUTORUN_HOME": str(test_runtime), "HOME": str(live_home)})
+        live_proc = daemon({"HOME": str(live_home)})
+
+        with mock.patch.object(restart_mod.ipc, "AUTORUN_CONFIG_DIR", test_runtime):
+            with mock.patch.object(
+                restart_mod.psutil, "process_iter", return_value=[test_proc, live_proc]
+            ):
+                assert restart_mod._daemon_processes_for_src(src_dir) == [test_proc]
 
     def test_scoped_restart_refuses_unowned_responding_daemon(self, tmp_path):
         """A worktree restart must not clean up or replace another live daemon."""
@@ -793,35 +829,3 @@ class TestDaemonMainLifecycleCleanup:
                     daemon_mod.main()
 
         assert cleanup_calls == ["cleanup"]
-
-
-class TestInstallerDaemonRestart:
-    """Installer restart should use the robust daemon discovery path."""
-
-    def test_installer_restarts_orphan_daemon_discovered_without_pid_file(self, tmp_path):
-        import autorun.install as install_mod
-        import autorun.restart_daemon as restart_mod
-
-        missing_lock = tmp_path / "daemon.lock"
-
-        with mock.patch.object(install_mod.ipc, "AUTORUN_LOCK_PATH", missing_lock):
-            with mock.patch.object(restart_mod, "get_daemon_pid", return_value=12345) as get_pid:
-                with mock.patch.object(restart_mod, "restart_daemon", return_value=0) as restart:
-                    install_mod._restart_daemon_if_running()
-
-        get_pid.assert_called_once_with()
-        restart.assert_called_once_with()
-
-    def test_installer_skips_restart_when_discovery_finds_no_daemon(self, tmp_path):
-        import autorun.install as install_mod
-        import autorun.restart_daemon as restart_mod
-
-        missing_lock = tmp_path / "daemon.lock"
-
-        with mock.patch.object(install_mod.ipc, "AUTORUN_LOCK_PATH", missing_lock):
-            with mock.patch.object(restart_mod, "get_daemon_pid", return_value=None) as get_pid:
-                with mock.patch.object(restart_mod, "restart_daemon") as restart:
-                    install_mod._restart_daemon_if_running()
-
-        get_pid.assert_called_once_with()
-        restart.assert_not_called()

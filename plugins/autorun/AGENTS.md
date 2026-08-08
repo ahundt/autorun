@@ -109,15 +109,10 @@ Defense-in-depth handlers stay.
 |-----|----------|-----|---------|--------|
 | [#4669](https://github.com/anthropics/claude-code/issues/4669): deny ignored at exit 0 | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED`; `AUTORUN_EXIT2_WORKAROUND` and `--exit2-mode` remain as higher-precedence aliases | `True` | stderr + exit 2 |
 | [#18534](https://github.com/anthropics/claude-code/issues/18534): additionalContext dropped | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED` | `True` | channel="ai" → "both" |
-| [#24115](https://github.com/anthropics/claude-code/issues/24115): plugin loader scans marketplace-source hooks/ AND cache; strict Zod rejects Gemini event names with `invalid_key` | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED` | `True` | Claude events ONLY in `plugins/autorun/hooks/`; Gemini events live under `src/autorun/gemini_template/` (outside Claude's scan path) |
-| [#14449](https://github.com/google-gemini/gemini-cli/issues/14449) ([PR #14460](https://github.com/google-gemini/gemini-cli/pull/14460)): Gemini hardcodes extension hooks at `<ext>/hooks/hooks.json`; manifest `hooks` field ignored | Gemini CLI | `AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED` | `True` | Installer materializes `~/.gemini/extensions/<name>/` from the template dir; `hook_entry.py` copied into `<ext>/hooks/` so `${extensionPath}/hooks/hook_entry.py` resolves |
 
-Both workarounds are fully documented where they are implemented, so this file
-does not restate them. Read `src/autorun/config.py:should_use_exit2_workaround()`
-and its bracketed block for #4669 (resolution order, value tokens, removal), and
-the `# --- BUG #24115 & #14449 WORKAROUND START ---` block at the top of
-`src/autorun/install.py` for the split repo layout (root causes, both env keys,
-removal steps).
+Read `src/autorun/config.py:should_use_exit2_workaround()` and its bracketed
+block for #4669 (resolution order, value tokens, removal). The permanent
+Claude/Gemini split layout is documented in `src/autorun/installer/extension.py`.
 
 Upstream status, checked 2026-08-05 with `gh`: #4669 closed 2026-01-05 and
 #24115 closed 2026-04-27, both `NOT_PLANNED`; #18534 closed 2026-01-19 as

@@ -153,23 +153,6 @@ class TestGeminiPathway:
             f"to the template's hooks dir."
         )
 
-    def test_install_py_references_template_not_plugin_root(self):
-        """Installer must hand `gemini extensions install` the template dir
-        path, not the plugin dir (which would install all Python source as
-        part of the extension on Pathway 6).
-        """
-        install_py = (PLUGIN_ROOT / "src" / "autorun" / "install.py").read_text(encoding="utf-8")
-        assert "_gemini_template_dir" in install_py
-        assert "_gemini_source" in install_py, (
-            "install.py must expose per-plugin source resolution so "
-            "pdf-extractor's legacy layout still works"
-        )
-        assert "str(gemini_src)" in install_py, (
-            "install.py must pass the template path (not plugin_dir) to "
-            "`gemini extensions install`"
-        )
-
-
 class TestClaudePathway:
     """Claude-specific invariants post-refactor."""
 
@@ -303,44 +286,3 @@ class TestSharedContract:
         gemini_data = json.loads((TEMPLATE / "hooks" / "hooks.json").read_text(encoding="utf-8"))
         assert "SessionStart" in claude_data["hooks"], "Claude hooks must register SessionStart"
         assert "SessionStart" in gemini_data["hooks"], "Gemini hooks must register SessionStart"
-
-
-class TestBugWorkaroundCleanup:
-    """Pin the deletion-path described in plugins/autorun/CLAUDE.md Bug
-    Workaround Policy — when upstream bugs are fixed, maintainers should be
-    able to follow the markers and flags to remove the workaround cleanly.
-    """
-
-    def test_policy_compliance_both_bugs_have_config_and_helpers(self):
-        """Each bug needs: CONFIG key, helper using the key, bracketed block."""
-        from autorun.config import CONFIG
-        flags = [
-            "AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED",
-            "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED",
-        ]
-        for flag in flags:
-            assert flag in CONFIG, f"CONFIG missing {flag}"
-
-        install_py = (PLUGIN_ROOT / "src" / "autorun" / "install.py").read_text(encoding="utf-8")
-        assert "_bug_24115_workaround_enabled" in install_py
-        assert "_bug_14449_workaround_enabled" in install_py
-        assert "# --- BUG #24115 & #14449 WORKAROUND START" in install_py
-        assert "# --- BUG #24115 & #14449 WORKAROUND END" in install_py
-
-    def test_both_bug_references_link_to_issues(self):
-        """Bug workaround comments must link to the upstream issue URLs so
-        maintainers can verify the bug is still open before deleting.
-        """
-        install_py = (PLUGIN_ROOT / "src" / "autorun" / "install.py").read_text(encoding="utf-8")
-        assert "github.com/anthropics/claude-code/issues/24115" in install_py
-        assert "github.com/google-gemini/gemini-cli/issues/14449" in install_py
-
-    def test_workaround_disable_instructions_in_claude_md(self):
-        """CLAUDE.md table lists every bug workaround flag with its key,
-        default, and effect — this is the deletion runbook.
-        """
-        claude_md = (PLUGIN_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-        # Existing bug #18534 should be in the table; new bugs don't need
-        # to be there YET but policy encourages adding them. We only assert
-        # the policy block exists so maintainers know where to add entries.
-        assert "Bug Workaround Policy" in claude_md

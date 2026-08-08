@@ -26,8 +26,8 @@ WHY A SEPARATE MODULE
 
 The step tuples cannot live on ``Platform``: steps are defined in modules that
 import ``platforms``, so a field holding them closes an import cycle, and
-encoding them as *names* for later lookup is the defect this registry already
-shipped once, where ``install_fn_name`` named a function nobody had written.
+encoding them as *names* for later lookup already shipped a nonexistent
+handler as a capability.
 
 Complexity: O(H x S) intents for H harnesses and S skills; staging is O(bytes)
 once per plugin, before the walk, so the walk itself stays pure.
@@ -41,7 +41,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping, Sequence
 
-from . import codex, discovery, extension, memory, skills
+from ..platforms import ExtensionSkills, PluginPackageSkills
+from . import codex, discovery, extension, memory, settings, skills
 from .discovery import redirected_home
 from .traversal import Context, Intent, Kind, Mode, Step
 
@@ -49,8 +50,8 @@ __all__ = [
     "STEPS",
     "skills_step", "bridge_step", "commands_step", "extension_step",
     "opencode_shim_step", "stage_opencode_shim", "stage_toml_commands",
-    "Region", "Hooks", "regions_for", "hooks_for",
-    "apply_regions", "apply_hooks",
+    "Region", "Hooks", "Marketplace", "regions_for", "hooks_for",
+    "marketplaces_for", "apply_regions", "apply_hooks", "apply_marketplaces",
     "prepared",
     "COMMANDS_SUBDIR", "TEMPLATE_SUBDIR",
 ]
@@ -67,10 +68,19 @@ COMMANDS_SUBDIR = "commands"
 
 def skills_step(harness: object, ctx: Context) -> Iterable[Intent]:
     """Every skill this harness receives, by its one route."""
+    platform = getattr(harness, "platform", harness)
     placement = _placement(ctx, getattr(harness, "name", ""))
-    return skills.skill_intents(
-        getattr(harness, "platform", harness), ctx, _plugins(ctx), placement=placement
+    intents, _ = skills.skill_plan(
+        platform,
+        ctx,
+        _plugins(ctx),
+        placement=placement,
+        packaged_native=isinstance(
+            getattr(platform, "native_skills", None),
+            (ExtensionSkills, PluginPackageSkills),
+        ),
     )
+    return intents
 
 
 def bridge_step(harness: object, ctx: Context) -> Iterable[Intent]:
@@ -104,13 +114,31 @@ def commands_step(harness: object, ctx: Context) -> Iterable[Intent]:
         )
 
 
+def codex_plugin_step(harness: object, ctx: Context) -> Iterable[Intent]:
+    """Publish the staged local Codex plugin as one fingerprinted tree."""
+    staged = ctx.settings.get("_staged_codex")
+    if not isinstance(staged, Mapping):
+        return
+    for plugin, source in staged.items():
+        yield Intent(
+            target=discovery.codex_plugin_source(plugin, home=ctx.home),
+            source=source,
+            plugin=plugin,
+        )
+
+
 def extension_step(harness: object, ctx: Context) -> Iterable[Intent]:
     """Materialize a Gemini-family extension from content staged before the walk.
 
     Staging happens in :func:`prepared`, not here: a step that wrote to a temp
     directory would be doing I/O during a ``PREVIEW`` that promises none.
     """
-    staged = ctx.settings.get("_staged_extensions")
+    staged_all = ctx.settings.get("_staged_extensions")
+    staged = (
+        staged_all.get(getattr(harness, "name", ""), {})
+        if isinstance(staged_all, Mapping)
+        else {}
+    )
     if not isinstance(staged, Mapping) or not staged:
         return ()
     return extension.extension_intents(
@@ -156,7 +184,7 @@ def opencode_shim_step(harness: object, ctx: Context) -> Iterable[Intent]:
 #: ``settings.steps_for_custom``, so adding one adds no entry either.
 STEPS: Mapping[str, tuple[Step, ...]] = {
     "claude": (skills_step, bridge_step),
-    "codex": (skills_step, commands_step),
+    "codex": (skills_step, commands_step, codex_plugin_step),
     "gemini": (skills_step, extension_step),
     "qwen": (skills_step, extension_step),
     "antigravity": (skills_step, bridge_step, extension_step),
@@ -191,47 +219,109 @@ class Hooks:
         return f"{self.path} ({', '.join(sorted(self.events)) or 'none'})"
 
 
-def regions_for(harness: object, ctx: Context) -> tuple[Region, ...]:
+@dataclass(frozen=True, slots=True)
+class Marketplace:
+    """One exact Codex marketplace entry and the identities it replaced."""
+
+    path: Path
+    name: str
+    entry: Mapping[str, object]
+    retired: tuple[Mapping[str, object], ...] = ()
+
+    def describe(self) -> str:
+        return f"{self.path} [{self.entry.get('name', '?')}]"
+
+
+def regions_for(
+    harness: object, ctx: Context, *, removing: bool = False
+) -> tuple[Region, ...]:
     """The guidance blocks this harness reads, if it reads any.
 
     A harness with no memory file gets none, which is a real answer rather than
     a missing case: Claude reads ``CLAUDE.md``, the Gemini family reads
     ``GEMINI.md``, and the rest read ``AGENTS.md``.
     """
+    if "ar" not in _plugins(ctx):
+        return ()
     platform = getattr(harness, "platform", harness)
     base = discovery.config_dir(platform, home=ctx.home)
     filename = str(getattr(platform, "memory_filename", "") or "")
     if base is None or not filename:
         return ()
-    guidance = str(ctx.settings.get("_guidance", "") or "")
-    if not guidance:
+    guidance_setting = ctx.settings.get("_guidance", "")
+    if isinstance(guidance_setting, Mapping):
+        flavor = getattr(platform, "install_flavor", "")
+        guidance = str(
+            guidance_setting.get(getattr(platform, "name", ""))
+            or guidance_setting.get(flavor)
+            or ""
+        )
+    else:
+        guidance = str(guidance_setting or "")
+    if not guidance and not removing:
         return ()
-    # --- BUG #54673 WORKAROUND START --- DELETE WHEN FIXED ---
-    # No token counts reach hooks, so the model states a guess about remaining
-    # capacity as fact. Disable: see memory.CONTEXT_GUIDANCE_FLAG.
-    if not memory.context_guidance_enabled():
+    flag = str(getattr(platform, "memory_workaround_flag", "") or "")
+    if flag and not removing and not settings.workaround_enabled(flag):
         return ()
-    # --- BUG #54673 WORKAROUND END ---
-    return (Region(base / filename, memory.CONTEXT_GUIDANCE, guidance),)
+    slug = str(getattr(platform, "memory_sentinel_slug", "") or "")
+    return (Region(base / filename, memory.Block(slug), guidance),) if slug else ()
 
 
-def hooks_for(harness: object, ctx: Context) -> tuple[Hooks, ...]:
+def hooks_for(
+    harness: object, ctx: Context, *, removing: bool = False
+) -> tuple[Hooks, ...]:
     """Autorun's hook entries for a harness that reads a user-owned hooks file.
 
     Only Codex today. Claude and the Gemini family carry their hooks inside the
     plugin or extension autorun owns outright, so those are ordinary intents.
     """
-    platform = getattr(harness, "platform", harness)
-    if getattr(platform, "name", "") != "codex":
+    if "ar" not in _plugins(ctx):
         return ()
-    if str(ctx.settings.get("codex_hook_source", "user")) not in ("user", "both"):
+    platform = getattr(harness, "platform", harness)
+    flavor = getattr(platform, "install_flavor", "") or getattr(platform, "name", "")
+    if flavor != "codex":
+        return ()
+    if (
+        not removing
+        and str(ctx.settings.get("codex_hook_source", "user")) not in ("user", "both")
+    ):
         return ()
     base = discovery.config_dir(platform, home=ctx.home)
     command = str(ctx.settings.get("_codex_hook_command", "") or "")
-    if base is None or not command:
+    if base is None or (not command and not removing):
         return ()
-    events = {name: (command,) for name in _CODEX_EVENTS}
+    events = {name: (() if removing else (command,)) for name in _CODEX_EVENTS}
     return (Hooks(base / "hooks.json", events),)
+
+
+def marketplaces_for(
+    harness: object, ctx: Context, *, removing: bool = False
+) -> tuple[Marketplace, ...]:
+    """The personal Codex marketplace entry, when that mode is selected."""
+    platform = getattr(harness, "platform", harness)
+    if (
+        getattr(platform, "name", "") != "codex"
+        or (
+            not removing
+            and str(ctx.settings.get("codex_plugin_marketplace", "personal"))
+            != "personal"
+        )
+    ):
+        return ()
+    entries = []
+    for plugin, plugin_dir in _plugins(ctx).items():
+        if (
+            not removing
+            and not (plugin_dir / ".codex-plugin" / "plugin.json").is_file()
+        ):
+            continue
+        entries.append(Marketplace(
+            discovery.personal_marketplace(home=ctx.home),
+            codex.PERSONAL_MARKETPLACE_NAME,
+            codex.marketplace_entry(plugin, f"./plugins/{plugin}"),
+            (codex.marketplace_entry("autorun", "./plugins/autorun"),),
+        ))
+    return tuple(entries)
 
 
 #: The events autorun handles on Codex. Registering one it has no handler for
@@ -278,12 +368,29 @@ def apply_hooks(entries: Iterable[Hooks], mode: Mode) -> list[str]:
         events = {} if mode is Mode.UNINSTALL else entry.events
         # Every event is swept either way, including ones no longer shipped.
         wanted = {name: events.get(name, ()) for name in entry.events}
-        try:
-            codex.merge_hooks(entry.path, wanted)
-        except ValueError as error:
-            notes.append(f"refused {entry.path}: {error}")
-            continue
+        codex.merge_hooks(entry.path, wanted)
         notes.append(f"{'withdrew' if mode is Mode.UNINSTALL else 'merged'} {entry.describe()}")
+    return notes
+
+
+def apply_marketplaces(entries: Iterable[Marketplace], mode: Mode) -> list[str]:
+    """Publish or withdraw exact marketplace entries; preview only describes."""
+    notes = []
+    for marketplace in entries:
+        notes.append(marketplace.describe())
+        if mode is Mode.PREVIEW:
+            continue
+        for retired in marketplace.retired:
+            codex.withdraw_from_marketplace(marketplace.path, retired)
+        if mode is Mode.INSTALL:
+            codex.publish_marketplace(
+                marketplace.path,
+                marketplace.name,
+                marketplace.entry,
+                display="Personal",
+            )
+        else:
+            codex.withdraw_from_marketplace(marketplace.path, marketplace.entry)
     return notes
 
 
@@ -297,7 +404,11 @@ GEMINI_TEMPLATE_SUBDIR = Path("src") / "autorun" / "gemini_template"
 
 @contextmanager
 def prepared(
-    ctx: Context, *, plugins: Mapping[str, Path], placement: str = "auto"
+    ctx: Context,
+    *,
+    plugins: Mapping[str, Path],
+    harnesses: Iterable[object] | None = None,
+    step_table: Mapping[str, tuple[Step, ...]] | None = None,
 ) -> Iterator[Context]:
     """Stage generated content, yield a Context pointing at it, then clean up.
 
@@ -311,38 +422,109 @@ def prepared(
     Copying the plugin's whole ``skills/`` in here is what once gave shared-root
     harnesses a second, unmarked, unprunable copy of every skill.
     """
+    if harnesses is None:
+        from ..platforms import PLATFORMS
+        harnesses = PLATFORMS.values()
+    harnesses = tuple(harnesses)
+    step_table = STEPS if step_table is None else step_table
     with tempfile.TemporaryDirectory(prefix="autorun-stage-") as tmp:
-        staged: dict[str, Path] = {}
-        for plugin, plugin_dir in plugins.items():
-            template = plugin_dir / GEMINI_TEMPLATE_SUBDIR
-            if not template.is_dir():
-                continue  # not a plugin that ships an extension; not an error
-            manifest = extension.Manifest(
-                name=plugin,
-                version=_version(plugin_dir),
-                description=_description(plugin_dir),
-            )
-            native = skills.shippable_skills(plugin_dir) if placement != "auto" else {}
-            try:
-                directory = extension.stage_extension(
-                    template, plugin_dir, Path(tmp) / plugin, manifest, skills=native
-                )
-                stage_toml_commands(directory, plugin)
-            except OSError:
-                # One plugin that cannot be staged does not stop the others, and
-                # every non-extension route for it still runs.
+        staged: dict[str, dict[str, Path]] = {}
+        staged_codex: dict[str, Path] = {}
+        failures: list[str] = []
+        for harness in harnesses:
+            name = getattr(harness, "name", "")
+            if extension_step not in step_table.get(name, ()):
                 continue
-            staged[plugin] = directory
+            platform = getattr(harness, "platform", harness)
+            staged[name] = {}
+            for plugin, plugin_dir in plugins.items():
+                template = plugin_dir / GEMINI_TEMPLATE_SUBDIR
+                if not template.is_dir():
+                    continue  # not a plugin that ships an extension; not an error
+                manifest = extension.Manifest(
+                    name=plugin,
+                    version=_version(plugin_dir),
+                    description=_description(plugin_dir),
+                )
+                shipped = skills.shippable_skills(plugin_dir)
+                _, planned = skills.skill_plan(
+                    platform,
+                    ctx,
+                    {plugin: plugin_dir},
+                    placement=_placement(ctx, name),
+                    packaged_native=True,
+                )
+                native = {skill: shipped[skill] for skill in planned.native}
+                try:
+                    directory = extension.stage_extension(
+                        template,
+                        plugin_dir,
+                        Path(tmp) / name / plugin,
+                        manifest,
+                        skills=native,
+                        hook_manifest=extension.translated_hooks(template, platform),
+                        manifest_name=str(
+                            getattr(platform, "extension_manifest_name", "gemini-extension.json")
+                        ),
+                        hooks_at_root=bool(
+                            getattr(platform, "extension_hooks_at_root", False)
+                        ),
+                    )
+                    if getattr(platform, "generates_toml_commands", True):
+                        stage_toml_commands(directory, plugin)
+                except OSError as error:
+                    failures.append(f"{name}/{plugin}: {error}")
+                    continue
+                staged[name][plugin] = directory
+        if (
+            any(getattr(harness, "name", "") == "codex" for harness in harnesses)
+            and str(ctx.settings.get("codex_plugin_marketplace", "personal")) == "personal"
+        ):
+            from ..platforms import CODEX
+
+            for plugin, plugin_dir in plugins.items():
+                if not (plugin_dir / ".codex-plugin" / "plugin.json").is_file():
+                    continue
+                _, planned = skills.skill_plan(
+                    CODEX,
+                    ctx,
+                    {plugin: plugin_dir},
+                    placement=_placement(ctx, "codex"),
+                    packaged_native=True,
+                )
+                try:
+                    staged_codex[plugin] = codex.stage_plugin(
+                        plugin_dir,
+                        Path(tmp) / "_codex" / plugin,
+                        include_hooks=str(ctx.settings.get("codex_hook_source", "user"))
+                        in ("plugin", "both"),
+                        skill_names=planned.native,
+                        hook_command=str(
+                            ctx.settings.get("_codex_plugin_hook_command", "") or ""
+                        ),
+                    )
+                except (OSError, ValueError) as error:
+                    failures.append(f"codex/{plugin}: {error}")
         shims = stage_opencode_shim(
             Path(tmp) / "_opencode", plugins,
             socket=str(ctx.settings.get("_daemon_socket", "") or ""),
-            command=str(ctx.settings.get("_hook_command", "") or ""),
+            command=ctx.settings.get("_hook_command", ()),
         )
-        yield _with(ctx, _staged_extensions=staged, _staged_opencode=shims)
+        yield _with(
+            ctx,
+            _staged_extensions=staged,
+            _staged_codex=staged_codex,
+            _staged_opencode=shims,
+            _staging_failures=tuple(failures),
+        )
 
 
 def stage_opencode_shim(
-    staging: Path, plugins: Mapping[str, Path], *, socket: str, command: str
+    staging: Path,
+    plugins: Mapping[str, Path],
+    *,
+    socket: str,
+    command: object,
 ) -> Mapping[str, Path]:
     """Write the substituted JavaScript bridge, ready to publish.
 
@@ -355,6 +537,7 @@ def stage_opencode_shim(
     import json
 
     shims: dict[str, Path] = {}
+    argv = list(command) if isinstance(command, (list, tuple)) else []
     for plugin, plugin_dir in plugins.items():
         source = plugin_dir / OPENCODE_TEMPLATE_SUBDIR / "autorun.js"
         if not source.is_file():
@@ -366,7 +549,7 @@ def stage_opencode_shim(
             .replace("__AUTORUN_SOCKET__", socket)
             # JSON-encoded: the command is embedded in a JS literal, and a path
             # containing a quote or backslash would otherwise break the module.
-            .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(command))
+            .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(argv))
         )
         (directory / "autorun.js").write_text(text, encoding="utf-8")
         shims[plugin] = directory

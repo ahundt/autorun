@@ -74,13 +74,25 @@ class TestShimSourceIsSelfContained:
 
 class TestInstallerPlacesTheShim:
     def _install(self, tmp_path, monkeypatch):
-        from autorun.install import _install_for_opencode
+        from autorun.installer import entrypoint
 
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AUTORUN_HOME", f"/tmp/aoc-{tmp_path.name[-8:]}")
+        monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", f"/tmp/aocs-{tmp_path.name[-8:]}")
         monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-        ok, msg = _install_for_opencode(MARKETPLACE_ROOT, ["autorun"])
-        assert ok, msg
+        monkeypatch.setattr(entrypoint, "_marketplace_root", lambda: MARKETPLACE_ROOT)
+        monkeypatch.setattr(
+            entrypoint.shutil,
+            "which",
+            lambda name: "/bin/opencode" if name == "opencode" else None,
+        )
+        monkeypatch.setattr(
+            entrypoint,
+            "_run",
+            lambda argv: subprocess.CompletedProcess(argv, 0, "", ""),
+        )
+        assert entrypoint.install_plugins("ar", conductor=False, tool=False) == 0
         return tmp_path / ".config" / "opencode"
 
     def test_shim_lands_in_the_singular_plugin_directory(self, tmp_path, monkeypatch):
@@ -97,27 +109,14 @@ class TestInstallerPlacesTheShim:
             for line in text.splitlines()
         ), "socket path must be absolute, not tilde-relative"
 
-    def test_the_real_uninstall_entry_point_reaches_opencode(self):
-        """Calling the helper directly proves nothing about the flow users run.
-
-        `_uninstall_harness_commands` walks only ForgeCode's base, so OpenCode
-        needs its own call from `uninstall_plugins`; without it the shim
-        survives an uninstall.
-        """
-        import inspect
-
-        from autorun import install
-
-        assert "_uninstall_for_opencode()" in inspect.getsource(install.uninstall_plugins)
-
     def test_uninstall_removes_the_shim_it_owns(self, tmp_path, monkeypatch):
-        from autorun.install import _uninstall_for_opencode
+        from autorun.installer import entrypoint
 
         base = self._install(tmp_path, monkeypatch)
         stranger = base / "plugin" / "someone-elses.js"
         stranger.write_text("export const Other = async () => ({})\n", encoding="utf-8")
 
-        _uninstall_for_opencode()
+        assert entrypoint.uninstall_plugins("ar") == 0
 
         assert not (base / "plugin" / "autorun.js").exists()
         assert stranger.is_file(), "uninstall removed a plugin autorun does not own"

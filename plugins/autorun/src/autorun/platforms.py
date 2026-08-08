@@ -130,10 +130,8 @@ class PluginPackageSkills(SkillRoute):
 
     Codex's package lives at a configurable path (``codex_plugin_source_dir``,
     default ``~/plugins``), so no ``config_dir``-relative fragment can express
-    it. ``resolver`` holds the function itself rather than its name: a name
-    cannot be checked, which is how ``install_fn_name="_install_for_claude"``
-    came to reference a function nobody wrote and still be exported as a
-    capability.
+    it. ``resolver`` holds the function itself rather than its name, so
+    construction proves the target is callable.
     """
 
     resolver: Callable[[], Path] | None = None
@@ -189,15 +187,10 @@ class NoNativeSkillRoute(SkillRoute):
 
 
 def _codex_plugin_package_dir() -> Path:
-    """Return Codex's staged plugin directory.
+    """Return the skill root inside Codex's staged plugin directory."""
+    from .installer.discovery import codex_plugin_source
 
-    Imported at call time because ``install`` imports this module; the call
-    still fails loudly if the resolver is ever removed, which a stored name
-    would not.
-    """
-    from .install import _codex_plugin_source_dir
-
-    return _codex_plugin_source_dir()
+    return codex_plugin_source() / "skills"
 
 
 @dataclass(frozen=True, slots=True)
@@ -663,6 +656,7 @@ class Platform:
     name: str
     display_name: str
     binary: str  # for shutil.which() probes
+    install_flavor: str = ""
 
     # === Detection (used by config.detect_cli_type) ===
     detect_env_vars: tuple[str, ...] = ()
@@ -789,12 +783,9 @@ class Platform:
     config_dir_env_var_subdir: str = ""
     template_dir: str | None = None
     hooks_path_var: str = ""
-    # Name of this harness's install function in `install`, for the capability
-    # snapshot. Empty means the harness has no dedicated function — Claude
-    # installs inline through the marketplace and plugin cache. Nothing
-    # dispatches on this, so a wrong value is invisible except in the snapshot;
-    # `test_declared_install_functions_exist` is what makes it checkable.
-    install_fn_name: str = ""
+    extension_manifest_name: str = "gemini-extension.json"
+    extension_hooks_at_root: bool = False
+    generates_toml_commands: bool = True
     list_cmd: tuple[str, ...] = ()
     app_bundle_ids: tuple[str, ...] = ()
     app_paths: tuple[str, ...] = ()
@@ -811,6 +802,7 @@ class Platform:
     memory_filename: str = ""
     # Template path relative to the plugin's src/autorun/ directory.
     memory_template: str = ""
+    memory_workaround_flag: str = ""
     # True only when the harness's own documentation describes direct discovery
     # of the shared ~/.agents/skills root. This is factual capability data, not
     # a preference: install.resolve_skill_routes() turns it plus the user's
@@ -985,9 +977,12 @@ CLAUDE = register(
         # marketplace and plugin cache. This declared "_install_for_claude" for
         # a function nobody wrote, and capability_snapshot published it.
         skill_search_routes=(ConfigDirSkills("skills"),),
-        install_fn_name="",
         memory_filename="CLAUDE.md",
         memory_template="claude_template/CLAUDE.md",
+        memory_workaround_flag=(
+            "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_"
+            "WORKAROUND_ENABLED"
+        ),
         memory_sentinel_slug="claude-memory-md",
         native_skills=ConfigDirSkills("skills"),
         list_cmd=("claude", "plugin", "list"),
@@ -1079,7 +1074,6 @@ GEMINI = register(
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
         skill_search_routes=(ConfigDirSkills("skills"),),
-        install_fn_name="_install_for_gemini",
         # https://geminicli.com/docs/cli/using-agent-skills/ — Gemini's
         # discovery tiers include the shared ~/.agents/skills root, so the
         # extension copy is a duplicate rather than the only route.
@@ -1156,8 +1150,9 @@ ANTIGRAVITY = register(
         config_dir="~/.gemini/antigravity-cli/",
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
+        extension_manifest_name="plugin.json",
+        extension_hooks_at_root=True,
         skill_search_routes=(HomeDirSkills(".gemini/config/skills"),),
-        install_fn_name="_install_for_antigravity",
         list_cmd=("agy", "plugin", "list"),
         native_skills=ExtensionSkills("plugins"),
         extensions_subdir="plugins",
@@ -1208,7 +1203,6 @@ QWEN = register(
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
         skill_search_routes=(ConfigDirSkills("skills"),),
-        install_fn_name="_install_for_qwen",
         # Qwen Code's Storage.getUserSkillsDirs() maps
         # SKILL_PROVIDER_CONFIG_DIRS = [".qwen", ".agents"] over os.homedir(),
         # so ~/.agents/skills is a user-scope discovery root alongside
@@ -1229,6 +1223,7 @@ QWEN = register(
         # include_skills = True` republished *every* skill of *every* plugin
         # natively after a single collision — and that is fixed per name.
         native_skills=ExtensionSkills("extensions"),
+        generates_toml_commands=False,
         extensions_subdir="extensions",
         uninstall_cmd=("qwen", "extensions", "uninstall", "{name}"),
         tool_names=_GEMINI_TOOLS,
@@ -1265,7 +1260,6 @@ CODEX = register(
         template_dir=None,  # user-level install at ~/.codex/hooks.json
         hooks_path_var="${PLUGIN_ROOT}",  # ${CLAUDE_PLUGIN_ROOT} also set as compat
         skill_search_routes=(ConfigDirSkills("skills"),),
-        install_fn_name="_install_for_codex",
         memory_filename="AGENTS.md",
         memory_template="codex_template/AGENTS.md",
         # https://learn.chatgpt.com/docs/build-skills — Codex scans the shared
@@ -1338,7 +1332,6 @@ FORGECODE = register(
         config_dir_env_vars=("FORGE_CONFIG",),
         template_dir="forgecode_template",
         skill_search_routes=(HomeDirSkills("forge/skills"),),
-        install_fn_name="_install_for_forgecode",
         memory_filename="AGENTS.md",
         memory_template="forgecode_template/AGENTS.md",
         memory_sentinel_slug="forgecode-agents-md",
@@ -1400,7 +1393,6 @@ OPENCODE = register(
             ConfigDirSkills("skills"),
             HomeDirSkills(".claude/skills"),
         ),
-        install_fn_name="_install_for_opencode",
         memory_filename="AGENTS.md",
         memory_template="opencode_template/AGENTS.md",
         memory_sentinel_slug="opencode-agents-md",

@@ -20,10 +20,13 @@ from .platforms import PLATFORMS, Platform
 
 def _jsonable_platform(platform: Platform) -> dict[str, Any]:
     """Convert an immutable Platform spec to stable JSON data."""
+    from .installer.steps import STEPS
+
     return {
         "name": platform.name,
         "display_name": platform.display_name,
         "binary": platform.binary,
+        "install_flavor": platform.install_flavor,
         "has_hooks": platform.has_hooks,
         "schema_type": platform.schema_type,
         "hook_protocol": platform.hook_protocol.name,
@@ -39,7 +42,10 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "config_dir": platform.config_dir,
         "template_dir": platform.template_dir,
         "hooks_path_var": platform.hooks_path_var,
-        "install_fn_name": platform.install_fn_name,
+        "extension_manifest_name": platform.extension_manifest_name,
+        "extension_hooks_at_root": platform.extension_hooks_at_root,
+        "generates_toml_commands": platform.generates_toml_commands,
+        "install_steps": [step.__name__ for step in STEPS[platform.name]],
         "list_cmd": list(platform.list_cmd),
         "app_bundle_ids": sorted(platform.app_bundle_ids),
         "app_paths": sorted(platform.app_paths),
@@ -93,6 +99,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "install_by_default": platform.install_by_default,
         "memory_filename": platform.memory_filename,
         "memory_template": platform.memory_template,
+        "memory_workaround_flag": platform.memory_workaround_flag,
         "memory_sentinel_slug": platform.memory_sentinel_slug,
         "standalone_session_env_vars": list(platform.standalone_session_env_vars),
         "uninstall_cmd": list(platform.uninstall_cmd),

@@ -88,21 +88,19 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `plugins/pdf-extractor/skills/pdf-extractor/SKILL.md` | 2 refs — do NOT change `pdfplumber>=0.10.0` in install commands! |
 | `plugins/pdf-extractor/skills/pdf-extractor/references/backends.md` | Do NOT change `pdfplumber>=0.10.0`! |
 
-### Tests (6 files)
+### Tests
 
 | File | Notes |
 |------|-------|
-| `plugins/autorun/tests/test_self_update.py` | ~25 refs. **See Gotcha #2** — parametrized test cases must keep distinct version pairs. |
 | `plugins/autorun/tests/test_hook_entry.py` | Cache path version dirs |
 | `plugins/autorun/tests/test_hooks_format.py` | Semver sort test data |
-| `plugins/autorun/tests/test_install_pathways.py` | Cache version sort test data. **See Gotcha #3** — version lists must stay distinct. |
 | `plugins/autorun/tests/test_bootstrap_config.py` | Version in config |
 | `plugins/autorun/tests/test_claude_e2e_real_money.py` | Cache path version dirs |
-| `plugins/autorun/tests/test_codex_install.py` | Codex cache path version dirs |
-| `plugins/autorun/tests/test_install_extension.py` | Extension manifest fixture. **See Gotcha #6** — comparison data, not a version reference. |
-| `plugins/autorun/tests/test_install_memory_runtime.py` | Prerelease ordering pairs. **See Gotcha #6** and #2 — pairs must stay distinct. |
-| `plugins/autorun/src/autorun/installer/extension.py` | Self-check manifest fixture. **See Gotcha #6**. |
-| `plugins/autorun/src/autorun/installer/runtime.py` | Prerelease ordering assertions and the comment citing them. **See Gotcha #6**. |
+| `plugins/autorun/tests/test_install_codex.py` | Codex marketplace and hook fixtures |
+| `plugins/autorun/tests/test_install_extension.py` | Extension manifest fixture. **See Gotcha #5** — comparison data, not a version reference. |
+| `plugins/autorun/tests/test_install_memory_runtime.py` | Prerelease ordering pairs. **See Gotcha #5** and #2 — pairs must stay distinct. |
+| `plugins/autorun/src/autorun/installer/extension.py` | Self-check manifest fixture. **See Gotcha #5**. |
+| `plugins/autorun/src/autorun/installer/runtime.py` | Prerelease ordering assertions and the comment citing them. **See Gotcha #5**. |
 
 ## Gotchas (learned from 0.10.0 → 0.10.1 release)
 
@@ -120,7 +118,7 @@ Unchecked `0.10.0` → `0.10.1` replace will change `pdfplumber>=0.10.0` to `pdf
 
 ### Gotcha 2: Test parametrization collapse
 
-`test_self_update.py` has parametrized test cases like:
+`test_install_memory_runtime.py` has parametrized test cases like:
 ```python
 ("0.10.0", "v0.10.1", True),   # patch bump — update available
 ("0.10.1", "v0.10.0", False),  # downgrade — no update
@@ -131,21 +129,15 @@ Unchecked replacement turns ALL three into `("0.10.1", "v0.10.1", ...)` — coll
 
 **Fix:** After bulk replace, manually verify parametrized test cases still have **distinct version pairs** that test the intended comparison (upgrade, downgrade, same).
 
-### Gotcha 3: Test version list deduplication
-
-`test_install_pathways.py` has version lists like `["0.8.0", "0.9.0", "0.10.0", "0.10.1"]` for testing sort order. Unchecked replacement turns this into `["0.8.0", "0.9.0", "0.10.1", "0.10.1"]` — duplicate entries that break the sort test.
-
-**Fix:** After bulk replace, verify version lists in test files still have **all-distinct entries**.
-
-### Gotcha 4: Minimum version deps in root pyproject.toml
+### Gotcha 3: Minimum version deps in root pyproject.toml
 
 `pyproject.toml` has `autorun>=0.10.0` and `pdf-extractor>=0.10.0` in `[project.optional-dependencies]`. These are **minimum** version requirements. Only bump these for breaking changes, not patch releases.
 
-### Gotcha 5: Block message scope hint must be on separate line
+### Gotcha 4: Block message scope hint must be on separate line
 
 `config.py` DEFAULT_INTEGRATIONS "To allow" lines end with the command, then `\nScope: [N|5m|permanent]` on a new line. If the scope hint is on the **same line** as the `/ar:ok` command (e.g. `/ar:ok 'git push' [N|5m|permanent]`), it breaks `test_actual_command_blocking::TestArOkQuotingInSuggestions` because the test parses everything after `/ar:ok` as the copy-pasteable pattern.
 
-### Gotcha 6: Installer fixtures that merely happen to match the current version
+### Gotcha 5: Installer fixtures that merely happen to match the current version
 
 Four files carry `1.0.0rc1` as *test data*, not as a version reference:
 `installer/runtime.py` and `test_install_memory_runtime.py` compare
@@ -181,7 +173,7 @@ all = [
 ]
 ```
 
-These are minimum versions — only bump for breaking changes, not patch releases. See Gotcha #4.
+These are minimum versions — only bump for breaking changes, not patch releases. See Gotcha #3.
 
 ## Verification Steps
 
@@ -189,7 +181,7 @@ After updating versions:
 
 1. **Search for old version**: `grep -rn "OLD_VERSION" . | grep -v __pycache__`
 2. **Run core tests**: `uv run pytest plugins/autorun/tests/test_unit_simple.py -v`
-3. **Run version-sensitive tests**: `uv run pytest plugins/autorun/tests/test_self_update.py test_hook_entry.py test_hooks_format.py test_install_pathways.py test_bootstrap_config.py test_actual_command_blocking.py -v`
+3. **Run version-sensitive tests**: `uv run pytest plugins/autorun/tests/test_install_memory_runtime.py plugins/autorun/tests/test_hook_entry.py plugins/autorun/tests/test_hooks_format.py plugins/autorun/tests/test_bootstrap_config.py plugins/autorun/tests/test_actual_command_blocking.py -v`
 4. **Run full suite**: `uv run pytest plugins/autorun/tests/ -v`
 5. **Verify config loads**: `uv run python -c "from autorun.config import DEFAULT_INTEGRATIONS; print(len(DEFAULT_INTEGRATIONS))"`
 

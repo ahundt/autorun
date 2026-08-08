@@ -38,6 +38,7 @@ one marker read, plus a tree hash only when the target is about to change.
 from __future__ import annotations
 
 import os
+from itertools import chain
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -50,6 +51,7 @@ from .fs import (
     decide,
     decide_files,
     decide_link,
+    owns,
     publish_files,
     publish_link,
     publish_tree,
@@ -167,9 +169,8 @@ class Target:
     The sequence lives here rather than as a ``Platform`` field for two reasons.
     Steps are defined in the install modules, which import ``platforms``, so a
     field holding them would close an import cycle. And encoding them as *names*
-    for later lookup is the defect already found in this registry:
-    ``install_fn_name`` named a function nobody had written and was published as
-    a capability. Holding the callables themselves cannot express that.
+    for later lookup already shipped a nonexistent handler as a capability.
+    Holding the callables themselves cannot express that.
 
     ``platform`` stays reachable so a step can read the harness facts it needs —
     config dir, skill routes, hook protocol — without a second lookup.
@@ -315,29 +316,53 @@ def retirements(
     for root in roots:
         for plugin in scope:
             for tree in owned_trees(root, plugin=plugin):
+                parts = tree.relative_to(root).parts
+                if ("plugins", "cache") in zip(parts, parts[1:]):
+                    continue  # harness copies source markers into versioned cache
                 resolved = tree.resolve()
                 if resolved in keep or resolved in seen:
                     continue
                 seen.add(resolved)
-                yield Intent(target=tree, source=None, plugin=plugin)
+                manifest = read_marker(tree)
+                kind = (
+                    Kind.FILES
+                    if manifest is not None and manifest.settings.get("kind") == "files"
+                    else Kind.TREE
+                )
+                yield Intent(target=tree, source=None, plugin=plugin, kind=kind)
 
 
-def run(harnesses: Sequence[Harness], ctx: Context, mode: Mode = Mode.PREVIEW) -> list[Decision]:
+def run(
+    harnesses: Sequence[Harness],
+    ctx: Context,
+    mode: Mode = Mode.PREVIEW,
+    *,
+    extra: Iterable[Intent] = (),
+) -> list[Decision]:
     """The installer, the uninstaller, the status pass and the dry run.
 
     Callers pick a mode; nothing below this line knows which one, because a
     decision is the same object whether it is printed or acted on.
     """
     decisions = []
-    for intent in walk(harnesses, ctx):
+    for intent in chain(walk(harnesses, ctx), extra):
         source = None if mode.retiring else intent.source
         if intent.kind is Kind.LINK:
             # A link's ownership is its target, not a marker; `decide` reads a
             # live symlink as user-authored and would refuse it forever.
             inside = (intent.source or intent.target).parent
             decision = decide_link(source, intent.target, inside, plugin=intent.plugin)
-        elif intent.kind is Kind.FILES and source is not None:
-            decision = decide_files(source, intent.target, plugin=intent.plugin)
+        elif intent.kind is Kind.FILES:
+            if source is not None:
+                decision = decide_files(source, intent.target, plugin=intent.plugin)
+            else:
+                manifest = read_marker(intent.target)
+                if manifest is None:
+                    decision = Decision(Verdict.SKIP, intent.target, "already absent")
+                elif owns(manifest, intent.plugin):
+                    decision = Decision(Verdict.RETIRE, intent.target, "no longer shipped")
+                else:
+                    decision = Decision(Verdict.KEEP, intent.target, "belongs to another plugin")
         else:
             decision = decide(intent.target, source, plugin=intent.plugin)
         decisions.append(_perform(intent, decision) if mode.writes else decision)

@@ -675,46 +675,21 @@ def test_skill_placement_routes_cover_every_platform_and_mode():
     """Route matrix: `auto` yields exactly one route for every registered
     platform; `native` never publishes shared; `both` duplicates only where
     shared loading actually exists."""
-    from autorun.install import resolve_skill_routes
+    from autorun.installer.skills import routes_for
 
     for platform in PLATFORMS.values():
-        shared_auto, native_auto = resolve_skill_routes(platform, "auto")
+        shared_auto, native_auto = routes_for(platform, "auto")
         assert shared_auto != native_auto, (
             f"{platform.name}: auto must resolve to exactly one route"
         )
         assert shared_auto is platform.loads_shared_agents_skills
 
-        shared_native, native_native = resolve_skill_routes(platform, "native")
+        shared_native, native_native = routes_for(platform, "native")
         assert (shared_native, native_native) == (False, True)
 
-        shared_both, native_both = resolve_skill_routes(platform, "both")
+        shared_both, native_both = routes_for(platform, "both")
         assert native_both is True
         assert shared_both is platform.loads_shared_agents_skills
-
-
-def test_a_route_with_no_destination_says_so_instead_of_naming_a_package():
-    """Invariant 1: a described route names something a writer writes.
-
-    describe_skill_routes fell back to "native (harness plugin package)" for
-    any harness with neither a skills directory nor an extensions directory.
-    That is true for Codex, whose skills ship in the staged plugin bundle, and
-    false for ForgeCode and OpenCode, which have no package at all — so a dry
-    run reported a native route for two harnesses no installer writes. A route
-    nobody writes reads as coverage, which is worse than a reported gap.
-    """
-    from autorun.install import describe_skill_routes, platform_skill_destinations
-
-    for name, platform in PLATFORMS.items():
-        line = describe_skill_routes("native", [name])[0]
-        if platform_skill_destinations(platform):
-            assert "no native skill route" not in line, (
-                f"{name} has a real destination but is described as having none"
-            )
-            continue
-        assert "no native skill route" in line, (
-            f"{name} has no native destination, but its dry-run line claims a "
-            f"route: {line!r}"
-        )
 
 
 def test_a_placement_that_would_install_nothing_is_refused_with_a_remedy():
@@ -725,14 +700,14 @@ def test_a_placement_that_would_install_nothing_is_refused_with_a_remedy():
     exactly like success. The check names the harness, what it would install,
     and the flag that works instead.
     """
-    from autorun.install import unsatisfiable_skill_placements
+    from autorun.installer.skills import unsatisfiable
 
-    assert unsatisfiable_skill_placements("auto", sorted(PLATFORMS)) == [], (
+    assert unsatisfiable(PLATFORMS.values(), "auto") == (), (
         "auto is the zero-configuration path and must be satisfiable for every "
         "registered harness"
     )
 
-    problems = unsatisfiable_skill_placements("native", sorted(PLATFORMS))
+    problems = unsatisfiable(PLATFORMS.values(), "native")
     flagged = {p.split(":", 1)[0] for p in problems}
     expected = {
         name for name, platform in PLATFORMS.items()
@@ -740,7 +715,7 @@ def test_a_placement_that_would_install_nothing_is_refused_with_a_remedy():
     }
     assert flagged == expected, f"expected {expected}, refused {flagged}"
     for problem in problems:
-        assert "To fix:" in problem and "--skill-placement" in problem, (
+        assert "Use 'auto'" in problem and "--skill-placement" in problem, (
             f"a refusal must carry a runnable remedy: {problem!r}"
         )
 
@@ -779,7 +754,7 @@ _EXPECTED_OWN_SKILL_ROOTS = {
 def test_skill_search_paths_include_every_documented_read_tier(tmp_path, monkeypatch):
     """Each harness's own skill roots must be declared, not just the one
     autorun writes."""
-    from autorun.install import skill_search_paths
+    from autorun.installer.discovery import skill_destinations
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -787,7 +762,7 @@ def test_skill_search_paths_include_every_documented_read_tier(tmp_path, monkeyp
     for name, platform in PLATFORMS.items():
         found = {
             str(path.relative_to(tmp_path))
-            for path in skill_search_paths(platform)
+            for path in skill_destinations(platform, reading=True)
             if tmp_path in path.parents or path.parent == tmp_path
         }
         missing = _EXPECTED_OWN_SKILL_ROOTS[name] - found
@@ -799,123 +774,51 @@ def test_skill_search_paths_include_the_shared_root_exactly_when_it_is_read(
 ):
     """The shared root is a read tier for the five harnesses that scan it and
     for no others."""
-    from autorun.install import shared_agents_skills_dir, skill_search_paths
+    from autorun.installer.discovery import shared_root, skill_destinations
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    shared = shared_agents_skills_dir()
+    shared = shared_root()
 
     for name, platform in PLATFORMS.items():
-        present = shared in skill_search_paths(platform)
+        paths = (*skill_destinations(platform, reading=True), *(
+            (shared,) if platform.loads_shared_agents_skills else ()
+        ))
+        present = shared in paths
         assert present is platform.loads_shared_agents_skills, (
             f"{name}: shared root present={present} but "
             f"loads_shared_agents_skills={platform.loads_shared_agents_skills}"
         )
 
 
-def test_duplicate_detection_sees_a_collision_in_a_non_claude_harness(
-    tmp_path, monkeypatch
-):
-    """The check ran only where platform_skills_dir was declared, which was
-    Claude alone. A skill in both ~/.agents/skills and ~/.qwen/skills is two
-    copies that can drift, and nothing reported it."""
-    from autorun import install as inst
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-
-    for root in (tmp_path / ".agents" / "skills", tmp_path / ".qwen" / "skills"):
-        skill = root / "collider"
-        skill.mkdir(parents=True)
-        (skill / "SKILL.md").write_text(
-            "---\nname: collider\ndescription: two copies\n---\n", encoding="utf-8"
-        )
-
-    findings = inst._health_duplicate_skills()
-    detail = " ".join(f.detail for f in findings)
-    assert "collider" in detail and ".qwen" in detail, (
-        "a name present in both the shared root and Qwen's own skills "
-        f"directory must be reported as a duplicate; got {findings!r}"
-    )
-
-
-def test_a_link_to_the_shared_copy_is_not_reported_as_a_duplicate(
-    tmp_path, monkeypatch
-):
-    """Edge case the bridge depends on: one file reached by two paths is one
-    skill. Reporting it would tell users to break the link that keeps their
-    edits unified."""
-    from autorun import install as inst
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-
-    shared_skill = tmp_path / ".agents" / "skills" / "linked"
-    shared_skill.mkdir(parents=True)
-    (shared_skill / "SKILL.md").write_text(
-        "---\nname: linked\ndescription: one copy\n---\n", encoding="utf-8"
-    )
-    qwen_skills = tmp_path / ".qwen" / "skills"
-    qwen_skills.mkdir(parents=True)
-    (qwen_skills / "linked").symlink_to(shared_skill)
-
-    detail = " ".join(f.detail for f in inst._health_duplicate_skills())
-    assert "linked" not in detail, (
-        "a symlink to the shared copy is one skill reached two ways, not two "
-        "copies, and must not be reported"
-    )
-
-
 def test_missing_read_tiers_are_skipped_without_error(tmp_path, monkeypatch):
     """Edge case: almost every declared tier is absent on a given machine."""
-    from autorun.install import skill_search_paths
+    from autorun.installer.discovery import skill_destinations
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     for platform in PLATFORMS.values():
-        paths = skill_search_paths(platform)
+        paths = skill_destinations(platform, reading=True)
         assert all(p.is_absolute() for p in paths), platform.name
         assert len(set(paths)) == len(paths), (
             f"{platform.name} declares the same read tier twice"
         )
 
 
-def test_declared_install_functions_exist():
-    """Invariant 2: a named function in the registry must be a real function.
+def test_every_registered_platform_has_install_steps():
+    from autorun.installer.steps import STEPS
 
-    PLATFORMS["claude"] declared install_fn_name="_install_for_claude", which
-    was never written — Claude installs inline. Nothing dispatches on the
-    field, so the only visible effect was capability_snapshot.py publishing an
-    installer that does not exist. A name cannot fail on its own; this test is
-    what makes it fail.
-    """
-    from autorun import install as install_module
-
-    for name, platform in PLATFORMS.items():
-        if not platform.install_fn_name:
-            continue
-        assert hasattr(install_module, platform.install_fn_name), (
-            f"{name} declares install_fn_name={platform.install_fn_name!r}, "
-            f"which does not exist in autorun.install"
-        )
+    assert set(STEPS) == set(PLATFORMS)
+    assert all(STEPS.values())
 
 
 def test_every_registry_reference_to_code_holds_the_callable():
-    """Invariant 2: store the function, not its name.
-
-    PLATFORMS["claude"].install_fn_name names "_install_for_claude", which does
-    not exist — Claude installs inline — and capability_snapshot exports it, so
-    the snapshot advertises an installer nobody wrote. A stored name cannot be
-    checked; a stored callable fails when it is wrong.
-
-    PluginPackageSkills holds its resolver directly, which is why calling
-    destinations() here is a real check rather than a string comparison.
-    """
-    from autorun.install import platform_skill_destinations
+    """Skill routes hold resolvers directly, so calling them checks the link."""
+    from autorun.installer.discovery import skill_destinations
 
     for name, platform in PLATFORMS.items():
-        destinations = platform_skill_destinations(platform)
+        destinations = skill_destinations(platform)
         assert isinstance(destinations, tuple), name
         for path in destinations:
             assert path.is_absolute(), f"{name} route returned {path!r}"
@@ -924,7 +827,7 @@ def test_every_registry_reference_to_code_holds_the_callable():
 def test_skill_placement_rejects_an_unvalidated_mode():
     """The resolver is the last owner of the value; a typo must not silently
     resolve to a route."""
-    from autorun.install import resolve_skill_routes
+    from autorun.installer.skills import routes_for
 
     with pytest.raises(ValueError, match="skill placement"):
-        resolve_skill_routes(PLATFORMS["codex"], "shared")
+        routes_for(PLATFORMS["codex"], "shared")

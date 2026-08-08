@@ -6,10 +6,9 @@ template and publishes it, which is why generation lives here and not in the
 traversal: an :class:`Intent` names a source path, and generated content has
 none until it has been staged.
 
-TWO HARNESS BUGS SHAPE THIS FILE
-================================
+TWO NATIVE LAYOUTS SHAPE THIS FILE
+==================================
 
---- BUG #14449 WORKAROUND START --- DELETE WHEN FIXED ---
 Gemini hardcodes the hook manifest at ``<ext>/hooks/hooks.json`` and ignores the
 manifest's own ``hooks`` field. The materialized extension therefore carries a
 real ``hooks/`` directory with ``hook_entry.py`` beside the manifest, so
@@ -17,10 +16,7 @@ real ``hooks/`` directory with ``hook_entry.py`` beside the manifest, so
 installed manifest says ``"hooks": "./hooks/hooks.json"`` and both files exist.
 https://github.com/google-gemini/gemini-cli/issues/14449 (closed COMPLETED by
 PR #14460, which merged the convention this already targets).
-Disable: AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED
---- BUG #14449 WORKAROUND END ---
 
---- BUG #24115 WORKAROUND START --- DELETE WHEN FIXED ---
 Claude's plugin loader scans the marketplace *source* ``hooks/`` as well as its
 cache, and its strict schema rejects Gemini event names with ``invalid_key``,
 which disables every hook in the file. Gemini events therefore live under
@@ -28,9 +24,7 @@ which disables every hook in the file. Gemini events therefore live under
 into the extension from there. That is why this module templates from a
 directory rather than from ``plugins/autorun/hooks/``.
 https://github.com/anthropics/claude-code/issues/24115 (closed NOT_PLANNED; a
-closed issue is not permission to delete a workaround).
-Disable: AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED
---- BUG #24115 WORKAROUND END ---
+closed issue does not change the two harnesses' incompatible native layouts).
 
 Complexity: O(files) to stage, one hash pass at publish. The receipt check is
 two file reads and no subprocess, which is what lets refresh run for a harness
@@ -168,6 +162,8 @@ def stage_extension(
     *,
     skills: Mapping[str, Path] | None = None,
     hook_manifest: Mapping[str, object] | None = None,
+    manifest_name: str = MANIFEST_NAME,
+    hooks_at_root: bool = False,
 ) -> Path:
     """Build one extension directory, ready to be published.
 
@@ -206,10 +202,49 @@ def stage_extension(
     elif (source_manifest := template / "hooks" / "hooks.json").is_file():
         shutil.copy2(source_manifest, hooks / "hooks.json")
 
-    (staging / MANIFEST_NAME).write_text(
-        json.dumps(manifest.as_document(), indent=2) + "\n", encoding="utf-8"
+    document = manifest.as_document()
+    if manifest_name == "plugin.json":
+        document.pop("contextFileName", None)
+        document["hooks"] = "./hooks.json" if hooks_at_root else "./hooks/hooks.json"
+    (staging / manifest_name).write_text(
+        json.dumps(document, indent=2) + "\n", encoding="utf-8"
     )
+    if hooks_at_root and (hooks / "hooks.json").is_file():
+        shutil.copy2(hooks / "hooks.json", staging / "hooks.json")
     return staging
+
+
+def translated_hooks(template: Path, platform: object) -> Mapping[str, object] | None:
+    """Translate the shared Gemini hook manifest through registry contracts."""
+    source_path = template / "hooks" / "hooks.json"
+    if not source_path.is_file():
+        return None
+    document = json.loads(source_path.read_text(encoding="utf-8"))
+    target_name = str(
+        getattr(platform, "install_flavor", "")
+        or getattr(platform, "name", "gemini")
+    )
+
+    def rewrite(value):
+        if isinstance(value, dict):
+            return {key: rewrite(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, str) and "hook_entry.py" in value:
+            return value.replace("--cli gemini", f"--cli {target_name}")
+        return value
+
+    from ..platforms import GEMINI
+
+    event_map = {
+        source_event: getattr(platform, "autorun_to_harness_cli_events", {}).get(
+            autorun_event
+        )
+        for source_event, autorun_event in GEMINI.harness_cli_to_autorun_events.items()
+    }
+    return getattr(platform, "hook_protocol").translate_manifest(
+        rewrite(document), event_map
+    )
 
 
 def extension_intents(

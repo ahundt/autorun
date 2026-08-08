@@ -539,9 +539,17 @@ def parse_custom_harness(spec: str) -> CustomHarness | None:
     flavor, binary, tail = (part.strip() for part in parts)
     config_dir, _, display = tail.partition("::")
     name, config_dir = name.strip(), config_dir.strip()
+    from ..platforms import CUSTOM_HARNESS_FLAVOR_ALIASES
+
     if not (name and binary and config_dir) or flavor not in flavors():
         return None
-    return CustomHarness(name, flavor, binary, config_dir, display.strip() or name)
+    return CustomHarness(
+        name,
+        CUSTOM_HARNESS_FLAVOR_ALIASES[flavor],
+        binary,
+        config_dir,
+        display.strip() or name,
+    )
 
 
 def flavors() -> tuple[str, ...]:
@@ -569,11 +577,16 @@ def synthesize(custom: CustomHarness) -> object:
 
     from ..platforms import PLATFORMS
 
+    # A custom ``claude`` flavor is the documented portable, no-hook layout:
+    # Claude-format markdown commands plus AGENTS.md. ForgeCode is the existing
+    # registry entry with exactly that install shape.
+    base = PLATFORMS["forgecode" if custom.flavor == "claude" else custom.flavor]
     return replace(
-        PLATFORMS[custom.flavor],
+        base,
         name=custom.name,
         display_name=custom.display_name or custom.name,
         binary=custom.binary,
+        install_flavor=custom.flavor,
         config_dir=custom.config_dir,
         config_dir_env_vars=(),
     )
@@ -587,7 +600,8 @@ def steps_for_custom(
     One entry, so ``targets()`` finds the synthesized platform without learning
     that custom harnesses exist.
     """
-    return {**steps, custom.name: steps.get(custom.flavor, ())}
+    flavor = "forgecode" if custom.flavor == "claude" else custom.flavor
+    return {**steps, custom.name: steps.get(flavor, ())}
 
 
 #: Installing the `autorun` and `autorun-install` executables as a uv tool, so
@@ -637,6 +651,7 @@ CUSTOM_HARNESS = Setting(
     default=(),
     help="Install for an unlisted harness: name=flavor:binary:config_dir[::display]",
     repeatable=True,
+    aliases=("custom_harnesses",),
 )
 
 

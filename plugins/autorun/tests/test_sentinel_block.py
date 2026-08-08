@@ -11,7 +11,7 @@ These tests pin one shared contract for both, plus the strip half that
 ``uninstall_plugins`` needs. The docstring at install.py:2938 promised
 "a future uninstall can strip our block cleanly" and no strip function existed.
 
-Conventions follow test_codex_install.py: ``tmp_path`` for every root, and
+Conventions follow test_install_codex.py: ``tmp_path`` for every root, and
 ``monkeypatch.setenv("HOME", ...)`` where ``Path.home()`` is involved.
 """
 from __future__ import annotations
@@ -24,16 +24,24 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from autorun.durable_io import atomic_write_text  # noqa: E402
-from autorun.install import (  # noqa: E402
-    install_sentinel_block,
-    strip_sentinel_block,
-)
+from autorun.installer.memory import Block, splice, strip  # noqa: E402
 
 START = "<!-- autorun:test-block:start -->"
 END = "<!-- autorun:test-block:end -->"
 
 USER_PREFIX = "# My own notes\n\nAlways run `make lint` before committing.\n"
 USER_SUFFIX = "## Personal\n\nPrefer pnpm over npm.\n"
+BLOCK = Block("test-block")
+
+
+def install_sentinel_block(target, body, *, start, end):
+    assert (start, end) == (BLOCK.start, BLOCK.end)
+    return splice(target, body, BLOCK)
+
+
+def strip_sentinel_block(target, *, start, end):
+    assert (start, end) == (BLOCK.start, BLOCK.end)
+    return strip(target, BLOCK)
 
 
 def _block_of(text: str) -> str:
@@ -153,7 +161,7 @@ def test_install_strips_sentinels_already_present_in_the_body(tmp_path):
 
 
 def test_install_preserves_user_content_byte_for_byte(tmp_path):
-    """The assertion test_forgecode_install.py never made.
+    """The former ForgeCode installer tests lacked this assertion.
 
     A trivial idempotence check passes even if the function deletes the user's
     file first. This one does not.

@@ -12,67 +12,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from autorun.core import AI_ECHO_CHANNEL, EventContext  # noqa: E402
-from autorun.install import (  # noqa: E402
-    CmdResult,
-    install_sentinel_block,
-    strip_sentinel_block,
-    uninstall_plugins,
-)
+from autorun.installer.memory import Block, context_guidance_enabled, splice, strip  # noqa: E402
 
 START = "<!-- autorun:audit-test:start -->"
 END = "<!-- autorun:audit-test:end -->"
+SENTINEL = Block("audit-test")
 
 
-# --------------------------------------------------------------------------
-# S1.1 — uninstall honored `selection` only for the plugin loop
-# --------------------------------------------------------------------------
+def install_sentinel_block(target, body, *, start, end):
+    assert (start, end) == (SENTINEL.start, SENTINEL.end)
+    return splice(target, body, SENTINEL)
 
 
-@pytest.fixture
-def stubbed_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("FORGE_CONFIG", raising=False)
-    monkeypatch.setattr("autorun.install.run_cmd", lambda *a, **k: CmdResult(True, "ok"))
-    monkeypatch.setattr("autorun.install._restart_daemon_if_running", lambda: None)
-    cache = tmp_path / ".claude" / "plugins" / "cache" / "autorun"
-    cache.mkdir(parents=True)
-    (cache / "marker").write_text("x", encoding="utf-8")
-    return tmp_path
-
-
-def test_uninstalling_one_plugin_does_not_delete_the_shared_cache(stubbed_home):
-    """`autorun --uninstall pdf-extractor` wiped the whole autorun cache.
-
-    The per-plugin loop honored `selection`; every destructive step after it
-    ran unconditionally, including rmtree of the shared cache and
-    `uv tool uninstall autorun`.
-    """
-    uninstall_plugins("pdf-extractor")
-
-    cache = stubbed_home / ".claude" / "plugins" / "cache" / "autorun"
-    assert cache.is_dir(), "a partial uninstall must not delete the shared cache"
-
-
-def test_uninstalling_everything_still_removes_the_cache(stubbed_home):
-    uninstall_plugins("all")
-
-    cache = stubbed_home / ".claude" / "plugins" / "cache" / "autorun"
-    assert not cache.exists()
-
-
-def test_partial_uninstall_leaves_memory_blocks_alone(stubbed_home):
-    """Guidance is autorun-wide, not per-plugin; only a full uninstall strips it."""
-    from autorun.install import install_platform_memory
-    from autorun.platforms import PLATFORMS
-
-    claude = stubbed_home / ".claude"
-    claude.mkdir(parents=True, exist_ok=True)
-    install_platform_memory(PLATFORMS["claude"], Path(__file__).resolve().parents[1], claude)
-
-    uninstall_plugins("pdf-extractor")
-
-    text = (claude / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "autorun:claude-memory-md:start" in text
+def strip_sentinel_block(target, *, start, end):
+    assert (start, end) == (SENTINEL.start, SENTINEL.end)
+    return strip(target, SENTINEL)
 
 
 # --------------------------------------------------------------------------
@@ -192,12 +146,10 @@ def test_the_54673_workaround_key_exists_in_config():
 def test_the_54673_workaround_can_be_disabled_via_config(monkeypatch):
     """Env-only meant it could not be disabled for a hook subprocess."""
     from autorun.config import CONFIG
-    from autorun.install import _claude_memory_workaround_enabled
-
     key = "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED"
     monkeypatch.delenv(key, raising=False)
     monkeypatch.setitem(CONFIG, key, False)
-    assert _claude_memory_workaround_enabled() is False
+    assert context_guidance_enabled() is False
 
 
 def test_every_bug_workaround_key_in_config_is_read_by_the_code():
@@ -215,26 +167,18 @@ def test_every_bug_workaround_key_in_config_is_read_by_the_code():
             assert key in blob, f"CONFIG[{key!r}] is declared but never read"
 
 
-# --------------------------------------------------------------------------
-# S2.7 — ForgeCode printed success for a write that did not happen
-# --------------------------------------------------------------------------
+def test_retired_marketplace_names_are_absent_from_current_install_surfaces():
+    """The old marketplace names made every plugin install miss its source."""
+    repo = Path(__file__).resolve().parents[3]
+    paths = [
+        repo / "README.md",
+        repo / ".claude-plugin" / "marketplace.json",
+        repo / "plugins" / "known_marketplaces.json",
+    ]
+    paths.extend((repo / "plugins" / "autorun" / "src" / "autorun").rglob("*.py"))
+    paths.extend((repo / "plugins" / "autorun" / "skills").rglob("*.md"))
 
-
-def test_forgecode_reports_failure_when_its_template_is_missing(tmp_path, monkeypatch):
-    """A partial extract printed ✓ for a file that was never created."""
-    from autorun.install import _install_for_forgecode
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("FORGE_CONFIG", raising=False)
-
-    marketplace = tmp_path / "marketplace"
-    plugin = marketplace / "plugins" / "autorun"
-    template = plugin / "src" / "autorun" / "forgecode_template"
-    (template / "commands").mkdir(parents=True)
-    # Deliberately no AGENTS.md in the template.
-
-    ok, message = _install_for_forgecode(marketplace, ["autorun"], force=False)
-
-    agents = tmp_path / ".forge" / "AGENTS.md"
-    assert not agents.exists()
-    assert not ok, f"reported success for a file it did not write: {message!r}"
+    for path in paths:
+        content = path.read_text(encoding="utf-8")
+        assert "autorun-dev" not in content, path
+        assert "clautorun" not in content, path

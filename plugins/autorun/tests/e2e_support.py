@@ -59,7 +59,7 @@ BACKEND_E2E_CONTRACTS = {
     "antigravity": BackendE2EContract("test_antigravity_e2e_real_money.py", True, True, "sandboxed print and temporary log"),
     "qwen": BackendE2EContract("test_qwen_e2e_real_money.py", True, True, "bare, no history, zero tools"),
     "codex": BackendE2EContract("test_codex_e2e_real_money.py", True, True, "read-only sandbox and temporary cwd"),
-    "forgecode": BackendE2EContract("test_install_pathways.py", False, False, "advisory install; no external hook API"),
+    "forgecode": BackendE2EContract("test_install_steps.py", False, False, "advisory install; no external hook API"),
     "opencode": BackendE2EContract("test_opencode_bridge.py", True, False, "in-process JS plugin carries events to the daemon socket; live deny dogfooded with a local model 2026-08-04"),
 }
 

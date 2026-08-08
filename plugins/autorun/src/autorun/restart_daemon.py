@@ -412,16 +412,25 @@ def _daemon_cmdline(proc) -> str:
 
 
 def _is_daemon_process_for_src(proc, src_dir: Path) -> bool:
-    """Return True for autorun daemon processes started from this source tree."""
+    """Return True for daemons owned by this source tree and runtime directory."""
     cmdline_str = _daemon_cmdline(proc)
-    return (
-        'from autorun.daemon import main' in cmdline_str
-        and str(src_dir) in cmdline_str
-    )
+    if 'from autorun.daemon import main' not in cmdline_str or str(src_dir) not in cmdline_str:
+        return False
+    try:
+        env = proc.environ()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, NotImplementedError):
+        return False
+    runtime = env.get("AUTORUN_HOME")
+    if not runtime:
+        home = env.get("HOME") or env.get("USERPROFILE")
+        if not home:
+            return False
+        runtime = str(Path(home) / ".autorun")
+    return Path(runtime).resolve() == ipc.AUTORUN_CONFIG_DIR.resolve()
 
 
 def _daemon_processes_for_src(src_dir: Path) -> list:
-    """Find orphan daemon processes that belong to the current source tree."""
+    """Find orphan daemons owned by the current source tree and runtime."""
     return [
         proc
         for proc in psutil.process_iter(['pid', 'cmdline'])

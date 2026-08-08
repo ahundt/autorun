@@ -86,6 +86,26 @@ def test_install_command_parsing():
     print("✅ Install command parsing works")
 
 
+def test_uninstall_accepts_an_optional_plugin_selection(monkeypatch):
+    assert parse_args(["--uninstall"]).uninstall == "all"
+    assert parse_args(["--uninstall", "pdf-extractor"]).uninstall == "pdf-extractor"
+
+    called = []
+    monkeypatch.setattr(
+        "autorun.install.uninstall_plugins",
+        lambda selection: called.append(selection) or 0,
+    )
+
+    assert main(["--uninstall", "pdf-extractor"]) == 0
+    assert called == ["pdf-extractor"]
+
+
+def test_codex_github_help_names_the_current_plugin_identity():
+    help_text = create_parser().format_help()
+    assert "ar@autorun" in help_text
+    assert "installs autorun@autorun" not in help_text
+
+
 def test_install_platform_flags_parse_all_supported_clis():
     """Install targeting accepts Claude, Gemini, and Codex."""
     args = parse_args(['--install', '--claude'])

@@ -1602,28 +1602,12 @@ class TestAllLocationsSync:
                 f"Run: uv run --project plugins/autorun python -m autorun --install --force"
 
     def test_uv_tool_is_editable_not_copy(self):
-        """Location 5: UV tool should be editable install (symlink), not copy."""
-        if not shutil.which("autorun"):
-            pytest.skip("UV tool not installed")
+        """The generated UV command requests an editable installation."""
+        from autorun.installer.runtime import uv_tool_install_argv
 
-        # Check for direct_url.json (indicates editable)
-        tool_paths = list(Path.home().glob(
-            ".local/share/uv/tools/autorun/lib/python*/site-packages/autorun*.dist-info/direct_url.json"
-        ))
-
-        if not tool_paths:
-            pytest.fail(
-                "UV tool is not editable (no direct_url.json found). "
-                "This is a COPY which will desync from source. "
-                "Run: uv tool uninstall autorun && "
-                "cd plugins/autorun && uv tool install --editable ."
-            )
-
-        # Verify it's actually editable
-        import json
-        direct_url = json.loads(tool_paths[0].read_text(encoding="utf-8"))
-        assert direct_url.get("dir_info", {}).get("editable") is True, \
-            "UV tool has direct_url.json but editable=false. Reinstall with --editable."
+        argv = uv_tool_install_argv(PLUGIN_ROOT)
+        assert argv[:3] == ("uv", "tool", "install")
+        assert "--editable" in argv
 
     def test_gemini_extension_hooks_match_source(self):
         """Gemini extension hooks.json must match the Gemini TEMPLATE source

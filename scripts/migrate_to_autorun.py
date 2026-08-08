@@ -88,9 +88,9 @@ However, some files require MANUAL updates and are intentionally NOT processed b
     - File still exists at old path src/clautorun/ (should have been moved/deleted)
     - MANUAL FIX: Remove src/clautorun/ directory or move metadata.json to src/autorun/
 
-13. plugins/autorun/tests/test_marketplace_name.py line 98
-    - test_readme_does_not_reference_clautorun_dev() — INTENTIONAL: tests that old name
-      "clautorun-dev" is not used in marketplace; the function name documents what it checks
+13. Retired marketplace-name regression
+    - plugins/autorun/tests/test_audit_fixes.py checks that current install surfaces
+      do not use "autorun-dev" or "clautorun"
     - NO FIX NEEDED: Keep as-is (the "clautorun" reference is the test's purpose)
 
 POST-MIGRATION CHECKLIST:

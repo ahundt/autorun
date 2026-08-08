@@ -90,13 +90,12 @@ that need it. No disk access: stage generated content to a temp dir and point th
   under `ar`, which leaked 362 files.
 - **A step knows only today's paths.** Retiring a route means adding it to
   `traversal.retirements`, or its trees leak forever carrying our marker.
-- **Claude's versioned cache is Claude's.** `~/.claude/plugins/cache/<market>/
-  <plugin>/<version>/` holds several versions at once and Claude loads the
-  newest. Its own installer writes them, so autorun leaves no marker there and
-  the retirement sweep finds nothing to remove. Do not teach the sweep to clean
-  old version directories: it would delete state Claude still tracks. Only the
-  fallback path, used when `claude plugin install` itself fails, writes there,
-  and it proves ownership by path rather than by marker.
+- **Versioned harness caches belong to the harness.**
+  `<config>/plugins/cache/<market>/<plugin>/<version>/` may copy an ownership
+  marker from the registered source tree. The retirement sweep ignores that
+  path: deleting it would remove state Claude or Codex still tracks. Claude's
+  fallback cache writer proves ownership by path and deliberately writes no
+  marker.
 - **The installer runs before its dependencies exist.** `hooks/hook_entry.py` is
   stdlib-only; on `ImportError` it spawns `uv pip install autorun && autorun
   --install` in the background and the next hook finds the deps. So a missing

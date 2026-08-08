@@ -209,7 +209,10 @@ def sync_dependencies_argv(plugin_dir: Path, *, uv_tool_env: bool = False) -> tu
     """
     if uv_tool_env:
         return ("uv", "pip", "install", "--python", sys.executable, "-q", "bashlex")
-    return ("uv", "sync", "--extra", "claude-code", "--extra", "bashlex")
+    return (
+        "uv", "sync", "--project", str(plugin_dir),
+        "--extra", "claude-code", "--extra", "bashlex",
+    )
 
 
 def uv_tool_install_argv(package_dir: Path, *, python: str = "") -> tuple[str, ...]:
@@ -230,6 +233,7 @@ def bootstrap(
     plugin_dir: Path,
     *,
     uv_tool_env: bool = False,
+    install_tool: bool = True,
     run: Runner = _spawn,
 ) -> tuple[Outcome, ...]:
     """Sync dependencies, then install the CLI, reporting each step.
@@ -241,7 +245,10 @@ def bootstrap(
     """
     steps = (
         ("dependencies", sync_dependencies_argv(plugin_dir, uv_tool_env=uv_tool_env)),
-        ("autorun CLI", uv_tool_install_argv(plugin_dir)),
+    ) + (
+        (("autorun CLI", uv_tool_install_argv(plugin_dir)),)
+        if install_tool
+        else ()
     )
     outcomes: list[Outcome] = []
     for name, argv in steps:
@@ -364,6 +371,10 @@ class Version:
         )
 
     def describe(self) -> str:
+        if self.latest == "unknown":
+            return f"version check unavailable (current={self.current})"
+        if self.current == "unknown":
+            return f"installed version unknown (latest={self.latest})"
         if self.update_available:
             return f"update available: {self.current} -> {self.latest}"
         return f"up to date ({self.current})"
@@ -410,7 +421,7 @@ def self_update(
     """
     if not version.update_available:
         return Outcome("self-update", True, version.describe())
-    resolved = detect_update_method() if method == "auto" else method
+    resolved = detect_update_method(available=available) if method == "auto" else method
     try:
         steps = update_argv(resolved, extension=extension, available=available)
     except KeyError:

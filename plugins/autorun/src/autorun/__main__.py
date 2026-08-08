@@ -85,44 +85,51 @@ def _hook_cli_choices() -> tuple[str, ...]:
 
 def _agents_skills_choices() -> tuple[str, ...]:
     """Return shared-skills bridge choices without duplicating install data."""
-    from .install import _AGENTS_SKILLS_SETTING
+    from .installer.settings import SHARED_SKILLS_BRIDGE
 
-    return _AGENTS_SKILLS_SETTING.choices
+    return SHARED_SKILLS_BRIDGE.choices
 
 
 def _skill_placement_choices() -> tuple[str, ...]:
     """Return skill-placement choices without duplicating install data."""
-    from .install import _SKILL_PLACEMENT_SETTING
+    from .installer.settings import SKILL_PLACEMENT
 
-    return _SKILL_PLACEMENT_SETTING.choices
+    return SKILL_PLACEMENT.choices
 
 
 def _skill_placement_help() -> str:
     """Return shared parser help for --skill-placement."""
-    from .install import skill_placement_help
+    from .installer.settings import SKILL_PLACEMENT
 
-    return skill_placement_help()
+    return SKILL_PLACEMENT.rendered_help()
 
 
 def _skill_placement_token():
     """Return the shared per-token validator for --skill-placement."""
-    from .install import skill_placement_token
+    from .installer.settings import SKILL_PLACEMENT
 
-    return skill_placement_token
+    return SKILL_PLACEMENT.checked
+
+
+def _codex_github_plugin_identity() -> str:
+    """The plugin identity published by the selected GitHub marketplace."""
+    from .installer.codex import GITHUB_MARKETPLACE_NAME, PLUGIN_NAME
+
+    return f"{PLUGIN_NAME}@{GITHUB_MARKETPLACE_NAME}"
 
 
 def _codex_hook_source_choices() -> tuple[str, ...]:
     """Return Codex hook-source choices without duplicating install data."""
-    from .install import _CODEX_HOOK_SOURCE_SETTING
+    from .installer.settings import CODEX_HOOK_SOURCE
 
-    return _CODEX_HOOK_SOURCE_SETTING.choices
+    return CODEX_HOOK_SOURCE.choices
 
 
 def _codex_plugin_marketplace_choices() -> tuple[str, ...]:
     """Return Codex marketplace choices without duplicating install data."""
-    from .install import _CODEX_PLUGIN_MARKETPLACE_SETTING
+    from .installer.settings import CODEX_PLUGIN_MARKETPLACE
 
-    return _CODEX_PLUGIN_MARKETPLACE_SETTING.choices
+    return CODEX_PLUGIN_MARKETPLACE.choices
 
 
 def _custom_harness_spec_help() -> str:
@@ -238,15 +245,15 @@ def create_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="autorun",
-        description="""Autorun - Claude Code plugin for autonomous task execution and lifecycle management.
+        description="""Autorun - task lifecycle, safety guards, and native integration for supported AI coding harnesses.
 
 INSTALLATION (Two steps - see below for details):
   1. Install Python package:  pip install autorun  (or: uv pip install autorun)
-  2. Register with CLI:       autorun --install
+  2. Install native assets:   autorun --install
 
 QUICK START (after installation):
-  1. Use /ar:go <task> in Claude Code to start autonomous execution
-  2. Control file creation: autorun file status (or /ar:st in Claude)
+  1. Use ar:go <task> (or the harness's native displayed spelling)
+  2. Control file creation: autorun file status
   3. Manage task history: autorun task status
 
 Features: Autonomous execution, file policies, safety guards, task lifecycle tracking.
@@ -258,96 +265,48 @@ INSTALLATION GUIDE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Why two steps?
-  Step 1: Install Python package    → Makes 'autorun' CLI command available
-  Step 2: Register with Claude CLI  → Adds /ar:* slash commands to Claude Code/Gemini
+  Step 1: Install Python package → makes the autorun CLI available
+  Step 2: Install native assets  → publishes hooks, commands, skills, guidance,
+                                   plugins, and extensions for detected harnesses
 
-Note: For local development from a git clone, use the full module path in Step 2:
-  uv run python -m plugins.autorun.src.autorun.install --install --force
-This ensures the installer finds the source .claude-plugin/ directory.
+Preview any install without writes:
+  autorun --install --install-dry-run
 
-Method 1: Via Claude Code plugin system (EASIEST - one command does both):
+Claude Code plugin installation:
   claude plugin install https://github.com/ahundt/autorun.git
 
-Method 2: Via pip/uv (two steps):
-  # Step 1: Install Python package
-  pip install git+https://github.com/ahundt/autorun.git
-  # OR with UV (faster, recommended):
-  uv pip install git+https://github.com/ahundt/autorun.git
-
-  # Step 2: Register with Claude Code/Gemini
-  autorun --install                    # Register all plugins
-  autorun --status                     # Verify installation
-
-  # Optional: Install as UV tool for global availability
+Python package installation:
   uv tool install git+https://github.com/ahundt/autorun.git
+  autorun --install
+  autorun --status
 
-Method 3: From local clone (development):
+Local development:
   git clone https://github.com/ahundt/autorun.git && cd autorun
-
-  # Step 1: Install in editable mode
-  uv pip install -e .                    # UV (recommended)
-  # OR:
-  pip install -e .                       # Standard pip
-
-  # Step 2: Register with Claude Code/Gemini (use full module path for local dev)
+  uv sync --project plugins/autorun --extra claude-code --extra bashlex
   uv run python -m plugins.autorun.src.autorun.install --install --force
-
-  # Optional: Install as UV tool (adds --tool flag to registration)
-  autorun --install --force --tool     # Only after uv tool install
-
-Install UV (if needed):
-  # macOS/Linux:
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  # Homebrew:
-  brew install uv
-  # Windows:
-  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXAMPLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Installation:
-  autorun --install                    # Register all plugins with Claude/Gemini
-  autorun --install autorun          # Register only autorun plugin
-  autorun --status                     # Check installation status
+  autorun --install                         # all plugins, detected harnesses
+  autorun --install ar --codex              # autorun only, Codex only
+  autorun --install pdf-extractor           # PDF extractor only
+  autorun --uninstall pdf-extractor         # preserve autorun everywhere
+  autorun --status                          # preview drift and run health checks
 
 AutoFile - control file creation (slash: /ar:a, /ar:j, /ar:f, /ar:st):
-  autorun file status                    # Show current file policy
-  autorun file allow                     # Allow all file creation (slash: /ar:a)
-  autorun file justify                   # Require justification (slash: /ar:j)
-  autorun file search                    # Only modify existing (slash: /ar:f)
-  autorun file allow --global            # Set global default for all sessions
+  autorun file status
+  autorun file allow
+  autorun file justify
+  autorun file search
+  autorun file allow --global
 
 Task lifecycle management:
-  autorun task status                  # Show current task status
-  autorun task status --verbose        # Show detailed task information
-  autorun task export tasks.json       # Export task history to JSON
-  autorun task gc --dry-run            # Preview old data cleanup (safe)
-  autorun task gc --no-confirm         # Clean up old task data
-
-Common workflows:
-  # First time setup - production (see INSTALLATION GUIDE above for full details)
-  pip install autorun                  # Step 1: Install Python package
-  autorun --install                    # Step 2: Register with Claude/Gemini
-
-  # First time setup - local development from clone
-  cd /path/to/autorun && uv pip install -e .
-  uv run python -m plugins.autorun.src.autorun.install --install --force
-
-  # Check what's installed
-  autorun --status                     # See plugin status
-
-  # Control file creation
-  autorun file status                    # See current policy
-  autorun file justify                   # Enable strict mode (equivalent to /ar:j)
-
-  # View task progress
-  autorun task status --verbose        # See all incomplete tasks
-
-  # Clean up old data
-  autorun task gc --dry-run            # Preview what will be deleted
-  autorun task gc                      # Confirm and clean up
+  autorun task status --verbose
+  autorun task export tasks.json
+  autorun task gc --dry-run
 
 For more information: https://github.com/ahundt/autorun
         """,
@@ -361,10 +320,10 @@ For more information: https://github.com/ahundt/autorun
         nargs="?",
         const="all",
         metavar="PLUGINS",
-        help="Install autorun plugins to Claude Code and/or Gemini CLI. "
-        "This registers the plugins, installs hooks, and makes slash commands available. "
-        "Default: all plugins (autorun + pdf-extractor). "
-        "Specify plugins: --install autorun or --install autorun,pdf-extractor",
+        help="Install plugins for detected supported harnesses. This publishes each "
+        "harness's native hooks, commands, skills, guidance, plugins, or extensions. "
+        "Default: ar and pdf-extractor. Select: --install ar or "
+        "--install ar,pdf-extractor",
     )
     install_group.add_argument(
         "--force",
@@ -476,14 +435,14 @@ For more information: https://github.com/ahundt/autorun
         help=(
             "Codex plugin marketplace mode: personal installs ar@personal "
             "from a local personal marketplace; github adds ahundt/autorun "
-            "and installs autorun@autorun. Default: personal. "
+            f"and installs {_codex_github_plugin_identity()}. Default: personal. "
             "AUTORUN_CODEX_PLUGIN_MARKETPLACE also sets this; the flag wins."
         ),
     )
     install_group.add_argument(
         "--conductor",
         action="store_true",
-        default=True,
+        default=None,
         help="Install Conductor extension for Gemini (default: True)",
     )
     install_group.add_argument(
@@ -495,8 +454,11 @@ For more information: https://github.com/ahundt/autorun
     install_group.add_argument(
         "--uninstall",
         "-u",
-        action="store_true",
-        help="Uninstall plugins and UV tools",
+        nargs="?",
+        const="all",
+        default=None,
+        metavar="PLUGINS",
+        help="Uninstall all plugins and UV tools, or a comma-separated selection",
     )
     # Status/info options
     # Hook integration group (used by hook_entry.py, valid on every code path)
@@ -516,7 +478,7 @@ For more information: https://github.com/ahundt/autorun
         "--status",
         "-s",
         action="store_true",
-        help="Show installation status: which plugins are installed, where they're located, and which CLIs (Claude Code, Gemini) have them enabled",
+        help="Preview install drift and run health checks for detected supported harnesses",
     )
     info_group.add_argument(
         "--version",
@@ -1021,7 +983,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         selection = args.install if args.install is not None else "all"
 
         install_kwargs = {
-            "tool": args.tool,
+            "tool": args.tool or None,
             "force": args.force,
             "claude_only": args.claude,
             "gemini_only": args.gemini,
@@ -1071,17 +1033,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     # Uninstall mode
-    if args.uninstall:
+    if args.uninstall is not None:
         from autorun.install import uninstall_plugins
 
-        return uninstall_plugins()
+        return uninstall_plugins(args.uninstall)
 
     # Update mode
     if args.update:
         from autorun.install import perform_self_update
 
         result = perform_self_update(method=args.update_method)
-        print(result.output)
+        print(result.describe())
         return 0 if result.ok else 1
 
     # AutoFile (af) subcommand - file creation control

@@ -476,11 +476,11 @@ class TestMainFunctionRouting:
             result = main(["--install"])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=False,
+            "all", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
         assert result == 0
@@ -495,11 +495,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "--force"])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=True,
+            "all", tool=None, force=True,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
         assert result == 0
@@ -514,11 +514,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "autorun,plan-export"])
 
         mock_install.assert_called_once_with(
-            "autorun,plan-export", tool=False, force=False,
+            "autorun,plan-export", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
         assert result == 0
@@ -533,11 +533,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "--codex"])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=False,
+            "all", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
         assert result == 0
@@ -552,11 +552,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "--codex", "--codex-hook-source", "plugin"])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=False,
+            "all", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source="plugin", codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source="plugin", codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
         assert result == 0
@@ -571,11 +571,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "--codex", "--codex-plugin-marketplace", "github"])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=False,
+            "all", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace="github", claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace="github", claude_agents_skills=None,
             skill_placement=None,
         )
         assert result == 0
@@ -591,11 +591,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "--custom-harness", spec])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=False,
+            "all", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
             custom_harnesses=[spec],
         )
@@ -611,11 +611,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "--install-dry-run"])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=False,
+            "all", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
             dry_run=True,
         )
@@ -643,11 +643,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "--qwen"])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=False,
+            "all", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=True,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
         assert result == 0
@@ -662,11 +662,11 @@ class TestMainFunctionRouting:
             result = main(["--install", "--antigravity"])
 
         mock_install.assert_called_once_with(
-            "all", tool=False, force=False,
+            "all", tool=None, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=True,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
         assert result == 0

@@ -142,31 +142,6 @@ def test_an_unrecognised_choice_falls_through_rather_than_aborting(raw):
                                         config={}).source == "default"
 
 
-def test_it_agrees_with_the_current_choice_resolver():
-    """The replacement must reach the same answers as the resolver in use for
-    every case that resolver handles."""
-    from autorun.install import (
-        _AGENTS_SKILLS_SETTING,
-        _CODEX_HOOK_SOURCE_SETTING,
-        resolve_choice_setting,
-    )
-
-    pairs = [(_AGENTS_SKILLS_SETTING, SHARED_SKILLS_BRIDGE),
-             (_CODEX_HOOK_SOURCE_SETTING, CODEX_HOOK_SOURCE)]
-    envs = [
-        {}, {"AUTORUN_SHARED_SKILLS_BRIDGE": "link"}, {"AUTORUN_CLAUDE_AGENTS_SKILLS": "copy"},
-        {"AUTORUN_SHARED_SKILLS_BRIDGE": "typo"}, {"AUTORUN_CODEX_HOOK_SOURCE": "plugin"},
-        {"AUTORUN_CODEX_HOOK_SOURCE": "garbage"},
-        {"AUTORUN_SHARED_SKILLS_BRIDGE": "copy", "AUTORUN_CLAUDE_AGENTS_SKILLS": "link"},
-    ]
-    for current, replacement in pairs:
-        for env in envs:
-            assert (
-                resolve_choice_setting(current, env=env, config={}).value
-                == replacement.resolve(None, env=env, config={}).value
-            ), (replacement.name, env)
-
-
 # ─── Per-harness placement ───────────────────────────────────────────────────
 
 

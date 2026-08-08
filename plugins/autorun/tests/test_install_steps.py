@@ -221,6 +221,342 @@ def test_an_eighth_harness_needs_no_module_edited(sandbox):
     assert owned(sandbox) == [], "a harness added without code removes without code"
 
 
+def test_orchestrator_runs_a_custom_harness_through_its_flavor_steps(sandbox):
+    from autorun.installer.orchestrate import install
+    from autorun.installer.settings import (
+        CustomHarness,
+        steps_for_custom,
+        synthesize,
+    )
+
+    custom = CustomHarness("mine", "codex", "mine-cli", "~/.mine", "Mine")
+    harness = synthesize(custom)
+    table = steps_for_custom(custom, steps.STEPS)
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={
+            "skill_placement": {"mine": "auto"},
+            "codex_hook_source": "user",
+            "_codex_hook_command": "uv run hook_entry.py --cli codex",
+        },
+        home=sandbox,
+        harnesses=(harness,),
+        step_table=table,
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is True
+    assert (sandbox / ".mine" / "commands" / "ar-go.md").is_file()
+    assert (sandbox / ".mine" / "hooks.json").is_file()
+
+
+def test_custom_extension_harness_registers_through_its_own_binary(sandbox):
+    import subprocess
+
+    from autorun.installer import registration
+    from autorun.installer.orchestrate import install
+    from autorun.installer.settings import CustomHarness, steps_for_custom, synthesize
+
+    custom = CustomHarness("mine", "qwen", "mine-cli", "~/.mine", "Mine")
+    harness = synthesize(custom)
+    table = steps_for_custom(custom, steps.STEPS)
+    entry = registration.with_binary(registration.REGISTRATIONS["qwen"], custom.binary)
+    calls = []
+
+    def record(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={
+            "skill_placement": {"mine": "auto"},
+            "_registrations": {"mine": entry},
+        },
+        home=sandbox,
+        harnesses=(harness,),
+        step_table=table,
+        run_command=record,
+        available=("mine-cli",),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is True
+    assert calls and calls[0][:3] == ("mine-cli", "extensions", "install")
+    assert "--cli qwen" in (
+        sandbox / ".mine" / "extensions" / "ar" / "hooks" / "hooks.json"
+    ).read_text(encoding="utf-8")
+
+
+def test_antigravity_native_skills_are_inside_the_staged_plugin(walk, sandbox):
+    paired, ctx = walk
+    antigravity = [target for target in paired if target.name == "antigravity"]
+
+    run(antigravity, ctx, Mode.INSTALL)
+
+    plugin = sandbox / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+    assert (plugin / "skills" / "commit" / "SKILL.md").is_file()
+    assert not (plugin.parent / "commit").exists(), "a skill must not land beside the plugin"
+
+
+def test_antigravity_staging_uses_its_native_manifest_and_hook_events(walk, sandbox):
+    import json
+
+    paired, ctx = walk
+    antigravity = [target for target in paired if target.name == "antigravity"]
+
+    run(antigravity, ctx, Mode.INSTALL)
+
+    plugin = sandbox / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+    manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+    hooks = json.loads((plugin / "hooks.json").read_text(encoding="utf-8"))
+    assert manifest["hooks"] == "./hooks.json"
+    assert not (plugin / "gemini-extension.json").exists()
+    assert {"PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop"} <= set(
+        hooks["autorun"]
+    )
+    assert "--cli antigravity" in (plugin / "hooks.json").read_text(encoding="utf-8")
+
+
+def test_qwen_staging_rewrites_hook_identity_without_deprecated_toml(walk, sandbox):
+    paired, ctx = walk
+    qwen = [target for target in paired if target.name == "qwen"]
+
+    run(qwen, ctx, Mode.INSTALL)
+
+    extension = sandbox / ".qwen" / "extensions" / "ar"
+    assert "--cli qwen" in (extension / "hooks" / "hooks.json").read_text(
+        encoding="utf-8"
+    )
+    assert not (extension / "commands" / "ar").exists()
+
+
+def test_extension_staging_failure_makes_the_install_result_broken(sandbox, monkeypatch):
+    from autorun.installer.orchestrate import install
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(steps.extension, "stage_extension", fail)
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["antigravity"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is False
+    assert any("staging" in finding.check for finding in result.findings)
+
+
+def test_unsatisfiable_skill_placement_is_broken_before_any_write(sandbox):
+    from autorun.installer.orchestrate import install
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"forgecode": "native"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["forgecode"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is False
+    assert result.decisions == ()
+    assert any("cannot be satisfied" in finding.detail for finding in result.findings)
+    assert not (sandbox / ".forge").exists()
+
+
+def test_duplicate_skill_names_are_broken_before_any_write(sandbox, tmp_path):
+    from autorun.installer.orchestrate import install
+
+    market = tmp_path / "market"
+    for plugin in ("one", "two"):
+        skill = market / "plugins" / plugin / "skills" / "same"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(plugin, encoding="utf-8")
+
+    result = install(
+        marketplace_root=market,
+        plugins=("one", "two"),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["codex"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is False
+    assert result.decisions == ()
+    assert any("one:same" in finding.detail and "two:same" in finding.detail for finding in result.findings)
+    assert list(sandbox.iterdir()) == []
+
+
+def test_blocked_shared_skill_falls_back_inside_only_the_extension(sandbox):
+    from autorun.installer.orchestrate import install
+
+    user_skill = sandbox / ".agents" / "skills" / "commit"
+    user_skill.mkdir(parents=True)
+    (user_skill / "SKILL.md").write_text("user copy", encoding="utf-8")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["qwen"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    native = sandbox / ".qwen" / "extensions" / "ar" / "skills"
+    assert result.ok is True
+    assert (native / "commit" / "SKILL.md").is_file()
+    assert not (native / "philosophy").exists(), "only the blocked name falls back"
+    assert (user_skill / "SKILL.md").read_text(encoding="utf-8") == "user copy"
+
+
+def test_codex_personal_package_and_marketplace_resolve_to_the_same_tree(sandbox):
+    import json
+
+    from autorun.installer.orchestrate import install
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={
+            "skill_placement": {"": "auto"},
+            "codex_hook_source": "user",
+            "codex_plugin_marketplace": "personal",
+            "_codex_hook_command": "uv run hook_entry.py --cli codex",
+        },
+        home=sandbox,
+        harnesses=(PLATFORMS["codex"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    source = sandbox / "plugins" / "ar"
+    marketplace = json.loads(
+        (sandbox / ".agents" / "plugins" / "marketplace.json").read_text()
+    )
+    entry = next(item for item in marketplace["plugins"] if item["name"] == "ar")
+    assert result.ok is True
+    assert entry["source"] == {"source": "local", "path": "./plugins/ar"}
+    assert sandbox / entry["source"]["path"] == source
+    assert (source / ".codex-plugin" / "plugin.json").is_file()
+    assert not (source / "skills" / "commit").exists(), "auto uses the shared route"
+    assert (source / ".codex-plugin" / "skills" / "ar" / "SKILL.md").is_file()
+    assert (sandbox / ".agents" / "skills" / "commit" / "SKILL.md").is_file()
+
+
+def test_codex_plugin_hook_mode_packages_hooks_without_user_hooks(sandbox):
+    from autorun.installer.orchestrate import install
+
+    command = "uv run ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli codex"
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={
+            "skill_placement": {"": "auto"},
+            "codex_hook_source": "plugin",
+            "codex_plugin_marketplace": "personal",
+            "_codex_plugin_hook_command": command,
+        },
+        home=sandbox,
+        harnesses=(PLATFORMS["codex"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    hooks = sandbox / "plugins" / "ar" / "hooks" / "hooks.json"
+    assert result.ok is True
+    assert command in hooks.read_text(encoding="utf-8")
+    assert not (sandbox / ".codex" / "hooks.json").exists()
+
+
+def test_codex_github_mode_registers_remote_identity_without_local_package(sandbox):
+    import subprocess
+
+    from autorun.installer.orchestrate import install
+
+    calls = []
+
+    def record(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={
+            "skill_placement": {"": "auto"},
+            "codex_hook_source": "user",
+            "codex_plugin_marketplace": "github",
+            "_codex_hook_command": "uv run hook_entry.py --cli codex",
+        },
+        home=sandbox,
+        harnesses=(PLATFORMS["codex"],),
+        run_command=record,
+        available=("codex",),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is True
+    assert calls == [
+        ("codex", "plugin", "marketplace", "add", "ahundt/autorun"),
+        ("codex", "plugin", "add", "ar@autorun"),
+    ]
+    assert not (sandbox / "plugins" / "ar").exists()
+    assert not (sandbox / ".agents" / "plugins" / "marketplace.json").exists()
+
+
+def test_force_withdraws_registration_before_readding_it(sandbox):
+    import subprocess
+
+    from autorun.installer.orchestrate import install
+
+    calls = []
+
+    def record(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={
+            "skill_placement": {"": "auto"},
+            "codex_hook_source": "user",
+            "codex_plugin_marketplace": "personal",
+            "_codex_hook_command": "uv run hook_entry.py --cli codex",
+        },
+        home=sandbox,
+        harnesses=(PLATFORMS["codex"],),
+        run_command=record,
+        available=("codex",),
+        state_dir=sandbox / ".state",
+        force=True,
+    )
+
+    assert result.ok is True
+    assert calls == [
+        ("codex", "plugin", "remove", "ar@personal"),
+        ("codex", "plugin", "remove", "autorun@personal"),
+        ("codex", "plugin", "remove", "ar@autorun"),
+        ("codex", "plugin", "remove", "autorun@autorun"),
+        ("codex", "plugin", "add", "ar@personal"),
+    ]
+
+
 # ─── Generated artifacts, staged before the walk ─────────────────────────────
 
 
@@ -272,13 +608,13 @@ def test_the_opencode_shim_substitutes_both_values_absolutely(tmp_path):
 
     shims = steps.stage_opencode_shim(
         tmp_path / "staged", {"ar": plugin},
-        socket="/tmp/ar.sock", command='uv run "hook entry.py"',
+        socket="/tmp/ar.sock", command=("uv", "run", "hook entry.py"),
     )
 
     text = (shims["ar"] / "autorun.js").read_text(encoding="utf-8")
     assert "__AUTORUN_SOCKET__" not in text and "/tmp/ar.sock" in text
     assert "__AUTORUN_HOOK_ENTRY_COMMAND__" not in text
-    assert r'"uv run \"hook entry.py\""' in text, "a quote in the path must not break the module"
+    assert '["uv", "run", "hook entry.py"]' in text
 
 
 def test_a_plugin_without_the_shim_template_stages_nothing(tmp_path):
@@ -315,6 +651,7 @@ def test_only_codex_merges_into_a_user_owned_hooks_file(sandbox):
     outright, so those are ordinary intents rather than a merge."""
     ctx = Context(
         marketplace_root=REPO,
+        plugin_dirs=(REPO / "plugins" / "autorun",),
         home=sandbox,
         settings={"codex_hook_source": "user", "_codex_hook_command": "uv run hook_entry.py"},
     )

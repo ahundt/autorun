@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,10 +18,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from autorun.installer.discovery import (  # noqa: E402
     MARKETPLACE_MANIFEST,
+    codex_plugin_source,
+    config_dir,
     marketplace_root,
+    personal_marketplace,
     plugin_dir,
     resolve_plugins,
+    shared_root,
+    skill_destinations,
 )
+from autorun.platforms import ConfigDirSkills  # noqa: E402
 
 
 def make_root(path: Path, plugins: list[dict] | None = None) -> Path:
@@ -147,14 +154,49 @@ def test_two_names_for_one_directory_install_it_once(tmp_path):
 # ─── Agreement with the implementation being replaced ────────────────────────
 
 
-def test_it_agrees_with_the_current_resolver_on_this_repository():
-    """The replacement must reach the same answers on the real tree, which is
-    the only shape exercised by an actual install."""
-    from autorun import install as legacy
+def test_the_real_repository_resolves_every_manifest_plugin():
+    root = marketplace_root()
 
-    current = legacy.find_marketplace_root()
-    replacement = marketplace_root(Path(legacy.__file__))
+    assert root is not None
+    assert plugin_dir(root, "ar") == (root / "plugins" / "autorun").resolve()
+    assert plugin_dir(root, "pdf-extractor") == (
+        root / "plugins" / "pdf-extractor"
+    ).resolve()
+    assert plugin_dir(root, "ghost") is None
 
-    assert replacement == current
-    for name in ("ar", "autorun", "pdf-extractor", "ghost"):
-        assert plugin_dir(replacement, name) == legacy._resolve_plugin_dir(current, name), name
+
+def test_shared_and_codex_locations_follow_their_one_config_authority(
+    tmp_path, monkeypatch
+):
+    from autorun.config import CONFIG
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setitem(CONFIG, "shared_agents_dir", "~/shared")
+    monkeypatch.setitem(CONFIG, "shared_agents_skills_subdir", "skill-box")
+    monkeypatch.setitem(CONFIG, "codex_plugin_source_dir", "~/plugin-box")
+
+    assert shared_root() == tmp_path / "shared" / "skill-box"
+    assert personal_marketplace() == tmp_path / "shared" / "plugins" / "marketplace.json"
+    assert codex_plugin_source("ar") == tmp_path / "plugin-box" / "ar"
+
+
+def test_config_and_skill_routes_share_override_env_default_precedence(
+    tmp_path, monkeypatch
+):
+    from autorun.config import CONFIG
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    platform = SimpleNamespace(
+        name="demo",
+        config_dir="~/.demo",
+        config_dir_env_vars=("DEMO_CONFIG",),
+        config_dir_env_var_subdir="demo",
+        native_skills=ConfigDirSkills("skills"),
+    )
+
+    assert config_dir(platform, env={}) == tmp_path / ".demo"
+    assert config_dir(platform, env={"DEMO_CONFIG": "~/env"}) == tmp_path / "env" / "demo"
+
+    monkeypatch.setitem(CONFIG, "harness_config_dirs", {"demo": "~/configured"})
+    assert config_dir(platform, env={"DEMO_CONFIG": "~/env"}) == tmp_path / "configured"
+    assert skill_destinations(platform) == (tmp_path / "configured" / "skills",)

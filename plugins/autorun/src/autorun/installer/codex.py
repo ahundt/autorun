@@ -26,8 +26,9 @@ Complexity: O(E) in existing entries, one read and one atomic write.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from .fs import dereference_links as fs_dereference_links, json_document
 
@@ -45,8 +46,16 @@ __all__ = [
     "marketplace_entry",
     "publish_marketplace",
     "withdraw_from_marketplace",
+    "stage_plugin",
     "dereference_links",
+    "PLUGIN_NAME", "PERSONAL_MARKETPLACE_NAME", "GITHUB_MARKETPLACE_NAME",
+    "GITHUB_MARKETPLACE_SOURCE",
 ]
+
+PLUGIN_NAME = "ar"
+PERSONAL_MARKETPLACE_NAME = "personal"
+GITHUB_MARKETPLACE_NAME = "autorun"
+GITHUB_MARKETPLACE_SOURCE = "ahundt/autorun"
 
 #: Anything else drops every hook in the file. Not a style rule — a data-loss rule.
 ALLOWED_TOP_LEVEL = frozenset({"description", "hooks"})
@@ -215,14 +224,22 @@ def marketplace_entry(name: str, relative_source: str, *, category: str = "Produ
     }
 
 
+def _same_marketplace_source(candidate: object, expected: Mapping[str, object]) -> bool:
+    """Whether name and source prove this is the entry autorun published."""
+    return (
+        isinstance(candidate, Mapping)
+        and candidate.get("name") == expected.get("name")
+        and candidate.get("source") == expected.get("source")
+    )
+
+
 def publish_marketplace(
     path: Path, name: str, entry: Mapping[str, object], *, display: str = ""
 ) -> bool:
     """Add or update one plugin in a marketplace file the user may also use.
 
-    Matched by plugin name and replaced in place, so a changed source path
-    converges instead of listing the plugin twice — two entries with the same
-    name is the shape that makes Codex install whichever it reads last.
+    Name plus exact source establishes ownership. A same-name entry from a
+    different source is a user conflict and is left untouched.
 
     Returns whether anything changed; :func:`json_document` writes nothing when
     the document is unchanged, so a repeated install does not churn the file.
@@ -235,17 +252,26 @@ def publish_marketplace(
         plugins = document.setdefault("plugins", [])
         if not isinstance(plugins, list):
             raise ValueError(f"{path}: 'plugins' must be a list, found {type(plugins).__name__}")
+        if any(
+            isinstance(p, Mapping)
+            and p.get("name") == entry.get("name")
+            and not _same_marketplace_source(p, entry)
+            for p in plugins
+        ):
+            raise ValueError(
+                f"{path}: plugin {entry.get('name')!r} already uses a different source"
+            )
         others = [
             p for p in plugins
-            if not (isinstance(p, Mapping) and p.get("name") == entry.get("name"))
+            if not _same_marketplace_source(p, entry)
         ]
         document["plugins"] = [*others, dict(entry)]
         changed = json.dumps(document, sort_keys=True) != before
     return changed
 
 
-def withdraw_from_marketplace(path: Path, plugin: str) -> bool:
-    """Remove one plugin, leaving every other entry and the file itself."""
+def withdraw_from_marketplace(path: Path, entry: Mapping[str, object]) -> bool:
+    """Remove one exactly owned plugin, leaving same-name entries untouched."""
     if not path.is_file():
         return False
     removed = False
@@ -253,10 +279,79 @@ def withdraw_from_marketplace(path: Path, plugin: str) -> bool:
         plugins = document.get("plugins")
         if not isinstance(plugins, list):
             return False
-        kept = [p for p in plugins if not (isinstance(p, Mapping) and p.get("name") == plugin)]
+        kept = [p for p in plugins if not _same_marketplace_source(p, entry)]
         removed = len(kept) != len(plugins)
         document["plugins"] = kept
     return removed
+
+
+def stage_plugin(
+    plugin_dir: Path,
+    staging: Path,
+    *,
+    include_hooks: bool = False,
+    include_skills: bool = True,
+    skill_names: Iterable[str] | None = None,
+    hook_command: str = "",
+) -> Path:
+    """Build the local Codex plugin tree without touching its live target."""
+    selected_skills = None if skill_names is None else set(skill_names)
+    include_skills = include_skills and selected_skills != set()
+    ignored = shutil.ignore_patterns(
+        ".git", ".venv", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        "__pycache__", "*.pyc", "*.pyo", ".coverage", "htmlcov", "hooks",
+    )
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        source = Path(directory)
+        skipped = set(ignored(directory, names))
+        if source == plugin_dir and not include_skills:
+            skipped.add("skills")
+        if source == plugin_dir / "skills":
+            skipped.update(
+                name for name in names
+                if (
+                    (source / name).is_dir()
+                    and not (source / name / "SKILL.md").is_file()
+                )
+                or (selected_skills is not None and name not in selected_skills)
+            )
+        return skipped
+
+    shutil.copytree(plugin_dir, staging, ignore=ignore)
+    manifest_path = staging / ".codex-plugin" / "plugin.json"
+    if not include_skills and manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        declared = manifest.get("skills")
+        if isinstance(declared, list):
+            kept = [entry for entry in declared if entry != "./skills/"]
+            if kept:
+                manifest["skills"] = kept
+            else:
+                manifest.pop("skills", None)
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+    if include_hooks:
+        if not hook_command:
+            raise ValueError("Codex plugin hooks require a command")
+        hooks = staging / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(plugin_dir / "hooks" / "hook_entry.py", hooks / "hook_entry.py")
+        events = (
+            "PreToolUse", "PostToolUse", "UserPromptSubmit",
+            "SessionStart", "Stop", "SubagentStop",
+        )
+        (hooks / "hooks.json").write_text(
+            json.dumps(
+                {"hooks": {event: [wrap((hook_command,))] for event in events}},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    dereference_links(staging)
+    return staging
 
 
 def dereference_links(root: Path) -> tuple[str, ...]:
@@ -369,19 +464,22 @@ def demo() -> None:
         # Republishing the same entry changes nothing and rewrites nothing.
         assert publish_marketplace(market, "personal", entry) is False
 
-        # A changed source converges instead of listing the plugin twice.
+        # A same-name entry from another source is not ours to replace.
         moved = marketplace_entry("autorun", "./elsewhere/autorun")
-        assert publish_marketplace(market, "personal", moved) is True
-        plugins = json.loads(market.read_text())["plugins"]
-        assert len(plugins) == 1 and plugins[0]["source"]["path"] == "./elsewhere/autorun"
+        try:
+            publish_marketplace(market, "personal", moved)
+        except ValueError as error:
+            assert "different source" in str(error)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("a name collision must not replace another source")
 
         # Another plugin, including one the user added, is never disturbed.
         theirs = marketplace_entry("their-tool", "./their-tool")
         publish_marketplace(market, "personal", theirs)
-        assert withdraw_from_marketplace(market, "autorun") is True
+        assert withdraw_from_marketplace(market, entry) is True
         remaining = json.loads(market.read_text())["plugins"]
         assert [p["name"] for p in remaining] == ["their-tool"]
-        assert withdraw_from_marketplace(market, "autorun") is False, "already gone"
+        assert withdraw_from_marketplace(market, entry) is False, "already gone"
 
         # --- staging must flatten links the Codex cache cannot follow --------
         real = codex / "real"

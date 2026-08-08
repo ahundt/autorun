@@ -39,10 +39,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from . import discovery, registration, status, steps, teardown
+from . import discovery, registration, skills, status, steps, teardown
+from ..platforms import ExtensionSkills, PluginPackageSkills
 from .fs import Verdict
 from .runtime import Outcome, Runner, _spawn
-from .traversal import Context, Mode, run, targets
+from .traversal import Context, Mode, retirements, run, targets
 
 __all__ = ["Result", "perform", "install", "uninstall", "preview"]
 
@@ -107,6 +108,9 @@ def perform(
     run_command: Runner = _spawn,
     available: Iterable[str] | None = None,
     state_dir: Path | None = None,
+    step_table: Mapping[str, tuple] | None = None,
+    force: bool = False,
+    teardown_enabled: bool = True,
 ) -> Result:
     """One run, in one mode. The single place the order of operations lives.
 
@@ -117,23 +121,94 @@ def perform(
     from ..platforms import PLATFORMS
 
     resolved = dict(settings or {})
+    codex_marketplace = str(resolved.get("codex_plugin_marketplace", "personal"))
+    resolved.setdefault(
+        "_registration_variants", {"codex": f"codex:{codex_marketplace}"}
+    )
+    resolved.setdefault(
+        "_registration_markets",
+        {"codex": "personal" if codex_marketplace == "personal" else "autorun"},
+    )
     directories, missing = discovery.resolve_plugins(marketplace_root, list(plugins))
-    if not directories:
+    if not directories and mode is Mode.INSTALL:
         return Result(mode, missing=missing)
 
     selected = list(PLATFORMS.values() if harnesses is None else harnesses)
     named = {discovery.plugin_name(d): d for d in directories}
+    for plugin in plugins:
+        named.setdefault(plugin, marketplace_root / "plugins" / plugin)
     ctx = Context(
         marketplace_root=marketplace_root,
-        plugin_dirs=directories,
+        # Placeholders keep plugin scope available during a source-independent
+        # uninstall. Steps ignore missing sources, while guidance, hooks,
+        # marketplace entries, and receipt-owned trees can still be retired.
+        plugin_dirs=tuple(dict.fromkeys(named.values())),
         home=home or Path.home(),
         settings=resolved,
+        force=force,
     )
-    paired = targets(selected, steps.STEPS)
+    findings: list[status.Finding] = []
+    if mode is not Mode.UNINSTALL:
+        for name, claims in skills.duplicate_names(named).items():
+            findings.append(status.Finding(
+                "skill names",
+                status.Level.BROKEN,
+                f"{name}: {', '.join(claims)}",
+                "select only one plugin that ships this skill name",
+            ))
+        for harness in selected:
+            platform = getattr(harness, "platform", harness)
+            placement = steps._placement(ctx, getattr(harness, "name", ""))
+            problems = skills.unsatisfiable((platform,), placement)
+            findings.extend(
+                status.Finding(
+                    "skill placement", status.Level.BROKEN, problem,
+                    "use --skill-placement auto or both",
+                )
+                for problem in problems
+            )
+            if problems:
+                continue
+            _, planned = skills.skill_plan(
+                platform,
+                ctx,
+                named,
+                placement=placement,
+                packaged_native=isinstance(
+                    getattr(platform, "native_skills", None),
+                    (ExtensionSkills, PluginPackageSkills),
+                ),
+            )
+            if planned.refused:
+                findings.append(status.Finding(
+                    "skill placement",
+                    status.Level.WARN,
+                    f"{getattr(harness, 'name', '?')}: preserved conflicting "
+                    f"user paths for {', '.join(planned.refused)}",
+                ))
+        if any(finding.level is status.Level.BROKEN for finding in findings):
+            return Result(mode, findings=tuple(findings), missing=missing)
+    step_table = steps.STEPS if step_table is None else step_table
+    paired = targets(selected, step_table)
 
     registrations: list[Outcome] = []
     notes: list[str] = []
-    with steps.prepared(ctx, plugins=named) as staged:
+    with steps.prepared(
+        ctx, plugins=named, harnesses=selected, step_table=step_table
+    ) as staged:
+        findings.extend(
+            status.Finding("extension staging", status.Level.BROKEN, str(failure))
+            for failure in staged.settings.get("_staging_failures", ())
+        )
+        if any(finding.level is status.Level.BROKEN for finding in findings):
+            return Result(mode, findings=tuple(findings), missing=missing)
+        marketplaces = tuple(
+            marketplace
+            for harness in selected
+            for marketplace in steps.marketplaces_for(
+                harness, staged, removing=mode is Mode.UNINSTALL
+            )
+        )
         # Uninstall tells the harness first: removing the files under a
         # registration leaves the harness caching a path that no longer exists.
         if mode is Mode.UNINSTALL:
@@ -143,14 +218,61 @@ def perform(
                     removing=True, run=run_command, available=available,
                 )
             )
+            try:
+                for harness in selected:
+                    notes.extend(steps.apply_hooks(
+                        steps.hooks_for(harness, staged, removing=True), mode
+                    ))
+                notes.extend(steps.apply_marketplaces(marketplaces, mode))
+            except (OSError, ValueError) as error:
+                findings.append(status.Finding(
+                    "Codex withdrawal", status.Level.BROKEN, str(error),
+                    "repair the user-owned JSON file, then retry uninstall",
+                ))
+                return Result(
+                    mode, notes=tuple(notes), registrations=tuple(registrations),
+                    findings=tuple(findings), missing=(),
+                )
 
         decisions = run(paired, staged, mode)
+        claimed = [decision.target for decision in decisions]
+        stale = retirements(
+            _config_roots(selected, staged),
+            () if mode is Mode.UNINSTALL else claimed,
+            plugins=named,
+        )
+        decisions.extend(run((), staged, mode, extra=stale))
 
         for harness in selected:
-            notes.extend(steps.apply_regions(steps.regions_for(harness, staged), mode))
-            notes.extend(steps.apply_hooks(steps.hooks_for(harness, staged), mode))
+            notes.extend(steps.apply_regions(
+                steps.regions_for(
+                    harness, staged, removing=mode is Mode.UNINSTALL
+                ),
+                mode,
+            ))
+            if mode is not Mode.UNINSTALL:
+                try:
+                    notes.extend(steps.apply_hooks(
+                        steps.hooks_for(harness, staged), mode
+                    ))
+                except (OSError, ValueError) as error:
+                    findings.append(status.Finding(
+                        "Codex hooks", status.Level.BROKEN, str(error),
+                        "repair the user-owned hooks file, then retry",
+                    ))
 
-        if mode is Mode.INSTALL:
+        if mode is not Mode.UNINSTALL:
+            try:
+                notes.extend(steps.apply_marketplaces(marketplaces, mode))
+            except (OSError, ValueError) as error:
+                findings.append(status.Finding(
+                    "Codex marketplace", status.Level.BROKEN, str(error),
+                    "resolve the conflicting marketplace entry, then retry",
+                ))
+
+        if mode is Mode.INSTALL and not any(
+            finding.level is status.Level.BROKEN for finding in findings
+        ):
             registrations.extend(
                 _registrations(
                     selected, named, marketplace_root, market, staged,
@@ -160,7 +282,7 @@ def perform(
 
     torn = (
         teardown.teardown(_config_roots(selected, ctx), state_dir=state_dir)
-        if mode is Mode.UNINSTALL
+        if mode is Mode.UNINSTALL and teardown_enabled
         else None
     )
     return Result(
@@ -168,8 +290,9 @@ def perform(
         decisions=tuple(decisions),
         notes=tuple(notes),
         registrations=tuple(registrations),
+        findings=tuple(findings),
         torn_down=torn,
-        missing=missing,
+        missing=() if mode is Mode.UNINSTALL else missing,
     )
 
 
@@ -185,18 +308,84 @@ def _registrations(
     available: Iterable[str] | None,
 ) -> list[Outcome]:
     """Tell each harness, for each plugin. Never raises into the walk's result."""
-    staged = ctx.settings.get("_staged_extensions") or {}
+    staged_all = ctx.settings.get("_staged_extensions") or {}
     done: list[Outcome] = []
     for harness in harnesses:
         name = getattr(harness, "name", "")
-        for plugin in plugins:
-            values = _values(root, plugin, market, staged.get(plugin) if isinstance(staged, Mapping) else None)
-            call = registration.withdraw if removing else registration.register
-            done.extend(call(name, values, run=run, available=available))
-            wanted = () if removing else _companions_wanted(ctx)
+        platform = getattr(harness, "platform", harness)
+        flavor = (
+            getattr(platform, "install_flavor", "")
+            or getattr(platform, "name", "")
+        )
+        variants = ctx.settings.get("_registration_variants", {})
+        registration_name = (
+            str(variants.get(name, name)) if isinstance(variants, Mapping) else name
+        )
+        markets = ctx.settings.get("_registration_markets", {})
+        registration_market = (
+            str(markets.get(name, market)) if isinstance(markets, Mapping) else market
+        )
+        staged = staged_all.get(name, {}) if isinstance(staged_all, Mapping) else {}
+        custom_entries = ctx.settings.get("_registrations", {})
+        custom_entry = (
+            custom_entries.get(name) if isinstance(custom_entries, Mapping) else None
+        )
+        registration_plugins = plugins
+        if not removing and flavor == "codex":
+            staged_codex = ctx.settings.get("_staged_codex", {})
+            registration_plugins = {
+                plugin: directory
+                for plugin, directory in plugins.items()
+                if (
+                    isinstance(staged_codex, Mapping)
+                    and plugin in staged_codex
+                )
+                or (directory / ".codex-plugin" / "plugin.json").is_file()
+            }
+        elif not removing and getattr(platform, "extensions_subdir", ""):
+            registration_plugins = {
+                plugin: directory
+                for plugin, directory in plugins.items()
+                if isinstance(staged, Mapping) and plugin in staged
+            }
+        for plugin in registration_plugins:
+            values = _values(
+                root, plugin, registration_market,
+                staged.get(plugin) if isinstance(staged, Mapping) else None,
+            )
+            if ctx.force and not removing:
+                if isinstance(custom_entry, registration.Registration):
+                    done.extend(registration.withdraw_entry(
+                        custom_entry, values, run=run, available=available, label=name
+                    ))
+                else:
+                    done.extend(registration.withdraw(
+                        registration_name, values, run=run, available=available
+                    ))
+            if isinstance(custom_entry, registration.Registration):
+                call = (
+                    registration.withdraw_entry if removing
+                    else registration.register_entry
+                )
+                done.extend(call(
+                    custom_entry, values, run=run, available=available, label=name
+                ))
+            else:
+                call = registration.withdraw if removing else registration.register
+                done.extend(call(
+                    registration_name, values, run=run, available=available
+                ))
+        # Companions are separate products. Installing one when requested does
+        # not authorize removing it as a side effect of uninstalling autorun.
+        wanted = [] if removing else _companions_wanted(ctx)
+        if wanted:
+            plugin = next(iter(plugins), "")
+            values = _values(
+                root, plugin, registration_market,
+                staged.get(plugin) if isinstance(staged, Mapping) else None,
+            )
             for outcomes in registration.companions(
-                name, wanted or ["conductor"], values,
-                removing=removing, run=run, available=available,
+                name, wanted, values, removing=removing, run=run, available=available,
             ).values():
                 done.extend(outcomes)
     return done
@@ -211,9 +400,15 @@ def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
     """Every config directory this run touched, for the lock sweep."""
     found = []
     for harness in harnesses:
-        base = discovery.config_dir(harness, home=ctx.home)
+        platform = getattr(harness, "platform", harness)
+        base = discovery.config_dir(platform, home=ctx.home)
         if base is not None:
             found.append(base)
+        if (
+            getattr(platform, "install_flavor", "")
+            or getattr(platform, "name", "")
+        ) == "codex":
+            found.append(discovery.codex_plugin_source(home=ctx.home).parent)
     found.append(discovery.shared_root(home=ctx.home).parent)
     return found
 

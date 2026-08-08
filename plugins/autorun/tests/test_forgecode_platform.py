@@ -41,8 +41,12 @@ def test_forgecode_template_dir_is_forgecode_template():
     assert PLATFORMS["forgecode"].template_dir == "forgecode_template"
 
 
-def test_forgecode_install_fn_name():
-    assert PLATFORMS["forgecode"].install_fn_name == "_install_for_forgecode"
+def test_forgecode_install_steps():
+    from autorun.installer.steps import STEPS
+
+    assert [step.__name__ for step in STEPS["forgecode"]] == [
+        "skills_step", "commands_step"
+    ]
 
 
 # ─── Detection ────────────────────────────────────────────────────────────────
