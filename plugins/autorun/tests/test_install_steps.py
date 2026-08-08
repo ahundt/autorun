@@ -37,6 +37,10 @@ def sandbox(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    # OpenCode honours XDG_CONFIG_HOME as an explicit parent override.  A CI
+    # runner may export it globally, so clear it here or the OpenCode command
+    # and plugin intents intentionally land outside this sandbox.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     return home
 
 

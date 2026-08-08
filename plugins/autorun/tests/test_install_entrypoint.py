@@ -18,6 +18,10 @@ def isolated(monkeypatch, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    # Keep the default harness roots inside this fixture.  OpenCode honours an
+    # explicit XDG_CONFIG_HOME, which CI may export globally; relocation itself
+    # is covered by the discovery tests.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar"))
     monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "state"))
     return home
