@@ -275,7 +275,7 @@ def test_release_checklist_covers_every_file_carrying_the_version():
                 continue
         except (OSError, UnicodeDecodeError):
             continue
-        if str(rel) not in listed:
+        if rel.as_posix() not in listed:
             uncovered.append(str(rel))
 
     assert not uncovered, (

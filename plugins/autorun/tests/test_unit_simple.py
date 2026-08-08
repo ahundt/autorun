@@ -8,6 +8,8 @@ import pytest
 import sys
 from pathlib import Path
 
+from conftest import skip_if_windows_service_provider_error
+
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -582,6 +584,7 @@ class TestCodeQuality:
             env={"PYTHONPATH": str(src_dir)},
             timeout=10,
         )
+        skip_if_windows_service_provider_error(result)
 
         assert result.returncode == 0, result.stderr
 

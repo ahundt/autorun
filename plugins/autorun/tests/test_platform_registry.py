@@ -764,7 +764,7 @@ def test_skill_search_paths_include_every_documented_read_tier(tmp_path, monkeyp
 
     for name, platform in PLATFORMS.items():
         found = {
-            str(path.relative_to(tmp_path))
+            path.relative_to(tmp_path).as_posix()
             for path in skill_destinations(platform, reading=True)
             if tmp_path in path.parents or path.parent == tmp_path
         }

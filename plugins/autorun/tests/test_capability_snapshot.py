@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from conftest import skip_if_windows_service_provider_error
+
 
 def test_capability_snapshot_contains_all_registered_platforms():
     from autorun import __version__
@@ -138,6 +140,7 @@ def test_capability_snapshot_cli_writes_json_without_touching_home(tmp_path):
         capture_output=True,
         timeout=10,
     )
+    skip_if_windows_service_provider_error(result)
 
     assert result.returncode == 0, result.stderr or result.stdout
     data = json.loads(output_path.read_text(encoding="utf-8"))

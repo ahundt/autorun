@@ -805,6 +805,7 @@ def test_an_extensions_subdir_is_relative_to_the_resolved_config_dir(tmp_path, m
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows does not expose POSIX executable bits")
 def test_the_executable_bit_survives_a_republish(tmp_path):
     """hook_entry.py stops being runnable if this is lost, and nothing reports
     it until a hook fails."""

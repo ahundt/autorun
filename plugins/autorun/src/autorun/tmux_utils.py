@@ -144,7 +144,11 @@ def _candidate_homebrew_binaries() -> List[str]:
     seen = set()
     existing = []
     for candidate in candidates:
-        path = str(Path(candidate))
+        # Candidate strings are already canonical for the platform being
+        # probed.  Re-parsing a mocked Darwin path through Windows ``Path``
+        # changes ``/opt/homebrew`` into ``\\opt\\homebrew`` and corrupts
+        # otherwise portable ordering tests (and diagnostics).
+        path = candidate
         if path in seen or not Path(path).exists():
             continue
         seen.add(path)
@@ -191,7 +195,7 @@ def _candidate_tmux_binaries() -> List[str]:
     seen = set()
     existing = []
     for candidate in candidates:
-        path = str(Path(candidate))
+        path = candidate
         if path in seen or not Path(path).exists():
             continue
         seen.add(path)

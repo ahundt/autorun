@@ -33,6 +33,12 @@ import psutil
 import pytest
 
 
+def skip_if_windows_service_provider_error(result: subprocess.CompletedProcess) -> None:
+    """Skip only hosted-Windows socket-provider failures, not product errors."""
+    if sys.platform == "win32" and "WinError 10106" in (result.stderr or ""):
+        pytest.skip("Windows runner has no usable _overlapped service provider")
+
+
 def pytest_configure(config):
     """Configure pytest with custom markers and DB isolation."""
     config.addinivalue_line("markers", "slow: marks tests as slow")

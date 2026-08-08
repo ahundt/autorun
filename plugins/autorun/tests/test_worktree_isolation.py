@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from conftest import skip_if_windows_service_provider_error
+
 
 def _run_isolated_probe(code: str, tmp_path: Path) -> subprocess.CompletedProcess:
     env = {
@@ -34,6 +36,7 @@ print(json.dumps({
 """,
         tmp_path,
     )
+    skip_if_windows_service_provider_error(result)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -56,6 +59,7 @@ print(json.dumps({
 """,
         tmp_path,
     )
+    skip_if_windows_service_provider_error(result)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

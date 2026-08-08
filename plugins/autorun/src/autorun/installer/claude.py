@@ -126,7 +126,9 @@ def substitute_root(directory: Path, *, names: Iterable[str] = SUBSTITUTED_NAMES
         after = harness.substitute(before, directory)
         if after != before:
             path.write_text(after, encoding="utf-8")
-            changed.append(str(path.relative_to(directory)))
+            # The receipt is portable between hosts; do not persist Windows
+            # separators in a list that is later compared on POSIX.
+            changed.append(path.relative_to(directory).as_posix())
     return tuple(changed)
 
 

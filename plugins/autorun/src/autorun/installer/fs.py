@@ -134,6 +134,22 @@ def _ignored(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in IGNORED_GLOBS)
 
 
+def _strip_extended_prefix(path: Path) -> Path:
+    """Normalize Windows extended-length symlink paths for comparisons.
+
+    Windows may return an extended-length spelling from ``readlink`` while
+    ``Path.resolve()`` returns the ordinary drive spelling.  They identify the
+    same file, but ``relative_to`` and equality do not consider the spellings
+    interchangeable.
+    """
+    text = os.fspath(path)
+    if text.startswith("\\\\?\\"):
+        text = text[4:]
+    elif text.startswith("//?/"):
+        text = text[4:]
+    return Path(text)
+
+
 _MARKER_NOTE = (
     "Created by autorun. Delete this file to un-claim the directory: autorun "
     "will then treat it as user-authored and neither replace nor remove it."
@@ -221,12 +237,14 @@ def scan_tree(root: Path) -> dict[str, str]:
         here = Path(directory)
         subdirs[:] = [d for d in subdirs if not _ignored(d) and not (here / d).is_symlink()]
         for link in (d for d in os.listdir(directory) if (here / d).is_symlink() and (here / d).is_dir()):
-            manifest[str((here / link).relative_to(root))] = _LINK + os.readlink(here / link)
+            # Receipt keys are persisted and compared across hosts; keep their
+            # separators stable instead of encoding the host's ``Path`` style.
+            manifest[(here / link).relative_to(root).as_posix()] = _LINK + os.readlink(here / link)
         for name in names:
             if name == OWNED_MARKER_NAME or _ignored(name):
                 continue
             path = here / name
-            manifest[str(path.relative_to(root))] = _fingerprint(path)
+            manifest[path.relative_to(root).as_posix()] = _fingerprint(path)
     return manifest
 
 
@@ -723,18 +741,18 @@ def decide_link(source: Path | None, target: Path, inside: Path, *, plugin: str 
         try:
             pointed = Path(os.readlink(target))
             pointed = pointed if pointed.is_absolute() else (target.parent / pointed)
-            resolved = pointed.resolve()
+            resolved = _strip_extended_prefix(pointed.resolve())
         except (OSError, RuntimeError):
             return Decision(Verdict.KEEP, target, "unreadable link")
         try:
-            resolved.relative_to(inside.resolve())
+            resolved.relative_to(_strip_extended_prefix(inside.resolve()))
         except ValueError:
             return Decision(Verdict.KEEP, target, "links outside the shared root")
         if source is None:
             return Decision(Verdict.RETIRE, target, "no longer bridged")
         return (
             Decision(Verdict.SKIP, target, "already linked")
-            if resolved == source.resolve()
+            if resolved == _strip_extended_prefix(source.resolve())
             else Decision(Verdict.PUBLISH, target, "relinking")
         )
     if not target.exists():
@@ -799,7 +817,9 @@ def withdraw_link(target: Path, inside: Path) -> bool:
     try:
         resolved = Path(os.readlink(target))
         resolved = resolved if resolved.is_absolute() else (target.parent / resolved)
-        resolved.resolve().relative_to(inside.resolve())
+        _strip_extended_prefix(resolved.resolve()).relative_to(
+            _strip_extended_prefix(inside.resolve())
+        )
     except (OSError, ValueError, RuntimeError):
         return False
     target.unlink()
@@ -928,14 +948,14 @@ def dereference_links(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
         try:
             resolved = path.resolve(strict=True)
         except (OSError, RuntimeError):
-            broken.append(str(path.relative_to(root)))
+            broken.append(path.relative_to(root).as_posix())
             continue
         path.unlink()
         if resolved.is_dir():
             shutil.copytree(resolved, path, symlinks=False)
         else:
             shutil.copy2(resolved, path)
-        replaced.append(str(path.relative_to(root)))
+        replaced.append(path.relative_to(root).as_posix())
     return tuple(replaced), tuple(broken)
 
 

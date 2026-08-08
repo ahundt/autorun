@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ CLAUDE_SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
 # gives users a skill whose every instruction points at absent paths. Users get
 # plugins/autorun/TROUBLESHOOTING.md, which is written for an installed copy.
 REPO_INTERNAL_SKILLS = ("autorun-maintainer",)
+POSIX_AUDIT_AVAILABLE = sys.platform != "win32"
 
 
 def _skill_entrypoints() -> list[Path]:
@@ -75,6 +77,10 @@ def test_packaged_skill_frontmatter_name_matches_its_directory(skill_dir):
 
 
 @pytest.mark.parametrize("skill_dir", _packaged_skill_dirs(), ids=_skill_ids())
+@pytest.mark.skipif(
+    not POSIX_AUDIT_AVAILABLE,
+    reason="audit-skill.sh requires a POSIX shell; Windows CI has no WSL distribution",
+)
 def test_packaged_skill_passes_the_structural_audit(skill_dir):
     """Phase 1 release gate: zero structural FAILs for every packaged skill."""
     result = _run_audit(str(skill_dir))
@@ -98,6 +104,10 @@ def _write_skill(root: Path, name: str, frontmatter: str, body: str = "") -> Pat
     return skill
 
 
+@pytest.mark.skipif(
+    not POSIX_AUDIT_AVAILABLE,
+    reason="audit-skill.sh requires a POSIX shell; Windows CI has no WSL distribution",
+)
 def test_audit_script_exits_zero_on_a_structurally_clean_skill(tmp_path):
     """A release gate can only gate if a clean run is distinguishable by status."""
     skill = _write_skill(
@@ -116,6 +126,10 @@ def test_audit_script_exits_zero_on_a_structurally_clean_skill(tmp_path):
     assert result.returncode == 0, result.stdout
 
 
+@pytest.mark.skipif(
+    not POSIX_AUDIT_AVAILABLE,
+    reason="audit-skill.sh requires a POSIX shell; Windows CI has no WSL distribution",
+)
 def test_audit_script_exits_nonzero_when_a_structural_check_fails(tmp_path):
     """A FAIL that still exits 0 lets CI and humans read a broken skill as passing."""
     skill = _write_skill(
@@ -130,6 +144,10 @@ def test_audit_script_exits_nonzero_when_a_structural_check_fails(tmp_path):
     assert result.returncode == 1, result.stdout
 
 
+@pytest.mark.skipif(
+    not POSIX_AUDIT_AVAILABLE,
+    reason="audit-skill.sh requires a POSIX shell; Windows CI has no WSL distribution",
+)
 def test_audit_script_help_documents_its_exit_codes():
     """The exit contract is only usable if `--help` states it."""
     result = _run_audit("--help")
@@ -139,6 +157,10 @@ def test_audit_script_help_documents_its_exit_codes():
     assert "audit-skill.sh <skill-path>" in result.stdout
 
 
+@pytest.mark.skipif(
+    not POSIX_AUDIT_AVAILABLE,
+    reason="audit-skill.sh requires a POSIX shell; Windows CI has no WSL distribution",
+)
 def test_audit_script_exits_nonzero_on_missing_directory(tmp_path):
     """An unusable argument must not be reported with the clean-run status."""
     result = _run_audit(str(tmp_path / "no-such-skill"))
@@ -146,6 +168,10 @@ def test_audit_script_exits_nonzero_on_missing_directory(tmp_path):
     assert result.returncode == 1
 
 
+@pytest.mark.skipif(
+    not POSIX_AUDIT_AVAILABLE,
+    reason="audit-skill.sh requires a POSIX shell; Windows CI has no WSL distribution",
+)
 def test_audit_resolves_repository_owned_notes_from_git_root(tmp_path):
     """A skill-local relative path may point at a note owned by its repository."""
     repo = tmp_path / "repo"

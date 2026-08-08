@@ -60,6 +60,7 @@ class TestDurablePublicationFailureIsLoud:
         monkeypatch.setattr(durable_io.os, "open", forbid_open)
         durable_io.sync_directory(tmp_path)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows has no portable directory fsync")
     def test_directory_open_failure_is_not_reported_as_durable(
         self, tmp_path, monkeypatch
     ):
@@ -71,6 +72,7 @@ class TestDurablePublicationFailureIsLoud:
         with pytest.raises(OSError, match="Could not open directory for fsync"):
             durable_io.sync_directory(tmp_path)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows has no portable directory fsync")
     def test_directory_fsync_failure_is_not_reported_as_durable(
         self, tmp_path, monkeypatch
     ):

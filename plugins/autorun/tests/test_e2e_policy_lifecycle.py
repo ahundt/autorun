@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
-from conftest import register_test_session
+from conftest import register_test_session, skip_if_windows_service_provider_error
 
 # claude_code_handler — REMOVED: canonical replacement is plugins.app.dispatch(ctx)
 # See: plugins.py UserPromptSubmit command registration via app.command()
@@ -237,6 +237,7 @@ class TestE2ECrossProcessPersistence:
         state_dir.mkdir()
         env = os.environ.copy()
         env["AUTORUN_TEST_STATE_DIR"] = str(state_dir)
+        src_literal = repr(str(src_path))
 
         # Subprocess 1: Simulate UserPromptSubmit setting policy
         result1 = subprocess.run([
@@ -244,7 +245,7 @@ class TestE2ECrossProcessPersistence:
             f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{src_path}').resolve()))
+sys.path.insert(0, str(Path({src_literal}).resolve()))
 from autorun.core import EventContext
 from autorun.core import ThreadSafeDB
 from autorun import plugins
@@ -262,6 +263,7 @@ plugins.app.dispatch(ctx)
 print("POLICY_SET")
 """
         ], capture_output=True, text=True, timeout=10, env=env)
+        skip_if_windows_service_provider_error(result1)
 
         assert result1.returncode == 0, f"Subprocess 1 failed: {result1.stderr}"
         assert "POLICY_SET" in result1.stdout
@@ -272,7 +274,7 @@ print("POLICY_SET")
             f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{src_path}').resolve()))
+sys.path.insert(0, str(Path({src_literal}).resolve()))
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
 
@@ -298,6 +300,7 @@ decision = result["hookSpecificOutput"]["permissionDecision"]
 print(f"DECISION:{{decision}}")
 """
         ], capture_output=True, text=True, timeout=10, env=env)
+        skip_if_windows_service_provider_error(result2)
 
         assert result2.returncode == 0, f"Subprocess 2 failed: {result2.stderr}"
 

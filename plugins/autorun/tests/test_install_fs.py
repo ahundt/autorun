@@ -216,7 +216,7 @@ def test_a_bridged_symlink_is_identified_by_its_target(tmp_path, source):
     link.symlink_to(shared)
 
     assert link.is_symlink()
-    assert Path(os.readlink(link)) == shared
+    assert link.resolve() == shared.resolve()
     assert withdrawn(link) is False, "a symlink is not a directory we own outright"
 
 
@@ -396,6 +396,7 @@ def test_a_user_edit_inside_an_owned_tree_survives_reinstall(tmp_path, source):
     assert "SKILL.md" in decision.describe(), "the report names the file"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows does not expose POSIX executable bits")
 def test_flipping_the_executable_bit_counts_as_an_edit(tmp_path, source):
     """Losing the executable bit stops `hook_entry.py` being runnable, so mode
     is part of the fingerprint, not just bytes."""

@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, Mapping
 
 from . import discovery
-from .fs import read_marker
+from .fs import _strip_extended_prefix, read_marker
 from .discovery import redirected_home
 from .traversal import Context, Intent, Kind
 
@@ -396,7 +396,9 @@ def bridge_intents(
                 try:
                     pointed = Path(stale.readlink())
                     pointed = pointed if pointed.is_absolute() else stale.parent / pointed
-                    pointed.resolve().relative_to(source.resolve())
+                    _strip_extended_prefix(pointed.resolve()).relative_to(
+                        _strip_extended_prefix(source.resolve())
+                    )
                 except (OSError, RuntimeError, ValueError):
                     continue
                 yield Intent(target=stale, source=None, plugin="ar", kind=Kind.LINK)

@@ -9,6 +9,7 @@ quotation mark would have found it in a user's install rather than here.
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -99,12 +100,12 @@ def test_both_placeholder_spellings_are_substituted(text, expected):
     """A manifest written by hand uses whichever spelling the author
     remembered, and an unexpanded placeholder becomes a path that does not
     exist rather than an error anyone sees."""
-    assert substitute(text, Path("/opt/ar")) == expected
+    assert substitute(text, Path("/opt/ar")) == expected.replace("/", os.sep)
 
 
 def test_another_harnesss_placeholder_is_honoured():
     assert substitute("${extensionPath}/h.py", Path("/opt/ar"),
-                      placeholder="${extensionPath}") == "/opt/ar/h.py"
+                      placeholder="${extensionPath}") == os.path.join("/opt/ar", "h.py")
 
 
 def test_the_claude_placeholder_constant_matches_what_manifests_use():

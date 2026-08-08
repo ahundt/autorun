@@ -52,7 +52,10 @@ def sync_directory(directory: Path) -> None:
 
 def sync_file(path: Path) -> None:
     """Flush a completed regular file and its directory entry."""
-    with path.open("rb") as handle:
+    # Windows rejects ``fsync`` on a read-only descriptor (EBADF), while POSIX
+    # accepts it.  Keep POSIX read-only support and use a read/write descriptor
+    # only where the Windows runtime requires it.
+    with path.open("r+b" if sys.platform == "win32" else "rb") as handle:
         os.fsync(handle.fileno())
     sync_directory(path.parent)
 

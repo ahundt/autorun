@@ -148,7 +148,7 @@ def test_a_project_path_with_a_space_survives_the_shell_rendering():
     command = UvCommand(project=Path("/tmp/a project"), script=Path("/tmp/a project/h.py"))
 
     assert shlex.split(command.shell()) == list(command.argv())
-    assert "/tmp/a project" in shlex.split(command.shell())
+    assert str(Path("/tmp/a project")) in shlex.split(command.shell())
 
 
 @pytest.mark.parametrize("no_sync, quiet", [(True, True), (False, False), (True, False)])
