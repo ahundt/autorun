@@ -437,6 +437,7 @@ def skill_destinations(
     *,
     reading: bool = False,
     env: Mapping[str, str] | None = None,
+    home: Path | None = None,
 ) -> tuple[Path, ...]:
     """Every directory one harness's skill routes resolve to.
 
@@ -450,25 +451,31 @@ def skill_destinations(
     its plugins directory, and ForgeCode reads ``~/forge/skills`` with no write
     route at all.
 
-    There is deliberately no ``home`` parameter. Home-anchored routes resolve
-    through ``Path.home()``, which honours ``$HOME`` — the seam install tests
-    and the sandboxed-install recipe already use — so a parameter here could
-    anchor only the *config* directory and would leave the home-anchored routes
-    pointing elsewhere. A half-honoured argument is worse than none: it reads as
-    isolation and delivers it for some routes only. Redirect ``$HOME`` and every
-    route follows.
+    ``home`` is the resolved install target. Callers that have a
+    :class:`~autorun.installer.traversal.Context` pass it explicitly so every
+    route, including home-anchored and plugin-package routes, follows the same
+    sandbox. Calls without it retain process-home behavior for status and
+    discovery probes.
     """
     routes = (
         tuple(getattr(platform, "skill_search_routes", ()) or ())
         if reading
         else (getattr(platform, "native_skills", None),)
     )
-    base = config_dir(platform, env=env)
+    base = config_dir(platform, env=env, home=home)
     seen: dict[Path, None] = {}
     for route in routes:
         if route is None:
             continue
-        for destination in route.destinations(base):
+        try:
+            destinations = route.destinations(base, home=home)
+        except TypeError as error:
+            if "unexpected keyword argument 'home'" not in str(error):
+                raise
+            # Keep compatibility with third-party route objects written
+            # against the pre-Context.home protocol.
+            destinations = route.destinations(base)
+        for destination in destinations:
             seen.setdefault(destination, None)
     return tuple(seen)
 

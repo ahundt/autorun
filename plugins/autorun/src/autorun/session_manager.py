@@ -35,6 +35,31 @@ DEFAULT_SESSION_TIMEOUT = 30.0
 SHARED_ACCESS_TIMEOUT = 5.0
 
 
+class _StableFileLock(FileLock):
+    """A filelock variant that keeps the lock path stable after release.
+
+    ``filelock`` 3.20+ unlinks its path during release. A waiter that already
+    opened the old inode can then be followed by a third process opening a new
+    inode, defeating mutual exclusion. Session state uses one lock path as a
+    durable coordination point, so release the OS lock without unlinking it.
+    """
+
+    def _release(self) -> None:
+        fd = self._context.lock_file_fd
+        self._context.lock_file_fd = None
+        if fd is None:
+            return
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 class SessionStateError(Exception):
     pass
 
@@ -236,22 +261,9 @@ class _JSONStore:
 
     @contextlib.contextmanager
     def _persistent_filelock(self, timeout: float):
-        """Acquire FileLock and ensure the lock file persists after release.
-
-        filelock >= 3.20 deletes the lock file on release. This context manager
-        re-creates it so stale-lock detection and cross-process observability
-        work correctly. Encapsulates the acquire-use-release-persist lifecycle
-        as a single RAII unit.
-        """
-        file_lock = FileLock(self._lock_file, timeout=timeout)
-        try:
-            with file_lock:
-                yield
-        finally:
-            try:
-                Path(self._lock_file).touch(exist_ok=True)
-            except OSError:
-                pass  # Non-critical — locking still works without the file
+        """Acquire the stable lock path for one state transaction."""
+        with _StableFileLock(self._lock_file, timeout=timeout):
+            yield
 
     @contextlib.contextmanager
     def session(self, session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT):

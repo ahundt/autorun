@@ -168,7 +168,12 @@ def _native_roots(platform: object, ctx: Context) -> tuple[Path, ...]:
     """
     from .discovery import skill_destinations
 
-    return skill_destinations(platform)
+    try:
+        return skill_destinations(platform, home=ctx.home)
+    except TypeError as error:
+        if "unexpected keyword argument 'home'" not in str(error):
+            raise
+        return skill_destinations(platform)
 
 
 def unsatisfiable(
@@ -366,7 +371,13 @@ def bridge_intents(
         return
     from .discovery import skill_destinations
 
-    for destination in skill_destinations(platform, reading=True):
+    try:
+        destinations = skill_destinations(platform, reading=True, home=ctx.home)
+    except TypeError as error:
+        if "unexpected keyword argument 'home'" not in str(error):
+            raise
+        destinations = skill_destinations(platform, reading=True)
+    for destination in destinations:
         if destination.is_symlink():
             continue
         shipped = {p.name: p for p in source.iterdir() if is_shippable(p)}
@@ -418,7 +429,7 @@ def demo() -> None:
 
     class Route:
         def __init__(self, sub): self.sub = sub
-        def destinations(self, config): return (config / self.sub,)
+        def destinations(self, config, *, home=None): return (config / self.sub,)
 
     with tempfile.TemporaryDirectory() as tmp, redirected_home(
         _made(Path(tmp) / "home")

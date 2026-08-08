@@ -54,7 +54,9 @@ class SkillRoute:
     contract :class:`HookProtocol` uses for wire formats.
     """
 
-    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+    def destinations(
+        self, config_dir: Path | None, *, home: Path | None = None
+    ) -> tuple[Path, ...]:
         """Return every directory this route writes. Empty means none."""
         return ()
 
@@ -69,7 +71,9 @@ class ConfigDirSkills(SkillRoute):
 
     subdir: str = "skills"
 
-    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+    def destinations(
+        self, config_dir: Path | None, *, home: Path | None = None
+    ) -> tuple[Path, ...]:
         return () if config_dir is None else (config_dir / self.subdir,)
 
     def describe(self) -> str:
@@ -87,7 +91,9 @@ class ExtensionSkills(SkillRoute):
 
     subdir: str = "extensions"
 
-    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+    def destinations(
+        self, config_dir: Path | None, *, home: Path | None = None
+    ) -> tuple[Path, ...]:
         return () if config_dir is None else (config_dir / self.subdir,)
 
     def describe(self) -> str:
@@ -108,7 +114,9 @@ class HomeDirSkills(SkillRoute):
 
     subdir: str = ""
 
-    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+    def destinations(
+        self, config_dir: Path | None, *, home: Path | None = None
+    ) -> tuple[Path, ...]:
         """Resolve against the process home.
 
         ``Path.home()`` honours ``$HOME``, which is this repository's isolation
@@ -118,7 +126,8 @@ class HomeDirSkills(SkillRoute):
         question, and an optional one at that — a caller omitting it would
         silently get the real home instead of a type error.
         """
-        return (Path.home() / self.subdir,) if self.subdir else ()
+        root = home or Path.home()
+        return (root / self.subdir,) if self.subdir else ()
 
     def describe(self) -> str:
         return f"~/{self.subdir}"
@@ -134,10 +143,12 @@ class PluginPackageSkills(SkillRoute):
     construction proves the target is callable.
     """
 
-    resolver: Callable[[], Path] | None = None
+    resolver: Callable[[Path | None], Path] | None = None
 
-    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
-        return () if self.resolver is None else (self.resolver(),)
+    def destinations(
+        self, config_dir: Path | None, *, home: Path | None = None
+    ) -> tuple[Path, ...]:
+        return () if self.resolver is None else (self.resolver(home),)
 
     def describe(self) -> str:
         return "installed plugin package"
@@ -156,11 +167,23 @@ class CombinedSkillRoutes(SkillRoute):
 
     routes: tuple[SkillRoute, ...] = ()
 
-    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+    def destinations(
+        self, config_dir: Path | None, *, home: Path | None = None
+    ) -> tuple[Path, ...]:
+        def resolve(route: SkillRoute) -> tuple[Path, ...]:
+            try:
+                return route.destinations(config_dir, home=home)
+            except TypeError as error:
+                if "unexpected keyword argument 'home'" not in str(error):
+                    raise
+                # Keep compatibility with third-party route objects written
+                # against the pre-Context.home protocol.
+                return route.destinations(config_dir)
+
         return tuple(
             destination
             for route in self.routes
-            for destination in route.destinations(config_dir)
+            for destination in resolve(route)
         )
 
     def describe(self) -> str:
@@ -186,11 +209,11 @@ class NoNativeSkillRoute(SkillRoute):
         )
 
 
-def _codex_plugin_package_dir() -> Path:
+def _codex_plugin_package_dir(home: Path | None = None) -> Path:
     """Return the skill root inside Codex's staged plugin directory."""
     from .installer.discovery import codex_plugin_source
 
-    return codex_plugin_source() / "skills"
+    return codex_plugin_source(home=home) / "skills"
 
 
 @dataclass(frozen=True, slots=True)
