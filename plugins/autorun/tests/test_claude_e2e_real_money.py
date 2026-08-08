@@ -14,21 +14,19 @@ Two test categories in this module:
    Tests: real Claude session with hooks active end-to-end.
    Cost: < $0.005 per run (haiku/sonnet model)
 
-ALL tests require AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for consistency
-with test_gemini_e2e_real_money.py. This prevents accidental daemon state
-mutation during regular test runs.
+Only the real Claude subprocess class requires
+AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1. The direct hook-process tests are
+free and remain enabled during regular test runs.
 
 To run ALL tests (including real money):
     export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
     uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py -v
 
-To run only FREE hook-level tests:
-    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+To run only FREE hook-level tests (the default for this module):
     uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py::TestClaudeHookEntryPoint -v
 
-To skip all (default in full suite):
-    uv run pytest plugins/autorun/tests/ -v
-    # These tests are SKIPPED automatically
+The paid subprocess class is skipped unless the explicit money-test flag is
+set; free hook-level coverage remains part of the regular suite.
 
 Full output logging (no truncation):
     All hook call I/O is written to: /tmp/autorun-e2e-test-logs/
@@ -45,9 +43,10 @@ Full output logging (no truncation):
 
 Equivalent Gemini tests: test_gemini_e2e_real_money.py
 
-Cost Breakdown:
-    TestClaudeHookEntryPoint (19 tests)  $0.000  (direct hook_entry.py calls)
-    TestClaudeE2ERealMoney   (4 tests)   <$0.005 (spawn claude -p)
+Cost breakdown:
+    TestClaudeHookEntryPoint  $0.000  (direct hook_entry.py calls; a small
+                                      stateful subset uses the isolated test daemon)
+    TestClaudeE2ERealMoney    <$0.005 (spawn claude -p)
 """
 
 import datetime
@@ -122,17 +121,15 @@ slow_claude_model_behavior = pytest.mark.skipif(
     ),
 )
 
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not ENABLE_REAL_MONEY_TESTS,
-        reason=(
-            "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set. "
-            "Set to 1 to run. Free hook-level tests cost $0.000; "
-            "real Claude subprocess tests cost < $0.005 per run."
-        ),
+pytestmark = pytest.mark.e2e
+paid_claude_e2e = pytest.mark.skipif(
+    not ENABLE_REAL_MONEY_TESTS,
+    reason=(
+        "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set. "
+        "Set to 1 to run real Claude subprocess tests; free hook-process "
+        "coverage remains enabled."
     ),
-]
+)
 
 
 # =============================================================================
@@ -352,23 +349,27 @@ class TestClaudeHookEntryPoint:
     This exercises the complete path:
         test → hook_entry.py → client.py → daemon → plugins.py → response
 
-    The daemon must be running (hook auto-starts it if needed, adding ~3-5s to
-    the first call). Each test uses a unique session_id to prevent state
-    contamination between tests.
+    Most tests use direct hook dispatch. Lifecycle tests that span multiple
+    subprocesses opt into the isolated test daemon so advisory counters persist;
+    each test uses a unique session_id to prevent state contamination.
 
     Cost: $0.000 per test run.
     """
 
     def _run(self, hook_resources: dict, payload: dict, timeout: int = 15,
-             *, isolated: bool = True) -> tuple:
+             *, isolated: bool = True, stateful: bool = False) -> tuple:
         """Run hook, by default in isolated mode (no daemon, local code).
 
         Args:
             isolated: If True (default), uses AUTORUN_USE_DAEMON=0 so tests run
                 against local code, not the installed daemon. Set False for tests
                 that need daemon response wrapping (e.g. SessionStart → {"continue": true}).
+            stateful: Use the isolated test daemon for sequences whose advisory
+                counters must survive across separate hook subprocesses. This
+                is intentionally separate from ``isolated=False`` because both
+                modes still preserve the temporary test state directories.
         """
-        env = self._isolated_env() if isolated else None
+        env = self._daemon_env() if stateful else (self._isolated_env() if isolated else None)
         return run_hook(
             hook_resources["hook_script"],
             hook_resources["plugin_root"],
@@ -921,14 +922,14 @@ class TestClaudeHookEntryPoint:
     # Three-stage system & plan mode gating (G1, G3, G5, G6)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _activate_autorun(self, hook_resources, session_id, task="test task"):
+    def _activate_autorun(self, hook_resources, session_id, task="test task", *, stateful=False):
         """Activate autorun for a test session via /ar:go command."""
         payload = self._base_payload(
             "UserPromptSubmit", session_id,
             prompt=f"/ar:go {task}",
             session_transcript=[],
         )
-        rc, _, stderr, resp = self._run(hook_resources, payload)
+        rc, _, stderr, resp = self._run(hook_resources, payload, stateful=stateful)
         assert rc == 0, f"/ar:go should return 0. rc={rc} stderr={stderr!r}"
         return resp
 
@@ -1096,7 +1097,7 @@ class TestClaudeHookEntryPoint:
         session_id = self._sid("g5-stop-tasks")
 
         # Step 1: Activate autorun
-        self._activate_autorun(hook_resources, session_id)
+        self._activate_autorun(hook_resources, session_id, stateful=True)
 
         # Step 2: Send Stop event — autorun is active, so even without explicit
         # tasks, the three-stage system should block premature stopping
@@ -1108,7 +1109,9 @@ class TestClaudeHookEntryPoint:
                 {"role": "assistant", "content": "Working on it..."},
             ],
         )
-        rc, stdout, stderr, resp = self._run(hook_resources, payload, timeout=20)
+        rc, stdout, stderr, resp = self._run(
+            hook_resources, payload, timeout=20, stateful=True,
+        )
 
         # The Stop handler should either:
         # a) Block via ctx.block() (rc may vary) with injection text
@@ -1188,17 +1191,30 @@ class TestClaudeHookEntryPoint:
         env["AUTORUN_USE_DAEMON"] = "0"
         return env
 
-    def _run_isolated(self, hook_resources, payload, timeout=15):
-        """Run hook in isolated mode (no daemon, temp state dir)."""
+    def _daemon_env(self):
+        """Return a daemon-backed environment using pytest's temp state dirs.
+
+        Direct hook mode intentionally creates a fresh advisory-state database
+        for every subprocess. Stateful lifecycle tests must use the same
+        daemon so counters such as staleness escalation persist across events,
+        while the inherited ``AUTORUN_HOME`` and test runtime variables keep
+        the daemon isolated from the developer's live sessions.
+        """
+        env = os.environ.copy()
+        env["AUTORUN_USE_DAEMON"] = "1"
+        return env
+
+    def _run_isolated(self, hook_resources, payload, timeout=15, *, stateful=False):
+        """Run hook with isolated temp state, optionally through the test daemon."""
         return run_hook(
             hook_resources["hook_script"],
             hook_resources["plugin_root"],
             payload,
-            env=self._isolated_env(),
+            env=self._daemon_env() if stateful else self._isolated_env(),
             timeout=timeout,
         )
 
-    def _create_task_isolated(self, hook_resources, session_id, task_id="1", subject="test task"):
+    def _create_task_isolated(self, hook_resources, session_id, task_id="1", subject="test task", *, stateful=False):
         """Create a task via isolated PostToolUse (no daemon, temp state dir).
 
         Without an incomplete task, check_task_staleness uses the
@@ -1210,9 +1226,9 @@ class TestClaudeHookEntryPoint:
             tool_input={"subject": subject, "description": "test"},
             tool_result=f"Task #{task_id} created successfully: {subject}",
             session_transcript=[],
-        ))
+        ), stateful=stateful)
 
-    def _send_post_tool_calls_isolated(self, hook_resources, session_id, count):
+    def _send_post_tool_calls_isolated(self, hook_resources, session_id, count, *, stateful=False):
         """Send N isolated PostToolUse Read events, return list of (resp, sys_msg)."""
         results = []
         for _ in range(count):
@@ -1222,31 +1238,31 @@ class TestClaudeHookEntryPoint:
                 tool_input={"file_path": "/tmp/test.txt"},
                 tool_result={"content": "contents"},
                 session_transcript=[],
-            ))
+            ), stateful=stateful)
             sys_msg = resp.get("systemMessage", "") if resp else ""
             results.append((resp, sys_msg))
         return results
 
-    def _send_pretool_call_isolated(self, hook_resources, session_id, tool_name="Read"):
+    def _send_pretool_call_isolated(self, hook_resources, session_id, tool_name="Read", *, stateful=False):
         """Send isolated PreToolUse event, return (resp, sys_msg, reason)."""
         rc, stdout, stderr, resp = self._run_isolated(hook_resources, self._base_payload(
             "PreToolUse", session_id,
             tool_name=tool_name,
             tool_input={"file_path": "/tmp/test.txt"},
-        ))
+        ), stateful=stateful)
         if resp:
             sys_msg = resp.get("systemMessage", "")
             reason = resp.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
             return resp, sys_msg, reason
         return resp, "", ""
 
-    def _activate_autorun_isolated(self, hook_resources, session_id, task="test task"):
-        """Activate autorun in isolated mode (no daemon)."""
+    def _activate_autorun_isolated(self, hook_resources, session_id, task="test task", *, stateful=False):
+        """Activate autorun in isolated temp state, optionally via test daemon."""
         return self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt=f"/ar:go {task}",
             session_transcript=[],
-        ))
+        ), stateful=stateful)
 
     def test_staleness_reminder_in_system_message_posttooluse(self, hook_resources):
         """Verify staleness reminder appears in PostToolUse systemMessage.
@@ -1256,15 +1272,17 @@ class TestClaudeHookEntryPoint:
         is the only field the user sees. Whether the AI sees it depends on #25987.
         """
         session_id = self._sid("sysmsg-staleness")
-        self._activate_autorun_isolated(hook_resources, session_id)
-        self._create_task_isolated(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id, stateful=True)
+        self._create_task_isolated(hook_resources, session_id, stateful=True)
 
         self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
-        ))
+        ), stateful=True)
 
-        results = self._send_post_tool_calls_isolated(hook_resources, session_id, 4)
+        results = self._send_post_tool_calls_isolated(
+            hook_resources, session_id, 4, stateful=True,
+        )
 
         reminder_msgs = [msg for _, msg in results if "TASK UPDATE REQUIRED" in msg]
         assert reminder_msgs, (
@@ -1291,17 +1309,19 @@ class TestClaudeHookEntryPoint:
           PreToolUse Read → deny(instruction) — tool BLOCKED
         """
         session_id = self._sid("warn-deny")
-        self._activate_autorun_isolated(hook_resources, session_id)
-        self._create_task_isolated(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id, stateful=True)
+        self._create_task_isolated(hook_resources, session_id, stateful=True)
 
         self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
-        ))
+        ), stateful=True)
 
         # --- First threshold crossing: should WARN (allow) ---
-        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
-        resp1, sys_msg1, reason1 = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3, stateful=True)
+        resp1, sys_msg1, reason1 = self._send_pretool_call_isolated(
+            hook_resources, session_id, "Read", stateful=True,
+        )
 
         assert resp1 is not None, "PreToolUse must return a response"
         perm1 = resp1.get("hookSpecificOutput", {}).get("permissionDecision", "")
@@ -1315,8 +1335,10 @@ class TestClaudeHookEntryPoint:
         )
 
         # --- Second threshold crossing: should DENY (block) ---
-        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
-        resp2, sys_msg2, reason2 = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3, stateful=True)
+        resp2, sys_msg2, reason2 = self._send_pretool_call_isolated(
+            hook_resources, session_id, "Read", stateful=True,
+        )
 
         assert resp2 is not None, "PreToolUse must return a response"
         perm2 = resp2.get("hookSpecificOutput", {}).get("permissionDecision", "")
@@ -1336,19 +1358,21 @@ class TestClaudeHookEntryPoint:
         pass through cleanly (no reminder injected) and reset the counter.
         """
         session_id = self._sid("pretool-task-passthru")
-        self._activate_autorun_isolated(hook_resources, session_id)
-        self._create_task_isolated(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id, stateful=True)
+        self._create_task_isolated(hook_resources, session_id, stateful=True)
 
         self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
-        ))
+        ), stateful=True)
 
         # Cross threshold — sets enforce_next=True
-        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3, stateful=True)
 
         # Send PreToolUse with TaskList — should pass through clean
-        resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "TaskList")
+        resp, sys_msg, reason = self._send_pretool_call_isolated(
+            hook_resources, session_id, "TaskList", stateful=True,
+        )
 
         # No reminder should be injected for Task tools
         assert "TASK UPDATE" not in reason, (
@@ -1365,25 +1389,27 @@ class TestClaudeHookEntryPoint:
         4. Next PreToolUse → no enforcement (enforce_next was cleared)
         """
         session_id = self._sid("reset-on-create")
-        self._activate_autorun_isolated(hook_resources, session_id)
-        self._create_task_isolated(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id, stateful=True)
+        self._create_task_isolated(hook_resources, session_id, stateful=True)
 
         self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
-        ))
+        ), stateful=True)
 
         # Cross threshold
-        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3, stateful=True)
 
         # TaskCreate resets everything
-        self._create_task_isolated(hook_resources, session_id, "2", "another task")
+        self._create_task_isolated(
+            hook_resources, session_id, "2", "another task", stateful=True,
+        )
 
-        # Verify counter was at least partially reset: needs more calls to fire again.
-        # Each subprocess in AUTORUN_USE_DAEMON=0 mode has isolated module state,
-        # so the counter may not reset to exactly 0 (write-back timing across processes).
-        # The key verification is: reminder_count was reset (escalation restarts from 1st level).
-        results = self._send_post_tool_calls_isolated(hook_resources, session_id, 4)
+        # Verify counter was reset: the shared test daemon preserves advisory
+        # state across the separate hook processes in this lifecycle.
+        results = self._send_post_tool_calls_isolated(
+            hook_resources, session_id, 4, stateful=True,
+        )
         reminder_msgs = [
             msg for _, msg in results
             if "TASK UPDATE REQUIRED" in msg or "TASK UPDATE OVERDUE" in msg
@@ -1438,25 +1464,29 @@ class TestClaudeHookEntryPoint:
                    PreToolUse → deny(BLOCKED) — tool BLOCKED again
         """
         session_id = self._sid("escalation-full")
-        self._activate_autorun_isolated(hook_resources, session_id)
-        self._create_task_isolated(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id, stateful=True)
+        self._create_task_isolated(hook_resources, session_id, stateful=True)
 
         self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 2", session_transcript=[],
-        ))
+        ), stateful=True)
 
         post_msgs = []
         pre_results = []  # list of (cycle, perm, reason)
 
         # 3 cycles: PostToolUse × 2 → PreToolUse × 1, repeated 3 times
         for cycle in range(3):
-            results = self._send_post_tool_calls_isolated(hook_resources, session_id, 2)
+            results = self._send_post_tool_calls_isolated(
+                hook_resources, session_id, 2, stateful=True,
+            )
             for _, msg in results:
                 if msg:
                     post_msgs.append(msg)
 
-            resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
+            resp, sys_msg, reason = self._send_pretool_call_isolated(
+                hook_resources, session_id, "Read", stateful=True,
+            )
             perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "") if resp else ""
             pre_results.append((cycle, perm, reason))
 
@@ -1556,8 +1586,8 @@ class TestClaudeHookEntryPoint:
         Cost: $0 (uses _run_isolated, no real claude -p calls)
         """
         session_id = self._sid("stop-deny-pretool")
-        self._activate_autorun_isolated(hook_resources, session_id)
-        self._create_task_isolated(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id, stateful=True)
+        self._create_task_isolated(hook_resources, session_id, stateful=True)
 
         # Step 2: Fire Stop event → should block and set pending_stop_injection
         stop_resp_raw = self._run_isolated(hook_resources, self._base_payload(
@@ -1567,14 +1597,16 @@ class TestClaudeHookEntryPoint:
                 {"role": "user", "content": "/ar:go test"},
                 {"role": "assistant", "content": "Working..."},
             ],
-        ))
+        ), stateful=True)
         rc, stdout, stderr, stop_resp = stop_resp_raw
         assert stop_resp is not None, "Stop hook must return a response"
         assert stop_resp.get("continue") is True, "Stop must return continue:true"
 
         # Step 3: Fire PreToolUse Read → should NOT be denied by the removed
         # enforce_stop_injection path.
-        resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
+        resp, sys_msg, reason = self._send_pretool_call_isolated(
+            hook_resources, session_id, "Read", stateful=True,
+        )
         if resp is not None:
             perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "")
             assert perm != "deny", (
@@ -1592,6 +1624,7 @@ class TestClaudeHookEntryPoint:
                 tool_input={"file_path": "/tmp/example.txt"},
                 tool_result={"content": "example"},
             ),
+            stateful=True,
         )
         assert rc_post == 0
         assert post_resp is not None, "PostToolUse must flush pending stop injection"
@@ -1604,7 +1637,9 @@ class TestClaudeHookEntryPoint:
         )
 
         # Step 5: Fire PreToolUse TaskList → should be ALLOWED (Task tools pass through)
-        resp2, sys_msg2, reason2 = self._send_pretool_call_isolated(hook_resources, session_id, "TaskList")
+        resp2, sys_msg2, reason2 = self._send_pretool_call_isolated(
+            hook_resources, session_id, "TaskList", stateful=True,
+        )
         if resp2:
             reason2_text = resp2.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
             assert "CANNOT STOP" not in reason2_text, (
@@ -1620,22 +1655,24 @@ class TestClaudeHookEntryPoint:
         Cost: $0 (uses _run_isolated)
         """
         session_id = self._sid("catch-all-enforce")
-        self._activate_autorun_isolated(hook_resources, session_id)
-        self._create_task_isolated(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id, stateful=True)
+        self._create_task_isolated(hook_resources, session_id, stateful=True)
 
         # Set low threshold and cross it
         self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
-        ))
+        ), stateful=True)
         # Cross threshold twice to trigger deny (warn-then-deny)
-        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
-        self._send_pretool_call_isolated(hook_resources, session_id, "Read")  # warn
-        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3, stateful=True)
+        self._send_pretool_call_isolated(
+            hook_resources, session_id, "Read", stateful=True,
+        )  # warn
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3, stateful=True)
 
         # Enforcement should DENY the next non-Task tool
         resp, sys_msg, reason = self._send_pretool_call_isolated(
-            hook_resources, session_id, "Grep",
+            hook_resources, session_id, "Grep", stateful=True,
         )
         assert resp is not None, "PreToolUse Grep must return a response"
         perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "")
@@ -1688,6 +1725,7 @@ class TestClaudeHookEntryPoint:
 
 
 @pytest.mark.timeout(420)
+@paid_claude_e2e
 class TestClaudeE2ERealMoney:
     """Real Claude CLI E2E tests — spawn `claude -p` (costs API tokens).
 

@@ -21,6 +21,7 @@ import pytest
 
 from e2e_support import (
     RETIRED_GEMINI_BACKEND_REASON,
+    autorun_extension_listed,
     retired_gemini_backend_enabled,
 )
 
@@ -73,8 +74,8 @@ def gemini_extension_check():
 
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
-        if "autorun" not in combined_output:
-            pytest.skip("autorun extension not installed in Gemini CLI")
+        if not autorun_extension_listed(combined_output):
+            pytest.skip("ar (autorun) extension not installed in Gemini CLI")
     except subprocess.TimeoutExpired:
         pytest.skip("gemini extensions list timed out (>30s)")
     except Exception as e:
@@ -120,25 +121,6 @@ class TestGeminiE2ERealMoney:
         assert "four" in output_lower or "4" in output_lower, \
             f"Unexpected response: {result.stdout}"
 
-    def test_gemini_extension_loaded(self, gemini_cli_check, gemini_extension_check):
-        """Test that autorun extension is loaded in Gemini.
-
-        No API cost - just checks extension list.
-        Note: `gemini extensions list` outputs to stderr, not stdout.
-        """
-        result = subprocess.run(
-            ["gemini", "extensions", "list"],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        assert result.returncode == 0, f"Extension list failed: {result.stderr}"
-        # Gemini CLI sends extension list to stderr (debug output stream)
-        combined_output = result.stdout + result.stderr
-        assert "autorun" in combined_output, \
-            f"autorun extension not found. Output:\n{combined_output[:500]}"
-
     @pytest.mark.skipif(
         True,  # Always skip until user confirms they want to test
         reason="Interactive test requires manual confirmation - costs real money"
@@ -165,6 +147,24 @@ class TestGeminiE2ERealMoney:
         # Just check that Gemini CLI responds
         assert result.returncode == 0 or "not found" in result.stderr.lower(), \
             f"Unexpected error: {result.stderr}"
+
+
+class TestGeminiExtensionRegistration:
+    """Verify the installed extension registration without API or model calls."""
+
+    def test_gemini_extension_loaded(self, gemini_cli_check, gemini_extension_check):
+        result = subprocess.run(
+            ["gemini", "extensions", "list"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 0, f"Extension list failed: {result.stderr}"
+        combined_output = result.stdout + result.stderr
+        assert autorun_extension_listed(combined_output), (
+            f"ar (autorun) extension not found. Output:\n{combined_output[:500]}"
+        )
 
 
 class TestGeminiHookEntryPoint:

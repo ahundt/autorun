@@ -30,6 +30,7 @@ import pytest
 
 from e2e_support import (
     RETIRED_GEMINI_BACKEND_REASON,
+    autorun_extension_listed,
     retired_gemini_backend_enabled,
 )
 
@@ -110,8 +111,8 @@ def gemini_extension_check():
 
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
-        if "autorun" not in combined_output:
-            pytest.skip("autorun extension not installed in Gemini CLI")
+        if not autorun_extension_listed(combined_output):
+            pytest.skip("ar (autorun) extension not installed in Gemini CLI")
 
         return True
     except subprocess.TimeoutExpired:
@@ -420,54 +421,41 @@ class TestGeminiCLIRealMoney:
         assert "four" in output_lower or "4" in output_lower, \
             f"Unexpected response: {result.stdout}"
 
-    def test_gemini_extension_loaded(self, gemini_cli_available, gemini_extension_check):
-        """Test that autorun extension is loaded in Gemini (NO API COST).
 
-        This verifies the extension is properly installed and registered.
-        Note: `gemini extensions list` outputs to stderr, not stdout.
-        """
+class TestGeminiExtensionRegistration:
+    """Verify Gemini registration without requiring a model/API call."""
+
+    def test_gemini_extension_loaded(self, gemini_cli_available, gemini_extension_check):
         result = subprocess.run(
             ["gemini", "extensions", "list"],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
 
-        assert result.returncode == 0, \
-            f"Extension list failed: {result.stderr}"
-
-        # Gemini CLI sends extension list to stderr (debug output stream)
+        assert result.returncode == 0, f"Extension list failed: {result.stderr}"
         combined_output = result.stdout + result.stderr
-        assert "autorun" in combined_output, \
-            f"autorun extension not found. Output:\n{combined_output[:500]}"
+        assert autorun_extension_listed(combined_output), (
+            f"ar (autorun) extension not found. Output:\n{combined_output[:500]}"
+        )
 
-        # Verify hooks file exists (installed extension or source)
         hooks_candidates = [
             Path.home() / ".gemini/extensions/ar/hooks/hooks.json",
             Path(__file__).parent.parent / "hooks/hooks.json",
         ]
-        hooks_file = None
-        for candidate in hooks_candidates:
-            if candidate.exists():
-                hooks_file = candidate
-                break
-        assert hooks_file is not None, \
-            "hooks.json not found. Searched:\n" + "\n".join(f"  - {p}" for p in hooks_candidates)
+        hooks_file = next((candidate for candidate in hooks_candidates if candidate.exists()), None)
+        assert hooks_file is not None, (
+            "hooks.json not found. Searched:\n"
+            + "\n".join(f"  - {path}" for path in hooks_candidates)
+        )
 
-        # Verify hooks file is valid JSON
         try:
-            with open(hooks_file) as f:
-                hooks_config = json.load(f)
+            hooks_config = json.loads(hooks_file.read_text())
+        except json.JSONDecodeError as exc:
+            pytest.fail(f"Invalid JSON in hooks file: {exc}")
 
-            assert "hooks" in hooks_config, \
-                "hooks.json missing 'hooks' field"
-
-            # Verify BeforeTool hook registered
-            assert "BeforeTool" in hooks_config["hooks"], \
-                "BeforeTool hook not registered"
-
-        except json.JSONDecodeError as e:
-            pytest.fail(f"Invalid JSON in hooks file: {e}")
+        assert "hooks" in hooks_config, "hooks.json missing 'hooks' field"
+        assert "BeforeTool" in hooks_config["hooks"], "BeforeTool hook not registered"
 
 
 class TestGeminiExtensionInstalledHook:
@@ -1134,7 +1122,7 @@ __doc__ += """
 
 ### Real Money Tests (require AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1):
 1. test_gemini_basic_response - Simple API call (< $0.001)
-2. test_gemini_extension_loaded - Extension list (NO API cost)
+2. test_gemini_extension_loaded - Extension registration (NO API cost)
 
 ## Running Tests
 

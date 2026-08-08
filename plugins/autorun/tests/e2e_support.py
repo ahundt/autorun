@@ -30,6 +30,9 @@ TASK_RECOVERY_MARKER_PATTERN = re.compile(
     r"AUTORUN_TASK_RECOVERY\([A-Za-z0-9_-]+\)"
 )
 TASK_PAUSE_COMMAND_SENTINEL = "generation-bound recovery marker"
+AUTORUN_EXTENSION_LINE = re.compile(
+    r"(?im)^\s*(?:[✓✔]\s*)?(?:ar|autorun(?:-workspace)?)\s*(?:\(|$)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +75,16 @@ def real_money_enabled() -> bool:
 def retired_gemini_backend_enabled() -> bool:
     """Return whether a legacy Gemini model call is still intentional."""
     return date.today() < GEMINI_CLI_CONSUMER_BACKEND_CUTOFF or os.environ.get(RETIRED_GEMINI_BACKEND_ENV, "0") == "1"
+
+
+def autorun_extension_listed(output: str) -> bool:
+    """Return whether Gemini's extension listing contains the canonical autorun ID.
+
+    Gemini CLI registers the marketplace plugin as ``ar``. Older installs may
+    still report ``autorun`` or ``autorun-workspace``; accept those aliases
+    without matching unrelated prose that merely mentions "autorun".
+    """
+    return bool(AUTORUN_EXTENSION_LINE.search(output))
 
 
 def model_override(env_name: str, default: str) -> str:

@@ -10,6 +10,7 @@ import pytest
 from autorun.platforms import PLATFORMS
 from e2e_support import (
     BACKEND_E2E_CONTRACTS,
+    autorun_extension_listed,
     RETIRED_GEMINI_BACKEND_ENV,
     find_task_recovery_marker,
     installed_task_pause_command_is_current,
@@ -52,6 +53,20 @@ def test_retired_gemini_model_calls_require_the_dedicated_override(monkeypatch):
     assert not retired_gemini_backend_enabled()
     monkeypatch.setenv(RETIRED_GEMINI_BACKEND_ENV, "1")
     assert retired_gemini_backend_enabled()
+
+
+@pytest.mark.parametrize(
+    ("listing", "expected"),
+    [
+        ("✓ ar (installed)\n✓ conductor (0.1.0)", True),
+        ("autorun-workspace (0.9.0)\n", True),
+        ("autorun is not installed\n", False),
+        ("✓ archive-tools (1.0.0)\n", False),
+    ],
+)
+def test_gemini_extension_identity_accepts_current_id_and_legacy_aliases(listing, expected):
+    """The installed Gemini ID is ``ar``; aliases remain backward compatible."""
+    assert autorun_extension_listed(listing) is expected
 
 
 @pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])
