@@ -44,6 +44,15 @@ class _StableFileLock(FileLock):
     durable coordination point, so release the OS lock without unlinking it.
     """
 
+    def _acquire(self) -> None:
+        super()._acquire()
+        if os.name == "nt" and self._context.lock_file_fd is not None:
+            # Keep the descriptor at byte zero for the matching unlock. The
+            # Windows CRT defines locking relative to the current position;
+            # resetting it here makes the stable-lock contract independent of
+            # whether the installed filelock/CRT advances the position.
+            os.lseek(self._context.lock_file_fd, 0, os.SEEK_SET)
+
     def _release(self) -> None:
         fd = self._context.lock_file_fd
         self._context.lock_file_fd = None
@@ -52,6 +61,11 @@ class _StableFileLock(FileLock):
         if os.name == "nt":
             import msvcrt
 
+            # ``msvcrt.locking`` operates from the descriptor's current
+            # position.  Keep unlock symmetric with the byte acquired by
+            # filelock even if a future filelock/CRT combination advances the
+            # descriptor while taking the lock.
+            os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         else:
             import fcntl

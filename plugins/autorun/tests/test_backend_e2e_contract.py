@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -137,7 +138,15 @@ def test_bare_task_pause_is_five_minutes_through_real_hook_process(
     )
 
     assert result.returncode == 0, result.stderr
-    assert "5m0s" in result.stdout
+    # The hook reports a live countdown.  Process startup consumes a small
+    # amount of the five-minute grant (Windows runners routinely spend 1–3s
+    # starting ``uv``), so assert the configured TTL rather than one exact
+    # wall-clock rendering.
+    countdown = re.search(r"active \((?:(\d+)m)?(\d+)s remaining\)", result.stdout)
+    assert countdown, result.stdout
+    minutes = int(countdown.group(1) or 0)
+    seconds = minutes * 60 + int(countdown.group(2))
+    assert 240 <= seconds <= 300, result.stdout
     assert find_task_recovery_marker(result.stdout), result.stdout
 
 
