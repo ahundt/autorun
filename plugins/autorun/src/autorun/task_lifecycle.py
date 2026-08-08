@@ -89,6 +89,18 @@ _MAX_CONSUMED_DELEGATION_MARKERS: int = 256
 _SESSION_START_CLAIM_DIGEST_HEX_CHARS: int = 16
 
 
+def _safe_path_component(value: str) -> str:
+    """Keep a logical session ID usable as one audit-log directory name.
+
+    Session IDs are protocol data and may contain ``:`` or ``/``. Those are
+    valid identity characters but are separators or reserved characters on
+    Windows, so only the filesystem presentation is normalized; the original
+    ID remains in state, events, and responses.
+    """
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value)).strip(" .")
+    return cleaned or "_"
+
+
 # === Stop / Resume action fragments (assembled at call site) ===
 _ACT_REVIEW = "{task_list}"
 _ACT_COMPLETE = '{task_update}({task_id_param}="X", status="completed")'
@@ -624,7 +636,9 @@ class TaskLifecycle:
         self.global_key = f"__task_lifecycle__{self.session_id}"
 
         # Audit log path (per-session, append-only)
-        self.audit_log = self.config.storage_dir / self.session_id / "audit.log"
+        self.audit_log = (
+            self.config.storage_dir / _safe_path_component(self.session_id) / "audit.log"
+        )
         self.audit_log.parent.mkdir(parents=True, exist_ok=True)
 
     # === State Access (REUSES session_state() - DRY) ===
