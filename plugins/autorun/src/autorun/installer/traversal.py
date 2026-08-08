@@ -44,7 +44,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
-from .discovery import redirected_home
+from .discovery import process_home, redirected_home
 from .fs import (
     Decision,
     Verdict,
@@ -80,10 +80,10 @@ class Context:
     plugin_dirs: tuple[Path, ...] = ()
     #: The home this run targets. It must agree with ``$HOME``, and defaults to
     #: it. Setting this alone does *not* relocate an install: home-anchored
-    #: skill routes resolve through ``Path.home()``, which reads ``$HOME``, so a
+    #: skill routes resolve through the process-home seam (``$HOME`` when set), so a
     #: caller that changes only this field gets a partly-relocated result — some
     #: paths moved, some not. Redirect ``$HOME`` and let this default.
-    home: Path = field(default_factory=Path.home)
+    home: Path = field(default_factory=process_home)
 
     def __post_init__(self) -> None:
         """Refuse a ``home`` that disagrees with ``$HOME``.
@@ -103,8 +103,8 @@ class Context:
         if declared is not None and self.home != declared:
             raise ValueError(
                 f"Context(home={self.home}) disagrees with $HOME={declared}. "
-                "Home-anchored routes resolve through Path.home(), which reads "
-                "$HOME, so this would read one home and write another. Set the "
+                "Home-anchored routes resolve through the process-home seam, "
+                "which reads $HOME when set, so this would read one home and write another. Set the "
                 "HOME environment variable instead and leave `home` to default."
             )
     settings: Mapping[str, object] = field(default_factory=dict)

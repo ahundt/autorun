@@ -37,7 +37,7 @@ __all__ = [
     "config_dir", "extensions_dir", "expand_home", "build_timestamp",
     "skill_destinations", "shared_root", "codex_plugin_source",
     "personal_marketplace", "plugin_name", "PLUGIN_MANIFEST",
-    "redirected_home",
+    "redirected_home", "process_home",
     "python_too_old", "MINIMUM_PYTHON",
 ]
 
@@ -58,6 +58,18 @@ _UV_MARKERS = (".local/share/uv/tools", ".local/share/uv/python")
 _UV_MAX_DEPTH = 4
 
 
+def process_home() -> Path:
+    """Return the configured process home on every supported OS.
+
+    ``Path.home()`` consults the account database on Windows and therefore
+    ignores a test or deployment that intentionally redirects ``HOME``.  The
+    installer treats ``HOME`` as its isolation seam, so prefer it whenever it
+    is present and fall back to the platform-native home lookup otherwise.
+    """
+    configured = os.environ.get("HOME")
+    return Path(configured) if configured else Path.home()
+
+
 def _uv_bases() -> tuple[Path, ...]:
     """Where to look for a checkout when a UV tool install cannot see its own.
 
@@ -72,7 +84,7 @@ def _uv_bases() -> tuple[Path, ...]:
     homes = {
         expand_home(p.config_dir) for p in PLATFORMS.values() if getattr(p, "config_dir", "")
     }
-    return (*sorted(homes), Path.home(), Path("/opt"))
+    return (*sorted(homes), process_home(), Path("/opt"))
 
 
 def is_marketplace_root(candidate: Path) -> bool:
@@ -310,7 +322,7 @@ def expand_home(value: str | Path, *, home: Path | None = None) -> Path:
     to make; the caller sees a path that plainly does not exist.
     """
     text = str(value)
-    root = home or Path.home()
+    root = home if home is not None else process_home()
     if text == "~":
         return root
     if text.startswith("~/"):

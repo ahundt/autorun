@@ -556,20 +556,24 @@ class TestContention:
         blocker = sqlite3.connect(str(db_path), isolation_level=None)
         blocker.execute("BEGIN IMMEDIATE")
         try:
-            start = time.monotonic()
-            with pytest.raises(SessionTimeoutError):
-                with store.operation_scope(0.2) as owner:
-                    try:
-                        with store.write_transaction(owner):
-                            pass
-                    except SessionTimeoutError:
-                        pass
+            with store.operation_scope(0.2) as owner:
+                first_started = time.monotonic()
+                with pytest.raises(SessionTimeoutError):
                     with store.write_transaction(owner):
                         pass
-            elapsed = time.monotonic() - start
-            assert elapsed < 0.2 * 2, (
-                f"Two attempts took {elapsed:.3f}s, so each one restarted the "
-                "budget instead of sharing one deadline."
+                first_elapsed = time.monotonic() - first_started
+                second_started = time.monotonic()
+                with pytest.raises(SessionTimeoutError):
+                    with store.write_transaction(owner):
+                        pass
+                second_elapsed = time.monotonic() - second_started
+            assert first_elapsed >= 0.1, (
+                f"The first attempt returned too early ({first_elapsed:.3f}s); "
+                "the contention fixture did not exercise the deadline."
+            )
+            assert second_elapsed < 0.1, (
+                f"The second attempt waited {second_elapsed:.3f}s after the "
+                "deadline, so each attempt may be restarting the budget."
             )
         finally:
             blocker.execute("ROLLBACK")

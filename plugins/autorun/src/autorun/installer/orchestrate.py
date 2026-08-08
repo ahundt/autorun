@@ -143,7 +143,7 @@ def perform(
         # uninstall. Steps ignore missing sources, while guidance, hooks,
         # marketplace entries, and receipt-owned trees can still be retired.
         plugin_dirs=tuple(dict.fromkeys(named.values())),
-        home=home or Path.home(),
+        home=home if home is not None else discovery.process_home(),
         settings=resolved,
         force=force,
     )

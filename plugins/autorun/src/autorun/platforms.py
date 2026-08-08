@@ -28,6 +28,18 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 
+def _process_home() -> Path:
+    """Return the configured process home on every supported OS.
+
+    ``Path.home()`` consults the account database on Windows and therefore
+    ignores a test or deployment that intentionally redirects ``HOME``.  The
+    installer treats ``HOME`` as its isolation seam, so prefer it whenever it
+    is present and fall back to the platform-native home lookup otherwise.
+    """
+    configured = os.environ.get("HOME")
+    return Path(configured) if configured else Path.home()
+
+
 # The register(Platform(...)) declarations below provide Click/Typer-like
 # declarative configuration: callers look up typed behavior instead of
 # branching on harness names.
@@ -126,7 +138,7 @@ class HomeDirSkills(SkillRoute):
         question, and an optional one at that — a caller omitting it would
         silently get the real home instead of a type error.
         """
-        root = home or Path.home()
+        root = home if home is not None else _process_home()
         return (root / self.subdir,) if self.subdir else ()
 
     def describe(self) -> str:
