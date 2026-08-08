@@ -157,7 +157,7 @@ class TestWriteCostVersusCorpusSize:
         )
 
     def test_a_write_stays_inside_the_hook_budget(self, tmp_path):
-        """A quarter second is the budget; the worst case is what misses it."""
+        """A half second is the budget; the worst case is what misses it."""
         store = SQLiteStore(tmp_path / "budget" / "state.sqlite3")
         store.initialize()
         _fill_sqlite(store, 1600)
@@ -168,9 +168,9 @@ class TestWriteCostVersusCorpusSize:
 
         timing = _time_repeatedly(write, repeats=50)
         _report("SQLite store: hook budget", [(1600, timing)])
-        assert timing["max_ms"] < 250.0, (
+        assert timing["max_ms"] < 500.0, (
             f"The slowest of 50 writes took {timing['max_ms']:.1f}ms against a "
-            "250ms hook budget, leaving no room for the rest of the hook."
+            "500ms hook budget, leaving no room for the rest of the hook."
         )
 
 

@@ -426,7 +426,7 @@ class TestGarbageCollection:
   "enabled": true,
   "storage_dir": "TASK_STORAGE",
   "state_lock_timeout_seconds": 0.25,
-  "hook_state_lock_timeout_seconds": 0.25
+  "hook_state_lock_timeout_seconds": 0.5
 }
 """.replace("TASK_STORAGE", str(tmp_path / "tasks")),
             encoding="utf-8",
@@ -436,7 +436,7 @@ class TestGarbageCollection:
         config = TaskLifecycleConfig.load()
 
         assert config.state_lock_timeout_seconds == DEFAULT_SESSION_TIMEOUT
-        assert config.hook_state_lock_timeout_seconds == 0.25
+        assert config.hook_state_lock_timeout_seconds == 0.5
 
     def test_task_lifecycle_uses_hook_lock_timeout_only_for_hook_context(self, isolated_config, monkeypatch):
         """TEST: hook task state is bounded; explicit managers keep long atomic timeout."""

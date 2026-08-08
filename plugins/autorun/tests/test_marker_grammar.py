@@ -326,7 +326,7 @@ class TestExtractionCost:
             f"Scanning a {len(text) // 1024} KiB transcript for an absent "
             f"marker took {elapsed_ms:.1f}ms — and that is roughly 20x the "
             "64 KiB a real transcript is capped at. This runs twice per hook "
-            "inside a 250ms budget shared with everything else."
+            "inside a 500ms budget shared with everything else."
         )
 
     def test_scanning_does_not_copy_its_inputs(self):

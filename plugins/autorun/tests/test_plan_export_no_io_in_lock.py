@@ -9,7 +9,7 @@ one process at a time. The state lock is global: while it is held, no other
 session can record a policy change, a task transition, or a stop decision.
 Tying that window to a filesystem copy — which may hit a slow disk, a network
 mount, or a full volume — makes every session's writes wait on one file
-operation, and the wait is bounded by a quarter-second hook budget.
+operation, and the wait is bounded by a half-second hook budget.
 
 So the copy moves out of the lock, and what replaces it has to keep the
 properties the lock was providing:
@@ -124,7 +124,7 @@ class TestNoFileIoWhileStateIsLocked:
         assert all(held == 0 for held in observed), (
             "The plan file was copied while the global state lock was held. "
             "Every other session's writes queue behind that copy, on a "
-            f"quarter-second budget. Lock depth during copy: {observed}"
+            f"half-second budget. Lock depth during copy: {observed}"
         )
 
     def test_metadata_embedding_also_happens_outside_the_lock(

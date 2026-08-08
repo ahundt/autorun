@@ -726,7 +726,10 @@ CONFIG = {
     # state lock. Longer waits cause Claude/Codex hook timeouts under many
     # simultaneous sessions; callers keep daemon-local cache when persistence
     # is briefly contended.
-    "hook_state_lock_timeout_seconds": 0.25,
+    # Cross-process hook writes include an fsynced JSON publication. A 500ms
+    # budget lets the eight-process reminder/concurrency path queue safely on
+    # slower filesystems while remaining bounded for interactive hooks.
+    "hook_state_lock_timeout_seconds": 0.5,
     # ─── State store: which backend holds session state ───
     # "json"   — one file rewritten on every change. The original.
     # "sqlite" — one row per field. Existing JSON must first be converted with

@@ -66,7 +66,7 @@ IDLE_TIMEOUT = 1800  # 30 minutes
 # Hooks must stay under strict harness budgets. Persistent session state is a
 # shared JSON file; advisory hook paths should skip persistence on contention
 # instead of waiting long enough to time out active sessions.
-HOOK_STATE_LOCK_TIMEOUT = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.25))
+HOOK_STATE_LOCK_TIMEOUT = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.5))
 
 # Advisory in-memory state has no durable home, so nothing else would ever
 # remove it. A daemon can serve thousands of sessions over days, and every

@@ -233,7 +233,7 @@ class TaskLifecycleConfig:
     ghost_clear_hash_length: int = 12
     task_pause_default_ttl_seconds: float = TASK_PAUSE_DEFAULT_TTL_SECONDS
     state_lock_timeout_seconds: float = DEFAULT_SESSION_TIMEOUT
-    hook_state_lock_timeout_seconds: float = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.25))
+    hook_state_lock_timeout_seconds: float = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.5))
 
     @classmethod
     def load(cls) -> "TaskLifecycleConfig":
