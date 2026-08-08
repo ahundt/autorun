@@ -549,6 +549,7 @@ class TestCodeQuality:
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "autorun", "--version"],
+                cwd=tmp_path,
                 capture_output=True,
                 text=True,
                 env=env,
@@ -575,6 +576,7 @@ class TestCodeQuality:
                 "-c",
                 "import autorun.core",
             ],
+            cwd=src_dir.parent.parent,
             capture_output=True,
             text=True,
             env={"PYTHONPATH": str(src_dir)},

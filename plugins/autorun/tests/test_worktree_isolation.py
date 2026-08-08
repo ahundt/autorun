@@ -14,6 +14,7 @@ def _run_isolated_probe(code: str, tmp_path: Path) -> subprocess.CompletedProces
     }
     return subprocess.run(
         [sys.executable, "-c", code],
+        cwd=tmp_path,
         env=env,
         text=True,
         capture_output=True,
