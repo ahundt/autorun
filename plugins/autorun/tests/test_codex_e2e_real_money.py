@@ -38,7 +38,6 @@ from e2e_support import (
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 _LOG_DIR = Path("/tmp") / "autorun-e2e-test-logs"
 
-pytestmark = pytest.mark.e2e
 paid_codex_e2e = pytest.mark.skipif(
     not ENABLE_REAL_MONEY_TESTS,
     reason=(
@@ -173,19 +172,26 @@ def _allow_non_spark_codex_e2e_model() -> bool:
     return os.environ.get("AUTORUN_CODEX_E2E_ALLOW_NON_SPARK_MODEL", "0") == "1"
 
 
-def _load_codex_model_catalog(args: list[str]) -> dict | None:
-    result = subprocess.run(
-        ["codex", "debug", "models", *args],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+def _load_codex_model_catalog(args: list[str]) -> dict:
+    command = ["codex", "debug", "models", *args]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        pytest.fail(f"Codex model catalog command failed: {error}")
     if result.returncode != 0:
-        return None
+        pytest.fail(
+            f"Codex model catalog command exited {result.returncode}: "
+            f"{(result.stderr or result.stdout)[-1000:]}"
+        )
     try:
         return _json_from_codex_debug_models(result.stdout + "\n" + result.stderr)
-    except (json.JSONDecodeError, ValueError):
-        return None
+    except (json.JSONDecodeError, ValueError) as error:
+        pytest.fail(f"Codex model catalog was not valid JSON: {error}")
 
 
 def _choose_codex_e2e_model() -> str:
@@ -285,7 +291,7 @@ def codex_cli_check():
 
     result = subprocess.run(["codex", "--version"], capture_output=True, text=True, timeout=10)
     if result.returncode != 0:
-        pytest.skip(f"Codex CLI is not runnable: {result.stderr[:500]}")
+        pytest.fail(f"Installed Codex CLI is not runnable: {result.stderr[:500]}")
 
 
 class TestCodexHookEntryPoint:
@@ -354,6 +360,7 @@ class TestCodexHookEntryPoint:
 
 
 @paid_codex_e2e
+@pytest.mark.e2e
 class TestCodexE2ERealMoney:
     """Real Codex CLI E2E tests using codex exec.
 

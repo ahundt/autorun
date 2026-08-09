@@ -76,7 +76,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Iterator, Mapping
+from typing import Callable, Iterable, Iterator, Mapping
 
 from filelock import FileLock
 
@@ -97,6 +97,8 @@ __all__ = [
     "publish_tree",
     "publish_files",
     "publish_link",
+    "record_tree",
+    "preserved_paths",
     "decide_link",
     "withdraw_link",
     "backup_path",
@@ -124,7 +126,9 @@ SKIP_NAMES = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv", ".mypy_
 #: backup beside a source file made every later ``decide`` report ``PUBLISH``
 #: for an identical tree, and each install rewrote it.
 IGNORED_GLOBS: tuple[str, ...] = (
-    *sorted(SKIP_NAMES), "*.pyc", "*.pyo", "*.tmp", "*~", "*.bak",
+    *sorted(SKIP_NAMES),
+    "*.pyc", "*.pyo", "*.tmp", "*~", "*.bak",
+    ".*-extension-install.json", "qwen-extension.json",
 )
 _LINK = "link:"
 
@@ -319,6 +323,38 @@ def read_marker(directory: Path) -> TreeManifest | None:
     return TreeManifest.from_marker(payload) if isinstance(payload, dict) else TreeManifest()
 
 
+def record_tree(
+    directory: Path,
+    *,
+    plugin: str,
+    ownership_proof: Callable[[Path], bool],
+) -> bool:
+    """Fingerprint a regular tree after its native installer materializes it.
+
+    The native CLI may copy rather than link a persistent registration source.
+    Its exact receipt establishes initial ownership; the snapshot written here
+    makes every later edit visible before refresh or uninstall. Symlinks reuse
+    the already-recorded source marker and need no second marker.
+    """
+    if directory.is_symlink():
+        return True
+    if not directory.is_dir():
+        return False
+    with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+        if (
+            not directory.is_dir()
+            or directory.is_symlink()
+            or not ownership_proof(directory)
+        ):
+            return False
+        atomic_write(
+            directory / OWNED_MARKER_NAME,
+            json.dumps(TreeManifest.of(directory, plugin).as_payload(), indent=2)
+            + "\n",
+        )
+    return True
+
+
 def compare(
     root: Path, manifest: TreeManifest
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -368,12 +404,21 @@ class Decision:
         return f"{self.verdict.value:<7} {self.target}  — {self.reason}{detail}"
 
 
+class _PublicationRefused(RuntimeError):
+    """Carry a decision that changed while the publication lock was acquired."""
+
+    def __init__(self, decision: Decision):
+        super().__init__(decision.reason)
+        self.decision = decision
+
+
 def decide(
     target: Path,
     source: Path | None,
     *,
     plugin: str,
     read: Callable[[Path], TreeManifest | None] = read_marker,
+    ownership_proof: Callable[[Path], bool] | None = None,
 ) -> Decision:
     """Decide one directory's fate, the same way for install and uninstall.
 
@@ -389,12 +434,37 @@ def decide(
 
     manifest = read(target)
     if manifest is None:
+        if ownership_proof is not None:
+            try:
+                if ownership_proof(target):
+                    return Decision(
+                        Verdict.PUBLISH if source is not None else Verdict.RETIRE,
+                        target,
+                        (
+                            "adopting exact harness install receipt"
+                            if source is not None
+                            else "retiring exact harness install receipt"
+                        ),
+                    )
+            except (OSError, RuntimeError, ValueError):
+                pass
         return Decision(Verdict.KEEP, target, "user-authored")
     if not owns(manifest, plugin):
         return Decision(Verdict.KEEP, target, f"belongs to {manifest.plugin}")
 
-    if not manifest.files and source is not None and scan_tree(target) == scan_tree(source):
-        return Decision(Verdict.PUBLISH, target, "recording legacy ownership")
+    if not manifest.files:
+        if source is not None and scan_tree(target) == scan_tree(source):
+            return Decision(Verdict.PUBLISH, target, "recording legacy ownership")
+        if ownership_proof is not None:
+            try:
+                if ownership_proof(target):
+                    return Decision(
+                        Verdict.PUBLISH if source is not None else Verdict.RETIRE,
+                        target,
+                        "migrating legacy marker with exact harness receipt",
+                    )
+            except (OSError, RuntimeError, ValueError):
+                pass
     edited, missing, extra = compare(target, manifest)
     if changed := tuple(sorted((*edited, *missing, *extra))):
         return Decision(Verdict.KEEP, target, "you edited files we installed", changed)
@@ -471,7 +541,13 @@ def _swapped(target: Path) -> Iterator[Path]:
 
 
 @contextmanager
-def published(target: Path, *, plugin: str = "", **settings: str) -> Iterator[Path]:
+def published(
+    target: Path,
+    *,
+    plugin: str = "",
+    authorize: Callable[[], Decision] | None = None,
+    **settings: str,
+) -> Iterator[Path]:
     """Stage beside ``target``, record what we wrote, and swap it in atomically.
 
     Yields the staging path for the caller to fill — normally with one
@@ -488,6 +564,10 @@ def published(target: Path, *, plugin: str = "", **settings: str) -> Iterator[Pa
     lock also lives in the parent, so it outlives the artifact being replaced.
     """
     with _swapped(target) as staged:
+        if authorize is not None:
+            decision = authorize()
+            if decision.verdict is not Verdict.PUBLISH:
+                raise _PublicationRefused(decision)
         yield staged
         # Claim inside the staging scope so the marker lands in the same
         # rename as the contents it describes.
@@ -532,7 +612,58 @@ def replace_tree(source: Path, target: Path) -> Path:
     return target
 
 
-def withdrawn(target: Path, *, plugin: str | None = None) -> bool:
+def _copy_path(source: Path, target: Path) -> None:
+    """Copy one file, directory, or link without following a link."""
+    if source.is_symlink():
+        target.symlink_to(os.readlink(source), target_is_directory=source.is_dir())
+    elif source.is_dir():
+        shutil.copytree(source, target, symlinks=True)
+    else:
+        shutil.copy2(source, target)
+
+
+@contextmanager
+def preserved_paths(paths: Iterable[Path]) -> Iterator[Callable[[], None]]:
+    """Restore existing paths unless the caller commits a native CLI change.
+
+    Harness CLIs may implement refresh as uninstall followed by install. Their
+    subprocess boundary cannot participate in our atomic rename, so snapshot
+    only the exact materialization and receipt paths proven to exist, then use
+    :func:`_swapped` to restore each one if any native command fails.
+    """
+    unique = tuple(
+        dict.fromkeys(
+            path for path in paths if path.exists() or path.is_symlink()
+        )
+    )
+    committed = False
+
+    def commit() -> None:
+        nonlocal committed
+        committed = True
+
+    with tempfile.TemporaryDirectory(prefix="autorun-native-rollback-") as tmp:
+        root = Path(tmp)
+        snapshots: list[tuple[Path, Path]] = []
+        for index, path in enumerate(unique):
+            snapshot = root / str(index)
+            _copy_path(path, snapshot)
+            snapshots.append((path, snapshot))
+        try:
+            yield commit
+        finally:
+            if not committed:
+                for path, snapshot in snapshots:
+                    with _swapped(path) as staged:
+                        _copy_path(snapshot, staged)
+
+
+def withdrawn(
+    target: Path,
+    *,
+    plugin: str | None = None,
+    ownership_proof: Callable[[Path], bool] | None = None,
+) -> bool:
     """Delete a directory autorun owns, restoring it if the delete fails.
 
     The removal twin of :func:`published`, and deliberately the same
@@ -552,10 +683,22 @@ def withdrawn(target: Path, *, plugin: str | None = None) -> bool:
         if not target.is_dir() or target.is_symlink():
             return False
         manifest = read_marker(target)
-        if manifest is None or (plugin is not None and not owns(manifest, plugin)):
-            return False
-        if any(compare(target, manifest)):
-            return False
+        proven_legacy = False
+        if ownership_proof is not None:
+            try:
+                proven_legacy = ownership_proof(target)
+            except (OSError, RuntimeError, ValueError):
+                proven_legacy = False
+        if manifest is None:
+            if not proven_legacy:
+                return False
+        else:
+            if plugin is not None and not owns(manifest, plugin):
+                return False
+            if any(compare(target, manifest)) and not (
+                not manifest.files and proven_legacy
+            ):
+                return False
         with tempfile.TemporaryDirectory(
             prefix=f".autorun-withdraw-{target.name}-", dir=target.parent
         ) as tmp:
@@ -727,7 +870,15 @@ def publish_files(
     return Decision(Verdict.PUBLISH, directory, reason, tuple(kept) + tuple(backed_up))
 
 
-def decide_link(source: Path | None, target: Path, inside: Path, *, plugin: str = "") -> Decision:
+def decide_link(
+    source: Path | None,
+    target: Path,
+    inside: Path,
+    *,
+    plugin: str = "",
+    ownership_proof: Callable[[Path], bool] | None = None,
+    exact_target: Path | None = None,
+) -> Decision:
     """Decide a bridged symlink, which :func:`decide` cannot answer.
 
     A live symlink ``exists()`` and carries no marker, so the whole-tree
@@ -748,7 +899,26 @@ def decide_link(source: Path | None, target: Path, inside: Path, *, plugin: str 
             resolved.relative_to(_strip_extended_prefix(inside.resolve()))
         except ValueError:
             return Decision(Verdict.KEEP, target, "links outside the shared root")
+        if (
+            exact_target is not None
+            and resolved != _strip_extended_prefix(exact_target.resolve())
+        ):
+            return Decision(Verdict.KEEP, target, "links to a different source")
         if source is None:
+            if ownership_proof is not None:
+                try:
+                    if not ownership_proof(target):
+                        return Decision(
+                            Verdict.KEEP,
+                            target,
+                            "linked source contains user edits",
+                        )
+                except (OSError, RuntimeError, ValueError):
+                    return Decision(
+                        Verdict.KEEP,
+                        target,
+                        "could not verify linked source contents",
+                    )
             return Decision(Verdict.RETIRE, target, "no longer bridged")
         return (
             Decision(Verdict.SKIP, target, "already linked")
@@ -760,10 +930,23 @@ def decide_link(source: Path | None, target: Path, inside: Path, *, plugin: str 
                 else Decision(Verdict.SKIP, target, "already absent"))
     # A real directory where a link belongs: the whole-tree rules apply, so a
     # copy-mode bridge we own can be replaced and anything else is the user's.
-    return decide(target, source, plugin=plugin)
+    return decide(
+        target,
+        source,
+        plugin=plugin,
+        ownership_proof=ownership_proof,
+    )
 
 
-def publish_link(source: Path, target: Path, *, plugin: str = "", **settings: str) -> Decision:
+def publish_link(
+    source: Path,
+    target: Path,
+    *,
+    plugin: str = "",
+    ownership_proof: Callable[[Path], bool] | None = None,
+    exact_target: Path | None = None,
+    **settings: str,
+) -> Decision:
     """Point ``target`` at ``source`` with a symlink, or copy and say so.
 
     The bridge exists so one edit applies everywhere. A copy forks silently: the
@@ -777,12 +960,24 @@ def publish_link(source: Path, target: Path, *, plugin: str = "", **settings: st
     marker, so the fallback is visible rather than assumed.
     """
     if target.is_symlink():
-        decision = decide_link(source, target, source.parent, plugin=plugin)
+        decision = decide_link(
+            source,
+            target,
+            source.parent,
+            plugin=plugin,
+            ownership_proof=ownership_proof,
+            exact_target=exact_target,
+        )
         if decision.verdict in (Verdict.KEEP, Verdict.SKIP):
             return decision
     elif target.exists():
-        marker = read_marker(target) if target.is_dir() else None
-        if not owns(marker, plugin) or any(compare(target, marker)):
+        decision = decide(
+            target,
+            source,
+            plugin=plugin,
+            ownership_proof=ownership_proof,
+        )
+        if decision.verdict is not Verdict.PUBLISH:
             return Decision(Verdict.KEEP, target, "user-authored")
     copied = False
     with _swapped(target) as staged:
@@ -803,7 +998,12 @@ def publish_link(source: Path, target: Path, *, plugin: str = "", **settings: st
     return Decision(Verdict.PUBLISH, target, f"linked to {source}")
 
 
-def withdraw_link(target: Path, inside: Path) -> bool:
+def withdraw_link(
+    target: Path,
+    inside: Path,
+    *,
+    exact_target: Path | None = None,
+) -> bool:
     """Remove a link autorun made, identified by where it points.
 
     A symlink carries no marker, so its only evidence of ownership is its
@@ -817,9 +1017,15 @@ def withdraw_link(target: Path, inside: Path) -> bool:
     try:
         resolved = Path(os.readlink(target))
         resolved = resolved if resolved.is_absolute() else (target.parent / resolved)
-        _strip_extended_prefix(resolved.resolve()).relative_to(
+        resolved = _strip_extended_prefix(resolved.resolve())
+        resolved.relative_to(
             _strip_extended_prefix(inside.resolve())
         )
+        if (
+            exact_target is not None
+            and resolved != _strip_extended_prefix(exact_target.resolve())
+        ):
+            return False
     except (OSError, ValueError, RuntimeError):
         return False
     target.unlink()
@@ -907,18 +1113,43 @@ def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[di
 _IGNORED = shutil.ignore_patterns(*IGNORED_GLOBS)
 
 
-def publish_tree(source: Path, target: Path, *, plugin: str = "", **settings: str) -> Decision:
+def publish_tree(
+    source: Path,
+    target: Path,
+    *,
+    plugin: str = "",
+    ownership_proof: Callable[[Path], bool] | None = None,
+    **settings: str,
+) -> Decision:
     """The common case: copy a source tree in, unless the decision says not to.
 
     Every skill, extension, command bundle and plugin cache goes through this
     one call. The fourteen hand-rolled copy sites it replaces each answered
     "may I write here?" differently, and had each drifted from the others.
     """
-    decision = decide(target, source, plugin=plugin)
+    decision = decide(
+        target,
+        source,
+        plugin=plugin,
+        ownership_proof=ownership_proof,
+    )
     if decision.verdict in (Verdict.KEEP, Verdict.SKIP):
         return decision
-    with published(target, plugin=plugin, **settings) as staged:
-        shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
+    try:
+        with published(
+            target,
+            plugin=plugin,
+            authorize=lambda: decide(
+                target,
+                source,
+                plugin=plugin,
+                ownership_proof=ownership_proof,
+            ),
+            **settings,
+        ) as staged:
+            shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
+    except _PublicationRefused as refused:
+        return refused.decision
     return decision
 
 

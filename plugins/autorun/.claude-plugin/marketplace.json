@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "autorun",
-  "description": "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally. Provides AutoFile policies, autonomous operation via hooks, and session exploration tools.",
+  "description": "Task lifecycle, command safety, AutoFile policies, autonomous continuation, and cross-harness hook integrations.",
   "owner": {
     "name": "Andrew Hundt",
     "email": "ATHundt@gmail.com"

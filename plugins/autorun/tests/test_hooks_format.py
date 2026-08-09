@@ -610,6 +610,7 @@ class TestCrossCliEventValidation:
         assert not contamination, f"Gemini hooks contains Claude-only events: {contamination}"
 
 
+@pytest.mark.e2e
 class TestCacheCleanup:
     """Test that Claude Code plugin cache contains valid Claude hooks.
 

@@ -60,12 +60,12 @@ class TestGeminiPathway:
         )
 
     def test_template_hook_entry_matches_canonical(self):
-        """Template hook_entry.py MUST stay byte-identical to the canonical
-        plugins/autorun/hooks/hook_entry.py. Any divergence means Gemini
-        runs stale handler code.
+        """The source pathway is a symlink to the canonical hook, never a
+        second implementation that can drift.
         """
         canonical = PLUGIN_ROOT / "hooks" / "hook_entry.py"
         template_copy = TEMPLATE / "hooks" / "hook_entry.py"
+        assert template_copy.is_symlink()
         assert canonical.read_bytes() == template_copy.read_bytes(), (
             "hook_entry.py in gemini_template/ has drifted from the canonical "
             "plugins/autorun/hooks/hook_entry.py. Re-run `autorun --install` or "
@@ -238,14 +238,14 @@ class TestSharedContract:
     """Code-sharing invariants: what MUST stay unified across both CLIs."""
 
     def test_hook_entry_is_single_source_of_truth(self):
-        """Exactly one hook_entry.py is the canonical source. The template's
-        copy is a synced artifact — not a diverged fork.
+        """Exactly one hook_entry.py is the canonical source. The template
+        links to it for source installs and wheel staging omits the link.
         """
         canonical = PLUGIN_ROOT / "hooks" / "hook_entry.py"
         template_copy = TEMPLATE / "hooks" / "hook_entry.py"
         assert canonical.is_file()
         assert template_copy.is_file()
-        # Byte-identical content implies no divergence.
+        assert template_copy.is_symlink()
         assert canonical.read_bytes() == template_copy.read_bytes()
 
     def test_cli_type_detection_discriminates_claude_vs_gemini(self):

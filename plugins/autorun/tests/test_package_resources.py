@@ -12,7 +12,6 @@ TDD Methodology:
 - REFACTOR: Clean up while keeping tests green
 """
 from pathlib import Path
-import pytest
 
 
 class TestGetPluginRoot:
@@ -48,6 +47,283 @@ class TestGetPluginRoot:
         root = get_plugin_root()
         marketplace = root / ".claude-plugin" / "marketplace.json"
         assert marketplace.exists(), f"marketplace.json not found in {root}"
+
+    def test_artifact_root_resolves_registered_plugin_name(self, tmp_path):
+        """A wheel has no plugins/autorun subdirectory beneath its package root."""
+        import json
+
+        from autorun.installer.discovery import plugin_dir
+
+        root = tmp_path / "autorun"
+        metadata = root / ".claude-plugin"
+        metadata.mkdir(parents=True)
+        (metadata / "plugin.json").write_text(json.dumps({"name": "ar"}))
+        (metadata / "marketplace.json").write_text(
+            json.dumps(
+                {
+                    "plugins": [
+                        {
+                            "name": "ar",
+                            "source": {
+                                "source": "github",
+                                "repo": "ahundt/autorun",
+                                "subdirectory": "plugins/autorun",
+                            },
+                        },
+                        {
+                            "name": "pdf-extractor",
+                            "source": {
+                                "source": "github",
+                                "repo": "ahundt/autorun",
+                                "subdirectory": "plugins/pdf-extractor",
+                            },
+                        },
+                    ]
+                }
+            )
+        )
+
+        assert plugin_dir(root, "ar") == root
+
+    def test_wheel_asset_copy_excludes_untracked_files(
+        self, tmp_path, monkeypatch
+    ):
+        import build_support
+
+        source = tmp_path / "plugin"
+        for tree, _destination in build_support.PLUGIN_ASSET_TREES:
+            (source / tree).mkdir(parents=True, exist_ok=True)
+        tracked = Path("skills/example/SKILL.md")
+        leaked = Path("skills/example/private.pdf")
+        (source / tracked).parent.mkdir(parents=True, exist_ok=True)
+        (source / tracked).write_text("tracked")
+        (source / leaked).write_bytes(b"private")
+        monkeypatch.setattr(build_support, "_tracked_paths", lambda _root: {tracked})
+
+        destination = tmp_path / "wheel" / "autorun"
+        build_support.copy_plugin_assets(source, destination)
+
+        assert (destination / tracked).read_text() == "tracked"
+        assert not (destination / leaked).exists()
+
+    def test_wheel_keeps_one_hook_entry_while_source_link_supports_gemini(
+        self, tmp_path, monkeypatch
+    ):
+        import build_support
+
+        source = tmp_path / "plugin"
+        for tree, _destination in build_support.PLUGIN_ASSET_TREES:
+            (source / tree).mkdir(parents=True, exist_ok=True)
+        canonical = source / "hooks" / "hook_entry.py"
+        template_hooks = source / "src" / "autorun" / "gemini_template" / "hooks"
+        template_hooks.mkdir(parents=True, exist_ok=True)
+        canonical.write_text("canonical\n")
+        (template_hooks / "hook_entry.py").symlink_to(
+            Path("../../../../hooks/hook_entry.py")
+        )
+        tracked = {
+            Path("hooks/hook_entry.py"),
+            Path("src/autorun/gemini_template/hooks/hook_entry.py"),
+        }
+        monkeypatch.setattr(build_support, "_tracked_paths", lambda _root: tracked)
+
+        destination = tmp_path / "wheel" / "autorun"
+        build_support.copy_plugin_assets(source, destination)
+
+        assert (destination / "hooks" / "hook_entry.py").read_text() == "canonical\n"
+        assert not (
+            destination / "gemini_template" / "hooks" / "hook_entry.py"
+        ).exists()
+
+    def test_sdist_filter_keeps_tracked_and_generated_metadata_only(
+        self, tmp_path, monkeypatch
+    ):
+        import subprocess
+
+        import build_support
+
+        source = tmp_path / "plugin"
+        source.mkdir()
+        tracked = Path("skills/example/SKILL.md")
+        output = b"skills/example/SKILL.md\0"
+        monkeypatch.setattr(
+            build_support.subprocess,
+            "run",
+            lambda *_args, **_kwargs: subprocess.CompletedProcess((), 0, output, b""),
+        )
+
+        kept = build_support.tracked_sdist_files(
+            source,
+            [
+                str(tracked),
+                "skills/example/private.pdf",
+                "src/autorun.egg-info/PKG-INFO",
+                "LICENSE",
+            ],
+        )
+
+        assert kept == [
+            str(tracked),
+            "src/autorun.egg-info/PKG-INFO",
+            "LICENSE",
+        ]
+
+    def test_build_metadata_is_reproducible_and_marks_dirty_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        import subprocess
+
+        import build_support
+
+        source = tmp_path / "plugin" / "src" / "autorun"
+        source.mkdir(parents=True)
+        (source / "metadata.json").write_text(
+            '{"version":"1.0.0rc1","commit":"unknown","build_time":"unknown"}'
+        )
+        responses = iter(
+            (
+                subprocess.CompletedProcess((), 0, "abc123\n", ""),
+                subprocess.CompletedProcess((), 0, " M src/autorun/core.py\n", ""),
+            )
+        )
+        monkeypatch.setattr(build_support.subprocess, "run", lambda *_a, **_k: next(responses))
+
+        document = build_support.build_metadata(
+            tmp_path / "plugin",
+            {"SOURCE_DATE_EPOCH": "1700000000"},
+        )
+
+        assert document == {
+            "version": "1.0.0rc1",
+            "commit": "abc123+dirty",
+            "build_time": "2023-11-14T22:13:20Z",
+        }
+
+    def test_explicit_build_commit_does_not_call_git(self, tmp_path, monkeypatch):
+        import build_support
+
+        source = tmp_path / "plugin" / "src" / "autorun"
+        source.mkdir(parents=True)
+        (source / "metadata.json").write_text('{"version":"1.0.0rc1"}')
+        monkeypatch.setattr(
+            build_support.subprocess,
+            "run",
+            lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("git called")),
+        )
+
+        document = build_support.build_metadata(
+            tmp_path / "plugin",
+            {"AUTORUN_BUILD_COMMIT": "release-sha", "SOURCE_DATE_EPOCH": "1700000000"},
+        )
+
+        assert document["commit"] == "release-sha"
+
+    def test_build_metadata_reads_version_from_pyproject_when_source_is_absent(
+        self, tmp_path
+    ):
+        import build_support
+
+        plugin = tmp_path / "plugin"
+        plugin.mkdir()
+        (plugin / "pyproject.toml").write_text(
+            '[project]\nname = "autorun"\nversion = "1.0.0rc1"\n'
+        )
+
+        document = build_support.build_metadata(
+            plugin,
+            {"AUTORUN_BUILD_COMMIT": "release-sha"},
+        )
+
+        assert document["version"] == "1.0.0rc1"
+
+    def test_wheel_templates_have_one_package_local_layout(self, tmp_path, monkeypatch):
+        import build_support
+
+        source = tmp_path / "plugin"
+        tracked = set()
+        for name in ("claude", "codex", "forgecode", "gemini", "opencode"):
+            relative = Path(f"src/autorun/{name}_template/marker.txt")
+            path = source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(name)
+            tracked.add(relative)
+        for tree, _destination in build_support.PLUGIN_ASSET_TREES:
+            (source / tree).mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(build_support, "_tracked_paths", lambda _root: tracked)
+
+        destination = tmp_path / "wheel" / "autorun"
+        build_support.copy_plugin_assets(source, destination)
+
+        for name in ("claude", "codex", "forgecode", "gemini", "opencode"):
+            assert (destination / f"{name}_template" / "marker.txt").read_text() == name
+            assert not (destination / "src" / "autorun" / f"{name}_template").exists()
+
+    def test_wheel_claude_marketplace_and_hooks_use_the_installed_distribution(
+        self, tmp_path, monkeypatch
+    ):
+        import json
+
+        import build_support
+
+        source = tmp_path / "plugin"
+        marketplace = source / ".claude-plugin" / "marketplace.json"
+        marketplace.parent.mkdir(parents=True)
+        marketplace.write_text(
+            json.dumps(
+                {
+                    "name": "autorun",
+                    "plugins": [
+                        {
+                            "name": "ar",
+                            "source": {
+                                "source": "github",
+                                "repo": "ahundt/autorun",
+                                "subdirectory": "plugins/autorun",
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+        hook_manifest = source / "hooks" / "hooks.json"
+        hook_manifest.parent.mkdir(parents=True)
+        hook_manifest.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "hooks": [
+                                    {"type": "command", "command": "uv run hook_entry.py"}
+                                ]
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        tracked = {
+            Path(".claude-plugin/marketplace.json"),
+            Path("hooks/hooks.json"),
+        }
+        for tree, _destination in build_support.PLUGIN_ASSET_TREES:
+            (source / tree).mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(build_support, "_tracked_paths", lambda _root: tracked)
+
+        destination = tmp_path / "wheel" / "autorun"
+        build_support.copy_plugin_assets(source, destination)
+
+        installed_marketplace = json.loads(
+            (destination / ".claude-plugin" / "marketplace.json").read_text()
+        )
+        assert installed_marketplace["plugins"] == [
+            {"name": "ar", "source": "."}
+        ]
+        installed_hooks = json.loads((destination / "hooks" / "hooks.json").read_text())
+        assert (
+            installed_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            == "autorun --cli claude"
+        )
 
 
 class TestGetCommandsDir:

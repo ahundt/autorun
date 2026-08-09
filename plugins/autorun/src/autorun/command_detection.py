@@ -452,7 +452,7 @@ def shell_command_from_tool_input(tool_input: object) -> str:
     """Return the shell command string from Claude/Gemini/Codex-style inputs."""
     if not isinstance(tool_input, dict):
         return ""
-    for key in ("command", "cmd"):
+    for key in ("command", "cmd", "CommandLine"):
         value = tool_input.get(key)
         if isinstance(value, str):
             return value

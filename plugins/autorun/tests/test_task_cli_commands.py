@@ -408,8 +408,6 @@ def test_cli_clear_with_confirm_in_non_interactive():
 
 def test_cli_clear_all_sessions():
     """Test cli_clear can remove all sessions."""
-    config = TaskLifecycleConfig.load()
-
     # Create multiple test sessions with unique prefixes
     session1 = 'test-cli-clear-all-unique-1'
     session2 = 'test-cli-clear-all-unique-2'
@@ -417,11 +415,8 @@ def test_cli_clear_all_sessions():
     manager1 = create_test_manager_with_tasks(session1)
     manager2 = create_test_manager_with_tasks(session2)
 
-    # Verify storage directories exist
-    storage1 = config.storage_dir / session1
-    storage2 = config.storage_dir / session2
-    assert storage1.exists(), "Session 1 storage should exist"
-    assert storage2.exists(), "Session 2 storage should exist"
+    assert manager1.tasks, "Session 1 tasks should exist"
+    assert manager2.tasks, "Session 2 tasks should exist"
 
     # Clear all sessions without confirmation
     exit_code, output = capture_stdout(
@@ -434,11 +429,11 @@ def test_cli_clear_all_sessions():
     assert exit_code == 0, "cli_clear should succeed"
     assert "Cleared" in output, "Should report cleared sessions"
 
-    # Verify storage directories removed
-    # Note: This clears ALL sessions, not just our test sessions
-    # So we just verify the operation succeeded and returned correct exit code
-    assert not storage1.exists(), "Session 1 storage should be removed"
-    assert not storage2.exists(), "Session 2 storage should be removed"
+    # SQLite owns task rows now; per-session JSON directories were removed by
+    # the storage redesign. Verify the public lifecycle view, not that obsolete
+    # implementation detail.
+    assert not TaskLifecycle(session_id=session1).tasks
+    assert not TaskLifecycle(session_id=session2).tasks
 
     print("✅ cli_clear all sessions works")
 

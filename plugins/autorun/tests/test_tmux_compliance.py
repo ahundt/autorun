@@ -9,29 +9,16 @@ plugins/autorun/skills/tmux-automation/SKILL.md
 import sys
 import os
 
-import pytest
-
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-try:
-    from autorun.tmux_utils import get_tmux_utilities, TmuxUtilities, TmuxControlState
-    from autorun.ai_monitor import get_tmux as get_ai_monitor_tmux
-    from autorun.tmux_injector import TmuxInjector, DualChannelInjector
-    COMPLIANCE_TEST_AVAILABLE = True
-except ImportError:
-    COMPLIANCE_TEST_AVAILABLE = False
-
-
-def _skip_if_unavailable():
-    if not COMPLIANCE_TEST_AVAILABLE:
-        pytest.skip("Tmux compliance modules not available")
+from autorun.tmux_utils import get_tmux_utilities, TmuxUtilities, TmuxControlState
+from autorun.ai_monitor import get_tmux as get_ai_monitor_tmux
+from autorun.tmux_injector import TmuxInjector, DualChannelInjector
 
 
 def test_default_session_naming():
     """Test requirement: Default session name should be 'autorun'"""
-    _skip_if_unavailable()
-
     # Test centralized utilities
     tmux_utils = get_tmux_utilities()
     assert tmux_utils.DEFAULT_SESSION_NAME == "autorun", \
@@ -50,8 +37,6 @@ def test_default_session_naming():
 
 def test_control_sequence_parsing():
     """Test requirement: Control sequence syntax (^ escape, ^^ literal)"""
-    _skip_if_unavailable()
-
     tmux_utils = TmuxUtilities("test_session")
 
     # Test basic parsing without control sequences
@@ -78,7 +63,6 @@ def test_control_sequence_parsing():
 
 def test_win_ops_completeness():
     """Test requirement: Complete WIN_OPS dispatch dictionary"""
-    _skip_if_unavailable()
 
     tmux_utils = TmuxUtilities("test_session")
 
@@ -148,7 +132,6 @@ def test_win_ops_completeness():
 
 def test_dry_compliance():
     """Test DRY principles across tmux implementations"""
-    _skip_if_unavailable()
 
     # All implementations should use the same centralized utilities
     # get_global_tmux_utils was removed from main.py — canonical replacement
@@ -165,7 +148,6 @@ def test_dry_compliance():
 
 def test_session_environment_detection():
     """Test session environment detection and fallback"""
-    _skip_if_unavailable()
 
     tmux_utils = TmuxUtilities("test_session")
 
@@ -181,7 +163,6 @@ def test_session_environment_detection():
 
 def test_ai_monitor_integration():
     """Test ai_monitor.py integration with centralized utilities"""
-    _skip_if_unavailable()
 
     # Test ai_monitor uses centralized utilities
     ai_monitor_tmux = get_ai_monitor_tmux()
@@ -195,7 +176,6 @@ def test_ai_monitor_integration():
 
 def test_tmux_injector_integration():
     """Test tmux_injector.py integration with centralized utilities"""
-    _skip_if_unavailable()
 
     # Test injector uses centralized utilities
     injector = TmuxInjector("test_injector_session")
@@ -219,7 +199,6 @@ def test_tmux_injector_integration():
 
 def test_main_py_integration():
     """Test main.py integration with tmux standards"""
-    _skip_if_unavailable()
 
     # get_global_tmux_utils was removed from main.py (Phase 2, Task #13)
     # Canonical replacement: tmux_utils.get_tmux_utilities() directly
@@ -233,7 +212,6 @@ def test_main_py_integration():
 
 def test_error_handling_and_fallbacks():
     """Test error handling and graceful fallbacks"""
-    _skip_if_unavailable()
 
     tmux_utils = TmuxUtilities("nonexistent_session")
 
@@ -257,7 +235,6 @@ def test_error_handling_and_fallbacks():
 
 def test_claude_detection_functions():
     """Test Claude session detection from pane content (no live tmux needed)."""
-    _skip_if_unavailable()
 
     from autorun.tmux_utils import (
         tmux_detect_prompt_type,
@@ -291,7 +268,6 @@ def test_claude_detection_functions():
 
 def test_safety_check_function():
     """Test check_safe_to_send validates content before sending to tmux."""
-    _skip_if_unavailable()
 
     from autorun.tmux_utils import check_safe_to_send
 
@@ -307,7 +283,6 @@ def test_safety_check_function():
 
 def test_detect_current_tmux_session():
     """Test detect_current_tmux_session returns None or str (no crash)."""
-    _skip_if_unavailable()
 
     from autorun.tmux_utils import detect_current_tmux_session
 
@@ -318,7 +293,6 @@ def test_detect_current_tmux_session():
 
 def test_custom_session_naming():
     """Test that all components accept custom session names consistently."""
-    _skip_if_unavailable()
 
     custom_name = "test_custom_session_42"
 
@@ -337,7 +311,6 @@ def test_custom_session_naming():
 
 def test_control_state_enum():
     """Test TmuxControlState enum has required states."""
-    _skip_if_unavailable()
 
     assert hasattr(TmuxControlState, 'NORMAL'), "Missing NORMAL state"
     assert hasattr(TmuxControlState, 'ESCAPE'), "Missing ESCAPE state"

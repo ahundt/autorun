@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from autorun.core import (  # noqa: E402
     ThreadSafeDB,
 )
 from autorun.session_manager import (  # noqa: E402
+    SessionBackendError,
     SessionPersistenceError,
     SessionTimeoutError,
 )
@@ -127,6 +129,21 @@ def failing_persistence(error=None):
 
 
 class TestPersistenceFailureIsLoud:
+    def test_corrupt_state_read_is_not_converted_to_a_default(
+        self, isolated_state, monkeypatch
+    ):
+        from autorun import session_manager as sm
+
+        monkeypatch.setitem(sm._CONFIG, "state_backend", "json")
+        sm._reset_for_testing()
+        state_file = isolated_state / "daemon_state.json"
+        corrupt = "{broken"
+        state_file.write_text(corrupt)
+
+        with pytest.raises(SessionBackendError, match="invalid JSON"):
+            ThreadSafeDB().get("session-a:file_policy", "ALLOW")
+        assert state_file.read_text() == corrupt
+
     def test_a_failed_write_raises_rather_than_logging_and_continuing(
         self, isolated_state
     ):
@@ -211,6 +228,58 @@ class TestPersistenceFailureIsLoud:
 
         db.set("session-a:field", "kept")
         assert db.get("session-a:field") == "kept"
+
+    def test_concurrent_batch_commit_republishes_the_durable_winner(
+        self, isolated_state, monkeypatch
+    ):
+        """A later durable commit must replace another thread's staged value."""
+        db = ThreadSafeDB()
+        first_flush_ready = threading.Event()
+        second_flush_done = threading.Event()
+        original_persist = db._persist_many
+
+        def ordered_persist(values):
+            if threading.current_thread().name == "first-batch":
+                first_flush_ready.set()
+                assert second_flush_done.wait(5)
+            original_persist(values)
+            if threading.current_thread().name == "second-batch":
+                second_flush_done.set()
+
+        monkeypatch.setattr(db, "_persist_many", ordered_persist)
+
+        def write(value):
+            with db.batch_writes():
+                db.set("shared:field", value)
+
+        first = threading.Thread(target=write, args=("A",), name="first-batch")
+        second = threading.Thread(target=write, args=("B",), name="second-batch")
+        first.start()
+        assert first_flush_ready.wait(5)
+        second.start()
+        first.join(5)
+        second.join(5)
+        assert not first.is_alive() and not second.is_alive()
+
+        assert db.get("shared:field") == "A"
+        assert ThreadSafeDB().get("shared:field") == "A"
+
+    def test_other_threads_cannot_read_an_uncommitted_batch_value(
+        self, isolated_state
+    ):
+        db = ThreadSafeDB()
+        db.set("shared:field", "durable")
+
+        with db.batch_writes():
+            db.set("shared:field", "staged")
+            observed = []
+            reader = threading.Thread(
+                target=lambda: observed.append(db.get("shared:field"))
+            )
+            reader.start()
+            reader.join(5)
+            assert observed == ["durable"]
+            assert db.get("shared:field") == "staged"
 
 
 class TestPersistenceFailureReachesTheCaller:

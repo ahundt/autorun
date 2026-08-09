@@ -859,6 +859,89 @@ class TestIsBootstrapRunning:
                 os.unlink(lockfile_path)
 
 
+class TestBootstrapWorker:
+    """The background boundary reports the real install result."""
+
+    def test_local_source_is_installed_into_the_hook_interpreter(self, tmp_path):
+        hook_entry = get_hook_entry_module()
+        plugin = tmp_path / "plugin"
+        plugin.mkdir()
+        (plugin / "pyproject.toml").touch()
+
+        argv = hook_entry._bootstrap_install_argv("uv", plugin)
+
+        assert argv == (
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            hook_entry.sys.executable,
+            "--editable",
+            str(plugin),
+        )
+
+    def test_artifact_fallback_uses_the_exact_vcs_subproject(self, tmp_path):
+        hook_entry = get_hook_entry_module()
+
+        argv = hook_entry._bootstrap_install_argv("pip", tmp_path / "artifact")
+
+        assert argv[-1].endswith("#subdirectory=plugins/autorun")
+        assert argv[:4] == (hook_entry.sys.executable, "-m", "pip", "install")
+
+    def test_worker_failure_is_recorded_and_suppresses_immediate_retry(
+        self, monkeypatch, tmp_path
+    ):
+        hook_entry = get_hook_entry_module()
+        plugin = tmp_path / "plugin"
+        plugin.mkdir()
+        (plugin / "pyproject.toml").touch()
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "state"))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin))
+        monkeypatch.setattr(hook_entry.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
+        monkeypatch.setattr(
+            hook_entry.subprocess,
+            "run",
+            lambda *_args, **_kwargs: hook_entry.subprocess.CompletedProcess(
+                (), 1, "", "resolver failed"
+            ),
+        )
+
+        assert hook_entry.run_bootstrap_worker("uv", plugin) == 1
+        payload = json.loads(
+            (tmp_path / "state" / "bootstrap.json").read_text(encoding="utf-8")
+        )
+        assert payload["ok"] is False
+        assert payload["detail"] == "resolver failed"
+        assert hook_entry.can_bootstrap() == (
+            False,
+            "previous bootstrap failed: resolver failed",
+        )
+
+    def test_spawn_uses_no_shell_and_keeps_lock_under_autorun_home(
+        self, monkeypatch, tmp_path
+    ):
+        hook_entry = get_hook_entry_module()
+        plugin = tmp_path / "plugin"
+        plugin.mkdir()
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "state"))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin))
+        monkeypatch.setattr(hook_entry.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
+        calls = []
+
+        class Process:
+            def __init__(self, argv, **kwargs):
+                calls.append((tuple(argv), kwargs))
+
+        monkeypatch.setattr(hook_entry.subprocess, "Popen", Process)
+
+        assert hook_entry.spawn_background_bootstrap() is True
+        argv, kwargs = calls[0]
+        assert argv[:2] == (hook_entry.sys.executable, str(Path(hook_entry.__file__).resolve()))
+        assert argv[2:4] == ("--bootstrap-worker", "uv")
+        assert "shell" not in kwargs
+        assert (tmp_path / "state" / "bootstrap.lock").is_file()
+
+
 class TestFailOpen:
     """Tests for fail_open() function."""
 

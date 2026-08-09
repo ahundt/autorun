@@ -1,6 +1,7 @@
 # Sources
 
-This skill is Copyright (c) 2026 Andrew Hundt. All rights reserved.
+This skill is Copyright (c) 2026 Andrew Hundt and distributed under the
+repository's Apache License 2.0.
 
 Consulted 2026-07-21 while writing and revising this skill. Each entry notes what it confirmed, so future updates can re-verify against the origin.
 

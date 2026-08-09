@@ -61,7 +61,14 @@ HOOK_TIMEOUT_BY_CLI = {
     "opencode": 4.5,
 }
 HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
-BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
+# Tests may override this legacy seam. Production derives both files from the
+# isolated autorun home so different users and test runs never share a /tmp lock.
+BOOTSTRAP_LOCKFILE: str | None = None
+BOOTSTRAP_SOURCE = (
+    "git+https://github.com/ahundt/autorun.git"
+    "#subdirectory=plugins/autorun"
+)
+BOOTSTRAP_RETRY_SECONDS = 300
 DEBUG_LOG_MAX_BYTES = 1_000_000
 DEBUG_VALUE_MAX_CHARS = 4_000
 
@@ -115,6 +122,50 @@ def _append_debug_log(message: str) -> None:
 
 _VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode")
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
+_VALID_EXPLICIT_EVENTS = {
+    "PreToolUse",
+    "PostToolUse",
+    "PreInvocation",
+    "PostInvocation",
+    "Stop",
+}
+
+
+def explicit_event_name() -> str | None:
+    """Return the native event carried by an installed hook command."""
+    for index, argument in enumerate(sys.argv[1:], 1):
+        if argument == "--event" and index + 1 < len(sys.argv):
+            value = sys.argv[index + 1]
+        elif argument.startswith("--event="):
+            value = argument.split("=", 1)[1]
+        else:
+            continue
+        return value if value in _VALID_EXPLICIT_EVENTS else None
+    return None
+
+
+def prepare_hook_payload(payload: dict, cli_type: str) -> dict:
+    """Attach command-owned event identity and common Antigravity aliases."""
+    prepared = dict(payload)
+    prepared["cli_type"] = cli_type
+    event_name = explicit_event_name()
+    if event_name:
+        # Antigravity stdin deliberately omits the event name. The installed
+        # manifest command is authoritative, so it wins over payload content.
+        prepared["hook_event_name"] = event_name
+    if cli_type == "antigravity":
+        transcript_path = prepared.get("transcriptPath")
+        if transcript_path and not prepared.get("transcript_path"):
+            prepared["transcript_path"] = transcript_path
+        workspace_paths = prepared.get("workspacePaths")
+        if (
+            not prepared.get("cwd")
+            and isinstance(workspace_paths, list)
+            and workspace_paths
+            and isinstance(workspace_paths[0], str)
+        ):
+            prepared["cwd"] = workspace_paths[0]
+    return prepared
 
 
 def hook_timeout_for_cli(cli_type: str) -> float:
@@ -310,6 +361,26 @@ def fail_open(message: str = "") -> NoReturn:
     sys.exit(0)
 
 
+def fail_open_for_cli(message: str, cli_type: str) -> NoReturn:
+    """Return the harness-native no-op shape for a non-permission event.
+
+    The bootstrap file cannot import the full platform registry: this path is
+    specifically for the state where autorun or one of its dependencies could
+    not be imported.  Keep the small mapping in this stdlib-only entry point
+    and exercise it against the registry in ``test_hook_entry.py``.
+    """
+    if cli_type == "claude":
+        fail_open(message)
+    if cli_type in {"gemini", "qwen"}:
+        print(json.dumps({"continue": True}))
+    else:
+        # Codex, Antigravity, ForgeCode, and OpenCode accept an empty native
+        # no-op.  Claude common fields are invalid on Antigravity's root-only
+        # protocol and must never leak into its fallback response.
+        print("{}")
+    sys.exit(0)
+
+
 def is_tool_gate_event(event_name: str) -> bool:
     """Return True for events where fail-open would allow a tool to run."""
     return event_name in _TOOL_GATE_EVENTS
@@ -334,10 +405,10 @@ def _peek_event_name(default: str = "unknown") -> str:
     """Best-effort event name extraction for fallback safety decisions."""
     text = _peek_stdin_text()
     if not text:
-        return default
+        return explicit_event_name() or default
     try:
         payload = json.loads(text)
-        return payload.get("hook_event_name", default)
+        return payload.get("hook_event_name") or explicit_event_name() or default
     except (json.JSONDecodeError, TypeError, AttributeError):
         return default
 
@@ -364,7 +435,15 @@ def fail_closed_tool_gate(message: str, cli_type: str, event_name: str) -> NoRet
         print(json.dumps(response))
         sys.exit(0)
 
-    schema_type = "permissive" if cli_type in {"gemini", "antigravity", "qwen"} else "strict"
+    if cli_type == "qwen":
+        print(json.dumps({"hookSpecificOutput": hook_specific}))
+        sys.exit(0)
+
+    if cli_type == "antigravity":
+        print(json.dumps({"decision": "deny", "reason": reason}))
+        sys.exit(0)
+
+    schema_type = "permissive" if cli_type == "gemini" else "strict"
     decision = "deny" if schema_type == "permissive" else "block"
     response = {
         "decision": decision,
@@ -376,6 +455,8 @@ def fail_closed_tool_gate(message: str, cli_type: str, event_name: str) -> NoRet
         "systemMessage": reason if schema_type == "permissive" else "",
         "hookSpecificOutput": hook_specific,
     }
+    if cli_type == "gemini":
+        response.pop("permissionDecision", None)
     print(json.dumps(response))
     if cli_type == "claude":
         print(reason, file=sys.stderr)
@@ -393,7 +474,16 @@ def fail_after_cli_timeout(cli_type: str, event_name: str) -> NoReturn:
     message = f"autorun CLI timed out after {timeout:g}s"
     if is_tool_gate_event(event_name):
         fail_closed_tool_gate(message, cli_type, event_name)
-    fail_open(message)
+    fail_open_for_cli(message, cli_type)
+
+
+def fail_after_fallback_error(message: str) -> NoReturn:
+    """Fail closed for permission gates and natively open elsewhere."""
+    event_name = _peek_event_name()
+    cli_type = detect_cli_type()
+    if is_tool_gate_event(event_name):
+        fail_closed_tool_gate(message, cli_type, event_name)
+    fail_open_for_cli(message, cli_type)
 
 
 # =============================================================================
@@ -497,17 +587,37 @@ def _daemon_socket_path() -> Path:
 
 def _can_use_direct_daemon(autorun_bin: Path | None) -> bool:
     """Limit fast IPC to a complete plugin-local installation."""
+    if os.environ.get("AUTORUN_USE_DAEMON") == "0":
+        return False
     if autorun_bin is None:
         return False
     normalized = str(autorun_bin).replace("\\", "/")
     return normalized.endswith("/.venv/bin/autorun")
 
 
-def _emit_daemon_result(response: dict, cli_type: str) -> int:
+def _unhandled_response(cli_type: str, event_name: str) -> dict | None:
+    """Return stdlib-only native no-op output for the daemon fast path."""
+    if cli_type == "antigravity":
+        if event_name == "PreToolUse":
+            return {"decision": "allow"}
+        if event_name == "Stop":
+            return {"decision": ""}
+        return {}
+    if cli_type in {"gemini", "qwen"}:
+        return {"continue": True}
+    return None
+
+
+def _emit_daemon_result(
+    response: dict,
+    cli_type: str,
+    event_name: str = "unknown",
+) -> int:
     """Emit an already platform-normalized daemon response."""
     if not response:
-        if cli_type in {"gemini", "antigravity", "qwen"}:
-            print(json.dumps({"continue": True}))
+        empty = _unhandled_response(cli_type, event_name)
+        if empty is not None:
+            print(json.dumps(empty))
         return 0
 
     print(json.dumps(response))
@@ -571,7 +681,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
         response = json.loads(response_line)
         if not isinstance(response, dict):
             raise ValueError("daemon response is not a JSON object")
-        return True, _emit_daemon_result(response, cli_type)
+        return True, _emit_daemon_result(response, cli_type, event_name)
     except socket.timeout:
         if connected:
             _append_debug_log("Direct daemon fast path timed out after connecting")
@@ -583,7 +693,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
             _append_debug_log(message)
             if is_tool_gate_event(event_name):
                 fail_closed_tool_gate(message, cli_type, event_name)
-            fail_open(message)
+            fail_open_for_cli(message, cli_type)
         return False, 0
 
 
@@ -696,7 +806,7 @@ def is_bootstrap_disabled() -> bool:
 
 def is_bootstrap_running() -> bool:
     """Check if bootstrap is already running via lockfile."""
-    lockfile = Path(BOOTSTRAP_LOCKFILE)
+    lockfile = _bootstrap_path("bootstrap.lock")
     if not lockfile.exists():
         return False
     # Check if lockfile is stale (older than 60 seconds)
@@ -708,6 +818,26 @@ def is_bootstrap_running() -> bool:
         return True
     except OSError:
         return False
+
+
+def _bootstrap_path(name: str) -> Path:
+    if name == "bootstrap.lock" and BOOTSTRAP_LOCKFILE:
+        return Path(BOOTSTRAP_LOCKFILE)
+    root = Path(os.environ.get("AUTORUN_HOME", str(Path.home() / ".autorun")))
+    return root / name
+
+
+def _bootstrap_failure() -> str:
+    """Return a recent worker failure, preventing an invisible retry loop."""
+    receipt = _bootstrap_path("bootstrap.json")
+    try:
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        age = time.time() - float(payload.get("timestamp", 0))
+    except (OSError, TypeError, ValueError):
+        return ""
+    if payload.get("ok") is False and age < BOOTSTRAP_RETRY_SECONDS:
+        return str(payload.get("detail", "bootstrap failed"))
+    return ""
 
 
 def can_bootstrap() -> tuple[bool, str]:
@@ -734,14 +864,77 @@ def can_bootstrap() -> tuple[bool, str]:
     if not os.environ.get("AUTORUN_PLUGIN_ROOT") and not os.environ.get("CLAUDE_PLUGIN_ROOT"):
         return False, "Plugin root not set (need AUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)"
 
+    if failure := _bootstrap_failure():
+        return False, f"previous bootstrap failed: {failure}"
+
     return True, "uv" if has_uv else "pip"
 
 
-def spawn_background_bootstrap() -> bool:
-    """Spawn bootstrap process in background using nohup.
+def _write_bootstrap_receipt(*, ok: bool, detail: str) -> None:
+    """Atomically publish the worker result for the next hook invocation."""
+    receipt = _bootstrap_path("bootstrap.json")
+    receipt.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = receipt.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps({"ok": ok, "detail": detail, "timestamp": time.time()}) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, receipt)
 
-    This runs uv pip install + autorun --install detached from the hook process.
-    The hook returns immediately; next invocation will find deps installed.
+
+def _bootstrap_install_argv(tool: str, plugin_root: Path) -> tuple[str, ...]:
+    """Install this exact source into the hook interpreter."""
+    source = str(plugin_root) if (plugin_root / "pyproject.toml").is_file() else BOOTSTRAP_SOURCE
+    editable = ("--editable",) if source == str(plugin_root) else ()
+    if tool == "uv":
+        return (
+            "uv", "pip", "install", "--python", sys.executable,
+            *editable, source,
+        )
+    return (sys.executable, "-m", "pip", "install", *editable, source)
+
+
+def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
+    """Install dependencies and publish native assets outside hook timeout."""
+    lockfile = _bootstrap_path("bootstrap.lock")
+    try:
+        installed = subprocess.run(
+            _bootstrap_install_argv(tool, plugin_root),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if installed.returncode != 0:
+            detail = next(
+                (line.strip() for line in (installed.stderr or installed.stdout).splitlines() if line.strip()),
+                "package installation failed",
+            )
+            _write_bootstrap_receipt(ok=False, detail=detail)
+            return 1
+        published = subprocess.run(
+            (sys.executable, "-m", "autorun", "--install", "--force"),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        detail = next(
+            (line.strip() for line in (published.stderr or published.stdout).splitlines() if line.strip()),
+            "native assets installed" if published.returncode == 0 else "native asset installation failed",
+        )
+        _write_bootstrap_receipt(ok=published.returncode == 0, detail=detail)
+        return 0 if published.returncode == 0 else 1
+    except (OSError, subprocess.SubprocessError) as error:
+        _write_bootstrap_receipt(ok=False, detail=f"{type(error).__name__}: {error}")
+        return 1
+    finally:
+        lockfile.unlink(missing_ok=True)
+
+
+def spawn_background_bootstrap() -> bool:
+    """Spawn the same-script bootstrap worker without a shell.
+
+    The hook returns immediately. The worker records its real result, so the
+    next invocation can distinguish running, successful, and failed bootstrap.
 
     Returns:
         True if bootstrap was spawned, False if skipped/disabled
@@ -759,35 +952,36 @@ def spawn_background_bootstrap() -> bool:
     if not can_run:
         return False  # Can't bootstrap, reason in tool_or_reason
 
-    # Create lockfile
+    lockfile = _bootstrap_path("bootstrap.lock")
     try:
-        Path(BOOTSTRAP_LOCKFILE).touch()
+        lockfile.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor = os.open(lockfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(descriptor)
+    except FileExistsError:
+        return True
     except OSError:
-        pass  # Best effort
+        return False
 
-    # Bootstrap script: install deps, then run plugin install
-    # Use uv if available, fall back to pip3
-    if tool_or_reason == "uv":
-        install_cmd = "uv pip install autorun"
-    else:
-        install_cmd = "pip3 install --user autorun"
-
-    bootstrap_cmd = f"""
-        {install_cmd} 2>/dev/null
-        autorun --install 2>/dev/null
-        rm -f {BOOTSTRAP_LOCKFILE}
-    """
-
-    # Spawn detached with nohup
+    plugin_root = Path(
+        os.environ.get("AUTORUN_PLUGIN_ROOT")
+        or os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    )
     try:
         subprocess.Popen(
-            ["nohup", "sh", "-c", bootstrap_cmd],
+            (
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--bootstrap-worker",
+                tool_or_reason,
+                str(plugin_root),
+            ),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
         return True
     except OSError:
+        lockfile.unlink(missing_ok=True)
         return False
 
 
@@ -830,9 +1024,10 @@ def run_fallback() -> None:
 
     if not src_dir or not src_dir.is_dir():
         event_name = _peek_event_name()
+        cli_type = detect_cli_type()
         if is_tool_gate_event(event_name):
-            fail_closed_tool_gate("Cannot locate plugin source", detect_cli_type(), event_name)
-        fail_open("Cannot locate plugin source")
+            fail_closed_tool_gate("Cannot locate plugin source", cli_type, event_name)
+        fail_open_for_cli("Cannot locate plugin source", cli_type)
 
     # Add to Python path for imports
     src_str = str(src_dir)
@@ -852,24 +1047,28 @@ def run_fallback() -> None:
     except ImportError as e:
         # Deps missing - try background bootstrap
         if is_bootstrap_disabled():
-            fail_open(
+            fail_after_fallback_error(
                 f"Import error: {e}. Bootstrap disabled. "
                 "Run manually: uv pip install autorun && autorun --install"
             )
         elif is_bootstrap_running():
-            fail_open("autorun bootstrapping in background, will be ready shortly")
+            fail_after_fallback_error(
+                "autorun bootstrapping in background, will be ready shortly"
+            )
         else:
             can_run, reason = can_bootstrap()
             if can_run:
                 spawn_background_bootstrap()
-                fail_open("autorun bootstrapping in background, will be ready shortly")
+                fail_after_fallback_error(
+                    "autorun bootstrapping in background, will be ready shortly"
+                )
             else:
-                fail_open(
+                fail_after_fallback_error(
                     f"Import error: {e}. Cannot bootstrap: {reason}. "
                     "Run manually: uv pip install autorun && autorun --install"
                 )
     except Exception as e:
-        fail_open(f"Runtime error: {e}")
+        fail_after_fallback_error(f"Runtime error: {e}")
 
 
 # =============================================================================
@@ -917,12 +1116,12 @@ def main() -> None:
             debug_lines.clear()
 
     log_debug("=" * 80)
-    event_name = "unknown"
+    event_name = explicit_event_name() or "unknown"
     payload_for_detection = None
     if stdin_data:
         try:
             payload_for_detection = json.loads(stdin_data)
-            event_name = payload_for_detection.get('hook_event_name', 'unknown')
+            event_name = payload_for_detection.get('hook_event_name') or event_name
         except json.JSONDecodeError:
             pass
     
@@ -930,6 +1129,9 @@ def main() -> None:
     log_debug(f"Hook entry stdin ({len(stdin_data)} bytes)")
 
     cli_type = detect_cli_type(payload_for_detection)
+    if isinstance(payload_for_detection, dict):
+        payload_for_detection = prepare_hook_payload(payload_for_detection, cli_type)
+        event_name = payload_for_detection.get("hook_event_name", event_name)
     log_debug(f"Detected CLI: {cli_type} (from --cli arg: {'--cli' in sys.argv})")
     log_debug(f"Env GEMINI_SESSION_ID: {os.environ.get('GEMINI_SESSION_ID')}")
     log_debug(f"Env GEMINI_PROJECT_DIR: {os.environ.get('GEMINI_PROJECT_DIR')}")
@@ -943,9 +1145,12 @@ def main() -> None:
     if stdin_data and cli_type:
         try:
             payload = json.loads(stdin_data)
-            payload["cli_type"] = cli_type
+            payload = prepare_hook_payload(payload, cli_type)
             stdin_data = json.dumps(payload)
-            log_debug(f"Injected cli_type={cli_type} into payload")
+            event_name = payload.get("hook_event_name", event_name)
+            log_debug(
+                f"Prepared payload for cli_type={cli_type}, event={event_name}"
+            )
         except (json.JSONDecodeError, Exception) as e:
             log_debug(f"Could not inject cli_type: {e}")
 
@@ -1009,4 +1214,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if "--bootstrap-worker" in sys.argv:
+        index = sys.argv.index("--bootstrap-worker")
+        raise SystemExit(
+            run_bootstrap_worker(sys.argv[index + 1], Path(sys.argv[index + 2]))
+        )
     main()

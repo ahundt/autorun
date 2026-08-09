@@ -20,6 +20,7 @@ import multiprocessing
 import pytest
 
 from autorun.session_manager import (
+    SessionBackendError,
     SessionLock,
     SessionTimeoutError,
     session_state,
@@ -253,28 +254,31 @@ class TestStateFileRecovery:
             assert s.get("missing_key") is None
             assert list(s.keys()) == []
 
-    def test_corrupt_state_file_yields_empty_state(self, state_setup):
-        """Corrupt daemon_state.json causes _load() to return {} (no crash)."""
+    def test_corrupt_state_file_fails_loudly_and_preserves_bytes(self, state_setup):
+        """Unreadable durable authority must not masquerade as empty state."""
         setup = state_setup
-        setup["state_file"].write_text("{invalid json <<<")
-        with session_state(setup["session_id"], state_dir=str(setup["state_dir"])) as s:
-            assert s.get("any_key") is None
+        corrupt = "{invalid json <<<"
+        setup["state_file"].write_text(corrupt)
+        with pytest.raises(SessionBackendError, match="invalid JSON"):
+            with session_state(setup["session_id"], state_dir=str(setup["state_dir"])):
+                pass
+        assert setup["state_file"].read_text() == corrupt
 
-    def test_empty_state_file_yields_empty_state(self, state_setup):
-        """Empty daemon_state.json causes _load() to return {} (no crash)."""
+    def test_empty_state_file_is_corrupt_state(self, state_setup):
         setup = state_setup
         setup["state_file"].write_text("")
-        with session_state(setup["session_id"], state_dir=str(setup["state_dir"])) as s:
-            assert s.get("any_key") is None
+        with pytest.raises(SessionBackendError, match="invalid JSON"):
+            with session_state(setup["session_id"], state_dir=str(setup["state_dir"])):
+                pass
 
-    def test_write_after_corrupt_state_recovers(self, state_setup):
-        """After corrupt state, writes succeed and state is saved correctly."""
+    def test_write_after_corrupt_state_refuses_to_overwrite_it(self, state_setup):
         setup = state_setup
-        setup["state_file"].write_text("not json at all")
-        with session_state(setup["session_id"], state_dir=str(setup["state_dir"])) as s:
-            s["key"] = "recovered"
-        with session_state(setup["session_id"], state_dir=str(setup["state_dir"])) as s:
-            assert s.get("key") == "recovered"
+        corrupt = "not json at all"
+        setup["state_file"].write_text(corrupt)
+        with pytest.raises(SessionBackendError, match="invalid JSON"):
+            with session_state(setup["session_id"], state_dir=str(setup["state_dir"])) as s:
+                s["key"] = "must-not-land"
+        assert setup["state_file"].read_text() == corrupt
 
     def test_truncated_tmp_file_overwritten_on_save(self, state_setup):
         """Leftover .tmp file (partial crash) is overwritten by next atomic write."""

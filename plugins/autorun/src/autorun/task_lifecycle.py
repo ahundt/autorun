@@ -87,6 +87,9 @@ _SECONDS_PER_DAY: int = 24 * 3600  # pure unit conversion (not a config value)
 _STAGE3_OVERFLOW_NAME_COUNT: int = 3  # task names shown in stage-3 overflow message
 _MAX_CONSUMED_DELEGATION_MARKERS: int = 256
 _SESSION_START_CLAIM_DIGEST_HEX_CHARS: int = 16
+_DELEGATION_RECEIPT_SESSION = "__task_delegation_receipts__"
+_DELEGATION_RECEIPTS_FIELD = "receipts"
+_MAX_RESOLVED_DELEGATION_RECEIPTS = 256
 
 
 def _safe_path_component(value: str) -> str:
@@ -378,11 +381,60 @@ _MARKER_SESSION_KEYWORDS = ("agent_session_id", "session")
 # spellings and both id alphabets rather than one harness's.
 _AGENT_SPAWN_ID_RE = re.compile(r'\bagent(?:Id|_id)"?\s*:\s*"?([A-Za-z0-9][A-Za-z0-9-]{7,})')
 # A SubagentStop's transcript_path names the child: .../agent-<id>.jsonl.
-_AGENT_TRANSCRIPT_RE = re.compile(r"agent-([A-Za-z0-9]{8,})\.jsonl$")
-# Ring-buffer bound on remembered spawns; fan-outs beyond this simply lose
-# the oldest identities, which degrades to the AMBIGUOUS (return-everything)
-# path rather than to wrong completions.
+_AGENT_TRANSCRIPT_RE = re.compile(r"agent-([A-Za-z0-9-]{8,})\.jsonl$")
+# Bound resolved history only. Unresolved spawns are lifecycle authority and
+# must survive arbitrarily wide fan-outs until they return or expire.
 _MAX_TRACKED_SPAWNS = 16
+
+
+def _bounded_spawn_ledger(entries: list[dict], now: float) -> list[dict]:
+    """Retain every unresolved spawn plus bounded resolved history."""
+    ttl = float(CONFIG.get("delegation_ttl_seconds", 0) or 0)
+    unresolved = []
+    resolved = []
+    for entry in entries:
+        if entry.get("returned"):
+            resolved.append(entry)
+            continue
+        # An unclaimed spawn older than the same liveness TTL cannot own a
+        # task. Claimed entries remain authoritative until return/TTL handling.
+        age = now - float(entry.get("at") or now)
+        if not entry.get("claimed") and ttl > 0 and age >= ttl:
+            continue
+        unresolved.append(entry)
+    return unresolved + resolved[-_MAX_TRACKED_SPAWNS:]
+
+
+def _agent_receipt_key(cli_type: str, agent_id: str) -> str:
+    """Namespace globally unique child ids by the harness that issued them."""
+    return f"{cli_type}:{agent_id}"
+
+
+def _bounded_delegation_receipts(
+    receipts: dict[str, dict], now: float | None = None
+) -> dict[str, dict]:
+    """Expire abandoned authority and retain bounded returned history."""
+    now = time.time() if now is None else now
+    ttl = float(CONFIG.get("delegation_ttl_seconds", 0) or 0)
+    unresolved = {
+        key: value
+        for key, value in receipts.items()
+        if not value.get("returned")
+        and not (
+            ttl > 0
+            and now - float(value.get("at") or now) >= ttl
+        )
+    }
+    resolved = sorted(
+        (
+            (key, value)
+            for key, value in receipts.items()
+            if value.get("returned")
+        ),
+        key=lambda item: float(item[1].get("returned_at") or item[1].get("at") or 0),
+    )[-_MAX_RESOLVED_DELEGATION_RECEIPTS:]
+    unresolved.update(resolved)
+    return unresolved
 
 
 @cache
@@ -639,7 +691,6 @@ class TaskLifecycle:
         self.audit_log = (
             self.config.storage_dir / _safe_path_component(self.session_id) / "audit.log"
         )
-        self.audit_log.parent.mkdir(parents=True, exist_ok=True)
 
     # === State Access (REUSES session_state() - DRY) ===
 
@@ -666,6 +717,64 @@ class TaskLifecycle:
         with self._daemon_serialized():
             with session_state(self.global_key, timeout=self._state_lock_timeout) as state:
                 yield state
+
+    @contextlib.contextmanager
+    def _delegation_receipt_state(self, ctx: EventContext | None = None):
+        """Open the cross-session child-to-parent authority registry safely."""
+        hook_ctx = ctx or self.ctx
+        synchronization = (
+            hook_ctx.state_synchronized(session_id=_DELEGATION_RECEIPT_SESSION)
+            if hook_ctx is not None
+            else contextlib.nullcontext()
+        )
+        with synchronization:
+            with session_state(
+                _DELEGATION_RECEIPT_SESSION,
+                timeout=self._state_lock_timeout,
+            ) as state:
+                yield state
+
+    def _delegation_receipt(self, cli_type: str, agent_id: str) -> dict | None:
+        """Read the immutable parent authority recorded at child spawn."""
+        key = _agent_receipt_key(cli_type, agent_id)
+        with self._delegation_receipt_state() as state:
+            receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
+            bounded = _bounded_delegation_receipts(receipts)
+            if bounded != receipts:
+                state[_DELEGATION_RECEIPTS_FIELD] = bounded
+            receipt = bounded.get(key)
+            return copy.deepcopy(receipt) if isinstance(receipt, dict) else None
+
+    def _finish_delegation_receipts(
+        self,
+        state: dict,
+        cli_type: str,
+        agent_ids: Iterable[str],
+        now: float,
+        *,
+        expired: bool = False,
+    ) -> None:
+        """Mark only receipts owned by this parent returned or expired."""
+        receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
+        changed = False
+        for agent_id in agent_ids:
+            key = _agent_receipt_key(cli_type, str(agent_id))
+            receipt = receipts.get(key)
+            if not isinstance(receipt, dict):
+                continue
+            if receipt.get("parent_session_id") != self.session_id:
+                continue
+            if receipt.get("returned") and (not expired or receipt.get("expired")):
+                continue
+            receipt["returned"] = True
+            receipt["returned_at"] = now
+            if expired:
+                receipt["expired"] = True
+            changed = True
+        if changed:
+            state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(
+                receipts, now
+            )
 
     def _migrate_if_needed(self, state: Dict) -> None:
         """Migrate stored state to current schema version (lazy self-healing).
@@ -988,6 +1097,7 @@ class TaskLifecycle:
             return
 
         try:
+            self.audit_log.parent.mkdir(parents=True, exist_ok=True)
             with open(self.audit_log, "a", encoding="utf-8") as f:
                 timestamp = datetime.now().isoformat()
                 extra_str = f" {json.dumps(extra)}" if extra else ""
@@ -1729,12 +1839,11 @@ class TaskLifecycle:
         but it retains every task and re-enables enforcement on the next
         completed activity, user prompt, or session start.
         """
-        # SubagentStop fires in the PARENT's context when a child agent (spawned via
-        # Agent tool) completes and returns results. Blocking SubagentStop creates a
-        # deadlock: parent waits for child results, but SubagentStop is blocked so
-        # results never arrive → parent loops forever. The parent's own Stop events
-        # (separate event name) still enforce task completion, so auto-resume is
-        # completely unaffected by this early return.
+        # SubagentStop may share the parent's session (Claude) or carry the
+        # child's session plus a parent transcript (Codex). Blocking it creates
+        # a deadlock: the parent cannot receive the child result. The spawn-time
+        # receipt below resolves either payload back to the authoritative parent;
+        # that parent's own Stop still enforces verification.
         if ctx.event == "SubagentStop":
             # Never blocks (blocking here deadlocks the parent waiting for the
             # child), but a finishing child ends its delegation: matching
@@ -1757,17 +1866,41 @@ class TaskLifecycle:
     def _return_delegations(self, ctx) -> list[str]:
         """Flip delegated tasks whose subagent finished to delegation-returned.
 
-        Identity, in order (claude-code#7881 bars session-id identity): the
-        SubagentStop transcript_path's ``agent-<id>.jsonl`` name; else the
-        single live ledger entry; else AMBIGUOUS — flip EVERY ledger-linked
-        delegation, because over-asking for verification is safe and
-        wrong-completing is not. One state commit, O(tasks), idempotent, so
-        fan-outs firing SubagentStop repeatedly re-flip nothing.
+        Codex supplies an exact agent_id while firing this hook in the child
+        session. Claude may instead encode the id in a child transcript path
+        while sharing the parent session. The immutable spawn receipt routes
+        either shape to the parent task state; a legacy local ledger fallback
+        remains for older payloads. One state commit is O(tasks) and idempotent.
         """
-        finished = None
-        match = _AGENT_TRANSCRIPT_RE.search(str(ctx.transcript_path or ""))
-        if match:
+        finished = str(ctx.agent_id) if ctx.agent_id else None
+        child_transcript = ctx.agent_transcript_path or ctx.transcript_path
+        match = _AGENT_TRANSCRIPT_RE.search(str(child_transcript or ""))
+        if finished is None and match:
             finished = match.group(1)
+
+        if finished:
+            receipt = self._delegation_receipt(ctx.cli_type, finished)
+            parent_session_id = (
+                str(receipt.get("parent_session_id"))
+                if isinstance(receipt, dict) and receipt.get("parent_session_id")
+                else None
+            )
+            if parent_session_id and parent_session_id != self.session_id:
+                parent = TaskLifecycle(
+                    session_id=parent_session_id,
+                    ctx=ctx,
+                    config=self.config,
+                )
+                return parent._return_delegations_for_agent(ctx, finished)
+
+        return self._return_delegations_for_agent(ctx, finished)
+
+    def _return_delegations_for_agent(
+        self,
+        ctx: EventContext,
+        finished: str | None,
+    ) -> list[str]:
+        """Apply one child return inside the already-resolved parent session."""
 
         returned: list[str] = []
         with self._session_state() as state:
@@ -1785,7 +1918,11 @@ class TaskLifecycle:
             if not target_ids:
                 return []
 
-            tasks = state.get("tasks", {})
+            tasks = (
+                repository.list_tasks(self.global_key, self._state_lock_timeout)
+                if repository is not None
+                else state.get("tasks", {})
+            )
             now = time.time()
             for task_id, task in tasks.items():
                 if not isinstance(task, dict) or task.get("status") != "delegated":
@@ -1799,13 +1936,28 @@ class TaskLifecycle:
                 if repository is not None:
                     repository.put_task(self.global_key, str(task_id), task, self._state_lock_timeout)
 
-            if returned:
+            matched_ledger = False
+            if target_ids:
                 for entry in ledger:
-                    if str(entry.get("id")) in target_ids:
+                    if (
+                        str(entry.get("id")) in target_ids
+                        and not entry.get("returned")
+                    ):
                         entry["returned"] = True
-                metadata["agent_spawns"] = ledger
-                state["tasks"] = tasks
+                        entry["returned_at"] = now
+                        matched_ledger = True
+            if returned or matched_ledger:
+                metadata["agent_spawns"] = _bounded_spawn_ledger(ledger, now)
+                if repository is None:
+                    state["tasks"] = tasks
                 state["session_metadata"] = metadata
+            with self._delegation_receipt_state(ctx) as receipt_state:
+                self._finish_delegation_receipts(
+                    receipt_state,
+                    ctx.cli_type,
+                    target_ids,
+                    now,
+                )
 
         for task_id in returned:
             self.log_event(
@@ -1844,16 +1996,24 @@ class TaskLifecycle:
                 str(entry.get("id")): entry
                 for entry in metadata.get("agent_spawns", [])
             }
-            tasks = state.get("tasks", {})
+            tasks = (
+                repository.list_tasks(self.global_key, self._state_lock_timeout)
+                if repository is not None
+                else state.get("tasks", {})
+            )
             for task_id, task in tasks.items():
                 if not isinstance(task, dict) or task.get("status") != "delegated":
                     continue
                 task_metadata = task.get("metadata") or {}
                 agent = task_metadata.get("delegated_to_session")
                 entry = ledger.get(str(agent)) if agent else None
-                if entry is None or entry.get("returned"):
+                if not agent or (entry is not None and entry.get("returned")):
                     continue
-                delegated_at = task_metadata.get("delegated_at") or entry.get("at") or now
+                delegated_at = task_metadata.get("delegated_at")
+                if delegated_at is None:
+                    if entry is None:
+                        continue
+                    delegated_at = entry.get("at") or now
                 if now - float(delegated_at) < ttl:
                     continue
                 task["status"] = "pending"
@@ -1861,8 +2021,28 @@ class TaskLifecycle:
                 reverted.append(str(task_id))
                 if repository is not None:
                     repository.put_task(self.global_key, str(task_id), task, self._state_lock_timeout)
+                if entry is not None:
+                    entry["returned"] = True
+                    entry["expired"] = True
             if reverted:
-                state["tasks"] = tasks
+                if repository is None:
+                    state["tasks"] = tasks
+                metadata["agent_spawns"] = _bounded_spawn_ledger(
+                    list(metadata.get("agent_spawns", [])), now
+                )
+                state["session_metadata"] = metadata
+                with self._delegation_receipt_state(ctx) as receipt_state:
+                    self._finish_delegation_receipts(
+                        receipt_state,
+                        ctx.cli_type,
+                        (
+                            str((tasks.get(task_id, {}).get("metadata") or {}).get("delegated_to_session"))
+                            for task_id in reverted
+                            if (tasks.get(task_id, {}).get("metadata") or {}).get("delegated_to_session")
+                        ),
+                        now,
+                        expired=True,
+                    )
         for task_id in reverted:
             self.log_event(
                 "DELEGATION_EXPIRED",
@@ -1894,16 +2074,58 @@ class TaskLifecycle:
         agent_id = match.group(1)
         try:
             with self._session_state() as state:
-                metadata = copy.deepcopy(state.get("session_metadata", {}))
-                ledger = list(metadata.get("agent_spawns", []))
-                if any(entry.get("id") == agent_id for entry in ledger):
-                    return
-                ledger.append(
-                    {"id": agent_id, "at": time.time(), "claimed": False, "returned": False}
-                )
-                del ledger[:-_MAX_TRACKED_SPAWNS]
-                metadata["agent_spawns"] = ledger
-                state["session_metadata"] = metadata
+                with self._delegation_receipt_state(ctx) as receipt_state:
+                    now = time.time()
+                    stored_receipts = copy.deepcopy(
+                        receipt_state.get(_DELEGATION_RECEIPTS_FIELD, {})
+                    )
+                    receipts = _bounded_delegation_receipts(
+                        stored_receipts, now
+                    )
+                    if receipts != stored_receipts:
+                        receipt_state[_DELEGATION_RECEIPTS_FIELD] = receipts
+                    key = _agent_receipt_key(ctx.cli_type, agent_id)
+                    existing = receipts.get(key)
+                    if isinstance(existing, dict):
+                        if existing.get("parent_session_id") != self.session_id:
+                            logger.warning(
+                                "Agent id %s is already owned by parent session %s",
+                                agent_id,
+                                existing.get("parent_session_id"),
+                            )
+                            return
+                    metadata = copy.deepcopy(state.get("session_metadata", {}))
+                    ledger = list(metadata.get("agent_spawns", []))
+                    ledger_entry = next(
+                        (entry for entry in ledger if entry.get("id") == agent_id),
+                        None,
+                    )
+                    if ledger_entry is None:
+                        ledger_entry = {
+                            "id": agent_id,
+                            "at": float(existing.get("at") or now)
+                            if isinstance(existing, dict)
+                            else now,
+                            "claimed": False,
+                            "returned": bool(existing.get("returned"))
+                            if isinstance(existing, dict)
+                            else False,
+                        }
+                        ledger.append(ledger_entry)
+                    metadata["agent_spawns"] = _bounded_spawn_ledger(ledger, now)
+                    state["session_metadata"] = metadata
+                    if not isinstance(existing, dict):
+                        receipts[key] = {
+                            "agent_id": agent_id,
+                            "cli_type": ctx.cli_type,
+                            "parent_session_id": self.session_id,
+                            "parent_global_key": self.global_key,
+                            "at": float(ledger_entry.get("at") or now),
+                            "returned": bool(ledger_entry.get("returned")),
+                        }
+                        receipt_state[_DELEGATION_RECEIPTS_FIELD] = (
+                            _bounded_delegation_receipts(receipts, now)
+                        )
         except Exception as exc:  # noqa: BLE001 - capture must never break the hook
             logger.warning("Could not record agent spawn: %s", exc)
 
@@ -2563,15 +2785,29 @@ class TaskLifecycle:
                     print("Use --no-confirm flag to proceed")
                     return 2
 
+                state_manager = get_session_manager()
+                session_keys = state_manager.list_sessions(
+                    namespace="task_lifecycle"
+                )
+                receipt_present = (
+                    _DELEGATION_RECEIPT_SESSION
+                    in state_manager.list_sessions()
+                )
                 sessions_dir = config.storage_dir
-                if not sessions_dir.exists():
+                session_dirs = (
+                    [d for d in sessions_dir.iterdir() if d.is_dir()]
+                    if sessions_dir.exists()
+                    else []
+                )
+                if not session_keys and not session_dirs and not receipt_present:
                     print("No task data found.")
                     return 0
 
-                session_dirs = [d for d in sessions_dir.iterdir() if d.is_dir()]
-
                 if confirm:
-                    print(f"⚠️  WARNING: About to clear {len(session_dirs)} session(s)")
+                    print(
+                        "⚠️  WARNING: About to clear "
+                        f"{len(session_keys) + len(session_dirs)} task session(s)"
+                    )
                     response = input("Type 'yes' to confirm: ")
                     if response.lower() != "yes":
                         print("Cancelled.")
@@ -2579,10 +2815,17 @@ class TaskLifecycle:
 
                 import shutil
 
+                state_manager.clear_sessions_atomically(
+                    (*session_keys, *(
+                        (_DELEGATION_RECEIPT_SESSION,) if receipt_present else ()
+                    ))
+                )
                 for session_dir in session_dirs:
                     shutil.rmtree(session_dir)
 
-                print(f"Cleared {len(session_dirs)} session(s)")
+                print(
+                    f"Cleared {len(session_keys) + len(session_dirs)} session(s)"
+                )
                 return 0
 
             else:
@@ -2613,7 +2856,31 @@ class TaskLifecycle:
                 # one cascading transaction for SQLite, one locked save for
                 # JSON. The CLI does not manually clear persistence internals.
                 state_manager = get_session_manager()
-                state_manager.clear_session(manager.global_key)
+                def remove_parent_receipts(receipt_state):
+                    receipts = copy.deepcopy(
+                        receipt_state.get(_DELEGATION_RECEIPTS_FIELD, {})
+                    )
+                    kept = {
+                        key: receipt
+                        for key, receipt in receipts.items()
+                        if not isinstance(receipt, dict)
+                        or (
+                            receipt.get("parent_session_id") != manager.session_id
+                            and receipt.get("parent_global_key") != manager.global_key
+                        )
+                    }
+                    if kept != receipts:
+                        if kept:
+                            receipt_state[_DELEGATION_RECEIPTS_FIELD] = kept
+                        else:
+                            receipt_state.clear()
+
+                state_manager.clear_sessions_atomically(
+                    (manager.global_key,),
+                    related_session=_DELEGATION_RECEIPT_SESSION,
+                    related_updater=remove_parent_receipts,
+                    timeout=manager._state_lock_timeout,
+                )
 
                 if storage_dir.exists():
                     shutil.rmtree(storage_dir)

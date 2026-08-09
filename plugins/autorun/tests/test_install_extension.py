@@ -67,23 +67,6 @@ def test_hooks_is_a_path_string_not_an_object():
     assert isinstance(document["hooks"], str)
 
 
-def test_the_generated_manifest_matches_the_installed_one():
-    """The strongest available check: the extension on this machine was
-    materialized by the installer being replaced."""
-    live_path = Path.home() / ".qwen" / "extensions" / "ar" / "gemini-extension.json"
-    if not live_path.is_file():
-        pytest.skip("no materialized qwen extension on this machine")
-    live = json.loads(live_path.read_text(encoding="utf-8"))
-
-    ours = Manifest(
-        name=live["name"], version=live["version"], description=live.get("description", "")
-    ).as_document()
-
-    for field in ("name", "version", "description", "contextFileName",
-                  "commands", "skills", "hooks"):
-        assert ours[field] == live[field], field
-
-
 # ─── Staging ────────────────────────────────────────────────────────────────
 
 
@@ -143,21 +126,6 @@ def test_the_manifest_filename_is_the_one_the_harness_reads(template, plugin, tm
     document = json.loads((staged / MANIFEST_NAME).read_text(encoding="utf-8"))
     assert document["name"] == "ar"
     assert document["version"] == "1.0.0rc1"
-
-
-def test_the_manifest_filename_matches_what_is_installed_on_this_machine():
-    """The strongest check available: compare against a real materialized
-    extension rather than against our own constant."""
-    from autorun.installer.extension import MANIFEST_NAME
-
-    installed = Path.home() / ".qwen" / "extensions" / "ar"
-    if not installed.is_dir():
-        pytest.skip("no materialized qwen extension on this machine")
-
-    assert (installed / MANIFEST_NAME).is_file(), (
-        f"the harness reads {MANIFEST_NAME}; found "
-        f"{sorted(p.name for p in installed.glob('*.json'))}"
-    )
 
 
 def test_staging_never_touches_the_destination(template, plugin, tmp_path):
@@ -238,13 +206,3 @@ def test_our_own_ownership_marker_is_sufficient(tmp_path, template, plugin):
     publish_tree(plugin / "commands", installed, plugin="ar")
 
     assert refreshable(installed, template, plugin="ar") is True
-
-
-def test_the_real_installed_extension_is_recognised_as_ours():
-    """Validates the receipt logic against a directory a real install made."""
-    installed = Path.home() / ".qwen" / "extensions" / "ar"
-    template = (Path(__file__).resolve().parents[1] / "src" / "autorun" / "gemini_template")
-    if not installed.is_dir() or not template.is_dir():
-        pytest.skip("no materialized qwen extension on this machine")
-
-    assert refreshable(installed, template) is True

@@ -565,11 +565,17 @@ class TestCodeQuality:
         assert not (autorun_home / "daemon.log").exists()
 
     @pytest.mark.unit
-    def test_core_import_does_not_emit_syntax_warning(self):
+    def test_core_import_does_not_emit_syntax_warning(self, tmp_path):
         """Daemon imports must stay warning-free for hook protocol stability."""
         import subprocess
 
         src_dir = Path(__file__).parent.parent / "src"
+        env = {
+            "PYTHONPATH": str(src_dir),
+            "AUTORUN_HOME": str(tmp_path / "autorun-home"),
+            "AUTORUN_TEST_STATE_DIR": str(tmp_path / "state"),
+            "AUTORUN_TEST_RUNTIME_DIR": str(tmp_path / "runtime"),
+        }
         result = subprocess.run(
             [
                 sys.executable,
@@ -581,7 +587,7 @@ class TestCodeQuality:
             cwd=src_dir.parent.parent,
             capture_output=True,
             text=True,
-            env={"PYTHONPATH": str(src_dir)},
+            env=env,
             timeout=10,
         )
         skip_if_windows_service_provider_error(result)

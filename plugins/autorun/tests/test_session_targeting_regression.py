@@ -129,9 +129,8 @@ class TestSessionTargetingRegression:
         env_info = tmux_utils.detect_tmux_environment()
 
         if not os.environ.get("TMUX"):
-            # Not running inside a tmux session — detection legitimately returns None.
-            # Skip rather than fail, since the feature only works inside tmux.
-            pytest.skip("Not running inside tmux — detect_tmux_environment() correctly returns None")
+            assert env_info is None
+            return
 
         assert env_info is not None, "Should detect tmux environment when running inside tmux"
         assert 'session' in env_info, "Environment info should include session"

@@ -31,7 +31,7 @@ DEFAULT_MODEL = "gemini-3.6-flash-low"
 ANTIGRAVITY_TASK_COMMAND = (
     Path.home()
     / ".gemini"
-    / "antigravity-cli"
+    / "config"
     / "plugins"
     / "ar"
     / "commands"
@@ -46,7 +46,7 @@ ANTIGRAVITY_HEADLESS_PERMISSION_DENIAL = (
 def _find_hook_script() -> Path:
     candidates = (
         PLUGIN_ROOT / "hooks" / "hook_entry.py",
-        Path.home() / ".gemini" / "antigravity-cli" / "plugins" / "ar" / "hooks" / "hook_entry.py",
+        Path.home() / ".gemini" / "config" / "plugins" / "ar" / "hooks" / "hook_entry.py",
     )
     for candidate in candidates:
         if candidate.is_file():
@@ -87,25 +87,31 @@ def test_antigravity_print_command_is_bounded_and_isolated(tmp_path, monkeypatch
 def test_antigravity_pre_tool_use_denies_dangerous_command_without_daemon(tmp_path):
     """Exercise the installed Antigravity schema through a real hook process.
 
-    Event name is "PreToolUse", not Gemini's "BeforeTool": Antigravity's tool
-    hooks use Claude-style names (platforms.py ANTIGRAVITY
-    harness_cli_to_autorun_events, citing antigravity.google/docs/cli-plugins);
-    only its model-lifecycle hooks use Pre/PostInvocation. Sending "BeforeTool"
-    here left the event unmapped, so the guard never ran and the hook returned
-    {"continue": true} — the test passed no safety property at all.
+    Antigravity's documented stdin omits the event name, so the installed
+    command supplies ``--event PreToolUse``. The nested ``toolCall`` and
+    PascalCase ``CommandLine`` fields are vendor-shaped; a Claude/Gemini-style
+    synthetic payload can pass while the real harness remains fail-open.
     """
     payload = {
-        "hook_event_name": "PreToolUse",
-        "session_id": f"agy-e2e-{uuid.uuid4().hex}",
-        "cwd": str(tmp_path),
-        "tool_name": "run_shell_command",
-        "tool_input": {"command": "rm -rf ./must-survive"},
+        "conversationId": f"agy-e2e-{uuid.uuid4().hex}",
+        "workspacePaths": [str(tmp_path)],
+        "transcriptPath": str(tmp_path / "transcript.jsonl"),
+        "toolCall": {
+            "name": "run_command",
+            "args": {
+                "CommandLine": "rm -rf ./must-survive",
+                "Cwd": str(tmp_path),
+                "WaitMsBeforeAsync": 5000,
+            },
+        },
+        "stepIdx": 0,
     }
     result = run_isolated_hook(
         plugin_root=PLUGIN_ROOT,
         hook_script=_find_hook_script(),
         cli="antigravity",
         payload=payload,
+        event="PreToolUse",
     )
     assert result.returncode == 0, result.stderr
     response = json.loads(result.stdout)
@@ -139,7 +145,7 @@ def test_antigravity_task_pause_recovery_in_minimal_live_model_session(tmp_path)
     if not shutil.which("agy"):
         pytest.skip("Antigravity CLI not installed")
     if not installed_task_pause_command_is_current(ANTIGRAVITY_TASK_COMMAND):
-        pytest.skip(
+        pytest.fail(
             "Antigravity's installed autorun command assets predate task pause. "
             "After active sessions are safe to interrupt, run "
             "`uv run --project plugins/autorun python -m autorun --install --force` "
@@ -158,7 +164,7 @@ def test_antigravity_task_pause_recovery_in_minimal_live_model_session(tmp_path)
     )
     combined = f"{result.stdout}\n{result.stderr}"
     if ANTIGRAVITY_HEADLESS_PERMISSION_DENIAL in combined:
-        pytest.skip(
+        pytest.fail(
             "Antigravity headless mode cannot prompt for the native task-command "
             "permission. Add the narrow `/ar:tasks` command permission to "
             "~/.gemini/antigravity-cli/settings.json, then rerun this test; do "

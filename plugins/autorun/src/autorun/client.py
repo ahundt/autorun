@@ -187,13 +187,17 @@ def output_hook_response(response: dict | str, event: str = "unknown", cli_type:
     # Reference: Issue #10936 — any stderr at exit 0 shows as "Hook Error" in UI,
     # so we also avoid all stderr here. Just exit 0 silently.
     if not response:
+        protocol = None
         try:
             from .platforms import platform_for
 
-            empty_response = platform_for(cli_type).hook_protocol.response_for_unhandled_hook()
+            protocol = platform_for(cli_type).hook_protocol
+            empty_response = protocol.response_for_unhandled_hook(event)
         except Exception:
             empty_response = {}
-        if empty_response:
+        if empty_response or (
+            protocol is not None and protocol.requires_json_for_unhandled_hook
+        ):
             print(json.dumps(empty_response))
         sys.exit(0)
 

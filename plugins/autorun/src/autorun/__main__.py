@@ -23,7 +23,7 @@ This module provides:
 
 Usage:
     # Installation
-    autorun --install                    # Install all plugins
+    autorun --install                    # Install every embedded plugin
     autorun --status                     # Show installation status
 
     # Task lifecycle management (modern subcommand structure)
@@ -37,9 +37,8 @@ Usage:
     # Hook handler (default)
     autorun                              # Run as hook handler
 
-v0.7: Daemon mode is now default (85-90% complete architecture)
-Set AUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
-Benefits: 10-30x faster (1-5ms vs 50-150ms), 78% code reduction via DRY
+Daemon mode is the default. Set AUTORUN_USE_DAEMON=0 to use direct hook
+execution when diagnosing daemon lifecycle behavior.
 """
 
 # Python 2 / version guard — AI assistants frequently invoke `python` (Python 2 on many
@@ -70,9 +69,7 @@ import sys  # noqa: E402
 from typing import Sequence  # noqa: E402
 
 
-# v0.7: Daemon mode is now default (85-90% complete architecture)
-# Set AUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
-# Benefits: 10-30x faster (1-5ms vs 50-150ms), 78% code reduction via DRY
+# Direct execution remains available for diagnostics and isolated tests.
 USE_DAEMON = os.environ.get("AUTORUN_USE_DAEMON", "1") != "0"
 
 
@@ -109,6 +106,13 @@ def _skill_placement_token():
     from .installer.settings import SKILL_PLACEMENT
 
     return SKILL_PLACEMENT.checked
+
+
+def _update_method_choices() -> tuple[str, ...]:
+    """Return self-update methods from the installer setting declaration."""
+    from .installer.settings import UPDATE_METHOD
+
+    return UPDATE_METHOD.choices
 
 
 def _codex_github_plugin_identity() -> str:
@@ -248,7 +252,7 @@ def create_parser() -> argparse.ArgumentParser:
         description="""Autorun - task lifecycle, safety guards, and native integration for supported AI coding harnesses.
 
 INSTALLATION (Two steps - see below for details):
-  1. Install Python package:  pip install autorun  (or: uv pip install autorun)
+  1. Install Python tool from the repository's plugins/autorun subdirectory
   2. Install native assets:   autorun --install
 
 QUICK START (after installation):
@@ -273,27 +277,28 @@ Preview any install without writes:
   autorun --install --install-dry-run
 
 Claude Code plugin installation:
-  claude plugin install https://github.com/ahundt/autorun.git
+  claude plugin marketplace add https://github.com/ahundt/autorun.git
+  claude plugin install ar@autorun
 
 Python package installation:
-  uv tool install git+https://github.com/ahundt/autorun.git
+  uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'
   autorun --install
   autorun --status
 
 Local development:
   git clone https://github.com/ahundt/autorun.git && cd autorun
-  uv sync --project plugins/autorun --extra claude-code --extra bashlex
-  uv run python -m plugins.autorun.src.autorun.install --install --force
+  uv sync --project plugins/autorun
+  uv run --project plugins/autorun autorun --install --force
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXAMPLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Installation:
-  autorun --install                         # all plugins, detected harnesses
+  autorun --install                         # embedded plugins, detected harnesses
   autorun --install ar --codex              # autorun only, Codex only
-  autorun --install pdf-extractor           # PDF extractor only
-  autorun --uninstall pdf-extractor         # preserve autorun everywhere
+  autorun --install pdf-extractor           # source marketplace checkout only
+  autorun --uninstall pdf-extractor         # source checkout; preserve autorun
   autorun --status                          # preview drift and run health checks
 
 AutoFile - control file creation (slash: /ar:a, /ar:j, /ar:f, /ar:st):
@@ -322,8 +327,9 @@ For more information: https://github.com/ahundt/autorun
         metavar="PLUGINS",
         help="Install plugins for detected supported harnesses. This publishes each "
         "harness's native hooks, commands, skills, guidance, plugins, or extensions. "
-        "Default: ar and pdf-extractor. Select: --install ar or "
-        "--install ar,pdf-extractor",
+        "Default: every plugin embedded in this distribution (the standalone "
+        "autorun wheel embeds ar; a source marketplace checkout also exposes "
+        "pdf-extractor). Select with --install ar or a comma-separated list.",
     )
     install_group.add_argument(
         "--force",
@@ -541,7 +547,7 @@ For more information: https://github.com/ahundt/autorun
     )
     update_group.add_argument(
         "--update-method",
-        choices=["auto", "plugin", "uv", "pip"],
+        choices=_update_method_choices(),
         default="auto",
         help="Force specific update method (default: auto-detect)",
     )
@@ -810,12 +816,14 @@ def set_bootstrap_config(enabled: bool) -> int:
     import re
     from pathlib import Path
 
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-    if not plugin_root:
-        # Try to find hooks relative to this file
-        plugin_root = str(Path(__file__).parent.parent)
+    from autorun.resources import get_hooks_dir
 
-    hooks_path = Path(plugin_root) / "hooks" / "hooks.json"
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    hooks_path = (
+        Path(plugin_root) / "hooks" / "hooks.json"
+        if plugin_root
+        else get_hooks_dir() / "hooks.json"
+    )
     if not hooks_path.exists():
         print(f"hooks.json not found at {hooks_path}")
         return 1
@@ -908,12 +916,13 @@ def run_direct() -> int:
         # daemon-client injection of the same value. Prefer either over this
         # process's cwd, which can point at a different project entirely and
         # would send plan_export.py's archive to the wrong notes/ directory.
-        cwd=payload.get("_cwd") or payload.get("cwd") or os.getcwd(),
+        cwd=normalized.get("cwd") or os.getcwd(),
         permission_mode=normalized["permission_mode"],
         source=normalized["source"],
         agent_id=normalized["agent_id"],
         agent_type=normalized["agent_type"],
         transcript_path=normalized.get("transcript_path"),
+        agent_transcript_path=normalized.get("agent_transcript_path"),
         stop_hook_active=normalized["stop_hook_active"],
         last_assistant_message=normalized["last_assistant_message"],
         background_tasks=normalized["background_tasks"],

@@ -23,11 +23,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytestmark = pytest.mark.slow
-
 # Add autorun to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "autorun" / "src"))
 
+import autorun.plan_export as plan_export_module
 from autorun.plan_export import (
     PlanExport,
     PlanExportConfig,
@@ -41,6 +40,16 @@ from autorun.session_manager import session_state
 # =============================================================================
 # FIXTURES
 # =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def isolated_plan_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep plan discovery and writes inside the per-test filesystem."""
+    home = tmp_path / "home"
+    plans_dir = home / ".claude" / "plans"
+    plans_dir.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(plan_export_module, "PLANS_DIR", plans_dir)
 
 
 @pytest.fixture

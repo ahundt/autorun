@@ -291,9 +291,28 @@ def test_custom_extension_harness_registers_through_its_own_binary(sandbox):
 
     assert result.ok is True
     assert calls and calls[0][:3] == ("mine-cli", "extensions", "install")
-    assert "--cli qwen" in (
-        sandbox / ".mine" / "extensions" / "ar" / "hooks" / "hooks.json"
-    ).read_text(encoding="utf-8")
+    source = Path(calls[0][-2])
+    assert source == (
+        sandbox / ".autorun" / "installer" / "extension-sources" / "mine" / "ar"
+    )
+    hooks = (source / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    assert "autorun --cli qwen" in hooks
+    assert "uv run" not in hooks
+
+
+def test_gemini_extension_uses_the_installed_cli_without_a_fake_project(walk, sandbox):
+    paired, ctx = walk
+    gemini = [target for target in paired if target.name == "gemini"]
+
+    run(gemini, ctx, Mode.INSTALL)
+
+    extension = (
+        sandbox / ".autorun" / "installer" / "extension-sources" / "gemini" / "ar"
+    )
+    hooks = (extension / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    assert "autorun --cli gemini" in hooks
+    assert "uv run" not in hooks
+    assert not (extension / "hooks" / "hook_entry.py").exists()
 
 
 def test_antigravity_native_skills_are_inside_the_staged_plugin(walk, sandbox):
@@ -302,7 +321,14 @@ def test_antigravity_native_skills_are_inside_the_staged_plugin(walk, sandbox):
 
     run(antigravity, ctx, Mode.INSTALL)
 
-    plugin = sandbox / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+    plugin = (
+        sandbox
+        / ".autorun"
+        / "installer"
+        / "extension-sources"
+        / "antigravity"
+        / "ar"
+    )
     assert (plugin / "skills" / "commit" / "SKILL.md").is_file()
     assert not (plugin.parent / "commit").exists(), "a skill must not land beside the plugin"
 
@@ -315,15 +341,32 @@ def test_antigravity_staging_uses_its_native_manifest_and_hook_events(walk, sand
 
     run(antigravity, ctx, Mode.INSTALL)
 
-    plugin = sandbox / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+    plugin = (
+        sandbox
+        / ".autorun"
+        / "installer"
+        / "extension-sources"
+        / "antigravity"
+        / "ar"
+    )
     manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
     hooks = json.loads((plugin / "hooks.json").read_text(encoding="utf-8"))
     assert manifest["hooks"] == "./hooks.json"
     assert not (plugin / "gemini-extension.json").exists()
-    assert {"PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop"} <= set(
-        hooks["autorun"]
-    )
-    assert "--cli antigravity" in (plugin / "hooks.json").read_text(encoding="utf-8")
+    assert set(hooks["autorun"]) == {"PreToolUse", "PostToolUse", "Stop"}
+    serialized = (plugin / "hooks.json").read_text(encoding="utf-8")
+    for event in ("PreToolUse", "PostToolUse", "Stop"):
+        assert f"--cli antigravity --event {event}" in serialized
+    for groups in hooks["autorun"].values():
+        handlers = [
+            handler
+            for group in groups
+            for handler in (group.get("hooks", []) if "hooks" in group else [group])
+        ]
+        assert handlers
+        assert all(handler["command"].startswith("autorun --cli antigravity") for handler in handlers)
+        assert all(handler["timeout"] == 5 for handler in handlers)
+        assert all("name" not in handler for handler in handlers)
 
 
 def test_qwen_staging_rewrites_hook_identity_without_deprecated_toml(walk, sandbox):
@@ -332,10 +375,13 @@ def test_qwen_staging_rewrites_hook_identity_without_deprecated_toml(walk, sandb
 
     run(qwen, ctx, Mode.INSTALL)
 
-    extension = sandbox / ".qwen" / "extensions" / "ar"
-    assert "--cli qwen" in (extension / "hooks" / "hooks.json").read_text(
-        encoding="utf-8"
+    extension = (
+        sandbox / ".autorun" / "installer" / "extension-sources" / "qwen" / "ar"
     )
+    hooks = (extension / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    assert "autorun --cli qwen" in hooks
+    assert "uv run" not in hooks
+    assert not (extension / "hooks" / "hook_entry.py").exists()
     assert not (extension / "commands" / "ar").exists()
 
 
@@ -603,8 +649,8 @@ def test_force_retries_a_failed_extension_registration_without_second_withdraw(
     assert result.ok is True
     assert calls == [
         ("gemini", "extensions", "uninstall", "ar"),
-        ("gemini", "extensions", "install", calls[1][-1]),
-        ("gemini", "extensions", "install", calls[1][-1]),
+        ("gemini", "extensions", "install", calls[1][-2], "--consent"),
+        ("gemini", "extensions", "install", calls[1][-2], "--consent"),
     ]
 
 
@@ -639,7 +685,7 @@ def test_force_does_not_accept_existing_extension_after_withdraw(sandbox, messag
     assert result.ok is False
     assert calls == [
         ("gemini", "extensions", "uninstall", "ar"),
-        ("gemini", "extensions", "install", calls[1][-1]),
+        ("gemini", "extensions", "install", calls[1][-2], "--consent"),
     ]
 
 
@@ -673,7 +719,8 @@ def test_force_retry_policy_is_shared_by_all_extension_flavors(
             attempts += 1
             if attempts == 1:
                 return subprocess.CompletedProcess(argv, 1, "", "network unreachable")
-        return subprocess.CompletedProcess(argv, 0, "", "")
+        stdout = "ar\n" if call[:3] == ("agy", "plugin", "list") else ""
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
 
     values = {
         "name": "ar", "market": "autorun", "root": "/repo",
@@ -692,9 +739,51 @@ def test_force_retry_policy_is_shared_by_all_extension_flavors(
 
     assert all(outcome.ok for outcome in withdrawn)
     assert all(outcome.ok for outcome in outcomes)
-    install_call = calls[1]
-    assert calls == [uninstall, install_call, install_call]
-    assert install_call[:3] == install
+    install_calls = [call for call in calls if call[:3] == install]
+    assert calls[0] == uninstall
+    assert len(install_calls) == 2
+    assert install_calls[0] == install_calls[1]
+    if harness == "antigravity":
+        assert [call[:3] for call in calls].count(("agy", "plugin", "validate")) == 2
+        assert calls[-1] == ("agy", "plugin", "list")
+
+
+@pytest.mark.parametrize("listed", [True, False])
+def test_antigravity_native_failure_imports_gemini_then_verifies_plugin(listed):
+    """The pre-redesign Agy import fallback is successful only when listed."""
+    import subprocess
+
+    from autorun.installer import registration
+
+    calls = []
+
+    def record(argv):
+        call = tuple(argv)
+        calls.append(call)
+        if call[:3] == ("agy", "plugin", "validate"):
+            return subprocess.CompletedProcess(argv, 1, "", "invalid native bundle")
+        if call[:3] == ("agy", "plugin", "list"):
+            return subprocess.CompletedProcess(argv, 0, "ar\n" if listed else "other\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    outcomes = registration.register(
+        "antigravity",
+        {
+            "name": "ar",
+            "market": "autorun",
+            "root": "/repo",
+            "extension": "/durable/ar",
+        },
+        run=record,
+        available=("agy",),
+    )
+
+    assert calls == [
+        ("agy", "plugin", "validate", "/durable/ar"),
+        ("agy", "plugin", "import", "gemini"),
+        ("agy", "plugin", "list"),
+    ]
+    assert all(outcome.ok for outcome in outcomes) is listed
 
 
 def test_forced_extension_failure_keeps_cli_recovery_detail_and_user_store(

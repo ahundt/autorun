@@ -11,9 +11,9 @@ TWO NATIVE LAYOUTS SHAPE THIS FILE
 
 Gemini hardcodes the hook manifest at ``<ext>/hooks/hooks.json`` and ignores the
 manifest's own ``hooks`` field. The materialized extension therefore carries a
-real ``hooks/`` directory with ``hook_entry.py`` beside the manifest, so
-``${extensionPath}/hooks/hook_entry.py`` resolves. Verified on this machine: the
-installed manifest says ``"hooks": "./hooks/hooks.json"`` and both files exist.
+real ``hooks/`` directory. Its commands call the already-installed ``autorun``
+entry point; pointing uv at the generated extension was invalid because that
+directory deliberately has no ``pyproject.toml``.
 https://github.com/google-gemini/gemini-cli/issues/14449 (closed COMPLETED by
 PR #14460, which merged the convention this already targets).
 
@@ -36,17 +36,25 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Mapping
+from typing import Callable, Iterator, Mapping
 
-from .fs import read_marker
+from . import discovery
+from .fs import compare, owns, read_marker, scan_tree
 from .traversal import Context, Intent
 
 __all__ = [
     "Manifest",
     "receipt_names_source",
+    "receipt_names_any_source",
+    "native_receipt_names_source",
+    "antigravity_receipt_names_plugin",
     "extension_dir",
+    "registration_source_dir",
     "extension_intents",
     "refreshable",
+    "materialization_unchanged",
+    "materialization_matches_source",
+    "materialization_tracks_source",
     "RECEIPT_GLOB",
     "MANIFEST_NAME",
 ]
@@ -115,6 +123,23 @@ def extension_dir(ctx: Context, platform: object, name: str) -> Path | None:
     return base / name if base is not None else None
 
 
+def registration_source_dir(ctx: Context, harness: str, name: str) -> Path:
+    """Persistent generated source handed to one native extension installer.
+
+    Gemini and Qwen create absolute links to the path passed to
+    ``extensions install``. A temporary staging path therefore becomes a
+    broken installed extension as soon as the installer returns. Keep each
+    harness's translated bundle separate under AUTORUN_HOME instead.
+    """
+    configured = ctx.settings.get("_extension_source_root")
+    root = (
+        Path(str(configured))
+        if configured
+        else ctx.home / ".autorun" / "installer" / "extension-sources"
+    )
+    return root / harness / name
+
+
 def receipt_names_source(installed: Path, source: Path) -> bool:
     """Whether the harness's own receipt says this extension came from ``source``.
 
@@ -137,7 +162,120 @@ def receipt_names_source(installed: Path, source: Path) -> bool:
     return False
 
 
-def refreshable(installed: Path, source: Path, *, plugin: str = "") -> bool:
+def receipt_names_any_source(installed: Path, sources) -> bool:
+    """Whether a harness receipt exactly names one explicitly allowed source."""
+    return any(receipt_names_source(installed, source) for source in sources)
+
+
+def native_receipt_names_source(
+    ctx: Context,
+    platform: object,
+    plugin: str,
+    installed: Path,
+    source: Path,
+) -> bool:
+    """Match one native CLI's exact receipt to the generated source.
+
+    Gemini and Qwen write the source path inside the materialized extension.
+    Agy instead writes a shared import manifest beside ``plugins/`` and copies
+    only the bundle contents.  Its legacy adoption therefore needs both the
+    exact manifest entry and an exact content match; once adopted,
+    :func:`record_tree` supplies the ordinary edit-sensitive marker.
+    """
+    flavor = (
+        getattr(platform, "install_flavor", "")
+        or getattr(platform, "name", "")
+    )
+    if flavor != "antigravity":
+        return receipt_names_source(installed, source)
+    if not antigravity_receipt_names_plugin(ctx, platform, plugin):
+        return False
+    return bool(installed.is_dir() and scan_tree(installed) == scan_tree(source))
+
+
+def antigravity_receipt_names_plugin(
+    ctx: Context,
+    platform: object,
+    plugin: str,
+) -> bool:
+    """Whether Agy's shared receipt names this exact installed plugin."""
+    base = discovery.config_dir(platform, home=ctx.home)
+    if base is None:
+        return False
+    try:
+        document = json.loads(
+            (base / "import_manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return False
+    imports = document.get("imports", ()) if isinstance(document, Mapping) else ()
+    return any(
+        isinstance(entry, Mapping)
+        and entry.get("name") == plugin
+        and entry.get("source") in {"antigravity", "gemini-cli"}
+        for entry in imports
+    )
+
+
+def materialization_unchanged(
+    installed: Path,
+    source: Path,
+    *,
+    plugin: str,
+    legacy_sources=(),
+    receipt_proof: Callable[[Path], bool] | None = None,
+) -> bool:
+    """Prove a native extension belongs to autorun and has no user edits."""
+    if not installed.is_dir():
+        return False
+    allowed_sources = (source, *tuple(legacy_sources))
+    marker = read_marker(installed)
+    if marker is not None and owns(marker, plugin):
+        if marker.files:
+            return not any(compare(installed, marker))
+        return receipt_names_any_source(installed, allowed_sources)
+    if installed.is_symlink():
+        try:
+            if installed.resolve() == source.resolve():
+                source_marker = read_marker(source)
+                return (
+                    source_marker is not None
+                    and owns(source_marker, plugin)
+                    and not any(compare(source, source_marker))
+                )
+        except (OSError, RuntimeError):
+            return False
+    if receipt_proof is not None:
+        return receipt_proof(installed)
+    return receipt_names_any_source(installed, allowed_sources)
+
+
+def materialization_tracks_source(installed: Path, source: Path) -> bool:
+    """Whether changes to the persistent source reach the native install."""
+    if not installed.is_symlink():
+        return False
+    try:
+        return installed.resolve() == source.resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def materialization_matches_source(installed: Path, source: Path) -> bool:
+    """Whether a native copied tree already contains the generated bundle."""
+    return bool(
+        installed.is_dir()
+        and source.is_dir()
+        and scan_tree(installed) == scan_tree(source)
+    )
+
+
+def refreshable(
+    installed: Path,
+    source: Path,
+    *,
+    plugin: str = "",
+    legacy_sources=(),
+) -> bool:
     """Whether a materialized extension may be refreshed from ``source``.
 
     Either autorun's own marker claims it, or the harness's receipt names our
@@ -151,7 +289,7 @@ def refreshable(installed: Path, source: Path, *, plugin: str = "") -> bool:
     marker = read_marker(installed)
     if marker is not None and (not plugin or not marker.plugin or marker.plugin == plugin):
         return True
-    return receipt_names_source(installed, source)
+    return receipt_names_any_source(installed, (source, *tuple(legacy_sources)))
 
 
 def stage_extension(
@@ -193,8 +331,13 @@ def stage_extension(
     # where the harness hardcodes its lookup.
     hooks = staging / "hooks"
     hooks.mkdir(exist_ok=True)
-    if (entry := template / "hooks" / "hook_entry.py").is_file():
-        shutil.copy2(entry, hooks / "hook_entry.py")
+    serialized_hooks = json.dumps(hook_manifest) if hook_manifest is not None else "hook_entry.py"
+    if "hook_entry.py" in serialized_hooks:
+        entry = plugin_dir / "hooks" / "hook_entry.py"
+        if not entry.is_file():
+            entry = template / "hooks" / "hook_entry.py"
+        if entry.is_file():
+            shutil.copy2(entry, hooks / "hook_entry.py")
     if hook_manifest is not None:
         (hooks / "hooks.json").write_text(
             json.dumps(hook_manifest, indent=2) + "\n", encoding="utf-8"
@@ -214,7 +357,12 @@ def stage_extension(
     return staging
 
 
-def translated_hooks(template: Path, platform: object) -> Mapping[str, object] | None:
+def translated_hooks(
+    template: Path,
+    platform: object,
+    *,
+    hook_command: str | None = None,
+) -> Mapping[str, object] | None:
     """Translate the shared Gemini hook manifest through registry contracts."""
     source_path = template / "hooks" / "hooks.json"
     if not source_path.is_file():
@@ -231,7 +379,7 @@ def translated_hooks(template: Path, platform: object) -> Mapping[str, object] |
         if isinstance(value, list):
             return [rewrite(item) for item in value]
         if isinstance(value, str) and "hook_entry.py" in value:
-            return value.replace("--cli gemini", f"--cli {target_name}")
+            return hook_command or f"autorun --cli {target_name}"
         return value
 
     from ..platforms import GEMINI
@@ -242,9 +390,23 @@ def translated_hooks(template: Path, platform: object) -> Mapping[str, object] |
         )
         for source_event, autorun_event in GEMINI.harness_cli_to_autorun_events.items()
     }
-    return getattr(platform, "hook_protocol").translate_manifest(
+    translated = getattr(platform, "hook_protocol").translate_manifest(
         rewrite(document), event_map
     )
+    installed_events = getattr(platform, "installed_hook_events", frozenset())
+    container_key = getattr(
+        getattr(platform, "hook_protocol"),
+        "hook_manifest_container_key",
+        "hooks",
+    )
+    events = translated.get(container_key) if isinstance(translated, dict) else None
+    if installed_events and isinstance(events, dict):
+        translated[container_key] = {
+            event: handlers
+            for event, handlers in events.items()
+            if event in installed_events
+        }
+    return translated
 
 
 def extension_intents(
@@ -259,13 +421,15 @@ def extension_intents(
     ``staged`` is built by :func:`stage_extension` before the walk, which keeps
     generation outside the traversal and keeps :class:`Intent` pure data.
     """
+    harness = getattr(platform, "name", "")
     for plugin, source in staged.items():
         if plugin not in plugins:
             continue
-        target = extension_dir(ctx, platform, plugin)
-        if target is None:
-            continue  # this harness has no extension directory; not an error
-        yield Intent(target=target, source=source, plugin=plugin)
+        yield Intent(
+            target=registration_source_dir(ctx, harness, plugin),
+            source=source,
+            plugin=plugin,
+        )
 
 
 def demo() -> None:

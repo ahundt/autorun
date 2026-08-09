@@ -28,11 +28,13 @@ gemini-cli is retired, 'gemini' represents the qwen code agy harness families.
 ### From GitHub (Production - Recommended)
 
 ```bash
-# Install directly via Claude Code plugin system
-claude plugin install https://github.com/ahundt/autorun.git
+# Add the marketplace, then install its registered plugin identity
+claude plugin marketplace add https://github.com/ahundt/autorun.git
+claude plugin install ar@autorun
 
 # Verify
-claude plugin list  # Should show: ar, pdf-extractor
+claude plugin list  # Should show: ar
+# Optional companion: claude plugin install pdf-extractor@autorun
 ```
 
 ### From Local Clone (Development)
@@ -41,10 +43,10 @@ claude plugin list  # Should show: ar, pdf-extractor
 git clone https://github.com/ahundt/autorun.git && cd autorun
 
 # Option 1: UV (recommended - faster, better dependency management)
-uv run python -m plugins.autorun.src.autorun.install --install --force
+uv run --project plugins/autorun python -m autorun --install --force
 
 # Option 2: pip fallback (if UV not available)
-pip install -e . && python -m plugins.autorun.src.autorun.install --install --force
+python -m pip install -e plugins/autorun && autorun --install --force
 
 # REQUIRED: Install as UV tool for global CLI availability
 # This makes the 'autorun' and 'autorun-install' commands globally available
@@ -52,7 +54,7 @@ pip install -e . && python -m plugins.autorun.src.autorun.install --install --fo
 cd plugins/autorun && uv tool install --force --editable .
 
 # Verify installation
-claude plugin list  # Should show: ar, pdf-extractor
+claude plugin list  # Shows ar; source-checkout installs may also show pdf-extractor
 autorun --status  # Verifies UV tool installation works
 ```
 
@@ -299,10 +301,10 @@ autorun/                          # Git repository root
 
 ```bash
 # Quick tests (from repo root)
-uv run pytest plugins/autorun/tests/test_unit_simple.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_unit_simple.py -v
 
 # Full suite with coverage
-uv run pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-report=term-missing
+uv run --project plugins/autorun pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-report=term-missing
 ```
 
 ## Integration References
@@ -311,7 +313,6 @@ uv run pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-rep
 - **Plugin Reference**: [docs.claude.com/en/docs/claude-code/plugins-reference](https://docs.claude.com/en/docs/claude-code/plugins-reference)
 - **Slash Commands**: [docs.claude.com/en/docs/claude-code/slash-commands](https://docs.claude.com/en/docs/claude-code/slash-commands)
 - **Hooks**: [docs.claude.com/en/docs/claude-code/hooks](https://docs.claude.com/en/docs/claude-code/hooks)
-- **Agent SDK**: [docs.claude.com/en/api/agent-sdk/overview](https://docs.claude.com/en/api/agent-sdk/overview)
 - **Byobu/Tmux**: [byobu.org](https://www.byobu.org/) - Terminal multiplexer for crash-safe sessions
 - **Mosh**: [mosh.org](https://mosh.org/) - Mobile shell for unreliable connections
 

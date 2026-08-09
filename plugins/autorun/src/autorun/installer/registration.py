@@ -35,8 +35,9 @@ one timeout rather than several.
 
 from __future__ import annotations
 
+import inspect
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Sequence
 
 from . import codex
@@ -76,6 +77,11 @@ class Registration:
     remove: tuple[tuple[str, ...], ...] = ()
     #: Tried before ``install``; success skips the rest of ``install``.
     refresh: tuple[tuple[str, ...], ...] = ()
+    #: Used only when the primary native install path fails.
+    fallback_install: tuple[tuple[str, ...], ...] = ()
+    #: Successful installation must make this command print ``{name}``.
+    verify: tuple[tuple[str, ...], ...] = ()
+    environment: Mapping[str, str] = field(default_factory=dict)
     binary: str = ""
     #: A forced extension uninstall can leave the harness registered but empty.
     #: Retry one failed install without repeating the destructive uninstall.
@@ -91,6 +97,9 @@ def with_binary(entry: Registration, binary: str) -> Registration:
         install=commands(entry.install),
         remove=commands(entry.remove),
         refresh=commands(entry.refresh),
+        fallback_install=commands(entry.fallback_install),
+        verify=commands(entry.verify),
+        environment=entry.environment,
         binary=binary,
         retry_after_force=entry.retry_after_force,
     )
@@ -154,19 +163,25 @@ REGISTRATIONS: Mapping[str, Registration] = {
     ),
     "gemini": Registration(
         binary="gemini",
-        install=(("gemini", "extensions", "install", "{extension}"),),
+        install=(("gemini", "extensions", "install", "{extension}", "--consent"),),
         remove=(("gemini", "extensions", "uninstall", "{name}"),),
+        environment={"GEMINI_CLI_TRUST_WORKSPACE": "true"},
         retry_after_force=True,
     ),
     "qwen": Registration(
         binary="qwen",
-        install=(("qwen", "extensions", "install", "{extension}"),),
+        install=(("qwen", "extensions", "install", "{extension}", "--consent"),),
         remove=(("qwen", "extensions", "uninstall", "{name}"),),
         retry_after_force=True,
     ),
     "antigravity": Registration(
         binary="agy",
-        install=(("agy", "plugin", "install", "{extension}"),),
+        install=(
+            ("agy", "plugin", "validate", "{extension}"),
+            ("agy", "plugin", "install", "{extension}"),
+        ),
+        fallback_install=(("agy", "plugin", "import", "gemini"),),
+        verify=(("agy", "plugin", "list"),),
         remove=(("agy", "plugin", "uninstall", "{name}"),),
         retry_after_force=True,
     ),
@@ -196,6 +211,7 @@ COMPANIONS: Mapping[str, Mapping[str, Registration]] = {
                     "--auto-update", "--consent",
                 ),
             ),
+            environment={"GEMINI_CLI_TRUST_WORKSPACE": "true"},
             remove=(("gemini", "extensions", "uninstall", "conductor"),),
         ),
     },
@@ -257,15 +273,36 @@ def _first_line(text: str) -> str:
 
 def _perform(
     argv: Sequence[str], values: Mapping[str, str], run: Runner, step: str,
-    *, absent: bool = False, already: bool = True,
+    *,
+    absent: bool = False,
+    already: bool = True,
+    environment: Mapping[str, str] | None = None,
+    required_text: str = "",
 ) -> Outcome:
     filled = substitute(argv, values)
     try:
-        result = run(filled)
+        try:
+            parameters = inspect.signature(run).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_env = run is _spawn or "env" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        result = (
+            run(filled, env=environment)
+            if environment and accepts_env
+            else run(filled)
+        )
     except (OSError, subprocess.SubprocessError) as error:
         return Outcome(step, False, f"{type(error).__name__}: {error}")
-    if _ran(result, absent=absent, already=already):
+    if _ran(result, absent=absent, already=already) and (
+        not required_text
+        or required_text.lower() in f"{result.stdout or ''}{result.stderr or ''}".lower()
+    ):
         return Outcome(step, True, "")
+    if result.returncode == 0 and required_text:
+        return Outcome(step, False, f"expected {required_text!r} in command output")
     return Outcome(step, False, _first_line(result.stderr or result.stdout))
 
 
@@ -278,6 +315,8 @@ def _sequence(
     stop: bool,
     absent: bool = False,
     already: bool = True,
+    environment: Mapping[str, str] | None = None,
+    required_text: str = "",
 ) -> tuple[Outcome, ...]:
     """Run commands in order, optionally stopping at the first failure.
 
@@ -289,7 +328,10 @@ def _sequence(
     for argv in commands:
         outcome = _perform(
             argv, values, run, f"{harness}: {' '.join(argv[:3])}",
-            absent=absent, already=already,
+            absent=absent,
+            already=already,
+            environment=environment,
+            required_text=required_text,
         )
         done.append(outcome)
         if stop and not outcome.ok:
@@ -304,6 +346,7 @@ def register(
     run: Runner = _spawn,
     available: Iterable[str] | None = None,
     force: bool = False,
+    allow_fallback: bool = True,
 ) -> tuple[Outcome, ...]:
     """Tell one harness about the plugin. Returns one outcome per command run.
 
@@ -316,7 +359,13 @@ def register(
     """
     entry = REGISTRATIONS.get(harness)
     return () if entry is None else register_entry(
-        entry, values, run=run, available=available, label=harness, force=force
+        entry,
+        values,
+        run=run,
+        available=available,
+        label=harness,
+        force=force,
+        allow_fallback=allow_fallback,
     )
 
 
@@ -328,6 +377,7 @@ def register_entry(
     available: Iterable[str] | None = None,
     label: str = "",
     force: bool = False,
+    allow_fallback: bool = True,
 ) -> tuple[Outcome, ...]:
     """Run one registration's install path. The shared half of the two tables.
 
@@ -338,7 +388,14 @@ def register_entry(
     if available is not None and entry.binary not in available:
         return ()
     name = label or entry.binary
-    refreshed = _sequence(entry.refresh, values, run, name, stop=True)
+    refreshed = _sequence(
+        entry.refresh,
+        values,
+        run,
+        name,
+        stop=True,
+        environment=entry.environment,
+    )
     if refreshed and all(outcome.ok for outcome in refreshed):
         return refreshed
     first = _sequence(
@@ -348,19 +405,57 @@ def register_entry(
         name,
         stop=True,
         already=not (force and entry.retry_after_force),
+        environment=entry.environment,
     )
-    if not (force and entry.retry_after_force and first and any(not outcome.ok for outcome in first)):
-        return first
-    # A forced uninstall followed by "already installed" means the CLI kept a
-    # registration but lost its files; retrying cannot repair that state and
-    # would only hide the actionable failure. Other failures get one retry.
-    if any(
-        _contains_any(outcome.detail, ALREADY)
-        for outcome in first
-        if not outcome.ok
-    ):
-        return first
-    return _sequence(entry.install, values, run, name, stop=True, already=True)
+    attempted = first
+    if force and entry.retry_after_force and first and any(not outcome.ok for outcome in first):
+        # A forced uninstall followed by "already installed" means the CLI kept a
+        # registration but lost its files; retrying cannot repair that state and
+        # would only hide the actionable failure. Other failures get one retry.
+        if not any(
+            _contains_any(outcome.detail, ALREADY)
+            for outcome in first
+            if not outcome.ok
+        ):
+            attempted = _sequence(
+                entry.install,
+                values,
+                run,
+                name,
+                stop=True,
+                already=True,
+                environment=entry.environment,
+            )
+    if attempted and any(not outcome.ok for outcome in attempted):
+        if not entry.fallback_install or not allow_fallback:
+            return attempted
+        failure = next(outcome.detail for outcome in attempted if not outcome.ok)
+        fallback = _sequence(
+            entry.fallback_install,
+            values,
+            run,
+            name,
+            stop=True,
+            environment=entry.environment,
+        )
+        if any(not outcome.ok for outcome in fallback):
+            return fallback
+        attempted = (
+            Outcome(f"{name}: native registration fallback", True, failure),
+            *fallback,
+        )
+    if not attempted:
+        return attempted
+    verified = _sequence(
+        entry.verify,
+        values,
+        run,
+        name,
+        stop=True,
+        environment=entry.environment,
+        required_text=str(values.get("name", "")),
+    )
+    return (*attempted, *verified)
 
 
 def withdraw(
@@ -393,7 +488,13 @@ def withdraw_entry(
     if available is not None and entry.binary not in available:
         return ()
     return _sequence(
-        entry.remove, values, run, label or entry.binary, stop=False, absent=True
+        entry.remove,
+        values,
+        run,
+        label or entry.binary,
+        stop=False,
+        absent=True,
+        environment=entry.environment,
     )
 
 

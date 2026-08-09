@@ -26,7 +26,7 @@ from . import (
     status,
     steps,
 )
-from .fs import Verdict
+from .fs import Verdict, atomic_write
 
 __all__ = [
     "install_plugins",
@@ -41,6 +41,8 @@ __all__ = [
 _FALLBACK_PLUGINS = ("ar", "pdf-extractor")
 _ALIASES = {"autorun": "ar"}
 _run = runtime._spawn
+
+_UV_TOOL_SCRIPTS = {"autorun": "autorun", "pdf-extractor": "extract-pdfs"}
 
 
 def _marketplace_root() -> Path:
@@ -126,7 +128,7 @@ def _refreshable(platform: object, root: Path, plugins: Sequence[str]) -> bool:
     return any(
         extension.refreshable(
             base / discovery.plugin_name(plugin_dir),
-            plugin_dir / steps.GEMINI_TEMPLATE_SUBDIR,
+            discovery.plugin_runtime_root(plugin_dir) / steps.GEMINI_TEMPLATE_SUBDIR,
             plugin=discovery.plugin_name(plugin_dir),
         )
         for plugin_dir in directories
@@ -166,7 +168,15 @@ def _harnesses(
         )
         if chosen
     )
-    missing = tuple(name for name in requested if PLATFORMS[name].binary not in available)
+    refreshable = {
+        name: _refreshable(PLATFORMS[name], root, plugins)
+        for name in requested
+    }
+    missing = tuple(
+        name
+        for name in requested
+        if PLATFORMS[name].binary not in available and not refreshable[name]
+    )
     if uninstalling:
         selected = list(PLATFORMS.values())
         missing = ()
@@ -176,7 +186,10 @@ def _harnesses(
         selected = [
             platform
             for platform in PLATFORMS.values()
-            if platform.install_by_default and (platform.binary in available or _refreshable(platform, root, plugins))
+            if (
+                (platform.install_by_default and platform.binary in available)
+                or _refreshable(platform, root, plugins)
+            )
         ]
 
     table: Mapping[str, tuple] = steps.STEPS
@@ -202,7 +215,7 @@ def _guidance(
     plugin = discovery.plugin_dir(root, "ar")
     if plugin is None:
         return {}
-    base = plugin / "src" / "autorun"
+    base = discovery.plugin_runtime_root(plugin)
     custom_by_name = {item.name: item for item in custom}
     bodies = {}
     for platform in harnesses:
@@ -231,16 +244,19 @@ def _runtime_settings(
     require_guidance: bool = True,
 ) -> Path | None:
     """Add generated command, guidance, registration, and socket inputs."""
+    from ..ipc import _get_autorun_config_dir
+
+    resolved["_extension_source_root"] = (
+        _get_autorun_config_dir() / "installer" / "extension-sources"
+    )
     plugin = discovery.plugin_dir(root, "ar")
     if plugin is None:
         return None
     no_sync = bool(resolved.get("hook_no_sync", True))
     python = str(resolved.get("hook_python", "") or "")
-    script = plugin / "hooks" / "hook_entry.py"
-    command = runtime.UvCommand(
-        project=plugin,
-        script=script,
-        args=("--cli", "codex"),
+    command = runtime.hook_command(
+        plugin,
+        cli="codex",
         python=python,
         no_sync=no_sync,
     )
@@ -255,18 +271,36 @@ def _runtime_settings(
         .shell()
         .replace("'${CLAUDE_PLUGIN_ROOT}'", "${CLAUDE_PLUGIN_ROOT}")
     )
-    from ..ipc import _get_autorun_config_dir
-
     resolved.update(
-        _hook_command=runtime.UvCommand(
-            project=plugin,
-            script=script,
-            args=("--cli", "opencode"),
+        _hook_command=runtime.hook_command(
+            plugin,
+            cli="opencode",
             python=python,
             no_sync=no_sync,
         ).argv(),
         _codex_hook_command=command.shell(),
         _codex_plugin_hook_command=plugin_command,
+        _extension_hook_commands={
+            getattr(harness, "name", ""): runtime.hook_command(
+                plugin,
+                cli=(
+                    getattr(
+                        getattr(harness, "platform", harness),
+                        "install_flavor",
+                        "",
+                    )
+                    or getattr(harness, "name", "gemini")
+                ),
+                python=python,
+                no_sync=no_sync,
+            ).shell()
+            for harness in harnesses
+            if getattr(
+                getattr(harness, "platform", harness),
+                "extensions_subdir",
+                "",
+            )
+        },
         _daemon_socket=str(_get_autorun_config_dir() / "daemon.sock"),
         _guidance=_guidance(root, harnesses, custom, required=require_guidance),
     )
@@ -284,14 +318,54 @@ def _print_result(result: orchestrate.Result, *, verbose: bool = False) -> None:
         print(line)
 
 
-def _editable_package(package: Path, label: str) -> runtime.Outcome:
-    argv = runtime.uv_tool_install_argv(package) if shutil.which("uv") else (sys.executable, "-m", "pip", "install", "--editable", str(package))
+def _package_receipt(package: str) -> Path:
+    return _state_dir() / "package-installs" / f"{package}.json"
+
+
+def _editable_package(
+    package: Path,
+    label: str,
+    *,
+    distribution: str,
+) -> runtime.Outcome:
+    using_uv = bool(shutil.which("uv"))
+    argv = runtime.uv_tool_install_argv(package) if using_uv else (
+        sys.executable, "-m", "pip", "install", "--editable", str(package)
+    )
     try:
         result = _run(argv)
     except (OSError, subprocess.SubprocessError) as error:
         return runtime.Outcome(label, False, f"{type(error).__name__}: {error}")
     detail = runtime._first_line(result.stderr or result.stdout)
+    if result.returncode == 0 and not using_uv:
+        receipt = _package_receipt(distribution)
+        atomic_write(
+            receipt,
+            json.dumps(
+                {
+                    "distribution": distribution,
+                    "installer": "pip",
+                    "python": str(Path(sys.executable).resolve()),
+                },
+                indent=2,
+            )
+            + "\n",
+        )
     return runtime.Outcome(label, result.returncode == 0, "" if result.returncode == 0 else detail)
+
+
+def _pip_package_owned(package: str) -> bool:
+    """Whether this autorun home recorded installing ``package`` with pip."""
+    try:
+        receipt = json.loads(_package_receipt(package).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        receipt.get("distribution") == package
+        and receipt.get("installer") == "pip"
+        and Path(str(receipt.get("python", ""))).resolve()
+        == Path(sys.executable).resolve()
+    )
 
 
 def install_plugins(
@@ -375,7 +449,17 @@ def install_plugins(
                 return 1
         if "pdf-extractor" in plugins:
             pdf = discovery.plugin_dir(root, "pdf-extractor")
-            outcome = _editable_package(pdf, "pdf-extractor CLI") if pdf is not None else runtime.Outcome("pdf-extractor CLI", False, "plugin source not found")
+            outcome = (
+                _editable_package(
+                    pdf,
+                    "pdf-extractor CLI",
+                    distribution="pdf-extractor",
+                )
+                if pdf is not None
+                else runtime.Outcome(
+                    "pdf-extractor CLI", False, "plugin source not found"
+                )
+            )
             print(outcome.describe())
             if not outcome.ok:
                 return 1
@@ -403,7 +487,12 @@ def install_plugins(
     )
     _print_result(result, verbose=dry_run)
     ok = result.ok
-    if not dry_run and ok and "ar" in plugins:
+    if (
+        not dry_run
+        and ok
+        and "ar" in plugins
+        and os.environ.get("AUTORUN_USE_DAEMON", "1") != "0"
+    ):
         restarted = runtime.restart_daemon(run=_run)
         print(restarted.describe())
         ok = restarted.ok
@@ -435,10 +524,19 @@ def uninstall_plugins(selection: str = "all") -> int:
     _print_result(result)
     ok = result.ok
     for plugin, package in (("ar", "autorun"), ("pdf-extractor", "pdf-extractor")):
-        if plugin not in plugins or not shutil.which("uv"):
+        if plugin not in plugins:
             continue
+        uv_owned = bool(shutil.which("uv")) and _uv_tool_installed(package)
+        pip_owned = _pip_package_owned(package)
+        if not uv_owned and not pip_owned:
+            continue
+        argv = (
+            ("uv", "tool", "uninstall", package)
+            if uv_owned
+            else (sys.executable, "-m", "pip", "uninstall", "-y", package)
+        )
         try:
-            removed = _run(("uv", "tool", "uninstall", package))
+            removed = _run(argv)
         except (OSError, subprocess.SubprocessError) as error:
             print(runtime.Outcome(f"{package} CLI", False, str(error)).describe())
             ok = False
@@ -452,7 +550,29 @@ def uninstall_plugins(selection: str = "all") -> int:
         )
         print(outcome.describe())
         ok = ok and outcome.ok
+        if outcome.ok and pip_owned:
+            _package_receipt(package).unlink(missing_ok=True)
     return 0 if ok else 1
+
+
+def _uv_tool_installed(package: str) -> bool:
+    """Whether the selected home positively owns this uv tool install."""
+    executable = shutil.which(_UV_TOOL_SCRIPTS[package])
+    if not executable:
+        return False
+    configured = os.environ.get("UV_TOOL_DIR")
+    if configured:
+        tool_root = Path(configured)
+    else:
+        data = os.environ.get("XDG_DATA_HOME")
+        tool_root = (
+            Path(data) / "uv" / "tools"
+            if data
+            else discovery.process_home() / ".local" / "share" / "uv" / "tools"
+        )
+    expected = (tool_root / package).resolve()
+    resolved = Path(executable).resolve()
+    return resolved == expected or expected in resolved.parents
 
 
 def _registry_entries() -> Mapping[str, Sequence[str]]:
@@ -467,6 +587,14 @@ def _registry_entries() -> Mapping[str, Sequence[str]]:
 
 def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: bool = False) -> int:
     """Preview the next install and run checks a file walk cannot answer."""
+    from .. import __build_time__, __commit__, __version__
+
+    print(
+        "build "
+        f"version={__version__} commit={__commit__} built={__build_time__} "
+        f"package={Path(__file__).resolve().parents[1]} "
+        f"python={Path(sys.executable).resolve()}"
+    )
     root = _marketplace_root()
     try:
         plugins = parse_selection(root, "all")
@@ -499,10 +627,9 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
     findings = ()
     probe_ok = True
     if plugin is not None and "ar" in plugins:
-        command = runtime.UvCommand(
-            project=plugin,
-            script=plugin / "hooks" / "hook_entry.py",
-            args=("--cli", "claude"),
+        command = runtime.hook_command(
+            plugin,
+            cli="claude",
             python=str(resolved.get("hook_python", "") or ""),
             no_sync=bool(resolved.get("hook_no_sync", True)),
         )
@@ -532,7 +659,7 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
         )
         for finding in findings:
             print(finding.describe())
-        probe = runtime.probe_runtime(
+        probe = runtime.probe_hook_runtime(
             plugin,
             python=str(resolved.get("hook_python", "") or ""),
             no_sync=bool(resolved.get("hook_no_sync", True)),
@@ -543,15 +670,30 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
     return 0 if result.ok and not needs_install and probe_ok and all(finding.level is not status.Level.BROKEN for finding in findings) else 1
 
 
-def _latest_version() -> str:
+def _latest_version(current: str) -> str:
+    """Newest compatible GitHub release, including RCs for RC installs.
+
+    GitHub's ``/releases/latest`` endpoint intentionally omits prereleases, so
+    it can never advance an RC installation to a newer RC. Stable installs do
+    not opt into prereleases; draft releases are never candidates.
+    """
     try:
         request = urllib.request.Request(
-            "https://api.github.com/repos/ahundt/autorun/releases/latest",
+            "https://api.github.com/repos/ahundt/autorun/releases?per_page=100",
             headers={"User-Agent": "autorun-installer"},
         )
         with urllib.request.urlopen(request, timeout=5) as response:
-            return str(json.loads(response.read()).get("tag_name", "unknown")).lstrip("v")
-    except (OSError, ValueError, urllib.error.URLError):
+            releases = json.loads(response.read())
+        allow_prerelease = any(char.isalpha() for char in current.lstrip("vV"))
+        candidates = (
+            str(item.get("tag_name", "")).lstrip("vV")
+            for item in releases
+            if isinstance(item, Mapping)
+            and not item.get("draft", False)
+            and (allow_prerelease or not item.get("prerelease", False))
+        )
+        return max((tag for tag in candidates if tag), key=runtime._as_tuple)
+    except (OSError, TypeError, ValueError, urllib.error.URLError):
         return "unknown"
 
 
@@ -563,7 +705,7 @@ def perform_self_update(method: str = "auto") -> runtime.Outcome:
         current = "unknown"
     extension_name = runtime.installed_extension_name(discovery.extensions_dir(PLATFORMS["gemini"]) or Path())
     return runtime.self_update(
-        runtime.Version(current, _latest_version()),
+        runtime.Version(current, _latest_version(current)),
         method=method,
         extension=extension_name,
         run=_run,

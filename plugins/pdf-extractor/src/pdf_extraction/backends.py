@@ -10,37 +10,12 @@ Backends (9 total):
 - Traditional: pymupdf4llm, pdfbox, pdfminer, pypdf2, pdfplumber, pdftotext
 """
 
+import importlib.util
 import os
+import shutil
 import subprocess
 import tempfile
 import time
-
-# Core dependencies - graceful degradation for missing packages
-try:
-    import pdfplumber
-except ImportError:
-    pdfplumber = None
-
-try:
-    import PyPDF2
-except ImportError:
-    PyPDF2 = None
-
-try:
-    from pdfminer.high_level import extract_text
-except ImportError:
-    extract_text = None
-
-# Optional dependencies - graceful degradation
-try:
-    from pdfbox import PDFBox
-except ImportError:
-    PDFBox = None
-
-try:
-    import pymupdf4llm
-except ImportError:
-    pymupdf4llm = None
 
 
 class BackendExtractor:
@@ -193,14 +168,14 @@ class Pymupdf4llmExtractor(BackendExtractor):
 
     def __init__(self):
         def create_pymupdf4llm():
-            if pymupdf4llm is None:
-                raise ImportError("pymupdf4llm not installed")
+            import pymupdf4llm
+
             return pymupdf4llm
 
         super().__init__('pymupdf4llm', create_pymupdf4llm)
 
     def _extract_impl(self, pdf_file: str) -> str:
-        return pymupdf4llm.to_markdown(pdf_file)
+        return self.converter.to_markdown(pdf_file)
 
 
 class PdfboxExtractor(BackendExtractor):
@@ -208,8 +183,8 @@ class PdfboxExtractor(BackendExtractor):
 
     def __init__(self):
         def create_pdfbox():
-            if PDFBox is None:
-                raise ImportError("pdfbox module not available")
+            from pdfbox import PDFBox
+
             return PDFBox()
 
         super().__init__('pdfbox', create_pdfbox)
@@ -232,8 +207,8 @@ class PdfminerExtractor(BackendExtractor):
 
     def __init__(self):
         def create_pdfminer():
-            if extract_text is None:
-                raise ImportError("pdfminer.six not installed")
+            from pdfminer.high_level import extract_text
+
             return extract_text
 
         super().__init__('pdfminer', create_pdfminer)
@@ -247,8 +222,8 @@ class Pypdf2Extractor(BackendExtractor):
 
     def __init__(self):
         def create_pypdf2():
-            if PyPDF2 is None:
-                raise ImportError("PyPDF2 not installed")
+            import PyPDF2
+
             return PyPDF2
 
         super().__init__('pypdf2', create_pypdf2)
@@ -267,8 +242,8 @@ class PdfplumberExtractor(BackendExtractor):
 
     def __init__(self):
         def create_pdfplumber():
-            if pdfplumber is None:
-                raise ImportError("pdfplumber not installed")
+            import pdfplumber
+
             return pdfplumber
 
         super().__init__('pdfplumber', create_pdfplumber)
@@ -316,3 +291,27 @@ BACKEND_REGISTRY = {
     'pdfplumber': lambda: PdfplumberExtractor(),
     'pdftotext': lambda: PdftotextExtractor()
 }
+
+
+_BACKEND_MODULES = {
+    'docling': 'docling',
+    'marker': 'marker',
+    'markitdown': 'markitdown',
+    'pymupdf4llm': 'pymupdf4llm',
+    'pdfbox': 'pdfbox',
+    'pdfminer': 'pdfminer',
+    'pypdf2': 'PyPDF2',
+    'pdfplumber': 'pdfplumber',
+}
+
+
+def backend_availability() -> dict[str, bool]:
+    """Report installed backends without importing their heavy modules."""
+    available: dict[str, bool] = {}
+    for name, module in _BACKEND_MODULES.items():
+        try:
+            available[name] = importlib.util.find_spec(module) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            available[name] = False
+    available['pdftotext'] = shutil.which('pdftotext') is not None
+    return available

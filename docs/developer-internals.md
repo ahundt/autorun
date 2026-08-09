@@ -58,7 +58,7 @@ show_comprehensive_uv_error("MODULE ERROR", "Specific error details")
 - **Minimum**: Python 3.10+ (required, matches `requires-python = ">=3.10"` in pyproject.toml)
 - **Tested**: Python 3.10, 3.11, 3.12, 3.13, 3.14
 - **Python 2.x**: Blocked with clear error message and solutions
-- **Python 3.0-3.9**: Warning shown but functionality allowed
+- **Python 3.0-3.9**: Rejected before autorun imports runtime modules
 
 ## Environment Requirements
 
@@ -66,7 +66,7 @@ show_comprehensive_uv_error("MODULE ERROR", "Specific error details")
 ```bash
 # Required: UV package manager for Python version management
 uv --version  # Verify UV installation
-uv sync --extra dev  # Install development dependencies
+uv sync --project plugins/autorun --locked --dev --all-extras
 ```
 
 **Production Environment:**

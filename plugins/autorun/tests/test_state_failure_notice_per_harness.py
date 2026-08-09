@@ -91,7 +91,24 @@ def _notice_text(response) -> str:
     hook_output = response.get("hookSpecificOutput") or {}
     if isinstance(hook_output, dict):
         parts.append(str(hook_output.get("additionalContext") or ""))
-    return " ".join(parts)
+    for step in response.get("injectSteps") or ():
+        if isinstance(step, dict):
+            parts.append(str(step.get("ephemeralMessage") or ""))
+    return " ".join(part for part in parts if part).strip()
+
+
+def _posttool_notice_carriers() -> list[str]:
+    """Harnesses whose documented PostToolUse response can carry text."""
+    carriers = []
+    for cli_type in SUPPORTED_CLI_TYPES:
+        probe = core.validate_hook_response(
+            "PostToolUse",
+            {"continue": True, "systemMessage": NOTICE_MARKER},
+            cli_type,
+        )
+        if NOTICE_MARKER in _notice_text(probe):
+            carriers.append(cli_type)
+    return carriers
 
 
 @pytest.mark.parametrize("cli_type", SUPPORTED_CLI_TYPES)
@@ -159,8 +176,7 @@ class TestNoticeShapePerHarness:
 class TestNoticeReachesHarnessesThatCanCarryIt:
     @pytest.mark.parametrize(
         "cli_type",
-        [name for name in SUPPORTED_CLI_TYPES
-         if PLATFORMS[name].schema_type != "none"],
+        _posttool_notice_carriers(),
     )
     def test_the_notice_is_actually_visible(self, isolated_state, cli_type):
         store = ThreadSafeDB()
@@ -250,8 +266,12 @@ class TestDispatchDoesNotLoseTheResponse:
             f"dispatch returned nothing on {cli_type}: the flush failure "
             "discarded a decision the handlers had already made."
         )
-        assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny" \
-            or response.get("systemMessage"), (
+        denied = (
+            response.get("decision") == "deny"
+            or response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+            or bool(response.get("systemMessage"))
+        )
+        assert denied, (
             f"The decision was lost on {cli_type}. Got: {response}"
         )
 

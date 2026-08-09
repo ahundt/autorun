@@ -106,6 +106,7 @@ class TestIsClaudeSession:
             assert tmux.is_claude_session('test-session', '0') is False
 
 
+@pytest.mark.tmux
 class TestIsClaudeSessionIntegration:
     """Integration tests using real tmux to exercise is_claude_session()."""
 

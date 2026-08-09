@@ -31,7 +31,8 @@ Work in `<git-root>/plugins/autorun/`. Never edit
 `~/.claude/plugins/cache/autorun/ar/<version>/` (the marketplace
 is `autorun`, the plugin inside it is `ar`).
 
-Installing the plugin (`/plugin install https://github.com/ahundt/autorun.git`)
+Installing the plugin (`claude plugin marketplace add
+https://github.com/ahundt/autorun.git`, then `claude plugin install ar@autorun`)
 copies the repository into that cache, and the plugin loads from there, so an
 AI following a runtime path lands in the cache by accident. Edits there are not
 version controlled, are overwritten on the next install, and may already be
@@ -41,7 +42,7 @@ You are in the wrong place if the path contains `.claude/plugins/cache/` or a
 version directory like `1.0.0rc1/`. Recover by `cd <git-root>/plugins/autorun/`
 (`git status` must succeed, `pwd` must end in `plugins/autorun/`), make the edit
 and run the tests there, commit from the git root, then reinstall with
-`/plugin update autorun`.
+`claude plugin update ar@autorun`.
 
 ## Feature implementation lessons
 

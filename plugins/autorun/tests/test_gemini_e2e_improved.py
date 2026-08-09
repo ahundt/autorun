@@ -34,40 +34,16 @@ from e2e_support import (
     retired_gemini_backend_enabled,
 )
 
-pytestmark = pytest.mark.e2e
-
 # Check for AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 
 
 def find_hook_script() -> Path:
-    """Dynamically find hook_entry.py script.
-
-    Search order:
-        1. Installed Gemini extension (production)
-        2. Development source dir (from test file location)
-        3. Absolute path for dev workspace
-
-    Returns:
-        Path to hook_entry.py
-
-    Raises:
-        FileNotFoundError: If hook script not found
-    """
-    possible_locations = [
-        Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
-        Path(__file__).parent.parent / "hooks/hook_entry.py",
-        Path.home() / ".claude/autorun/plugins/autorun/hooks/hook_entry.py",
-    ]
-
-    for location in possible_locations:
-        if location.exists():
-            return location
-
-    raise FileNotFoundError(
-        "hook_entry.py not found. Searched:\n" +
-        "\n".join(f"  - {loc}" for loc in possible_locations)
-    )
+    """Return the repository hook so free tests never depend on a live install."""
+    location = Path(__file__).parent.parent / "hooks/hook_entry.py"
+    if not location.is_file():
+        raise FileNotFoundError(f"hook_entry.py not found at {location}")
+    return location
 
 
 @pytest.fixture(scope="module")
@@ -85,11 +61,13 @@ def gemini_cli_available():
             timeout=5
         )
         if result.returncode != 0:
-            pytest.skip(f"Gemini CLI not working: {result.stderr}")
+            pytest.fail(f"Installed Gemini CLI is not runnable: {result.stderr}")
 
         return result.stdout.strip()
-    except Exception as e:
-        pytest.skip(f"Gemini CLI check failed: {e}")
+    except subprocess.TimeoutExpired:
+        pytest.fail("Installed Gemini CLI --version timed out (>5s)")
+    except OSError as error:
+        pytest.fail(f"Installed Gemini CLI check failed: {error}")
 
 
 @pytest.fixture(scope="module")
@@ -107,7 +85,7 @@ def gemini_extension_check():
             timeout=30  # Extensions list loads credentials + experiments
         )
         if result.returncode != 0:
-            pytest.skip(f"Could not list Gemini extensions: {result.stderr}")
+            pytest.fail(f"Installed Gemini extension list failed: {result.stderr}")
 
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
@@ -116,9 +94,9 @@ def gemini_extension_check():
 
         return True
     except subprocess.TimeoutExpired:
-        pytest.skip("gemini extensions list timed out (>30s)")
-    except Exception as e:
-        pytest.skip(f"Extension check failed: {e}")
+        pytest.fail("Installed Gemini extension list timed out (>30s)")
+    except OSError as error:
+        pytest.fail(f"Installed Gemini extension check failed: {error}")
 
 
 @pytest.fixture
@@ -142,20 +120,14 @@ class TestGeminiHookEntryPointDirect:
 
     def test_hook_script_exists(self):
         """Verify hook_entry.py can be found."""
-        try:
-            hook_script = find_hook_script()
-            assert hook_script.exists(), f"Hook script not found: {hook_script}"
-            assert hook_script.name == "hook_entry.py", \
-                f"Found wrong file: {hook_script.name}"
-        except FileNotFoundError as e:
-            pytest.skip(str(e))
+        hook_script = find_hook_script()
+        assert hook_script.exists(), f"Hook script not found: {hook_script}"
+        assert hook_script.name == "hook_entry.py", \
+            f"Found wrong file: {hook_script.name}"
 
     def test_hook_sessionstart_event(self, clean_environment):
         """Test SessionStart hook event (NO COST - direct Python call)."""
-        try:
-            hook_script = find_hook_script()
-        except FileNotFoundError as e:
-            pytest.skip(str(e))
+        hook_script = find_hook_script()
 
         # AUTORUN_USE_DAEMON=0 → run_direct() in __main__.py → exercises canonical
         # plugins.py code without connecting to the live daemon socket.
@@ -182,10 +154,7 @@ class TestGeminiHookEntryPointDirect:
 
     def test_hook_beforeagent_event_slash_command(self, clean_environment):
         """Test BeforeAgent hook event with /ar:st command (NO COST)."""
-        try:
-            hook_script = find_hook_script()
-        except FileNotFoundError as e:
-            pytest.skip(str(e))
+        hook_script = find_hook_script()
 
         # Simulate BeforeAgent event with /ar:st command
         stdin_data = json.dumps({
@@ -224,10 +193,7 @@ class TestGeminiHookEntryPointDirect:
         Tests backward-compatible camelCase format (type/toolName/toolInput/sessionId).
         Our normalize_hook_payload handles this for older Gemini CLI versions.
         """
-        try:
-            hook_script = find_hook_script()
-        except FileNotFoundError as e:
-            pytest.skip(str(e))
+        hook_script = find_hook_script()
 
         # camelCase format (backward-compatible)
         stdin_data = json.dumps({
@@ -282,10 +248,7 @@ class TestGeminiHookEntryPointDirect:
 
         Reference: https://geminicli.com/docs/hooks/reference/
         """
-        try:
-            hook_script = find_hook_script()
-        except FileNotFoundError as e:
-            pytest.skip(str(e))
+        hook_script = find_hook_script()
 
         # Official Gemini CLI snake_case format (v0.26+)
         stdin_data = json.dumps({
@@ -338,10 +301,7 @@ class TestGeminiHookEntryPointDirect:
 
     def test_hook_safe_command_allowed_snakecase(self, clean_environment):
         """Test that safe commands are allowed with official snake_case format (NO COST)."""
-        try:
-            hook_script = find_hook_script()
-        except FileNotFoundError as e:
-            pytest.skip(str(e))
+        hook_script = find_hook_script()
 
         # Official Gemini CLI format - safe command
         stdin_data = json.dumps({
@@ -387,6 +347,7 @@ class TestGeminiHookEntryPointDirect:
     reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
            "Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
 )
+@pytest.mark.e2e
 class TestGeminiCLIRealMoney:
     """Real Gemini CLI E2E tests that make actual API calls.
 
@@ -422,6 +383,7 @@ class TestGeminiCLIRealMoney:
             f"Unexpected response: {result.stdout}"
 
 
+@pytest.mark.e2e
 class TestGeminiExtensionRegistration:
     """Verify Gemini registration without requiring a model/API call."""
 
@@ -459,12 +421,11 @@ class TestGeminiExtensionRegistration:
 
 
 class TestGeminiExtensionInstalledHook:
-    """Test the INSTALLED hook (Gemini extension copy, not dev repo).
+    """Test the distributable hook process against Gemini wire payloads.
 
     NO API COST - invokes the hook_entry.py directly with subprocess,
-    exactly as Gemini CLI would. Uses the extension's installed copy at
-    ~/.gemini/extensions/ar/ to verify that the deployed
-    code correctly blocks dangerous commands and permits safe ones.
+    exactly as Gemini CLI would. The canonical source entrypoint keeps this
+    contract hermetic; installed-tree publication is covered separately.
 
     This is the closest E2E validation to real Gemini CLI behavior without
     requiring the AI to actually invoke tools (which is unreliable in piped mode).
@@ -472,18 +433,10 @@ class TestGeminiExtensionInstalledHook:
 
     @pytest.fixture
     def extension_hook(self):
-        """Get path to hook_entry.py (installed extension or source fallback)."""
-        candidates = [
-            Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
-            Path(__file__).parent.parent / "hooks/hook_entry.py",
-        ]
-        for hook_path in candidates:
-            if hook_path.exists():
-                return hook_path
-        pytest.skip(
-            "Gemini hook_entry.py not found. Searched:\n"
-            + "\n".join(f"  - {p}" for p in candidates)
-        )
+        """Use the repository's canonical hook, never a live user install."""
+        hook_path = Path(__file__).parent.parent / "hooks/hook_entry.py"
+        assert hook_path.is_file()
+        return hook_path
 
     def _run_hook(self, hook_path: Path, payload: dict) -> dict:
         """Run hook_entry.py as subprocess with JSON payload, return parsed response.
@@ -698,18 +651,10 @@ class TestGeminiWriteFileBlocking:
 
     @pytest.fixture
     def extension_hook(self):
-        """Get path to hook_entry.py (installed extension or source fallback)."""
-        candidates = [
-            Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
-            Path(__file__).parent.parent / "hooks/hook_entry.py",
-        ]
-        for hook_path in candidates:
-            if hook_path.exists():
-                return hook_path
-        pytest.skip(
-            "Gemini hook_entry.py not found. Searched:\n"
-            + "\n".join(f"  - {p}" for p in candidates)
-        )
+        """Use the repository's canonical hook, never a live user install."""
+        hook_path = Path(__file__).parent.parent / "hooks/hook_entry.py"
+        assert hook_path.is_file()
+        return hook_path
 
     def _run_hook(self, hook_path: Path, payload: dict) -> dict:
         """Run hook_entry.py as subprocess with JSON payload."""

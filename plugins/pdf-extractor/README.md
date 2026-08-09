@@ -6,12 +6,23 @@ Extract text and structured data from PDF documents using a multi-backend approa
 
 ### AI Harnesses
 
-From the autorun repository root, install the plugin and skill for every
-detected supported harness:
+From an autorun source checkout, install the plugin and skill for every detected
+supported harness:
 
 ```bash
 autorun --install pdf-extractor --force
 ```
+
+For Claude Code, install it directly from the repository marketplace:
+
+```bash
+claude plugin marketplace add https://github.com/ahundt/autorun.git
+claude plugin install pdf-extractor@autorun
+```
+
+The standalone autorun wheel embeds only the `ar` plugin. Its
+`autorun --install pdf-extractor` selection is therefore available only when
+running from a source marketplace checkout that contains both plugin trees.
 
 Target one harness with `--claude`, `--gemini`, `--qwen`, `--antigravity`, or
 `--codex`. Claude, Gemini, Qwen, and Antigravity use native per-plugin skills.
@@ -22,15 +33,12 @@ does not currently expose a skill API.
 ### Python CLI
 
 ```bash
-cd ~/.claude/autorun/plugins/pdf-extractor
-uv venv
-source .venv/bin/activate
-uv pip install -e .
+uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
 ```
 
 For GPU-accelerated backends (docling, marker):
 ```bash
-uv pip install -e ".[gpu]"
+uv tool install --force 'pdf-extractor[gpu] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
 ```
 
 ## Usage
@@ -93,4 +101,4 @@ not the Codex skill invocation.
 
 ## License
 
-MIT
+Apache License 2.0 — see the repository's `LICENSE` file.

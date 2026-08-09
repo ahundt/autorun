@@ -6,20 +6,20 @@ When updating versions in the autorun marketplace, use this checklist to ensure 
 
 All plugins in this marketplace use the **same version number** for consistency. When releasing a new version, update ALL plugins to the same version.
 
-The source of truth is `plugins/autorun/pyproject.toml`. The release consistency
-test checks both packages, manifests, marketplaces, Python `__version__` values,
-and maintained version-bearing docs against that value.
+The source of truth is `plugins/autorun/pyproject.toml`. The checklist coverage
+test verifies that every maintained file carrying the current version is listed;
+release and package tests separately validate artifact and runtime identities.
 
 ## Quick Method
 
 ```bash
 # 1. Find all references to the OLD version
-rg -n "OLD_VERSION" --glob '*.py' --glob '*.json' --glob '*.toml' --glob '*.md' \
+rg --hidden -n "OLD_VERSION" --glob '*.py' --glob '*.json' --glob '*.toml' --glob '*.md' \
   --glob '!**/__pycache__/**' --glob '!**/.venv/**' --glob '!notes/**'
 
 # 2. Review EVERY match before replacing — see Gotchas below
 # 3. Replace only the ones that are autorun version refs
-# 4. Run tests: uv run pytest plugins/autorun/tests/ -v
+# 4. Run tests: uv run --project plugins/autorun pytest plugins/autorun/tests/ -v
 # 5. Verify zero old refs remain (excluding notes/)
 ```
 
@@ -27,7 +27,7 @@ rg -n "OLD_VERSION" --glob '*.py' --glob '*.json' --glob '*.toml' --glob '*.md' 
 
 ```bash
 # Find all JSON version fields
-rg -n '"version"' --glob '*.json' --glob '!**/__pycache__/**'
+rg --hidden -n '"version"' --glob '*.json' --glob '!**/__pycache__/**'
 
 # Find all Python __version__ variables
 rg -n '__version__' --glob '*.py' --glob '!**/__pycache__/**' --glob '!**/.venv/**'
@@ -36,19 +36,22 @@ rg -n '__version__' --glob '*.py' --glob '!**/__pycache__/**' --glob '!**/.venv/
 rg -n '^version\s*=' --glob '*.toml'
 ```
 
-## Files to Update (~33 files)
+## Current inventory
 
-The grep in "Quick Method" is the authoritative source. The lists below are a guide — grep is the real checklist.
+The `--hidden` grep in "Quick Method" is authoritative. Hidden Claude/Codex
+manifests are release inputs, so a search without `--hidden` is incomplete. The
+lists below name maintained source fields; generated `metadata.json` build
+provenance is written by the release builder and is not hand-edited.
 
-### Root/Marketplace (3 files)
+### Root/Marketplace
 
 | File | Field/Pattern | Notes |
 |------|---------------|-------|
 | `pyproject.toml` | `version = "X.Y.Z"` | Only the `version` field. Do NOT change `>=X.Y.Z` minimum deps unless breaking change. |
-| `src/autorun_workspace/__init__.py` | Print statement with version | |
+| `src/autorun_workspace/__init__.py` | `__version__ = "X.Y.Z"` | |
 | `.claude-plugin/marketplace.json` | `"version": "X.Y.Z"` (2 entries: autorun + pdf-extractor) | |
 
-### autorun Plugin (8+ files)
+### autorun Plugin
 
 | File | Field/Pattern | Notes |
 |------|---------------|-------|
@@ -56,9 +59,9 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `plugins/autorun/.claude-plugin/plugin.json` | `"version": "X.Y.Z"` | |
 | `plugins/autorun/.claude-plugin/marketplace.json` | `"version": "X.Y.Z"` | |
 | `plugins/autorun/src/autorun/__init__.py` | `__version__ = "X.Y.Z"` | |
-| `plugins/autorun/src/autorun/install.py` | 5 references: 2 fallback defaults, 1 print, 1 config dict, 1 `__version__` fallback | |
-| `plugins/autorun/src/autorun/metadata.json` | `"version": "X.Y.Z"` | Build artifact — stale commit hash is OK |
-| `plugins/autorun/src/autorun/gemini_template/gemini-extension.json` | `"version": "X.Y.Z"` | Lives under `gemini_template/`, outside Claude's marketplace scan path — see the bug #24115 / #14449 workaround in `install.py` |
+| `plugins/autorun/src/autorun/metadata.json` | generated `"version"` build metadata | Do not hand-edit; the release builder rewrites version, commit, and build time |
+| `plugins/autorun/src/autorun/gemini_template/gemini-extension.json` | `"version": "X.Y.Z"` | Lives under `gemini_template/`, outside Claude's marketplace scan path — see the bug #24115 / #14449 workaround in `installer/extension.py` |
+| `plugins/autorun/.codex-plugin/plugin.json` | `"version": "X.Y.Z"` | Codex package manifest |
 
 ### pdf-extractor Plugin (4+ files)
 
@@ -74,11 +77,11 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | File | Notes |
 |------|-------|
 | `README.md` | Section headers, install verification examples |
+| `CHANGELOG.md` | Add the dated release section |
 | `AGENTS.md` | 2 refs — `## autorun Plugin (vX.Y.Z)` and `## pdf-extractor Plugin (vX.Y.Z)`. `CLAUDE.md` and `GEMINI.md` are symlinks to it; edit this file, never a link |
 | `plugins/autorun/AGENTS.md` | 1 ref — the illustrative plugin-cache path `<version>/` |
 | `plugins/autorun/HOOK_ARCHITECTURE.md` | Version references in docs |
-| `docs/version_update_checklist.md` | `**Current Version: X.Y.Z**` at top |
-| `plugins/autorun/.codex-plugin/plugin.json` | Codex plugin package version |
+| `docs/version_update_checklist.md` | No current-version field; update only examples that intentionally track the release |
 | `plugins/pdf-extractor/CLAUDE.md` | Section header |
 
 ### Skills (4+ files)
@@ -99,6 +102,9 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `plugins/autorun/tests/test_install_codex.py` | Codex marketplace and hook fixtures |
 | `plugins/autorun/tests/test_install_extension.py` | Extension manifest fixture. **See Gotcha #5** — comparison data, not a version reference. |
 | `plugins/autorun/tests/test_install_memory_runtime.py` | Prerelease ordering pairs. **See Gotcha #5** and #2 — pairs must stay distinct. |
+| `plugins/autorun/tests/test_install_entrypoint.py` | Package receipt version fixture. |
+| `plugins/autorun/tests/test_package_resources.py` | Build metadata version fixture. |
+| `plugins/autorun/tests/test_release_artifacts.py` | Expected release artifact metadata. |
 | `plugins/autorun/src/autorun/installer/extension.py` | Self-check manifest fixture. **See Gotcha #5**. |
 | `plugins/autorun/src/autorun/installer/runtime.py` | Prerelease ordering assertions and the comment citing them. **See Gotcha #5**. |
 
@@ -179,11 +185,11 @@ These are minimum versions — only bump for breaking changes, not patch release
 
 After updating versions:
 
-1. **Search for old version**: `grep -rn "OLD_VERSION" . | grep -v __pycache__`
-2. **Run core tests**: `uv run pytest plugins/autorun/tests/test_unit_simple.py -v`
-3. **Run version-sensitive tests**: `uv run pytest plugins/autorun/tests/test_install_memory_runtime.py plugins/autorun/tests/test_hook_entry.py plugins/autorun/tests/test_hooks_format.py plugins/autorun/tests/test_bootstrap_config.py plugins/autorun/tests/test_actual_command_blocking.py -v`
-4. **Run full suite**: `uv run pytest plugins/autorun/tests/ -v`
-5. **Verify config loads**: `uv run python -c "from autorun.config import DEFAULT_INTEGRATIONS; print(len(DEFAULT_INTEGRATIONS))"`
+1. **Search for old version**: use the `rg --hidden` command in "Quick Method"
+2. **Run core tests**: `uv run --project plugins/autorun pytest plugins/autorun/tests/test_unit_simple.py -v`
+3. **Run version-sensitive tests**: `uv run --project plugins/autorun pytest plugins/autorun/tests/test_install_memory_runtime.py plugins/autorun/tests/test_hook_entry.py plugins/autorun/tests/test_hooks_format.py plugins/autorun/tests/test_bootstrap_config.py plugins/autorun/tests/test_actual_command_blocking.py -v`
+4. **Run full suite**: `uv run --project plugins/autorun pytest plugins/autorun/tests/ -v`
+5. **Verify config loads**: `uv run --project plugins/autorun python -c "from autorun.config import DEFAULT_INTEGRATIONS; print(len(DEFAULT_INTEGRATIONS))"`
 
 ## Release Workflow
 
@@ -193,7 +199,7 @@ Follow the file lists above. Commit and push.
 ### Stage 2: Pre-flight checks
 ```bash
 # Tests pass
-uv run pytest plugins/autorun/tests/ -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/ -v
 
 # Working tree is clean
 git status  # expect clean
@@ -230,9 +236,9 @@ git log vX.Y.Z --oneline -1
 # Must show the version bump commit
 ```
 
-### Stage 6: Create GitHub release (optional)
+### Stage 6: Create GitHub prerelease (required for RC self-update)
 ```bash
-gh release create vX.Y.Z --title "autorun vX.Y.Z" --generate-notes
+gh release create vX.Y.Z --prerelease --title "autorun vX.Y.Z" --generate-notes
 ```
 
 ### If CI fails after tagging
@@ -249,7 +255,9 @@ git push origin vX.Y.Z
 
 ## PyPI Publishing (future — not yet configured)
 
-autorun is currently distributed via GitHub (`claude plugin install` / `gemini extensions install`), not PyPI. If PyPI publishing is added in the future, follow the pattern from the [AI Session Search release guide](https://github.com/ahundt/ai-session-search/blob/main/docs/development/releasing.md):
+autorun is currently distributed from GitHub through the package subdirectory
+and the Claude marketplace flow, not PyPI. If PyPI publishing is added in the
+future, follow the pattern from the [AI Session Search release guide](https://github.com/ahundt/ai-session-search/blob/main/docs/development/releasing.md):
 
 1. **Trusted Publishers** — configure on PyPI/TestPyPI with exact owner/repo/workflow/environment match
 2. **GitHub Environments** — `testpypi` (auto-publish) + `pypi` (manual approval gate)

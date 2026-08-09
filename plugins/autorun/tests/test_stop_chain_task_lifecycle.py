@@ -348,8 +348,7 @@ class TestTaskLifecycleEnabled:
 
     def test_hooks_registered_when_enabled(self):
         """When enabled, prevent_premature_stop must be in the Stop chain."""
-        if not task_lifecycle.is_enabled():
-            pytest.skip("Task lifecycle disabled in test environment")
+        assert task_lifecycle.is_enabled(), "isolated test config must enable task lifecycle"
 
         stop_chain = plugins.app.chains.get("Stop", [])
         handler_names = [h.__name__ for h in stop_chain]

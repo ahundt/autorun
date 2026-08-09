@@ -9,10 +9,9 @@ task never blocked again. Three pieces close that:
 2. A delegation marker with no ``agent_session_id`` claims the latest
    unclaimed spawn, so the task knows where its work went.
 3. SubagentStop flips matching delegated tasks to ``delegation-returned``,
-   which blocks the Stop gate again with verification wording; parallel
-   subagents share the parent session id (anthropics/claude-code#7881), so
-   identity comes from the transcript path or the ledger, and ambiguity
-   returns every ledger-linked delegation rather than guessing one.
+   which blocks the parent Stop gate again with verification wording. Claude
+   can share the parent session while Codex fires from the child session; a
+   spawn-time receipt preserves parent authority across both payload shapes.
 
 The spawn-result fixture below is derived from a captured live Agent-tool
 result (ids and paths generalized): the extraction regex and tool-name
@@ -33,7 +32,7 @@ if str(SRC_DIR) not in sys.path:
 
 from autorun import session_manager as sm  # noqa: E402
 from autorun.config import CONFIG  # noqa: E402
-from autorun.core import EventContext, ThreadSafeDB  # noqa: E402
+from autorun.core import EventContext, ThreadSafeDB, normalize_hook_payload  # noqa: E402
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig  # noqa: E402
 
 DELEGATE = CONFIG["delegate_marker_template"]
@@ -98,6 +97,8 @@ def _ctx(
     tool_result="",
     assistant_text="",
     transcript_path="",
+    agent_transcript_path="",
+    agent_id=None,
     cli_type="claude",
 ):
     ctx = EventContext(
@@ -113,6 +114,8 @@ def _ctx(
         store=store,
         cli_type=cli_type,
         transcript_path=transcript_path,
+        agent_transcript_path=agent_transcript_path,
+        agent_id=agent_id,
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_1
@@ -133,6 +136,11 @@ def _state_key(session_id):
 def _ledger(session_id):
     with sm.session_state(_state_key(session_id)) as state:
         return list(state.get("session_metadata", {}).get("agent_spawns", []))
+
+
+def _receipts():
+    with sm.session_state("__task_delegation_receipts__") as state:
+        return dict(state.get("receipts", {}))
 
 
 class TestSpawnLedger:
@@ -181,6 +189,120 @@ class TestSpawnLedger:
         _spawn("dl-forge", store, cfg, tool_name="Bash")
 
         assert _ledger("dl-forge") == []
+
+    @pytest.mark.parametrize("backend", ["json", "sqlite"])
+    def test_unreturned_receipt_expires_with_delegation_ttl(
+        self, isolated_state, cfg, monkeypatch, backend
+    ):
+        monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+        sm._reset_for_testing()
+        store = ThreadSafeDB()
+        _spawn("dl-expired-receipt", store, cfg)
+        key = f"claude:{SPAWN_ID}"
+        expired = time.time() - float(CONFIG["delegation_ttl_seconds"]) - 60
+        with sm.session_state("__task_delegation_receipts__") as state:
+            receipts = dict(state["receipts"])
+            receipts[key] = {**receipts[key], "at": expired}
+            state["receipts"] = receipts
+
+        child = TaskLifecycle(config=cfg, session_id="untrusted-child")
+        assert child._delegation_receipt("claude", SPAWN_ID) is None
+        assert key not in _receipts()
+
+    @pytest.mark.parametrize("backend", ["json", "sqlite"])
+    def test_clear_parent_removes_its_cross_session_receipts(
+        self, isolated_state, cfg, monkeypatch, backend
+    ):
+        monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+        sm._reset_for_testing()
+        store = ThreadSafeDB()
+        _spawn("dl-clear-parent", store, cfg)
+        assert _receipts()
+
+        assert TaskLifecycle.cli_clear(
+            session_id="dl-clear-parent", confirm=False
+        ) == 0
+
+        assert _receipts() == {}
+
+    @pytest.mark.parametrize("backend", ["json", "sqlite"])
+    def test_clear_all_removes_global_delegation_registry(
+        self, isolated_state, cfg, monkeypatch, backend
+    ):
+        monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+        sm._reset_for_testing()
+        store = ThreadSafeDB()
+        _spawn("dl-clear-all-one", store, cfg)
+        _spawn(
+            "dl-clear-all-two",
+            store,
+            cfg,
+            result=SPAWN_RESULT.replace(SPAWN_ID, "b1c2d3e4f5a6b7c8d"),
+        )
+        assert len(_receipts()) == 2
+
+        assert TaskLifecycle.cli_clear(all_sessions=True, confirm=False) == 0
+
+        assert _receipts() == {}
+
+    def test_json_clear_write_failure_preserves_parent_and_receipt(
+        self, isolated_state, cfg, monkeypatch
+    ):
+        """The JSON backend publishes parent and receipt deletion together."""
+        monkeypatch.setitem(sm._CONFIG, "state_backend", "json")
+        sm._reset_for_testing()
+        store = ThreadSafeDB()
+        session_id = "dl-json-clear-rollback"
+        manager = TaskLifecycle(config=cfg, session_id=session_id)
+        manager.create_task("7", {"subject": "Preserved"}, "created")
+        _spawn(session_id, store, cfg)
+        receipts_before = _receipts()
+        backend = sm.get_session_manager()._store
+        original_save = backend._save
+
+        def reject_save():
+            raise OSError("injected JSON clear failure")
+
+        monkeypatch.setattr(backend, "_save", reject_save)
+        assert TaskLifecycle.cli_clear(session_id=session_id, confirm=False) == 1
+        monkeypatch.setattr(backend, "_save", original_save)
+
+        assert set(TaskLifecycle(config=cfg, session_id=session_id).tasks) == {"7"}
+        assert _receipts() == receipts_before
+
+    def test_json_clear_all_write_failure_preserves_every_session_and_receipt(
+        self, isolated_state, cfg, monkeypatch
+    ):
+        """A failed all-clear cannot publish a partially deleted JSON file."""
+        monkeypatch.setitem(sm._CONFIG, "state_backend", "json")
+        sm._reset_for_testing()
+        store = ThreadSafeDB()
+        sessions = ("dl-json-all-a", "dl-json-all-b")
+        for session_id in sessions:
+            manager = TaskLifecycle(config=cfg, session_id=session_id)
+            manager.create_task("7", {"subject": session_id}, "created")
+            agent_id = SPAWN_ID if session_id.endswith("a") else "b1c2d3e4f5a6b7c8d"
+            _spawn(
+                session_id,
+                store,
+                cfg,
+                result=SPAWN_RESULT.replace(SPAWN_ID, agent_id),
+            )
+        receipts_before = _receipts()
+        backend = sm.get_session_manager()._store
+        original_save = backend._save
+
+        monkeypatch.setattr(
+            backend,
+            "_save",
+            lambda: (_ for _ in ()).throw(OSError("injected JSON all-clear failure")),
+        )
+        assert TaskLifecycle.cli_clear(all_sessions=True, confirm=False) == 1
+        monkeypatch.setattr(backend, "_save", original_save)
+
+        for session_id in sessions:
+            assert set(TaskLifecycle(config=cfg, session_id=session_id).tasks) == {"7"}
+        assert _receipts() == receipts_before
 
 
 class TestMarkerClaimsSpawn:
@@ -282,6 +404,137 @@ class TestReturnedGate:
             "8": "delegation-returned",
         }, "ambiguity must return every ledger-linked delegation, complete none"
 
+    def test_dashed_codex_transcript_returns_only_matching_child(
+        self, isolated_state, cfg
+    ):
+        store = ThreadSafeDB()
+        session_id = "dl-codex-return"
+        manager = TaskLifecycle(config=cfg, session_id=session_id)
+        first_id = CODEX_SPAWN_ID
+        second_id = "01997b21-0e6f-7bb2-9d1e-aaaaaaaaaaaa"
+
+        for task_id, agent_id in (("7", first_id), ("8", second_id)):
+            manager.create_task(task_id, {"subject": f"Part {task_id}"}, "created")
+            _spawn(
+                session_id,
+                store,
+                cfg,
+                result={"agent_id": agent_id, "status": "spawned"},
+                tool_name="spawn_agent",
+                cli_type="codex",
+            )
+            assert manager.delegate_tasks_from_markers(
+                [task_id],
+                allowed_task_ids=[task_id],
+                session=agent_id,
+                marker_identity=f"codex-marker-{task_id}",
+            ) == [task_id]
+
+        sub = _ctx(
+            session_id,
+            store,
+            event="SubagentStop",
+            tool_name="",
+            transcript_path=f"/tmp/example-session/agent-{first_id}.jsonl",
+            cli_type="codex",
+        )
+        assert TaskLifecycle(ctx=sub, config=cfg).handle_stop(sub) is None
+
+        tasks = manager.tasks
+        assert tasks["7"]["status"] == "delegation-returned"
+        assert tasks["8"]["status"] == "delegated"
+
+    def test_real_codex_child_session_returns_only_its_parent_task(
+        self, isolated_state, cfg
+    ):
+        """Codex emits SubagentStop in the child session, keyed by agent_id."""
+        store = ThreadSafeDB()
+        parent_session = "codex-parent-session"
+        child_session = "codex-child-session"
+        parent = TaskLifecycle(config=cfg, session_id=parent_session)
+        first_id = CODEX_SPAWN_ID
+        second_id = "01997b21-0e6f-7bb2-9d1e-bbbbbbbbbbbb"
+
+        for task_id, agent_id in (("7", first_id), ("8", second_id)):
+            parent.create_task(task_id, {"subject": f"Part {task_id}"}, "created")
+            _spawn(
+                parent_session,
+                store,
+                cfg,
+                result={"agent_id": agent_id, "status": "spawned"},
+                tool_name="spawn_agent",
+                cli_type="codex",
+            )
+            assert parent.delegate_tasks_from_markers(
+                [task_id],
+                allowed_task_ids=[task_id],
+                session=agent_id,
+                marker_identity=f"codex-real-wire-{task_id}",
+            ) == [task_id]
+
+        sub = _ctx(
+            child_session,
+            store,
+            event="SubagentStop",
+            tool_name="",
+            transcript_path="/tmp/codex/parent-session.jsonl",
+            agent_transcript_path=f"/tmp/codex/agent-{first_id}.jsonl",
+            agent_id=first_id,
+            cli_type="codex",
+        )
+        child = TaskLifecycle(ctx=sub, config=cfg)
+
+        assert child.handle_stop(sub) is None
+        assert parent.tasks["7"]["status"] == "delegation-returned"
+        assert parent.tasks["8"]["status"] == "delegated"
+        assert child.tasks == {}, "child state must not become task authority"
+
+        assert child.handle_stop(sub) is None
+        assert parent.tasks["7"]["status"] == "delegation-returned"
+
+    @pytest.mark.parametrize("backend", ["json", "sqlite"])
+    def test_duplicate_subagent_stop_preserves_return_timestamps(
+        self, isolated_state, cfg, monkeypatch, backend
+    ):
+        """A retried return is a durable no-op, including eviction ordering."""
+        monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+        sm._reset_for_testing()
+        store = ThreadSafeDB()
+        session_id = f"dl-idempotent-{backend}"
+        self._delegate(session_id, store, cfg)
+        sub = _ctx(
+            session_id,
+            store,
+            event="SubagentStop",
+            tool_name="",
+            transcript_path=f"/tmp/example-session/agent-{SPAWN_ID}.jsonl",
+        )
+        manager = TaskLifecycle(ctx=sub, config=cfg)
+
+        assert manager.handle_stop(sub) is None
+        first_ledger = _ledger(session_id)
+        first_receipts = _receipts()
+        time.sleep(0.01)
+        assert manager.handle_stop(sub) is None
+
+        assert _ledger(session_id) == first_ledger
+        assert _receipts() == first_receipts
+
+    def test_codex_agent_transcript_path_survives_normalization(self):
+        normalized = normalize_hook_payload(
+            {
+                "cli_type": "codex",
+                "hook_event_name": "SubagentStop",
+                "session_id": "child",
+                "agent_id": CODEX_SPAWN_ID,
+                "transcript_path": "~/parent.jsonl",
+                "agent_transcript_path": "~/child.jsonl",
+            }
+        )
+
+        assert normalized["agent_id"] == CODEX_SPAWN_ID
+        assert normalized["agent_transcript_path"].endswith("/child.jsonl")
+
     def test_fanout_storm_flips_each_task_once_and_idempotently(self, isolated_state, cfg):
         """Recorded fan-out: 8 spawns, 8 delegations, 16 SubagentStop firings.
 
@@ -328,7 +581,7 @@ class TestReturnedGate:
     def test_dead_agent_ttl_reverts_to_pending(self, isolated_state, cfg, monkeypatch):
         store = ThreadSafeDB()
         session_id = "dl-ttl"
-        manager = self._delegate(session_id, store, cfg)
+        self._delegate(session_id, store, cfg)
 
         expired = time.time() - float(CONFIG["delegation_ttl_seconds"]) - 60
         with sm.session_state(_state_key(session_id)) as state:
@@ -348,6 +601,51 @@ class TestReturnedGate:
             "a dead subagent must not exempt its task forever"
         )
         assert response is not None, "the reverted task blocks the stop again"
+
+    def test_active_fanout_is_not_evicted_before_ttl_recovery(
+        self, isolated_state, cfg
+    ):
+        """The history bound must never discard an unresolved delegation."""
+        store = ThreadSafeDB()
+        session_id = "dl-over-ring-bound"
+        manager = TaskLifecycle(config=cfg, session_id=session_id)
+
+        for n in range(17):
+            task_id = str(n)
+            agent_id = f"d{n:02d}e4f5a6b7c8d9e{n:02d}"
+            manager.create_task(task_id, {"subject": f"Part {n}"}, "created")
+            _spawn(
+                session_id,
+                store,
+                cfg,
+                result=SPAWN_RESULT.replace(SPAWN_ID, agent_id),
+            )
+            assert manager.delegate_tasks_from_markers(
+                [task_id],
+                allowed_task_ids=[task_id],
+                marker_identity=f"marker-{n}",
+            ) == [task_id]
+
+        oldest_id = "d00e4f5a6b7c8d9e00"
+        assert oldest_id in {entry["id"] for entry in _ledger(session_id)}
+
+        expired = time.time() - float(CONFIG["delegation_ttl_seconds"]) - 60
+        manager.update_task(
+            "0",
+            {"metadata": {"delegated_at": expired}},
+            "expire oldest",
+        )
+
+        def expire_oldest(metadata):
+            for entry in metadata.get("agent_spawns", []):
+                if entry.get("id") == oldest_id:
+                    entry["at"] = expired
+
+        manager.atomic_update_metadata(expire_oldest)
+        stop = _ctx(session_id, store, event="Stop", tool_name="", assistant_text="done")
+        TaskLifecycle(ctx=stop, config=cfg).handle_stop(stop)
+
+        assert manager.tasks["0"]["status"] == "pending"
 
 
 class TestHarnessNamesLiveInTheRegistry:

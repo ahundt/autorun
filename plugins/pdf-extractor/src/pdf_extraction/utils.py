@@ -3,13 +3,7 @@
 PDF Extraction Utilities - GPU detection, quality metrics, encryption check.
 """
 
-try:
-    import PyPDF2
-except ImportError:
-    PyPDF2 = None
-
-
-def detect_gpu_availability() -> dict:
+def detect_gpu_availability(*, probe_runtime: bool = True) -> dict:
     """
     Detect if GPU is available for GPU-accelerated backends.
 
@@ -28,6 +22,8 @@ def detect_gpu_availability() -> dict:
     }
 
     try:
+        if not probe_runtime:
+            return gpu_info
         import torch
         if torch.cuda.is_available():
             gpu_info['available'] = True
@@ -89,12 +85,13 @@ def is_pdf_encrypted(pdf_path: str) -> bool:
     Returns:
         True if encrypted, False otherwise (also False if PyPDF2 not available)
     """
-    if PyPDF2 is None:
-        return False  # Can't check encryption without PyPDF2
-
     try:
+        import PyPDF2
+
         with open(pdf_path, 'rb') as f:
             reader = PyPDF2.PdfReader(f)
             return reader.is_encrypted
     except Exception:
+        # Availability probes deliberately collapse parser/import failures into
+        # "not readable here"; extraction reports detailed backend errors.
         return False

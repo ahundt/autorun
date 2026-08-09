@@ -127,6 +127,7 @@ class Intent:
     source: Path | None = None
     plugin: str = ""
     settings: Mapping[str, str] = field(default_factory=dict)
+    ownership_proof: Callable[[Path], bool] | None = None
     kind: "Kind" = None  # defaults to Kind.TREE in __post_init__
 
     def __post_init__(self):
@@ -236,6 +237,27 @@ def _perform(intent: Intent, decision: Decision) -> Decision:
     """
     publishers = {Kind.TREE: publish_tree, Kind.FILES: publish_files, Kind.LINK: publish_link}
     if decision.verdict is Verdict.PUBLISH and intent.source is not None:
+        if intent.kind is Kind.TREE:
+            return publish_tree(
+                intent.source,
+                intent.target,
+                plugin=intent.plugin,
+                ownership_proof=intent.ownership_proof,
+                **intent.settings,
+            )
+        if intent.kind is Kind.LINK:
+            return publish_link(
+                intent.source,
+                intent.target,
+                plugin=intent.plugin,
+                ownership_proof=intent.ownership_proof,
+                exact_target=(
+                    intent.source
+                    if intent.settings.get("registration_link") == "1"
+                    else None
+                ),
+                **intent.settings,
+            )
         return publishers[intent.kind](
             intent.source, intent.target, plugin=intent.plugin, **intent.settings
         )
@@ -243,9 +265,28 @@ def _perform(intent: Intent, decision: Decision) -> Decision:
         if intent.kind is Kind.FILES:
             removed = bool(withdraw_files(intent.target, plugin=intent.plugin))
         elif intent.kind is Kind.LINK and intent.source is not None:
-            removed = withdraw_link(intent.target, intent.source.parent)
+            if intent.target.is_symlink():
+                removed = withdraw_link(
+                    intent.target,
+                    intent.source.parent,
+                    exact_target=(
+                        intent.source
+                        if intent.settings.get("registration_link") == "1"
+                        else None
+                    ),
+                )
+            else:
+                removed = withdrawn(
+                    intent.target,
+                    plugin=intent.plugin,
+                    ownership_proof=intent.ownership_proof,
+                )
         else:
-            removed = withdrawn(intent.target, plugin=intent.plugin)
+            removed = withdrawn(
+                intent.target,
+                plugin=intent.plugin,
+                ownership_proof=intent.ownership_proof,
+            )
         # Report what happened. `withdrawn` returns False for a symlink, a
         # foreign marker or a failed delete, and discarding that made a refused
         # removal read exactly like a clean one.
@@ -351,7 +392,18 @@ def run(
             # A link's ownership is its target, not a marker; `decide` reads a
             # live symlink as user-authored and would refuse it forever.
             inside = (intent.source or intent.target).parent
-            decision = decide_link(source, intent.target, inside, plugin=intent.plugin)
+            decision = decide_link(
+                source,
+                intent.target,
+                inside,
+                plugin=intent.plugin,
+                ownership_proof=intent.ownership_proof,
+                exact_target=(
+                    intent.source
+                    if intent.settings.get("registration_link") == "1"
+                    else None
+                ),
+            )
         elif intent.kind is Kind.FILES:
             if source is not None:
                 decision = decide_files(source, intent.target, plugin=intent.plugin)
@@ -364,7 +416,14 @@ def run(
                 else:
                     decision = Decision(Verdict.KEEP, intent.target, "belongs to another plugin")
         else:
-            decision = decide(intent.target, source, plugin=intent.plugin)
+            decision = decide(
+                intent.target,
+                source,
+                plugin=intent.plugin,
+                ownership_proof=(
+                    intent.ownership_proof if source is not None else None
+                ),
+            )
         decisions.append(_perform(intent, decision) if mode.writes else decision)
     return decisions
 

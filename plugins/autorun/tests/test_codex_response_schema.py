@@ -187,6 +187,29 @@ def test_codex_e2e_model_selector_prefers_refreshed_spark_catalog(monkeypatch):
     assert calls == [["codex", "debug", "models"]]
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "message"),
+    [
+        (2, "", "catalog unavailable", "exited 2"),
+        (0, "not json", "", "was not valid JSON"),
+    ],
+)
+def test_codex_e2e_model_catalog_errors_fail_enabled_live_gate(
+    monkeypatch, returncode, stdout, stderr, message
+):
+    e2e = _load_codex_e2e_module()
+    monkeypatch.setattr(
+        e2e.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    with pytest.raises(pytest.fail.Exception, match=message):
+        e2e._load_codex_model_catalog([])
+
+
 def test_codex_e2e_model_selector_rejects_non_spark_override_by_default(monkeypatch):
     e2e = _load_codex_e2e_module()
     monkeypatch.setenv("AUTORUN_CODEX_E2E_MODEL", "gpt-5.3-codex")

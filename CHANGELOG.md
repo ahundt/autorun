@@ -8,6 +8,8 @@ marketplace itself carries a separate `version` field.
 
 ## [Unreleased]
 
+## [1.0.0rc1] - 2026-08-09
+
 ### Added
 
 - **Agent memory install.** `autorun --install` writes a sentinel-delimited
@@ -54,7 +56,7 @@ marketplace itself carries a separate `version` field.
 - **ForgeCode install destroyed user-authored `<base>/AGENTS.md`.** It used
   `shutil.copy2`; it now merges a sentinel block like every other harness.
   Idempotence tests could not catch this — overwriting with the same template
-  always yields identical bytes.
+  yields identical bytes under the same source and toolchain.
 - **A stray sentinel marker made memory installs grow the guidance file
   without bound** while leaving the block permanently un-strippable.
 - **`AUTORUN_CODEX_*` environment variables overrode explicit CLI flags.**

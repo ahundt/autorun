@@ -1,5 +1,6 @@
 # Core documentation
 include CLAUDE.md
+include README.md
 include build_support.py
 include setup.py
 
@@ -18,10 +19,15 @@ recursive-include scripts *.py
 
 # Workspace configuration
 include pyproject.toml
-recursive-include src/autorun/gemini_template *.json *.py
+recursive-include src/autorun/claude_template *
+recursive-include src/autorun/codex_template *
+recursive-include src/autorun/forgecode_template *
+recursive-include src/autorun/gemini_template *
+recursive-include src/autorun/opencode_template *
 
 # Exclude build artifacts
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude .DS_Store
 global-exclude *.tmp
+global-exclude *.pdf

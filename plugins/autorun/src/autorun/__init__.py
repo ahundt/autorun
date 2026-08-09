@@ -16,17 +16,13 @@
 # limitations under the License.
 
 """
-autorun - Claude Agent SDK Command Interceptor
+autorun - task lifecycle and safety hooks for AI coding harnesses
 
-A lightweight, efficient command interceptor for Claude Code that saves tokens by processing
-autorun commands locally before they reach the AI.
+The package supplies hook dispatch, persistent task state, command guards,
+installer orchestration, and native assets for supported harnesses.
 
-Features:
-- Zero AI token consumption for autorun commands
-- Interactive mode with smart Ctrl+C handling
-- Multiple integration methods (hooks, MCP, plugin)
-- Efficient command dispatch via decorator pattern
-- Full compatibility with existing autorun workflows
+The optional local daemon shares state safely across hook processes; direct
+mode exercises the same handlers without the daemon.
 """
 
 __version__ = "1.0.0rc1"
@@ -52,8 +48,6 @@ try:
 except (json.JSONDecodeError, OSError, AttributeError):
     # Robust fallback for any failure (missing file, invalid JSON, etc.)
     pass
-
-import json
 
 # Minimal exports to avoid circular imports
 __all__ = [

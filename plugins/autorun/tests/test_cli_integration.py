@@ -147,6 +147,10 @@ def test_update_command_parsing():
     args = parse_args(['--update', '--update-method', 'uv'])
     assert args.update_method == 'uv', "Update method should be set"
 
+    for method in ("claude", "gemini"):
+        args = parse_args(["--update", "--update-method", method])
+        assert args.update_method == method
+
     print("✅ Update command parsing works")
 
 

@@ -139,5 +139,5 @@ Details: [`docs/RUNTIME_STATE_ISOLATION.md`](../../../docs/RUNTIME_STATE_ISOLATI
 ## Checks
 
 Every module self-checks:
-`uv run python -c "from autorun.installer.fs import demo; demo()"`.
+`uv run --project plugins/autorun python -c "from autorun.installer.fs import demo; demo()"`.
 Named tests live in `plugins/autorun/tests/test_install_*.py`.

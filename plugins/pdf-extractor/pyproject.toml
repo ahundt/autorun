@@ -8,7 +8,7 @@ version = "1.0.0rc1"
 description = "PDF data extraction with 9 backend support"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "Apache-2.0"
 authors = [{name = "Andrew Hundt", email = "ATHundt@gmail.com"}]
 keywords = ["pdf", "extraction", "ocr", "markdown", "data"]
 classifiers = [

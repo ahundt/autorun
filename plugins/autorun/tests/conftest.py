@@ -364,7 +364,10 @@ def cleanup_test_sessions():
         print(f"\n[DEBUG] Keeping {len(_test_session_ids)} test session artifacts for debugging")
         return
 
-    state_dir = Path.home() / ".claude" / "sessions"
+    # The suite redirects every persistence backend here before imports.  The
+    # cleanup path must use that same authority; consulting Path.home() can
+    # delete an unrelated live session that happens to share a generated ID.
+    state_dir = Path(os.environ["AUTORUN_TEST_STATE_DIR"])
     if not state_dir.exists():
         return
 
@@ -426,7 +429,7 @@ def unique_session_id():
 
     # Cleanup specific to this test (no glob — slow with 10K+ files)
     if not should_keep_test_artifacts():
-        state_dir = Path.home() / ".claude" / "sessions"
+        state_dir = Path(os.environ["AUTORUN_TEST_STATE_DIR"])
         if state_dir.exists():
             for session_id in created_ids:
                 for prefix in [session_id, f"test_backend_{session_id}", f"test_dumbdbm_{session_id}",

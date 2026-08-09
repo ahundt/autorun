@@ -12,6 +12,7 @@ than an accident.
 from __future__ import annotations
 
 import os
+import json
 import stat
 import sys
 from dataclasses import dataclass
@@ -102,6 +103,63 @@ def test_a_step_that_raises_is_not_swallowed(ctx):
 
     with pytest.raises(RuntimeError, match="cannot resolve"):
         list(walk([Fake("h", (broken,))], ctx))
+
+
+@pytest.mark.parametrize("poison", ["hooks", "marketplace", "guidance"])
+def test_shared_file_preflight_prevents_every_durable_install_write(
+    tmp_path, monkeypatch, poison
+):
+    from autorun.installer.memory import Block
+    from autorun.installer.orchestrate import install
+    from autorun.platforms import PLATFORMS
+
+    home = tmp_path / poison / "home"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    if poison == "hooks":
+        target = home / ".codex" / "hooks.json"
+        content = '{"hooks":'
+    elif poison == "marketplace":
+        target = home / ".agents" / "plugins" / "marketplace.json"
+        content = json.dumps({"plugins": {}})
+    else:
+        target = home / ".codex" / "AGENTS.md"
+        content = Block("codex-agents-md").start + "\nmissing end marker\n"
+    target.parent.mkdir(parents=True)
+    target.write_text(content, encoding="utf-8")
+    before = {
+        path.relative_to(home): path.read_bytes()
+        for path in home.rglob("*")
+        if path.is_file()
+    }
+    calls = []
+
+    result = install(
+        marketplace_root=Path(__file__).resolve().parents[3],
+        plugins=("ar",),
+        settings={
+            "_codex_hook_command": "autorun --cli codex",
+            "_guidance": {"codex": "guidance"},
+            "codex_hook_source": "user",
+            "codex_plugin_marketplace": "personal",
+            "skill_placement": {"codex": "auto"},
+        },
+        home=home,
+        harnesses=(PLATFORMS["codex"],),
+        available=(),
+        run_command=lambda argv: calls.append(tuple(argv)),
+        state_dir=tmp_path / poison / "state",
+    )
+
+    after = {
+        path.relative_to(home): path.read_bytes()
+        for path in home.rglob("*")
+        if path.is_file()
+    }
+    assert result.ok is False
+    assert any(finding.check == "installer preflight" for finding in result.findings)
+    assert after == before
+    assert calls == []
 
 
 def test_two_steps_yielding_the_same_target_are_both_walked(ctx, source, tmp_path):

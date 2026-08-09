@@ -73,6 +73,8 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "drops_additional_context": platform.drops_additional_context,
         "root_allow_decision": platform.hook_protocol.root_allow_decision,
         "root_block_decision": platform.hook_protocol.root_block_decision,
+        "native_hook_events": sorted(platform.native_hook_events),
+        "installed_hook_events": sorted(platform.installed_hook_events),
         "supports_additional_context_events": sorted(platform.supports_additional_context_events),
         "unsupported_response_fields_by_event": {event: sorted(fields) for event, fields in platform.unsupported_response_fields_by_event.items()},
         "command_invocation_hint": platform.command_invocation_hint,

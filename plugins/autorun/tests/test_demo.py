@@ -1374,7 +1374,8 @@ def outro() -> None:
     print(c("  Works with: Claude Code  +  Gemini CLI", "cyan"))
     print()
     print(c("  Install:", "white", "bold"))
-    print(c("  claude plugin install https://github.com/ahundt/autorun.git", "cyan"))
+    print(c("  claude plugin marketplace add https://github.com/ahundt/autorun.git", "cyan"))
+    print(c("  claude plugin install ar@autorun", "cyan"))
     print()
     print(c("  github.com/ahundt/autorun", "gray"))
     pause(3.0)
@@ -1913,6 +1914,7 @@ class TestDemoFree:
             )
         assert "autorun — what you gain" in output, "Outro section missing"
 
+    @pytest.mark.tmux
     def test_demo_session_creates_tmux_session(self, tmp_path):
         """DemoSession.create_shell() creates a tmux session that exists."""
         if not shutil.which("tmux"):
@@ -1947,6 +1949,7 @@ class TestDemoFree:
     not ENABLE_REAL_MONEY,
     reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run live Claude tests"
 )
+@pytest.mark.e2e
 class TestDemoRealMoney:
     """Live Claude Haiku session tests — uses tmux + claude TUI, ~$0.02 total.
 

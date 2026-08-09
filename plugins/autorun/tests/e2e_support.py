@@ -13,7 +13,6 @@ from pathlib import Path
 
 from autorun.core import format_command_for_cli
 from autorun.platforms import PLATFORMS, to_harness_cli_event
-from autorun.task_lifecycle import TaskLifecycleConfig
 
 
 REAL_MONEY_ENV = "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"
@@ -144,26 +143,41 @@ def run_isolated_hook(
     hook_script: Path,
     cli: str,
     payload: dict,
+    event: str | None = None,
     timeout: int = 20,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Execute one real hook process with unique state and no shared daemon."""
-    session_id = str(payload.get("session_id") or f"e2e-{cli}-{os.getpid()}")
+    session_id = str(
+        payload.get("session_id")
+        or payload.get("conversationId")
+        or f"e2e-{cli}-{os.getpid()}"
+    )
+    wire_payload = dict(payload)
+    native_event = event or wire_payload.get("hook_event_name")
+    command = [
+        "uv",
+        "run",
+        "--project",
+        str(plugin_root),
+        sys.executable,
+        str(hook_script),
+        "--cli",
+        cli,
+    ]
+    if cli == "antigravity" and native_event:
+        # Antigravity stdin has no event discriminator; the manifest command
+        # owns it. Keep this process test faithful to that production wire.
+        wire_payload.pop("hook_event_name", None)
+        command.extend(("--event", str(native_event)))
     return subprocess.run(
-        [
-            "uv",
-            "run",
-            "--project",
-            str(plugin_root),
-            sys.executable,
-            str(hook_script),
-            "--cli",
-            cli,
-        ],
-        input=json.dumps(payload),
+        command,
+        input=json.dumps(wire_payload),
         capture_output=True,
         text=True,
         timeout=timeout,
         env=isolated_hook_env(plugin_root, session_id),
+        cwd=cwd,
     )
 
 
@@ -176,63 +190,114 @@ def run_bounded_stop_hook_sequence(
     cwd: Path,
 ) -> BoundedStopHookResult:
     """Exercise N blocks, N+1 yield, and next-turn reset through hook_entry.py."""
-    config = TaskLifecycleConfig.load()
     task_subject = "Retain this task across the bounded Stop yield"
-    stop_payload = {
-        "hook_event_name": to_harness_cli_event("Stop", cli),
-        "session_id": session_id,
-        "cwd": str(cwd),
-        "_cwd": str(cwd),
-        "stop_hook_active": False,
-        "session_transcript": [],
-    }
+    if cli == "antigravity":
+        stop_payload = {
+            "conversationId": session_id,
+            "workspacePaths": [str(cwd)],
+            "transcriptPath": str(cwd / "transcript.jsonl"),
+            "executionNum": 1,
+            "terminationReason": "model_stop",
+            "fullyIdle": True,
+        }
+        stop_event = "Stop"
+    else:
+        stop_payload = {
+            "hook_event_name": to_harness_cli_event("Stop", cli),
+            "session_id": session_id,
+            "cwd": str(cwd),
+            "_cwd": str(cwd),
+            "stop_hook_active": False,
+            "session_transcript": [],
+        }
+        stop_event = None
 
-    def invoke(payload: dict) -> dict:
+    def invoke(payload: dict, *, event: str | None = None) -> dict:
         completed = run_isolated_hook(
             plugin_root=plugin_root,
             hook_script=hook_script,
             cli=cli,
             payload=payload,
+            event=event,
+            cwd=cwd,
         )
         if completed.returncode != 0:
             raise AssertionError(completed.stderr)
         return json.loads(completed.stdout) if completed.stdout.strip() else {}
 
-    platform = PLATFORMS[cli]
-    if platform.task_management_style == "plan_checklist":
-        task_tool = platform.tool_names["task_progress"]
-        task_input = {
-            "plan": [{"step": task_subject, "status": "pending"}],
-        }
-        task_result = "Plan updated"
-    else:
-        task_tool = platform.tool_names["task_create"]
-        task_input = {"subject": task_subject, "description": "E2E task"}
-        task_result = f"Task #e2e-retained-task created successfully: {task_subject}"
-    invoke(
-        {
-            "hook_event_name": to_harness_cli_event("PostToolUse", cli),
-            "session_id": session_id,
-            "cwd": str(cwd),
-            "_cwd": str(cwd),
-            "tool_name": task_tool,
-            "tool_input": task_input,
-            "tool_result": task_result,
-            "session_transcript": [],
-        }
+    def lifecycle_process(action: str) -> dict:
+        """Seed/read lifecycle state in the same fresh-process boundary."""
+        code = (
+            "import json, os, sys; "
+            "from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig; "
+            "cfg=TaskLifecycleConfig.load(); cfg.enabled=True; cfg.save(); "
+            "manager=TaskLifecycle(session_id='explicit:' + os.environ['AUTORUN_SESSION_ID'], config=cfg); "
+            "manager.create_task('e2e-retained-task', {'subject': sys.argv[2], 'description': 'E2E task'}, 'created') "
+            "if sys.argv[1] == 'seed' else None; "
+            "print(json.dumps({'tasks': manager.tasks, 'stop_block_max_count': cfg.stop_block_max_count}))"
+        )
+        completed = subprocess.run(
+            [
+                "uv",
+                "run",
+                "--project",
+                str(plugin_root),
+                sys.executable,
+                "-c",
+                code,
+                action,
+                task_subject,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=isolated_hook_env(plugin_root, session_id),
+            cwd=cwd,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(
+                f"lifecycle subprocess failed in {cwd}:\n"
+                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            )
+        return json.loads(completed.stdout)
+
+    seeded = lifecycle_process("seed")
+    status_before = seeded["tasks"]
+    stop_block_max_count = int(seeded["stop_block_max_count"])
+    blocked = tuple(
+        invoke(stop_payload, event=stop_event)
+        for _ in range(stop_block_max_count)
     )
-    status_prompt = {
-        "hook_event_name": to_harness_cli_event("UserPromptSubmit", cli),
-        "session_id": session_id,
-        "cwd": str(cwd),
-        "_cwd": str(cwd),
-        "prompt": format_command_for_cli("/ar:task status", cli),
-    }
-    status_before = invoke(status_prompt)
-    blocked = tuple(invoke(stop_payload) for _ in range(config.stop_block_max_count))
-    yielded = invoke(stop_payload)
-    status_after = invoke(status_prompt)
-    next_turn = invoke(stop_payload)
+    yielded = invoke(stop_payload, event=stop_event)
+    status_after = lifecycle_process("status")["tasks"]
+    if cli == "antigravity":
+        invoke(
+            {
+                "conversationId": session_id,
+                "workspacePaths": [str(cwd)],
+                "transcriptPath": str(cwd / "transcript.jsonl"),
+                "toolCall": {
+                    "name": "list_dir",
+                    "args": {"DirectoryPath": str(cwd)},
+                },
+                "stepIdx": 1,
+            },
+            event="PostToolUse",
+        )
+    else:
+        invoke(
+            {
+                "hook_event_name": to_harness_cli_event("PostToolUse", cli),
+                "session_id": session_id,
+                "cwd": str(cwd),
+                "_cwd": str(cwd),
+                "tool_name": "list_dir",
+                "tool_input": {"path": str(cwd)},
+                "tool_result": "done",
+                "session_transcript": [],
+            }
+        )
+    next_turn = invoke(stop_payload, event=stop_event)
     return BoundedStopHookResult(
         blocked_responses=blocked,
         yielded_response=yielded,

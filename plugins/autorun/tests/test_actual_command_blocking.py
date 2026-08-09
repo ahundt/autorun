@@ -20,11 +20,10 @@ import pytest
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / "src"))
 
-from autorun.core import EventContext, ThreadSafeDB
-from autorun import plugins
-from autorun.command_detection import BASHLEX_AVAILABLE
-from autorun.config import BASH_TOOLS, WRITE_TOOLS
-from autorun.session_manager import session_state
+from autorun.core import EventContext, ThreadSafeDB  # noqa: E402
+from autorun import plugins  # noqa: E402
+from autorun.config import BASH_TOOLS, WRITE_TOOLS  # noqa: E402
+from autorun.session_manager import session_state  # noqa: E402
 
 
 # Daemon-path helper — replaces deleted pretooluse_handler
@@ -117,7 +116,6 @@ class TestActualCommandBlocking:
         reason = hook_output.get("permissionDecisionReason", "")
         assert "head" in reason.lower(), "Blocking reason doesn't mention head"
 
-    @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required for pipe detection")
     def test_piped_cat_allowed(self):
         """Verify piped cat is ALLOWED (bashlex detects pipe context)."""
         ctx = EventContext(
@@ -135,7 +133,6 @@ class TestActualCommandBlocking:
         assert permission_decision == "allow", \
             f"Piped cat was blocked! permissionDecision={permission_decision}"
 
-    @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required for pipe detection")
     def test_piped_head_allowed(self):
         """Verify piped head is ALLOWED (bashlex detects pipe context)."""
         ctx = EventContext(
@@ -420,7 +417,6 @@ class TestArOkQuotingInSuggestions:
 class TestPipeDetectionRobustness:
     """Test pipe detection handles edge cases correctly."""
 
-    @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required")
     def test_pipe_with_stderr_redirect(self):
         """Test pipe detection with stderr redirect (2>&1 | command)."""
         ctx = EventContext(
@@ -438,7 +434,6 @@ class TestPipeDetectionRobustness:
         assert permission_decision == "allow", \
             "Piped command with stderr redirect was blocked"
 
-    @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required")
     def test_pipe_with_tee(self):
         """Test pipe with tee command (common logging pattern)."""
         ctx = EventContext(
@@ -605,6 +600,81 @@ class TestGeminiPayloadNormalization:
         hook_output = result.get("hookSpecificOutput", {})
         assert hook_output.get("permissionDecision") == "allow", \
             f"Safe ls command was blocked! permissionDecision={hook_output.get('permissionDecision')}"
+
+
+class TestAntigravityOfficialPayload:
+    """Pin Antigravity 2.0's documented camelCase nested hook contract."""
+
+    def test_native_run_command_is_normalized_and_blocked(self):
+        from autorun.core import normalize_hook_payload
+
+        normalized = normalize_hook_payload(
+            {
+                "cli_type": "antigravity",
+                "hook_event_name": "PreToolUse",
+                "conversationId": "agy-conversation",
+                "workspacePaths": ["/workspace/project"],
+                "transcriptPath": "/tmp/agy/transcript.jsonl",
+                "toolCall": {
+                    "name": "run_command",
+                    "args": {
+                        "CommandLine": "rm -rf build",
+                        "Cwd": "/workspace/project",
+                    },
+                },
+            }
+        )
+
+        assert normalized["session_id"] == "agy-conversation"
+        assert normalized["transcript_path"] == "/tmp/agy/transcript.jsonl"
+        assert normalized["cwd"] == "/workspace/project"
+        assert normalized["tool_name"] == "run_command"
+        assert normalized["tool_input"]["command"] == "rm -rf build"
+
+        ctx = EventContext(
+            session_id=normalized["session_id"],
+            event=normalized["hook_event_name"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+            cwd=normalized["cwd"],
+            cli_type="antigravity",
+        )
+        response = _pretooluse(ctx)
+
+        assert response["decision"] == "deny"
+        assert set(response) == {"decision", "reason"}
+
+    def test_native_write_target_uses_file_policy(self, tmp_path):
+        from autorun.core import normalize_hook_payload
+
+        normalized = normalize_hook_payload(
+            {
+                "cli_type": "antigravity",
+                "hook_event_name": "PreToolUse",
+                "conversationId": "agy-write",
+                "toolCall": {
+                    "name": "write_to_file",
+                    "args": {
+                        "TargetFile": str(tmp_path / "new.txt"),
+                        "CodeContent": "content",
+                        "Overwrite": False,
+                    },
+                },
+            }
+        )
+        with session_state("agy-write") as state:
+            state["file_policy"] = "SEARCH"
+        ctx = EventContext(
+            session_id="agy-write",
+            event="PreToolUse",
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+            store=ThreadSafeDB(),
+            cli_type="antigravity",
+        )
+
+        assert normalized["tool_input"]["file_path"].endswith("new.txt")
+        assert _pretooluse(ctx)["decision"] == "deny"
 
 
 class TestGeminiOfficialSnakeCaseFormat:

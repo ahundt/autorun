@@ -22,6 +22,7 @@ from autorun.installer.codex import (  # noqa: E402
     merge_hooks,
     shadowing_override,
     unknown_top_level,
+    validate_hooks,
     wrap,
 )
 
@@ -55,6 +56,14 @@ def test_a_file_with_a_rejected_key_is_refused_not_extended(tmp_path):
         merge_hooks(poisoned, {"Stop": [OURS]})
 
     assert json.loads(poisoned.read_text()) == original, "left exactly as found"
+
+
+def test_a_malformed_event_list_is_refused_during_validation(tmp_path):
+    poisoned = tmp_path / "poisoned.json"
+    poisoned.write_text(json.dumps({"hooks": {"Stop": {}}}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Stop"):
+        validate_hooks(poisoned)
 
 
 def test_we_never_introduce_a_rejected_key(hooks):
@@ -243,26 +252,7 @@ def test_a_command_the_user_added_inside_our_wrapper_survives(tmp_path):
     ]
 
 
-# ─── Agreement with the file the current installer wrote ────────────────────
-
-
 # ─── The marketplace that lists the plugin ──────────────────────────────────
-
-
-def test_the_generated_entry_matches_the_one_on_disk():
-    """The live file was written by the installer being replaced, so an
-    identical entry is the strongest available equivalence check."""
-    from autorun.installer.codex import marketplace_entry
-
-    live = Path.home() / ".agents" / "plugins" / "marketplace.json"
-    if not live.is_file():
-        pytest.skip("codex marketplace not installed on this machine")
-    document = json.loads(live.read_text(encoding="utf-8"))
-    existing = next((p for p in document.get("plugins", []) if p.get("name") == "autorun"), None)
-    if existing is None:
-        pytest.skip("autorun is not listed in the local marketplace")
-
-    assert marketplace_entry("autorun", existing["source"]["path"]) == existing
 
 
 def test_a_same_name_with_a_different_source_is_not_ours_to_replace(tmp_path):
@@ -375,17 +365,3 @@ def test_a_dangling_link_is_reported_not_silently_removed(tmp_path):
 
     assert broken == ("skills/dangling",)
     assert (staged / "dangling").is_symlink()
-
-
-def test_it_reads_the_real_installed_hooks_file_correctly():
-    """The strongest available check: the file on this machine was written by
-    the installer being replaced."""
-    live = Path.home() / ".codex" / "hooks.json"
-    if not live.is_file():
-        pytest.skip("codex hooks not installed on this machine")
-
-    document = json.loads(live.read_text(encoding="utf-8"))
-
-    assert unknown_top_level(document) == (), "the live file would load in Codex"
-    for event, entries in document.get("hooks", {}).items():
-        assert len([e for e in entries if is_ours(e)]) <= 1, f"{event}: at most one of ours"

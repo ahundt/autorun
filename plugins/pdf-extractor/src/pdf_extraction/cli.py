@@ -38,13 +38,31 @@ def _setup_standalone_imports():
 if __name__ == '__main__':
     _setup_standalone_imports()
 
-# Now import the modules (works both installed and standalone)
-from pdf_extraction.backends import BACKEND_REGISTRY
-from pdf_extraction.extractors import extract_single_pdf, pdf_to_txt
-from pdf_extraction.utils import detect_gpu_availability
+def extract_single_pdf(*args, **kwargs):
+    """Import extraction machinery only after argument parsing."""
+    from pdf_extraction.extractors import extract_single_pdf as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def pdf_to_txt(*args, **kwargs):
+    """Import batch extraction machinery only when a batch is requested."""
+    from pdf_extraction.extractors import pdf_to_txt as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def detect_gpu_availability(*, probe_runtime: bool = True):
+    """Import GPU detection only for commands that need it."""
+    from pdf_extraction.utils import detect_gpu_availability as implementation
+
+    return implementation(probe_runtime=probe_runtime)
 
 
 def main():
+    from pdf_extraction.backends import BACKEND_REGISTRY
+
+    backend_names = ", ".join(BACKEND_REGISTRY)
     parser = argparse.ArgumentParser(
         description='Extract text from PDFs to markdown',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -64,7 +82,7 @@ Examples:
     parser.add_argument(
         '--backends', nargs='+',
         help='Backends to use (default: auto-detect). '
-             'Options: markitdown, pdfplumber, pdfminer, pypdf2, docling, marker'
+             f'Options: {backend_names}'
     )
     parser.add_argument('--no-resume', action='store_true',
                         help='Re-extract all files (ignore existing)')
@@ -77,11 +95,21 @@ Examples:
 
     # List backends option (no input required)
     if args.list_backends:
-        gpu_info = detect_gpu_availability()
+        from pdf_extraction.backends import backend_availability
+
+        availability = backend_availability()
+        gpu_info = detect_gpu_availability(probe_runtime=False)
         print("Available backends:")
-        for name in BACKEND_REGISTRY.keys():
+        for name in BACKEND_REGISTRY:
+            if not availability[name]:
+                continue
             recommended = " (recommended)" if name in gpu_info['recommended_backends'] else ""
             print(f"  - {name}{recommended}")
+        unavailable = [name for name in BACKEND_REGISTRY if not availability[name]]
+        if unavailable:
+            print("\nSupported but not installed:")
+            for name in unavailable:
+                print(f"  - {name}")
         print(f"\nGPU available: {gpu_info['available']}")
         if gpu_info['available']:
             print(f"GPU: {gpu_info['device_name']}")
@@ -95,7 +123,12 @@ Examples:
     backends = args.backends
     if not backends:
         gpu_info = detect_gpu_availability()
-        backends = gpu_info['recommended_backends']
+        from pdf_extraction.backends import backend_availability
+
+        available = backend_availability()
+        backends = [
+            name for name in gpu_info['recommended_backends'] if available.get(name)
+        ]
 
     input_path = os.path.expanduser(args.input)
 

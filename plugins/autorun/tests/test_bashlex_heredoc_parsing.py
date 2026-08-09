@@ -12,17 +12,11 @@ from pathlib import Path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-try:
-    import bashlex
-    from bashlex import ast as bashlex_ast
-    BASHLEX_AVAILABLE = True
-except ImportError:
-    BASHLEX_AVAILABLE = False
-    bashlex = None
-    bashlex_ast = None
+import bashlex
+from bashlex import ast as bashlex_ast
 
 
-class CommandExtractorVisitor(bashlex_ast.nodevisitor if bashlex_ast else object):
+class CommandExtractorVisitor(bashlex_ast.nodevisitor):
     """Visitor to extract command words from bashlex AST."""
 
     def __init__(self):
@@ -38,10 +32,6 @@ class CommandExtractorVisitor(bashlex_ast.nodevisitor if bashlex_ast else object
 
 def test_heredoc_parsing_basic():
     """Test bashlex can parse heredocs without errors."""
-    if not BASHLEX_AVAILABLE:
-        import pytest
-        pytest.skip("bashlex not available")
-
     heredoc_cmd = """python3 << EOF
 print("hello")
 EOF"""
@@ -53,10 +43,6 @@ EOF"""
 
 def test_heredoc_quoted_delimiter():
     """Test bashlex handles quoted heredoc delimiters (e.g., << 'EOF')."""
-    if not BASHLEX_AVAILABLE:
-        import pytest
-        pytest.skip("bashlex not available")
-
     # This used to fail in bashlex - verify our normalization works
     from autorun.command_detection import _normalize_heredoc_delimiters
 
@@ -81,10 +67,6 @@ def test_heredoc_content_not_exposed_as_commands():
     This is critical - if 'grep' appears inside heredoc content, it should
     NOT be extracted as a command.
     """
-    if not BASHLEX_AVAILABLE:
-        import pytest
-        pytest.skip("bashlex not available")
-
     heredoc_cmd = """python3 << 'EOF'
 import sys
 pattern = "grep"
@@ -118,10 +100,6 @@ EOF"""
 
 def test_heredoc_with_actual_user_command():
     """Test the exact heredoc that was causing false positives."""
-    if not BASHLEX_AVAILABLE:
-        import pytest
-        pytest.skip("bashlex not available")
-
     # This is the actual command that revealed the bug
     heredoc_cmd = """python3 << 'EOF'
 import sys

@@ -49,6 +49,7 @@ from .traversal import Context, Intent, Kind, Mode, Step
 __all__ = [
     "STEPS",
     "skills_step", "bridge_step", "commands_step", "extension_step",
+    "extension_materialization_intents", "extension_materialization_targets",
     "opencode_shim_step", "stage_opencode_shim", "stage_toml_commands",
     "Region", "Hooks", "Marketplace", "regions_for", "hooks_for",
     "marketplaces_for", "apply_regions", "apply_hooks", "apply_marketplaces",
@@ -59,7 +60,7 @@ __all__ = [
 #: Where the portable markdown command bundle lives inside the plugin, and
 #: where it lands in a harness config directory. Both fixed: a harness that
 #: reads ``<config>/commands/*.md`` reads exactly that path.
-TEMPLATE_SUBDIR = Path("src") / "autorun" / "forgecode_template"
+TEMPLATE_SUBDIR = Path("forgecode_template")
 COMMANDS_SUBDIR = "commands"
 
 
@@ -103,7 +104,7 @@ def commands_step(harness: object, ctx: Context) -> Iterable[Intent]:
     if base is None:
         return
     for plugin, plugin_dir in _plugins(ctx).items():
-        source = plugin_dir / TEMPLATE_SUBDIR / COMMANDS_SUBDIR
+        source = discovery.plugin_runtime_root(plugin_dir) / TEMPLATE_SUBDIR / COMMANDS_SUBDIR
         if not source.is_dir():
             continue
         yield Intent(
@@ -146,9 +147,92 @@ def extension_step(harness: object, ctx: Context) -> Iterable[Intent]:
     )
 
 
+def extension_materialization_intents(
+    harnesses: Iterable[object],
+    ctx: Context,
+) -> Iterator[Intent]:
+    """Native extension links/copies maintained when their CLI is absent.
+
+    With a live Gemini-family binary, that binary owns materialization and the
+    installer only publishes its persistent registration source. If the binary
+    later disappears, an exact link or install receipt still lets autorun
+    refresh or retire its materialization without guessing from a directory
+    name.
+    """
+    available = ctx.settings.get("_available_binaries")
+    if available is None:
+        return
+    present = {str(binary) for binary in available}
+    for platform, plugin, target, source, template in _extension_materializations(
+        harnesses, ctx
+    ):
+        if str(getattr(platform, "binary", "")) in present:
+            continue
+        allowed_sources = (source, template)
+        yield Intent(
+            target=target,
+            source=source,
+            plugin=plugin,
+            kind=Kind.LINK,
+            ownership_proof=(
+                lambda installed,
+                expected=allowed_sources,
+                current=source,
+                selected=platform,
+                plugin_name=plugin: extension.materialization_unchanged(
+                    installed,
+                    current,
+                    plugin=plugin_name,
+                    legacy_sources=expected[1:],
+                    receipt_proof=lambda candidate: (
+                        extension.native_receipt_names_source(
+                            ctx,
+                            selected,
+                            plugin_name,
+                            candidate,
+                            current,
+                        )
+                        or extension.receipt_names_any_source(candidate, expected)
+                    ),
+                )
+            ),
+            settings={"registration_link": "1"},
+        )
+
+
+def extension_materialization_targets(
+    harnesses: Iterable[object],
+    ctx: Context,
+) -> Iterator[Path]:
+    """Every native materialization path protected from stale-tree sweeping."""
+    for _platform, _plugin, target, _source, _template in _extension_materializations(
+        harnesses, ctx
+    ):
+        yield target
+
+
+def _extension_materializations(harnesses: Iterable[object], ctx: Context):
+    """Yield the one normalized identity tuple used by claims and fallback I/O."""
+    plugins = _plugins(ctx)
+    for harness in harnesses:
+        name = getattr(harness, "name", "")
+        platform = getattr(harness, "platform", harness)
+        if not getattr(platform, "extensions_subdir", ""):
+            continue
+        for plugin, plugin_dir in plugins.items():
+            target = extension.extension_dir(ctx, platform, plugin)
+            if target is None:
+                continue
+            source = extension.registration_source_dir(ctx, name, plugin)
+            template = (
+                discovery.plugin_runtime_root(plugin_dir) / GEMINI_TEMPLATE_SUBDIR
+            )
+            yield platform, plugin, target, source, template
+
+
 #: OpenCode loads plugins from `<config>/plugin/` (singular, verified against
 #: opencode 1.18.13) as plain ES modules with no build step.
-OPENCODE_TEMPLATE_SUBDIR = Path("src") / "autorun" / "opencode_template" / "plugin"
+OPENCODE_TEMPLATE_SUBDIR = Path("opencode_template") / "plugin"
 OPENCODE_PLUGIN_SUBDIR = "plugin"
 
 
@@ -365,6 +449,8 @@ def apply_hooks(entries: Iterable[Hooks], mode: Mode) -> list[str]:
         if mode is Mode.PREVIEW:
             notes.append(f"would merge {entry.describe()}")
             continue
+        if mode is Mode.UNINSTALL and not entry.path.is_file():
+            continue
         events = {} if mode is Mode.UNINSTALL else entry.events
         # Every event is swept either way, including ones no longer shipped.
         wanted = {name: events.get(name, ()) for name in entry.events}
@@ -399,7 +485,7 @@ def apply_marketplaces(entries: Iterable[Marketplace], mode: Mode) -> list[str]:
 
 #: Where the Gemini-family template lives inside a plugin. Its `hooks/` holds
 #: the entry point and the event manifest the harness actually reads.
-GEMINI_TEMPLATE_SUBDIR = Path("src") / "autorun" / "gemini_template"
+GEMINI_TEMPLATE_SUBDIR = Path("gemini_template")
 
 
 @contextmanager
@@ -438,7 +524,7 @@ def prepared(
             platform = getattr(harness, "platform", harness)
             staged[name] = {}
             for plugin, plugin_dir in plugins.items():
-                template = plugin_dir / GEMINI_TEMPLATE_SUBDIR
+                template = discovery.plugin_runtime_root(plugin_dir) / GEMINI_TEMPLATE_SUBDIR
                 if not template.is_dir():
                     continue  # not a plugin that ships an extension; not an error
                 manifest = extension.Manifest(
@@ -455,6 +541,12 @@ def prepared(
                     packaged_native=True,
                 )
                 native = {skill: shipped[skill] for skill in planned.native}
+                hook_commands = ctx.settings.get("_extension_hook_commands", {})
+                hook_command = (
+                    hook_commands.get(name)
+                    if isinstance(hook_commands, Mapping)
+                    else None
+                )
                 try:
                     directory = extension.stage_extension(
                         template,
@@ -462,7 +554,13 @@ def prepared(
                         Path(tmp) / name / plugin,
                         manifest,
                         skills=native,
-                        hook_manifest=extension.translated_hooks(template, platform),
+                        hook_manifest=extension.translated_hooks(
+                            template,
+                            platform,
+                            hook_command=(
+                                str(hook_command) if hook_command else None
+                            ),
+                        ),
                         manifest_name=str(
                             getattr(platform, "extension_manifest_name", "gemini-extension.json")
                         ),
@@ -539,7 +637,11 @@ def stage_opencode_shim(
     shims: dict[str, Path] = {}
     argv = list(command) if isinstance(command, (list, tuple)) else []
     for plugin, plugin_dir in plugins.items():
-        source = plugin_dir / OPENCODE_TEMPLATE_SUBDIR / "autorun.js"
+        source = (
+            discovery.plugin_runtime_root(plugin_dir)
+            / OPENCODE_TEMPLATE_SUBDIR
+            / "autorun.js"
+        )
         if not source.is_file():
             continue
         directory = staging / plugin

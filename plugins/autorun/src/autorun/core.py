@@ -47,7 +47,12 @@ from functools import lru_cache
 from collections import OrderedDict
 
 # Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
-from .session_manager import SessionPersistenceError, SessionStateError, session_state
+from .session_manager import (
+    SessionBackendError,
+    SessionPersistenceError,
+    SessionStateError,
+    session_state,
+)
 from .config import CONFIG
 from .platforms import (
     PLATFORMS as _PLATFORMS,
@@ -416,8 +421,13 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
     raw_event = payload.get("hook_event_name") or payload.get("type", "")
     event = to_autorun_event(raw_event, cli_type)
 
-    # Get session ID (Gemini uses sessionId)
-    session_id = payload.get("sessionId") or payload.get("session_id", "unknown")
+    # Get session ID (Gemini uses sessionId; Antigravity uses conversationId).
+    session_id = (
+        payload.get("sessionId")
+        or payload.get("session_id")
+        or payload.get("conversationId")
+        or "unknown"
+    )
 
     logger.debug(f"normalize_hook_payload: raw_event={raw_event}, event={event}, session_id={session_id}")
 
@@ -465,13 +475,46 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
             transcript = truncated
             logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → {len(truncated)} messages ({size_estimate // 1024}KB)")
 
+    tool_call = payload.get("toolCall")
+    tool_call = tool_call if isinstance(tool_call, dict) else {}
+    raw_tool_input = (
+        payload.get("tool_input")
+        or payload.get("toolInput")
+        or tool_call.get("args")
+        or {}
+    )
+    tool_input = dict(raw_tool_input) if isinstance(raw_tool_input, dict) else {}
+    if cli_type == "antigravity":
+        # Antigravity's documented arguments are PascalCase. Preserve them for
+        # diagnostics while adding the canonical aliases existing policies use.
+        for native, canonical in (
+            ("CommandLine", "command"),
+            ("TargetFile", "file_path"),
+            ("CodeContent", "content"),
+            ("ReplacementContent", "new_string"),
+            ("TargetContent", "old_string"),
+        ):
+            value = tool_input.get(native)
+            if canonical not in tool_input and value is not None:
+                tool_input[canonical] = value
+
+    transcript_path = payload.get("transcript_path") or payload.get("transcriptPath")
+    workspace_paths = payload.get("workspacePaths")
+    workspace_path = (
+        workspace_paths[0]
+        if isinstance(workspace_paths, list)
+        and workspace_paths
+        and isinstance(workspace_paths[0], str)
+        else None
+    )
+
     return {
         "cli_type": cli_type,
         "hook_event_name": event,
         "session_id": session_id,
         "prompt": payload.get("prompt", ""),
-        "tool_name": payload.get("tool_name") or payload.get("toolName", ""),
-        "tool_input": payload.get("tool_input") or payload.get("toolInput", {}),
+        "tool_name": payload.get("tool_name") or payload.get("toolName") or tool_call.get("name", ""),
+        "tool_input": tool_input,
         "tool_result": payload.get("tool_response") or payload.get("tool_result") or payload.get("toolResult"),
         "session_transcript": transcript,
         "permission_mode": payload.get("permission_mode", "default"),
@@ -489,7 +532,17 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "background_tasks": payload.get("background_tasks") or [],
         "session_crons": payload.get("session_crons") or [],
         # Expanded at normalise time so downstream consumers can read a filesystem-ready path.
-        "transcript_path": os.path.expanduser(payload["transcript_path"]) if payload.get("transcript_path") else None,
+        "transcript_path": os.path.expanduser(transcript_path) if transcript_path else None,
+        "cwd": payload.get("_cwd") or payload.get("cwd") or workspace_path,
+        # Codex SubagentStop keeps the parent's transcript in transcript_path
+        # and identifies the child transcript separately. Preserve both: the
+        # task lifecycle uses the child path as a legacy identity fallback
+        # when agent_id is unavailable.
+        "agent_transcript_path": (
+            os.path.expanduser(payload["agent_transcript_path"])
+            if payload.get("agent_transcript_path")
+            else None
+        ),
     }
 
 
@@ -590,10 +643,10 @@ class ThreadSafeDB:
         _lock: RLock for thread-safe access
         _cache: In-memory dict cache
 
-    Benefits:
-        - First access: Reads from JSON (~7-17ms)
-        - Subsequent: Reads from memory cache (<1ms)
-        - Daemon restart: Cache rebuilds from persistent JSON
+    Behavior:
+        - First access hydrates the session from durable storage
+        - Subsequent reads use the synchronized in-process cache
+        - Daemon restart rebuilds the cache from durable storage
     """
 
     def __init__(
@@ -636,6 +689,9 @@ class ThreadSafeDB:
 
     def get(self, key: str, default=None) -> Any:
         """Hydrate one session once, then serve present and missing fields from memory."""
+        dirty = getattr(self._batch, "dirty", {})
+        if self._batch_depth() > 0 and key in dirty:
+            return dirty[key]
         with self._lock:
             if key in self._cache:
                 if self._volatile_entry_expired(key):
@@ -654,9 +710,14 @@ class ThreadSafeDB:
                 self._loaded_sessions.add(session_id)
                 field_key = f"{session_id}:{field}"
                 return self._cache[field_key] if field_key in self._cache else default
-            except Exception as e:
-                logger.warning(f"ThreadSafeDB.get skipped persistent state for {key!r}: {e}")
-                return default
+            except SessionStateError:
+                self._loaded_sessions.discard(session_id)
+                raise
+            except Exception as exc:
+                self._loaded_sessions.discard(session_id)
+                raise SessionBackendError(
+                    f"Could not read persistent state for {key!r}: {exc}"
+                ) from exc
 
     def set(self, key: str, value: Any):
         """Set value in both memory cache and persistent JSON store."""
@@ -664,16 +725,13 @@ class ThreadSafeDB:
         if isinstance(value, (list, dict, set)):
             value = copy.deepcopy(value)
 
-        with self._lock:
-            # Update memory cache
-            self._cache[key] = value
-            # This key now has a durable home, so it is no longer subject to
-            # advisory eviction.
-            self._drop_volatile_bookkeeping(key)
-            if self._batch_depth() > 0:
-                self._batch.dirty[key] = value
-                return StateWriteStatus.STAGED
+        if self._batch_depth() > 0:
+            # One dispatch may read its own staged value, but another daemon
+            # thread must continue to see the last durable value until commit.
+            self._batch.dirty[key] = value
+            return StateWriteStatus.STAGED
 
+        with self._lock:
             # Persist to JSON via session_state() RAII wrapper
             self._persist_many({key: value})
             return StateWriteStatus.DURABLE
@@ -895,29 +953,39 @@ class ThreadSafeDB:
         state bookkeeping is not worth failing a tool call over — but nothing
         may treat the write as though it landed.
         """
-        grouped: Dict[str, Dict[str, Any]] = {}
-        for key, value in values.items():
-            session_id, field = self._split_key(key)
-            grouped.setdefault(session_id, {})[field] = value
+        with self._lock:
+            grouped: Dict[str, Dict[str, Any]] = {}
+            for key, value in values.items():
+                session_id, field = self._split_key(key)
+                grouped.setdefault(session_id, {})[field] = value
 
-        failures = []
-        for session_id, fields in grouped.items():
-            try:
-                with session_state(session_id, timeout=self._state_timeout) as state:
-                    for field, value in fields.items():
-                        state[field] = value
-            except Exception as e:
-                for field in fields:
-                    self._cache.pop(f"{session_id}:{field}", None)
-                # The session is no longer known to be fully hydrated, so the
-                # next read must go back to storage rather than concluding a
-                # missing field was never set.
-                self._loaded_sessions.discard(session_id)
-                failures.append((session_id, sorted(fields), e))
+            failures = []
+            for session_id, fields in grouped.items():
+                try:
+                    with session_state(session_id, timeout=self._state_timeout) as state:
+                        for field, value in fields.items():
+                            state[field] = value
+                except Exception as e:
+                    for field in fields:
+                        self._cache.pop(f"{session_id}:{field}", None)
+                    # The session is no longer known to be fully hydrated, so the
+                    # next read must go back to storage rather than concluding a
+                    # missing field was never set.
+                    self._loaded_sessions.discard(session_id)
+                    failures.append((session_id, sorted(fields), e))
+                    continue
 
-        if failures:
-            described = "; ".join(f"{session_id} ({', '.join(fields)}): {error}" for session_id, fields, error in failures)
-            raise SessionPersistenceError(f"State was not saved and has been dropped from memory: {described}") from failures[0][2]
+                # Publish only after the durable transaction commits. Holding
+                # the cache lock across both operations makes the last cache
+                # writer the same transaction as the last storage writer.
+                for field, value in fields.items():
+                    key = f"{session_id}:{field}"
+                    self._cache[key] = value
+                    self._drop_volatile_bookkeeping(key)
+
+            if failures:
+                described = "; ".join(f"{session_id} ({', '.join(fields)}): {error}" for session_id, fields, error in failures)
+                raise SessionPersistenceError(f"State was not saved and has been dropped from memory: {described}") from failures[0][2]
 
 
 _HISTORY_IDENTITY_DIGEST_BYTES = 16
@@ -1047,7 +1115,7 @@ def resolve_session_key(pid: int, cwd: str, fallback_id: str) -> str:
 class LazyTranscript:
     """
     Lazy string conversion for session_transcript.
-    Only converts to string when searched, saving 10-50ms per hook call.
+    Converts to string only when a handler actually searches the transcript.
 
     Usage:
         transcript = LazyTranscript(ctx.session_transcript)
@@ -1509,6 +1577,7 @@ class EventContext:
         "_source",
         "_agent_id",
         "_agent_type",
+        "_agent_transcript_path",
         "_chain_notifications",
         "_transcript_path",
         "_stop_hook_active",
@@ -1578,6 +1647,7 @@ class EventContext:
         agent_id: str | None = None,
         agent_type: str | None = None,
         transcript_path: str = None,
+        agent_transcript_path: str = None,
         stop_hook_active: bool = False,
         last_assistant_message: str = "",
         background_tasks: List = None,
@@ -1618,6 +1688,7 @@ class EventContext:
         object.__setattr__(self, "_source", source)
         object.__setattr__(self, "_agent_id", agent_id or None)
         object.__setattr__(self, "_agent_type", agent_type or None)
+        object.__setattr__(self, "_agent_transcript_path", agent_transcript_path or None)
         object.__setattr__(self, "_stop_hook_active", bool(stop_hook_active))
         object.__setattr__(self, "_last_assistant_message", last_assistant_message or "")
         object.__setattr__(self, "_background_tasks", tuple(background_tasks or ()))
@@ -1751,6 +1822,11 @@ class EventContext:
     def agent_type(self) -> "str | None":
         """Harness agent type; not by itself proof that this is a subagent."""
         return self._agent_type
+
+    @property
+    def agent_transcript_path(self) -> "str | None":
+        """Child-agent transcript path when the harness reports one separately."""
+        return self._agent_transcript_path
 
     def state_get(self, name: str, default=None, *, session_id: str | None = None):
         """Read a session-scoped field through the shared daemon cache."""
@@ -2515,8 +2591,7 @@ class AutorunDaemon:
     """
     AsyncIO Unix socket daemon for fast hook handling.
 
-    Replaces per-invocation process startup (50-150ms) with
-    persistent daemon (1-5ms response time).
+    Reuses one process across hooks to avoid repeated interpreter startup.
 
     Lifecycle:
     - Tracks active Claude session PIDs via active_pids set
@@ -2715,12 +2790,13 @@ class AutorunDaemon:
                 # The Python client wrapper adds "_cwd"; a raw socket client
                 # such as the OpenCode plugin sends plain "cwd". Accept both so
                 # a frame that took the short path is not left without a cwd.
-                cwd=payload.get("_cwd") or payload.get("cwd"),
+                cwd=normalized.get("cwd"),
                 permission_mode=normalized["permission_mode"],
                 source=normalized["source"],
                 agent_id=normalized["agent_id"],
                 agent_type=normalized["agent_type"],
                 transcript_path=normalized.get("transcript_path"),
+                agent_transcript_path=normalized.get("agent_transcript_path"),
                 stop_hook_active=normalized["stop_hook_active"],
                 last_assistant_message=normalized["last_assistant_message"],
                 background_tasks=normalized["background_tasks"],

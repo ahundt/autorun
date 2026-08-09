@@ -3,7 +3,7 @@
   "version": "1.0.0rc1",
   "description": "PDF data extraction with multi-backend support (markitdown, docling, pdfplumber, etc.)",
   "author": {"name": "Andrew Hundt", "email": "ATHundt@gmail.com"},
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": ["pdf", "extraction", "ocr", "markdown", "data"],
   "commands": "./commands/"
 }

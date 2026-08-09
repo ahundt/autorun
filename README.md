@@ -14,8 +14,8 @@
 4. **Room to Discuss**: `/ar:tasks pause <reason>` pauses reminders and Stop enforcement without changing tasks
 5. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
 6. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-7. **Works across maintained AI coding harnesses**: Same safety policies across Claude Code, Antigravity, Qwen Code, Codex CLI, ForgeCode, and OpenCode; legacy Gemini CLI remains available by explicit opt-in
-8. **80+ Autorun Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
+7. **Works across maintained AI coding harnesses**: Native hooks protect Claude Code, Antigravity, Qwen Code, and Codex; OpenCode has an in-process tool veto; ForgeCode receives advisory guidance
+8. **Portable Command Suite**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
 9. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
 
 ![autorun Architecture](autorun-architecture.svg)
@@ -24,7 +24,7 @@
 
 ```bash
 # Install (requires UV - see UV Installation below)
-uv pip install git+https://github.com/ahundt/autorun.git
+uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'
 autorun --install
 
 # Verify installation
@@ -111,20 +111,30 @@ aise analyze --when 30d --limit 50 --output /absolute/new/analysis
 
 ## UV Installation (Recommended)
 
-The autorun marketplace includes 2 plugins: **autorun** and **pdf-extractor**.
+The source marketplace includes **autorun** and **pdf-extractor**. The standalone
+autorun Python distribution embeds only the `ar` plugin; install pdf-extractor
+from its own plugin subdirectory or from the Claude marketplace.
 
 > **Note:** plan-export functionality is now built into the autorun plugin. Use `/ar:planexport` commands for plan management.
 
 ### GitHub Installation
 
-Install the entire marketplace directly from GitHub:
+Install the autorun Python distribution directly from its repository
+subdirectory:
 
 ```bash
-# Install plugins from GitHub
-uv pip install git+https://github.com/ahundt/autorun.git
+# Install the CLI and complete embedded plugin
+uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'
 
 # Register plugins with Claude Code
 autorun --install
+```
+
+Claude Code can alternatively use the repository marketplace directly:
+
+```bash
+claude plugin marketplace add https://github.com/ahundt/autorun.git
+claude plugin install ar@autorun
 ```
 
 ### Local Installation
@@ -136,14 +146,15 @@ Install from a local clone:
 git clone https://github.com/ahundt/autorun.git
 cd autorun
 
-# Install marketplace
-uv pip install .
+# Install the autorun tool
+uv tool install --editable plugins/autorun
 
 # Register plugins with Claude Code
 autorun --install
 ```
 
-> **Note:** Use `autorun --install` to ensure the command runs in the correct UV environment. If `autorun-marketplace` is in your PATH, you can run it directly without `uv run`.
+> **Note:** `autorun --install` publishes native assets from the installed
+> distribution. `autorun --install --install-dry-run` previews the same walk.
 
 ### Development Installation
 
@@ -155,14 +166,13 @@ git clone https://github.com/ahundt/autorun.git
 cd autorun
 
 # Option 1: UV (recommended - faster, better dependency management)
-uv run python -m plugins.autorun.src.autorun.install --install --force
+uv run --project plugins/autorun python -m autorun --install --force
 
-# Option 2: pip fallback (if UV not available)
-pip install -e . && python -m plugins.autorun.src.autorun.install --install --force
+# Option 2: pip fallback (if UV is unavailable)
+python -m pip install -e plugins/autorun && autorun --install --force
 
 # REQUIRED: Install as UV tool for global CLI availability
-# This makes 'autorun' and 'aise' commands globally available
-# which are needed for proper daemon operation and session management
+# This makes 'autorun' and 'autorun-install' globally available
 cd plugins/autorun && uv tool install --force --editable .
 
 # Verify installation
@@ -236,13 +246,13 @@ autorun --install --skill-placement native --skill-placement codex=both
 
 | Mode | Effect |
 |---|---|
-| `auto` | One route per harness: the shared `~/.agents/skills` root for harnesses whose docs describe reading it (Codex, legacy Gemini), otherwise that harness's native plugin/extension skills directory. |
+| `auto` | One route per harness: the shared `~/.agents/skills` root for harnesses whose docs describe reading it (Codex, legacy Gemini, Qwen Code, ForgeCode, and OpenCode), otherwise that harness's native plugin/extension skills directory. |
 | `native` | Native route only. Nothing is written to the shared root. |
 | `both` | Shared **and** native where the harness reads both. The only mode that can list one skill twice, after which the two copies can drift apart. |
 
 A bare mode applies to every selected harness; `HARNESS=MODE` overrides one, and
 the flag repeats. Valid harness names are `claude`, `codex`, `gemini`, `qwen`,
-`antigravity`, and `forgecode`. An unknown harness or mode is rejected at parse
+`antigravity`, `forgecode`, and `opencode`. An unknown harness or mode is rejected at parse
 time with the list of valid names.
 
 `AUTORUN_SKILL_PLACEMENT` accepts the same grammar, space- or comma-separated
@@ -257,7 +267,7 @@ and the exact directories each harness would receive, before anything is written
 
 #### Sharing skills with Claude Code
 
-Codex, OpenCode, Command Code and Gemini CLI all scan `~/.agents/skills/`, the cross-tool shared location. Claude Code does not — it reads `~/.claude/skills/` only. A skill authored in the shared directory is therefore invisible to Claude Code until it is bridged:
+Codex, OpenCode, ForgeCode, Qwen Code, and legacy Gemini CLI all scan `~/.agents/skills/`, the cross-tool shared location. Claude Code does not — it reads `~/.claude/skills/` only. A skill authored in the shared directory is therefore invisible to Claude Code until it is bridged:
 
 ```bash
 autorun --install --claude --claude-agents-skills link  # symlink shared skills into ~/.claude/skills
@@ -295,8 +305,10 @@ assume a skill is an `/ar:*` command. The read-only
 Claude, Gemini, Qwen, and Antigravity discover the skill through their native
 per-plugin installation. Codex receives the union of selected plugin skills in
 `~/.agents/skills/`, so `$pdf-extractor` works independently of the autorun
-plugin cache. ForgeCode does not expose a skill API; autorun reports that
-limitation instead of claiming skill parity.
+plugin cache. ForgeCode and OpenCode consume the shared installation through
+their model-facing skill tools. They do not expose an autorun-writable native
+skill directory, so `native` deliberately installs no skills for those two
+harnesses while `auto` and `both` use the shared route.
 
 For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-api.md).
 
@@ -318,7 +330,7 @@ For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-
 **Update Gemini CLI**:
 
 ```bash
-# Using Bun (recommended - 2x faster)
+# Using Bun
 bun install -g @google/gemini-cli@latest
 
 # Or using npm
@@ -337,18 +349,18 @@ For troubleshooting, see [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md
 git clone https://github.com/ahundt/autorun.git && cd autorun
 
 # Option 1: UV (recommended)
-uv run python -m plugins.autorun.src.autorun.install --install --gemini --force
-uv run python plugins/autorun/scripts/restart_daemon.py
+uv run --project plugins/autorun autorun --install --gemini --force
+uv run --project plugins/autorun autorun --restart-daemon
 
 # Option 2: pip fallback
-pip install -e . && \
-python -m plugins.autorun.src.autorun.install --install --gemini --force && \
-python plugins/autorun/scripts/restart_daemon.py
+python -m pip install -e plugins/autorun && \
+autorun --install --gemini --force && \
+autorun --restart-daemon
 
 # Verify installation
 gemini extensions list
 autorun --status --gemini
-# Should show: autorun-workspace@1.0.0rc1
+# Should show: ar@1.0.0rc1
 
 # Test in Gemini CLI
 gemini
@@ -442,10 +454,10 @@ For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 
 ```bash
 # Quick core tests
-uv run pytest plugins/autorun/tests/test_unit_simple.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_unit_simple.py -v
 
 # Full suite with coverage
-uv run pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-report=term-missing
+uv run --project plugins/autorun pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-report=term-missing
 ```
 
 **Integration test**: Create a byobu session (`byobu-new-session autorun-work`), run `/ar:go <task>`, close terminal, reattach (`byobu-attach autorun-work`) — AI work should continue from where it left off.
@@ -571,9 +583,9 @@ More: [byobu docs](https://www.byobu.org/documentation), [Mosh](https://mosh.org
 ## Development
 
 1. **Edit source**: `plugins/autorun/src/autorun/` in the git repository (NOT the plugin cache at `~/.claude/plugins/cache/`)
-2. **Run tests**: `uv run pytest plugins/autorun/tests/ -v`
+2. **Run tests**: `uv run --project plugins/autorun pytest plugins/autorun/tests/ -v`
 3. **Reinstall after changes**: See [Development Installation](#development-installation-contributors)
-4. **Update plugin**: `/plugin update autorun`
+4. **Update plugin**: `/plugin update ar@autorun`
 
 ## Advanced Setup (Optional)
 
@@ -597,7 +609,7 @@ cd autorun
 **Contributor Workflow:**
 1. **Make changes**: Edit code in your local clone
 2. **Test locally**: Use the installed development version to test your changes
-3. **Run tests**: `uv run pytest tests/` to ensure nothing breaks
+3. **Run tests**: `uv run --project plugins/autorun pytest plugins/autorun/tests/` to ensure nothing breaks
 4. **Submit PR**: Create a pull request with your improvements
 
 **AI Safety with Git:**
@@ -610,13 +622,13 @@ cd autorun
 
 ```bash
 # Option 1: UV (recommended)
-uv run python -m plugins.autorun.src.autorun.install --install --force
+uv run --project plugins/autorun python -m autorun --install --force
 
 # Option 2: pip fallback (if UV not available)
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
-python -m plugins.autorun.src.autorun.install --install --force
+python -m pip install -e "plugins/autorun[dev]"
+python -m autorun --install --force
 ```
 
 ## Available Commands
@@ -643,10 +655,11 @@ slash menu closed, Claude Code and Qwen Code consume an unknown slash command
 in their own slash processors and print their own feedback ("Unknown skill"
 on Claude, "Unknown command" on Qwen — verified in both harnesses' source, so
 you always see an immediate error rather than a silent drop), and ForgeCode
-and OpenCode send autorun no events at all. On those two the installed files
-`ar-go`, `ar-st`, `ar-allow`, `ar-find`, `ar-commit`, and `ar-ph` are the
-whole command surface, and the guards in their `AGENTS.md` are advice to the
-agent rather than enforcement.
+and ForgeCode sends autorun no hook events. ForgeCode's installed guards are
+advice to the agent. OpenCode does not expose prompt or Stop hooks, but its
+in-process JavaScript bridge sends tool calls to autorun and vetoes denied
+commands. On both harnesses the installed files `ar-go`, `ar-st`, `ar-allow`,
+`ar-find`, `ar-commit`, and `ar-ph` are the command surface.
 
 Autorun prints the local spelling everywhere: `/ar:` on Claude Code and the
 Gemini family, `ar:` on Codex, `/ar-` on ForgeCode and OpenCode. `/ar:help`
@@ -1135,7 +1148,7 @@ autorun --state-migrate               # Convert JSON while scoped daemon is stop
 autorun --state-rollback              # Export the row store back to JSON
 autorun --state-maintenance           # Report database/WAL/reclaimable bytes
 autorun --update                     # Check for and install updates
-autorun --update-method uv           # Force specific update method (auto|plugin|uv|pip)
+autorun --update-method uv           # Force method (auto|claude|gemini|plugin|uv|pip)
 autorun --no-bootstrap               # Disable automatic bootstrap in hooks
 autorun --enable-bootstrap           # Re-enable automatic bootstrap
 ```
@@ -1186,7 +1199,7 @@ autorun --cli claude                 # Hook identity: claude|gemini|antigravity|
 
 Accepted values: `--exit2-mode: auto|always|never`;
 `--cli: claude|gemini|antigravity|qwen|codex|opencode`;
-`--update-method: auto|plugin|uv|pip`.
+`--update-method: auto|claude|gemini|plugin|uv|pip`.
 
 > `--exit2-mode` works around a Claude Code bug ([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669)). Controls whether hook deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI).
 
@@ -1200,7 +1213,8 @@ Claude Code discovers the plugin via `.claude-plugin/plugin.json`, calls `comman
 
 #### 1. Plugin Integration (Recommended)
 
-Standard installation via `/plugin install https://github.com/ahundt/autorun.git`. Automatic updates, seamless integration. All `/ar:*` commands available.
+Standard installation uses `/plugin marketplace add https://github.com/ahundt/autorun.git`
+followed by `/plugin install ar@autorun`. All `/ar:*` commands are available.
 
 #### 2. Hook Integration (Advanced)
 
@@ -1208,12 +1222,12 @@ Fine-grained control over command interception. Hooks are scripts triggered at s
 
 **Setup:**
 ```bash
-# The hooks entry point is hooks/hook_entry.py, configured via hooks/claude-hooks.json
+# The hooks entry point is hooks/hook_entry.py, configured via hooks/hooks.json
 # Install the plugin to register hooks automatically:
 uv run --project plugins/autorun python -m autorun --install --force
 ```
 
-**Hook configuration** (`hooks/claude-hooks.json`) registers these events:
+**Hook configuration** (`hooks/hooks.json`) registers these events:
 
 | Event | Matcher | Purpose |
 |-------|---------|---------|
@@ -1249,9 +1263,10 @@ Exit: `quit`, `exit`, `q`, Ctrl+C (twice), or Ctrl+D.
 ### Plugin Management
 
 ```bash
-/plugin install https://github.com/ahundt/autorun.git   # Install from GitHub
-/plugin update autorun                                    # Update to latest
-/plugin uninstall autorun                                 # Uninstall
+/plugin marketplace add https://github.com/ahundt/autorun.git
+/plugin install ar@autorun                                # Install from GitHub
+/plugin update ar@autorun                                 # Update to latest
+/plugin uninstall ar@autorun                              # Uninstall
 /plugin marketplace list                                  # Browse plugins
 ```
 
@@ -1296,11 +1311,11 @@ autorun/
 ├── .codex-plugin/
 │   └── plugin.json          # Codex plugin manifest for packaged skills
 ├── agents/                    # Tmux and CLI automation agents
-├── commands/                  # 77 slash command .md files + autorun entry point
+├── commands/                  # Command files plus the autorun entry point
 │   └── autorun              # Plugin command script (JSON stdin/stdout)
 ├── hooks/
 │   ├── hook_entry.py          # Event handler (UserPromptSubmit, PreToolUse, Stop, SubagentStop)
-│   └── claude-hooks.json      # Hook configuration
+│   └── hooks.json             # Hook configuration
 ├── src/autorun/
 │   ├── config.py              # CONFIG constants and DEFAULT_INTEGRATIONS (single source of truth)
 │   ├── core.py                # Core hook processing logic
@@ -1327,7 +1342,7 @@ Key patterns: DRY code generation, thread safety, multiprocess safety, RAII reso
 
 #### **DRY Code Patterns**
 
-**Factory Functions**: `_make_policy_handler(name)` and `_make_block_op(scope, op)` in `plugins.py` generate handlers from data, reducing 180+ lines to ~25 lines.
+**Factory Functions**: `_make_policy_handler(name)` and `_make_block_op(scope, op)` in `plugins.py` generate related handlers from shared data.
 
 **Data-Driven Registration**: `_BLOCK_COMMANDS` tuple list + loop registers commands without repetition.
 
@@ -1391,12 +1406,11 @@ See [References](#references) for plugin development documentation links.
 
 ## Dependencies
 
-1. `claude-agent-sdk>=0.1.4` - Claude Code communication
-2. `ruff>=0.14.1` - Code formatting and linting
-3. `bashlex>=0.18` - Bash command parsing for pipe-context detection
-4. `psutil` - Process and system utilities
-5. `filelock>=3.12.0` - Cross-process file locking for session state
-6. Python 3.10+ (matches `requires-python = ">=3.10"` in pyproject.toml)
+1. `bashlex>=0.18` - Bash command parsing for pipe-context detection
+2. `psutil` - Process and system utilities
+3. `filelock>=3.12.0` - Cross-process file locking for session state
+4. `PyYAML>=6.0` - Shared command and skill frontmatter parsing
+5. Python 3.10+ (matches `requires-python = ">=3.10"` in pyproject.toml)
 
 ## Companion Tools
 
@@ -1414,11 +1428,12 @@ See [References](#references) for plugin development documentation links.
 claude --debug
 
 # Reinstall plugin (GitHub version)
-/plugin uninstall autorun
-/plugin install https://github.com/ahundt/autorun.git
+/plugin uninstall ar@autorun
+/plugin marketplace add https://github.com/ahundt/autorun.git
+/plugin install ar@autorun
 
 # Reinstall plugin (local development version)
-/plugin uninstall autorun
+/plugin uninstall ar@autorun
 /plugin marketplace add ./autorun
 /plugin install ar@autorun
 
@@ -1433,13 +1448,14 @@ ls -la ~/.claude/plugins/autorun/commands/
 
 **Plugin management (Claude Code):**
 ```bash
-/plugin install https://github.com/ahundt/autorun.git   # Install/update from GitHub
-/plugin update autorun                                    # Update to latest
-/plugin uninstall autorun                                 # Uninstall
+/plugin marketplace add https://github.com/ahundt/autorun.git
+/plugin install ar@autorun                                # Install from GitHub
+/plugin update ar@autorun                                 # Update to latest
+/plugin uninstall ar@autorun                              # Uninstall
 /plugin                                                   # List installed plugins
 /plugin marketplace add ./autorun                         # Add local marketplace (dev)
 /plugin install ar@autorun                           # Install local version (dev)
-uv run python -m autorun --install --force                # Install/reinstall via UV
+uv run --project plugins/autorun python -m autorun --install --force  # Install/reinstall via UV
 ```
 
 ## Bug Workaround Policy
@@ -1520,7 +1536,7 @@ git push origin feature/your-improvement
 - [Plugin Marketplace](https://docs.claude.com/en/docs/claude-code/plugin-marketplaces) — Installation and [verification](https://docs.claude.com/en/docs/claude-code/plugin-marketplaces#verify-marketplace-installation)
 - [Slash Commands](https://docs.claude.com/en/docs/claude-code/slash-commands) — Markdown commands with bash integration (`!` prefix)
 - [Hooks](https://docs.claude.com/en/docs/claude-code/hooks) — Event-driven command interception
-- [Agent SDK (Python)](https://docs.claude.com/en/api/agent-sdk/python) — Direct Claude Code communication via `ClaudeSDKClient`
+- [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks) — Hook events, decisions, and response schemas
 - [Official Plugin Examples](https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/plugins/README.md) — Reference implementations
 
 **Terminal Multiplexers:**

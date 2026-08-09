@@ -34,12 +34,20 @@ BASH_TOOLS = {
     "bash",
     "bash_command",
     "run_shell_command",
+    "run_command",
     "exec_command",
     "functions.exec_command",
     "shell",
 }
-WRITE_TOOLS = {"Write", "write_file", "write"}
-EDIT_TOOLS = {"Edit", "edit_file", "replace", "edit"}
+WRITE_TOOLS = {"Write", "write_file", "write_to_file", "write"}
+EDIT_TOOLS = {
+    "Edit",
+    "edit_file",
+    "replace",
+    "replace_file_content",
+    "multi_replace_file_content",
+    "edit",
+}
 FILE_TOOLS = WRITE_TOOLS | EDIT_TOOLS
 PLAN_TOOLS = {"ExitPlanMode", "exit_plan_mode"}
 

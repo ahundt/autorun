@@ -28,12 +28,15 @@ from e2e_support import (
     retired_gemini_backend_enabled,
 )
 
-pytestmark = pytest.mark.e2e
 CLI_VERSION_TIMEOUT_SECONDS = 10
 MINIMUM_GEMINI_HOOK_VERSION = Version("0.28.0")
 retired_gemini_model = pytest.mark.skipif(
     not retired_gemini_backend_enabled(),
     reason=RETIRED_GEMINI_BACKEND_REASON,
+)
+real_money_model = pytest.mark.skipif(
+    os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") != "1",
+    reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for live model tests.",
 )
 
 # Add src to path for tmux_utils import
@@ -61,18 +64,18 @@ def gemini_available():
             timeout=CLI_VERSION_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        pytest.skip(
-            f"Gemini CLI version probe exceeded {CLI_VERSION_TIMEOUT_SECONDS}s"
+        pytest.fail(
+            f"Installed Gemini CLI version probe exceeded {CLI_VERSION_TIMEOUT_SECONDS}s"
         )
 
     if result.returncode != 0:
-        pytest.skip("Gemini CLI not working")
+        pytest.fail(f"Installed Gemini CLI is not runnable: {result.stderr}")
 
     version = result.stdout.strip()
     try:
         parsed_version = Version(version)
     except InvalidVersion:
-        pytest.skip(f"Gemini CLI returned an invalid version: {version!r}")
+        pytest.fail(f"Installed Gemini CLI returned an invalid version: {version!r}")
     if parsed_version < MINIMUM_GEMINI_HOOK_VERSION:
         pytest.skip(
             f"Gemini CLI version {version} < {MINIMUM_GEMINI_HOOK_VERSION} "
@@ -114,8 +117,16 @@ def gemini_extension_installed():
 
     hooks_file = ext_dir / "hooks" / "hooks.json"
     if not hooks_file.exists():
-        pytest.skip("Hooks file not found in Gemini extension")
+        pytest.fail("Installed autorun Gemini extension has no hooks/hooks.json")
 
+    return ext_dir
+
+
+@pytest.fixture
+def gemini_extension_source():
+    """Return the hermetic extension template used by normal CI."""
+    ext_dir = get_plugin_root() / "src" / "autorun" / "gemini_template"
+    assert (ext_dir / "hooks" / "hooks.json").is_file()
     return ext_dir
 
 
@@ -175,12 +186,9 @@ if __name__ == "__main__":
 
 
 @pytest.mark.integration
+@pytest.mark.e2e
 @retired_gemini_model
-@pytest.mark.skipif(
-    not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
-    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
-           "this test runs Gemini CLI which costs real money"
-)
+@real_money_model
 def test_gemini_before_tool_hook_fires_on_write_file(
     gemini_available,
     gemini_settings_enabled,
@@ -316,7 +324,7 @@ def test_gemini_before_tool_hook_fires_on_write_file(
 
 
 def test_gemini_before_tool_hook_structure(
-    gemini_extension_installed
+    gemini_extension_source
 ):
     """
     Test that BeforeTool hooks are properly configured in Gemini extension.
@@ -324,7 +332,7 @@ def test_gemini_before_tool_hook_structure(
     This is a unit test that verifies the hooks.json structure without
     requiring a running Gemini session.
     """
-    ext_dir = gemini_extension_installed
+    ext_dir = gemini_extension_source
     hooks_file = ext_dir / "hooks" / "hooks.json"
 
     with open(hooks_file) as f:
@@ -378,12 +386,9 @@ def test_gemini_before_tool_hook_structure(
 
 
 @pytest.mark.integration
+@pytest.mark.e2e
 @retired_gemini_model
-@pytest.mark.skipif(
-    not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
-    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
-           "this test starts a real Gemini backend session",
-)
+@real_money_model
 def test_gemini_session_start_hook_fires(
     gemini_available,
     gemini_settings_enabled,
@@ -417,10 +422,8 @@ def test_gemini_session_start_hook_fires(
         "SessionStart" in output
     )
 
-    # Note: This test may be flaky depending on Gemini output format
-    # If it fails, check if Gemini CLI version changed output format
     if not has_hook_evidence:
-        pytest.skip(
+        pytest.fail(
             "Could not verify SessionStart hook from output. "
             f"Gemini version: {gemini_available}\n"
             f"Output:\n{output[:500]}"
@@ -428,14 +431,14 @@ def test_gemini_session_start_hook_fires(
 
 
 def test_gemini_before_tool_hook_covers_run_shell_command(
-    gemini_extension_installed
+    gemini_extension_source
 ):
     """
     Test that BeforeTool hooks cover run_shell_command (catch-all or matcher).
 
     This verifies the hook will fire for shell command execution.
     """
-    ext_dir = gemini_extension_installed
+    ext_dir = gemini_extension_source
     hooks_file = ext_dir / "hooks" / "hooks.json"
 
     with open(hooks_file) as f:
@@ -453,14 +456,14 @@ def test_gemini_before_tool_hook_covers_run_shell_command(
 
 
 def test_gemini_before_tool_hook_covers_replace(
-    gemini_extension_installed
+    gemini_extension_source
 ):
     """
     Test that BeforeTool hooks cover replace tool (catch-all or matcher).
 
     This verifies the hook will fire for file editing.
     """
-    ext_dir = gemini_extension_installed
+    ext_dir = gemini_extension_source
     hooks_file = ext_dir / "hooks" / "hooks.json"
 
     with open(hooks_file) as f:
@@ -478,12 +481,9 @@ def test_gemini_before_tool_hook_covers_replace(
 
 
 @pytest.mark.integration
+@pytest.mark.e2e
 @retired_gemini_model
-@pytest.mark.skipif(
-    not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
-    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
-           "this test runs Gemini CLI which costs real money"
-)
+@real_money_model
 def test_before_tool_hook_input_structure_has_required_fields(
     gemini_available,
     gemini_settings_enabled,
@@ -595,7 +595,7 @@ def test_before_tool_hook_input_structure_has_required_fields(
             # Note: tool_name might be None for SessionStart, that's OK
             # Just verify the structure is present
         else:
-            pytest.skip("Hook did not fire - cannot test input structure")
+            pytest.fail("Hook did not fire - cannot test input structure")
 
     finally:
         if hook_backup.exists():

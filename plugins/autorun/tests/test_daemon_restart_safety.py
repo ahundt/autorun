@@ -796,11 +796,10 @@ class TestDaemonMainLifecycleCleanup:
             def _cleanup_files(self):
                 cleanup_calls.append("cleanup")
 
-        with mock.patch.object(daemon_mod, "_bootstrap_optional_deps", return_value=None):
-            with mock.patch.object(daemon_mod, "AutorunDaemon", return_value=FakeDaemon()):
-                with mock.patch.object(daemon_mod, "ipc", mock.MagicMock(), create=True) as ipc_mod:
-                    with pytest.raises(SystemExit):
-                        daemon_mod.main()
+        with mock.patch.object(daemon_mod, "AutorunDaemon", return_value=FakeDaemon()):
+            with mock.patch.object(daemon_mod, "ipc", mock.MagicMock(), create=True) as ipc_mod:
+                with pytest.raises(SystemExit):
+                    daemon_mod.main()
 
         ipc_mod.cleanup_socket.assert_not_called()
         assert cleanup_calls == []
@@ -823,9 +822,8 @@ class TestDaemonMainLifecycleCleanup:
                 cleanup_calls.append("cleanup")
                 self._daemon_lock = None
 
-        with mock.patch.object(daemon_mod, "_bootstrap_optional_deps", return_value=None):
-            with mock.patch.object(daemon_mod, "AutorunDaemon", return_value=FakeDaemon()):
-                with pytest.raises(SystemExit):
-                    daemon_mod.main()
+        with mock.patch.object(daemon_mod, "AutorunDaemon", return_value=FakeDaemon()):
+            with pytest.raises(SystemExit):
+                daemon_mod.main()
 
         assert cleanup_calls == ["cleanup"]

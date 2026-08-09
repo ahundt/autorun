@@ -72,6 +72,28 @@ def test_an_unmarked_directory_is_the_users_whatever_its_name(tmp_path, source):
     assert (theirs / "SKILL.md").is_file(), "refused removal must not delete"
 
 
+def test_exact_external_receipt_can_adopt_but_is_rechecked_inside_lock(
+    tmp_path, source
+):
+    """A receipt proof that disappears before publication cannot authorize it."""
+    target = tmp_path / "dest" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("installed by harness\n", encoding="utf-8")
+    checks = iter((True, False))
+
+    decision = publish_tree(
+        source,
+        target,
+        plugin="ar",
+        ownership_proof=lambda _path: next(checks),
+    )
+
+    assert decision.verdict is Verdict.KEEP
+    assert decision.reason == "user-authored"
+    assert (target / "SKILL.md").read_text() == "installed by harness\n"
+    assert read_marker(target) is None
+
+
 def test_the_marker_records_the_registered_plugin_name_not_the_directory_name(
     tmp_path, source
 ):
@@ -218,6 +240,48 @@ def test_a_bridged_symlink_is_identified_by_its_target(tmp_path, source):
     assert link.is_symlink()
     assert link.resolve() == shared.resolve()
     assert withdrawn(link) is False, "a symlink is not a directory we own outright"
+
+
+def test_registration_link_refuses_a_sibling_source(tmp_path, source):
+    """An in-root sibling is not exact ownership of a native extension link."""
+    from autorun.installer import fs
+
+    expected = tmp_path / "sources" / "gemini" / "ar"
+    sibling = tmp_path / "sources" / "gemini" / "ar-user"
+    shutil.copytree(source, expected)
+    shutil.copytree(source, sibling)
+    installed = tmp_path / "home" / ".gemini" / "extensions" / "ar"
+    installed.parent.mkdir(parents=True)
+    installed.symlink_to(sibling, target_is_directory=True)
+
+    decision = fs.decide_link(
+        None,
+        installed,
+        expected.parent,
+        plugin="ar",
+        exact_target=expected,
+    )
+
+    assert decision.verdict is fs.Verdict.KEEP
+    assert fs.withdraw_link(
+        installed, expected.parent, exact_target=expected
+    ) is False
+    assert installed.is_symlink()
+    assert (sibling / "SKILL.md").is_file()
+
+
+def test_native_extension_receipts_do_not_look_like_user_edits(tmp_path, source):
+    """Harness-owned receipt files stay outside autorun's content snapshot."""
+    from autorun.installer import fs
+
+    target = tmp_path / "extension"
+    fs.publish_tree(source, target, plugin="ar")
+    (target / ".gemini-extension-install.json").write_text("{}", encoding="utf-8")
+    (target / "qwen-extension.json").write_text("{}", encoding="utf-8")
+
+    marker = fs.read_marker(target)
+    assert marker is not None
+    assert fs.compare(target, marker) == ((), (), ())
 
 
 def test_the_marker_lands_in_the_same_rename_as_the_contents(tmp_path, source):

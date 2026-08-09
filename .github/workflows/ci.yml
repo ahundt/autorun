@@ -9,23 +9,20 @@ on:
 permissions:
   contents: read
   checks: write
-  pull-requests: write
-  issues: read
 
 jobs:
   ci:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.12", "3.13"]
-        exclude:
-          # macOS runners are expensive, so only test on latest Python
-          - os: macos-latest
-            python-version: "3.12"
-          # Windows: skip older Python (same cost-saving pattern as macos)
-          - os: windows-latest
-            python-version: "3.12"
+        include:
+          - {os: ubuntu-latest, python-version: "3.10"}
+          - {os: ubuntu-latest, python-version: "3.11"}
+          - {os: ubuntu-latest, python-version: "3.12"}
+          - {os: ubuntu-latest, python-version: "3.13"}
+          - {os: ubuntu-latest, python-version: "3.14"}
+          - {os: macos-latest, python-version: "3.13"}
+          - {os: windows-latest, python-version: "3.13"}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -41,18 +38,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
+      - name: Install Bun for the OpenCode bridge contract
+        # OpenCode executes autorun's in-process veto under Bun. The official
+        # action makes those tests a release gate instead of optional skips.
+        uses: oven-sh/setup-bun@v2
+
       - name: Verify Python version
         run: |
-          uv run python --version
+          uv run --project plugins/autorun python --version
           echo "Expected: Python ${{ matrix.python-version }}"
 
       - name: Install dependencies
-        # UV workspace with committed uv.lock -- use --locked to reproduce exact environment.
-        # --dev installs [dependency-groups] dev from all workspace members (uv-native):
+        # Select autorun explicitly; the workspace root package has no runtime
+        # or test dependencies. --locked reproduces the committed uv.lock.
+        # --dev installs autorun's [dependency-groups] dev requirements:
         #   pytest>=8.4.2, pytest-asyncio>=1.2.0, pytest-cov>=7.0.0, pytest-mock>=3.15.1,
         #   pytest-timeout>=2.1.0 (plugin pyproject.toml:165-172).
         # --all-extras also installs [project.optional-dependencies] extras (compatible pins).
-        run: uv sync --locked --dev --all-extras
+        run: uv sync --project plugins/autorun --locked --dev --all-extras
 
       - name: Lint - critical errors only (blocking)
         # E9: syntax errors, F63/F7/F82: undefined names/imports -- these always fail CI
@@ -74,13 +77,16 @@ jobs:
         # for asyncio_mode, markers, timeout config (not the workspace root pyproject.toml).
         # Tests live at plugins/autorun/tests/ -- running from repo root finds nothing.
         # --junitxml uses absolute workspace path so dorny/test-reporter finds the XML.
-        # Safe subset: excludes tests requiring real tmux sessions, running daemon,
-        # subprocess spawning, external APIs, or >5s wall-clock time.
-        # Coverage threshold (fail_under=60) omitted -- calibrated for full suite.
+        # Hermetic daemon, subprocess, race, and slow tests are part of the
+        # release gate. Only real tmux sessions and opt-in live/model tests are
+        # excluded from the cross-platform matrix. Release artifact builds run
+        # once in the dedicated job below.
+        # Coverage is measured once in the dedicated Ubuntu job below so the
+        # seven-platform matrix does not pay instrumentation cost seven times.
         working-directory: plugins/autorun
         run: >-
-          uv run pytest tests/
-          -m "not tmux and not daemon and not subprocess and not e2e and not interactive and not stress and not race and not slow"
+          uv run --project . pytest tests/
+          -m "not tmux and not e2e and not release"
           --tb=short -v
           --junitxml=${{ github.workspace }}/test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
 
@@ -96,3 +102,103 @@ jobs:
           path: test_results*.xml
           reporter: java-junit
           fail-on-error: false
+
+      - name: Run PDF extractor tests
+        working-directory: plugins/pdf-extractor
+        run: uv run --project . --locked --extra dev pytest tests/ --tb=short -v
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install Bun for the OpenCode bridge contract
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install test dependencies
+        run: uv sync --project plugins/autorun --locked --dev --all-extras
+
+      - name: Enforce source coverage
+        working-directory: plugins/autorun
+        run: >-
+          uv run --project . pytest tests/
+          -m "not tmux and not e2e and not release"
+          --tb=short
+          --cov=src/autorun
+          --cov-report=term-missing
+          --cov-fail-under=75
+
+  release-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install test dependencies
+        run: uv sync --project plugins/autorun --locked --dev --all-extras
+
+      - name: Build twice and verify artifact lifecycles
+        working-directory: plugins/autorun
+        run: >-
+          uv run --project . pytest tests/test_release_artifacts.py
+          -m release --tb=short -v
+
+  tmux-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install test dependencies and tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+          uv sync --project plugins/autorun --locked --dev
+
+      - name: Run tests against a private tmux server
+        working-directory: plugins/autorun
+        run: >-
+          uv run --project . pytest tests/
+          -m tmux --tb=short -v
+
+  state-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install test dependencies
+        run: uv sync --project plugins/autorun --locked --dev
+
+      - name: Verify storage cost remains independent of unrelated state
+        working-directory: plugins/autorun
+        env:
+          AUTORUN_ENABLE_STATE_BENCHMARK: "1"
+        run: >-
+          uv run --project . pytest tests/test_state_store_benchmark.py
+          -m benchmark --tb=short -v

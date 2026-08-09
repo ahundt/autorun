@@ -114,17 +114,11 @@ class TestGeminiEnvironmentSimulation:
         """Test bashlex dependency is available (skip if not installed)."""
         from autorun.command_detection import BASHLEX_AVAILABLE
 
-        if not BASHLEX_AVAILABLE:
-            pytest.skip("bashlex not installed - install with: uv pip install bashlex")
-
-        assert BASHLEX_AVAILABLE, "bashlex check passed"
+        assert BASHLEX_AVAILABLE, "bashlex is a required autorun dependency"
 
     def test_pipe_detection_with_head(self):
         """Test command_matches_pattern detects head in piped commands."""
-        from autorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
-
-        if not BASHLEX_AVAILABLE:
-            pytest.skip("bashlex not available")
+        from autorun.command_detection import command_matches_pattern
 
         piped_cmd = "cargo build 2>&1 | head -50"
         matches_head = command_matches_pattern(piped_cmd, "head")

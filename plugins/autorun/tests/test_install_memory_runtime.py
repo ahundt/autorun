@@ -216,6 +216,72 @@ def test_bootstrap_syncs_then_installs_the_cli():
     assert calls[1][:4] == ("uv", "tool", "install", "--force")
 
 
+def test_installed_distribution_needs_no_source_project_bootstrap(tmp_path):
+    from autorun.installer.runtime import bootstrap
+
+    package = tmp_path / "site-packages" / "autorun"
+    package.mkdir(parents=True)
+    (package / "__main__.py").write_text("# installed package")
+    run, calls = _recorder()
+
+    outcomes = bootstrap(package, run=run)
+
+    assert calls == []
+    assert len(outcomes) == 1 and outcomes[0].ok
+    assert outcomes[0].step == "installed distribution"
+
+
+def test_hook_command_uses_installed_python_without_a_wheel_pyproject(tmp_path):
+    import shlex
+    import sys
+
+    from autorun.installer.runtime import hook_command
+
+    package = tmp_path / "site packages" / "autorun"
+    script = package / "hooks" / "hook_entry.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# hook")
+
+    command = hook_command(package, cli="codex")
+
+    assert command.argv() == (sys.executable, str(script), "--cli", "codex")
+    assert shlex.split(command.shell()) == list(command.argv())
+
+
+def test_hook_command_keeps_uv_project_for_a_source_checkout(tmp_path):
+    from autorun.installer.runtime import UvCommand, hook_command
+
+    plugin = tmp_path / "plugins" / "autorun"
+    plugin.mkdir(parents=True)
+    (plugin / "pyproject.toml").write_text("[project]\n")
+
+    command = hook_command(plugin, cli="opencode", python="/python", no_sync=False)
+
+    assert isinstance(command, UvCommand)
+    assert command.project == plugin
+    assert command.args == ("--cli", "opencode")
+    assert command.python == "/python"
+    assert command.no_sync is False
+
+
+def test_installed_distribution_probe_reports_the_running_interpreter(tmp_path):
+    import platform
+    import sys
+
+    from autorun.installer.runtime import probe_hook_runtime
+
+    package = tmp_path / "site-packages" / "autorun"
+    package.mkdir(parents=True)
+
+    probe = probe_hook_runtime(package)
+
+    assert probe.ok
+    assert probe.uv_path == ""
+    assert probe.executable == sys.executable
+    assert probe.machine == platform.machine()
+    assert probe.system == platform.system()
+
+
 def test_a_failed_sync_stops_before_installing_the_cli():
     """Installing the tool from a project whose dependencies did not resolve
     produces a CLI that imports nothing, and the failure then surfaces inside a
@@ -286,6 +352,8 @@ def test_the_interpreter_is_pinned_rather_than_left_to_path_order():
         ("1.0.0rc1", "1.0.1", True),
         ("1.0.0rc1", "1.0.0rc2", True),
         ("1.0.0rc2", "1.0.0rc1", False),
+        ("1.0.0rc9", "1.0.0rc10", True),
+        ("1.0.0rc10", "1.0.0rc2", False),
         ("1.0.0rc1", "1.0.0rc1", False),
     ],
 )
@@ -305,7 +373,7 @@ def test_the_currently_installed_version_can_be_compared():
     try:
         current = installed_version("autorun")
     except PackageNotFoundError:
-        pytest.skip("autorun is not installed as a package here")
+        pytest.fail("uv did not install the autorun workspace package metadata")
 
     assert Version(current, "99.0.0").update_available is True
     assert Version(current, current).update_available is False
@@ -318,6 +386,18 @@ def test_an_unknown_version_is_not_an_update(unknown):
     from autorun.installer.runtime import Version
 
     assert Version(*unknown).update_available is False
+
+
+@pytest.mark.parametrize("unknown", [("unknown", "1.0.1"), ("1.0.0", "unknown")])
+def test_explicit_update_fails_when_version_check_is_inconclusive(unknown):
+    from autorun.installer.runtime import Version, self_update
+
+    run, calls = _recorder()
+
+    outcome = self_update(Version(*unknown), run=run)
+
+    assert not outcome.ok
+    assert calls == []
 
 
 def test_an_up_to_date_install_runs_no_subprocess_at_all():
@@ -333,8 +413,8 @@ def test_an_up_to_date_install_runs_no_subprocess_at_all():
 
 @pytest.mark.parametrize(
     "method, expected_head",
-    [("uv", ("uv", "pip", "install", "--upgrade")),
-     ("claude", ("claude", "plugin", "update", "autorun")),
+    [("uv", ("uv", "pip", "install", "--python")),
+     ("claude", ("claude", "plugin", "update", "ar@autorun")),
      ("gemini", ("gemini", "extensions", "update"))],
 )
 def test_each_method_runs_its_own_command(method, expected_head):
@@ -369,15 +449,22 @@ def test_an_older_installation_still_answers_to_its_old_extension_name(tmp_path)
     assert installed_extension_name(tmp_path) == "ar", "newest spelling wins"
 
 
-def test_harness_clis_are_preferred_over_language_package_managers():
-    """A plugin installation upgraded with pip leaves the harness still loading
-    the old copy from its own cache."""
+def test_update_detection_uses_install_provenance_not_unrelated_binaries(tmp_path):
+    """A binary on PATH does not prove that binary owns this installation."""
     from autorun.installer.runtime import detect_update_method
 
-    assert detect_update_method(available=lambda b: b == "claude") == "claude"
-    assert detect_update_method(available=lambda b: b in {"gemini", "uv"}) == "gemini"
-    assert detect_update_method(available=lambda b: b == "uv") == "uv"
-    assert detect_update_method(available=lambda b: False) == "pip"
+    home = tmp_path / "home"
+    claude = home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.0.0" / "runtime.py"
+    gemini = home / ".gemini" / "extensions" / "ar" / "runtime.py"
+    package = tmp_path / "venv" / "site-packages" / "autorun" / "runtime.py"
+
+    def every_cli(_binary):
+        return True
+
+    assert detect_update_method(origin=claude, home=home, available=every_cli) == "claude"
+    assert detect_update_method(origin=gemini, home=home, available=every_cli) == "gemini"
+    assert detect_update_method(origin=package, home=home, available=every_cli) == "uv"
+    assert detect_update_method(origin=package, home=home, available=lambda _b: False) == "pip"
 
 
 def test_a_language_package_upgrade_reregisters_afterwards():
@@ -390,7 +477,9 @@ def test_a_language_package_upgrade_reregisters_afterwards():
 
     assert self_update(Version("1.0.0", "1.0.1"), method="uv", run=run).ok
 
-    assert calls[0] == ("uv", "pip", "install", "--upgrade", REPOSITORY)
+    assert calls[0] == (
+        "uv", "pip", "install", "--python", sys.executable, "--upgrade", REPOSITORY
+    )
     assert calls[1][-2:] == ("--install", "--force"), calls
     assert len(calls) == 2
 
@@ -402,7 +491,7 @@ def test_a_harness_cli_update_needs_no_second_step():
 
     self_update(Version("1.0.0", "1.0.1"), method="claude", run=run)
 
-    assert calls == [("claude", "plugin", "update", "autorun")]
+    assert calls == [("claude", "plugin", "update", "ar@autorun")]
 
 
 def test_a_failed_upgrade_does_not_go_on_to_reregister():

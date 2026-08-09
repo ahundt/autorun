@@ -29,6 +29,18 @@ from autorun.session_manager import session_state
 class TestFailureModes:
     """Tests for pre-mortem failure modes."""
 
+    def test_disabled_audit_log_does_not_touch_storage(self, tmp_path):
+        blocked_parent = tmp_path / "not-a-directory"
+        blocked_parent.write_text("occupied")
+        config = TaskLifecycleConfig(
+            storage_dir=blocked_parent / "task-lifecycle",
+            debug_logging=False,
+        )
+
+        manager = TaskLifecycle(session_id="no-audit-io", config=config)
+
+        assert not manager.audit_log.exists()
+
     def test_01_task_explosion_100_plus_tasks(self):
         """Problem 1: Task explosion (100+ tasks) - cap injection."""
         print("\n=== Problem 1: Task explosion (100+ tasks) ===")

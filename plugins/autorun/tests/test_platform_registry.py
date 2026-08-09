@@ -254,15 +254,28 @@ def test_antigravity_platform_fields():
     assert p.has_hooks is True
     assert p.schema_type == "permissive"
     assert p.list_cmd == ("agy", "plugin", "list")
+    assert p.config_dir == "~/.gemini/config/"
     assert ".gemini/antigravity-cli" in p.detect_path_hints
     assert "/Applications/Antigravity.app" in p.app_paths
     assert "com.google.antigravity" in p.app_bundle_ids
-    assert p.task_management_style == "bulk_todos"
+    assert p.task_management_style == "none"
+    assert not p.task_create_tools
+    assert not p.task_update_tools
     assert p.hook_protocol.name == "antigravity"
-    assert p.harness_cli_to_autorun_events["PreInvocation"] == "UserPromptSubmit"
+    assert p.harness_cli_to_autorun_events["PreInvocation"] == "BeforeModel"
     assert p.harness_cli_to_autorun_events["PostInvocation"] == "AfterModel"
+    assert p.tool_names["bash"] == "run_command"
+    assert p.tool_names["write"] == "write_to_file"
     assert p.autorun_to_harness_cli_events["PreToolUse"] == "PreToolUse"
     assert p.autorun_to_harness_cli_events["Stop"] == "Stop"
+    assert p.native_hook_events == {
+        "PreToolUse",
+        "PostToolUse",
+        "PreInvocation",
+        "PostInvocation",
+        "Stop",
+    }
+    assert p.installed_hook_events == {"PreToolUse", "PostToolUse", "Stop"}
 
 
 def test_qwen_platform_fields():
@@ -285,7 +298,7 @@ def test_qwen_platform_fields():
         ("gemini", "BeforeTool", "PreToolUse"),
         ("qwen", "PreToolUse", "PreToolUse"),
         ("qwen", "PreCompact", "PreCompress"),
-        ("antigravity", "PreInvocation", "UserPromptSubmit"),
+        ("antigravity", "PreInvocation", "BeforeModel"),
         ("antigravity", "PostInvocation", "AfterModel"),
         ("codex", "Stop", "Stop"),
     ],
@@ -353,19 +366,19 @@ def test_antigravity_protocol_translation_flattens_only_flat_events():
     source = {
         "hooks": {
             "BeforeTool": [
-                {"hooks": [{"command": "one"}]},
-                {"matcher": "named", "hooks": [{"command": "two"}]},
+                {"hooks": [{"name": "one", "command": "hook_entry.py --cli gemini", "timeout": 5000}]},
+                {"matcher": "named", "hooks": [{"name": "two", "command": "hook_entry.py --cli gemini", "timeout": 5000}]},
             ],
-            "AfterAgent": [{"matcher": "ignored", "hooks": [{"command": "stop"}]}],
+            "AfterAgent": [{"matcher": "ignored", "hooks": [{"name": "stop", "command": "hook_entry.py --cli gemini", "timeout": 5000}]}],
         }
     }
     assert protocol.translate_manifest(source, {"BeforeTool": "PreToolUse", "AfterAgent": "Stop"}) == {
         "autorun": {
             "PreToolUse": [
-                {"matcher": "*", "hooks": [{"command": "one"}]},
-                {"matcher": "named", "hooks": [{"command": "two"}]},
+                {"matcher": "*", "hooks": [{"command": "hook_entry.py --cli gemini --event PreToolUse", "timeout": 5}]},
+                {"matcher": "named", "hooks": [{"command": "hook_entry.py --cli gemini --event PreToolUse", "timeout": 5}]},
             ],
-            "Stop": [{"command": "stop"}],
+            "Stop": [{"command": "hook_entry.py --cli gemini --event Stop", "timeout": 5}],
         }
     }
 
@@ -464,11 +477,28 @@ def test_hook_protocol_unknown_tool_decision_fails_closed():
         ("codex", {}),
         ("gemini", {"continue": True}),
         ("qwen", {"continue": True}),
-        ("antigravity", {"continue": True}),
+        ("antigravity", {}),
     ],
 )
 def test_hook_protocol_empty_response_contract(platform_name, expected):
     assert PLATFORMS[platform_name].hook_protocol.response_for_unhandled_hook() == expected
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        ("PreToolUse", {"decision": "allow"}),
+        ("PostToolUse", {}),
+        ("BeforeModel", {}),
+        ("AfterModel", {}),
+        ("Stop", {"decision": ""}),
+    ],
+)
+def test_antigravity_unhandled_response_is_event_native(event, expected):
+    assert (
+        PLATFORMS["antigravity"].hook_protocol.response_for_unhandled_hook(event)
+        == expected
+    )
 
 
 # ─── Multi-thread safety (PLATFORMS is read-only across sessions) ─────────────

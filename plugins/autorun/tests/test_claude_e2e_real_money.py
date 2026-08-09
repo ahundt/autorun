@@ -121,7 +121,6 @@ slow_claude_model_behavior = pytest.mark.skipif(
     ),
 )
 
-pytestmark = pytest.mark.e2e
 paid_claude_e2e = pytest.mark.skipif(
     not ENABLE_REAL_MONEY_TESTS,
     reason=(
@@ -313,11 +312,11 @@ def claude_cli_check():
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
-            pytest.skip(f"Claude CLI not working: {result.stderr}")
+            pytest.fail(f"Installed Claude CLI is not runnable: {result.stderr}")
     except subprocess.TimeoutExpired:
-        pytest.skip("claude --version timed out (>10s)")
-    except Exception as e:
-        pytest.skip(f"Claude CLI version check failed: {e}")
+        pytest.fail("Installed Claude CLI --version timed out (>10s)")
+    except OSError as error:
+        pytest.fail(f"Installed Claude CLI version check failed: {error}")
 
     # Check autorun plugin is loaded
     try:
@@ -326,15 +325,19 @@ def claude_cli_check():
             capture_output=True, text=True, timeout=30,
         )
         combined = result.stdout + result.stderr
+        if result.returncode != 0:
+            pytest.fail(f"Installed Claude plugin list failed: {combined[-2000:]}")
         if "autorun" not in combined.lower() and "cr:" not in combined.lower():
             pytest.skip(
                 "autorun plugin not loaded in Claude Code. "
-                "Install with: claude plugin install https://github.com/ahundt/autorun.git"
+                "Install with: claude plugin marketplace add "
+                "https://github.com/ahundt/autorun.git && "
+                "claude plugin install ar@autorun"
             )
     except subprocess.TimeoutExpired:
-        pytest.skip("claude plugin list timed out (>30s)")
-    except Exception as e:
-        pytest.skip(f"Plugin list check failed: {e}")
+        pytest.fail("Installed Claude plugin list timed out (>30s)")
+    except OSError as error:
+        pytest.fail(f"Installed Claude plugin list check failed: {error}")
 
 
 # =============================================================================
@@ -1725,6 +1728,7 @@ class TestClaudeHookEntryPoint:
 
 
 @pytest.mark.timeout(420)
+@pytest.mark.e2e
 @paid_claude_e2e
 class TestClaudeE2ERealMoney:
     """Real Claude CLI E2E tests — spawn `claude -p` (costs API tokens).

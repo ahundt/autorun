@@ -14,6 +14,7 @@ from pdf_extraction.backends import (
     PdftotextExtractor,
     Pymupdf4llmExtractor,
     Pypdf2Extractor,
+    backend_availability,
 )
 
 
@@ -164,38 +165,25 @@ class TestOptionalBackends:
     """Tests for optional backends (may not be installed)."""
 
     def test_docling_extractor_instantiation(self):
-        """DoclingExtractor should handle missing dependency gracefully."""
-        try:
-            extractor = DoclingExtractor()
-            assert extractor.name == 'docling'
-        except ImportError:
-            pytest.skip("docling not installed")
+        """Construction is lazy and never imports docling."""
+        assert DoclingExtractor().name == 'docling'
 
     def test_marker_extractor_instantiation(self):
         """MarkerExtractor should handle missing dependency gracefully."""
-        try:
-            extractor = MarkerExtractor()
-            assert extractor.name == 'marker'
-        except ImportError:
-            pytest.skip("marker not installed")
+        assert MarkerExtractor().name == 'marker'
 
     def test_pymupdf4llm_extractor_instantiation(self):
         """Pymupdf4llmExtractor should handle missing dependency gracefully."""
-        try:
-            extractor = Pymupdf4llmExtractor()
-            assert extractor.name == 'pymupdf4llm'
-        except ImportError:
-            pytest.skip("pymupdf4llm not installed")
+        assert Pymupdf4llmExtractor().name == 'pymupdf4llm'
 
     def test_pdfbox_extractor_instantiation(self):
         """PdfboxExtractor should handle missing dependency gracefully."""
-        try:
-            extractor = PdfboxExtractor()
-            assert extractor.name == 'pdfbox'
-        except ImportError:
-            pytest.skip("pdfbox not installed")
+        assert PdfboxExtractor().name == 'pdfbox'
 
     def test_pdftotext_extractor_instantiation(self):
         """PdftotextExtractor should instantiate (uses system command)."""
         extractor = PdftotextExtractor()
         assert extractor.name == 'pdftotext'
+
+    def test_availability_reports_every_backend_without_importing_them(self):
+        assert set(backend_availability()) == set(BACKEND_REGISTRY)

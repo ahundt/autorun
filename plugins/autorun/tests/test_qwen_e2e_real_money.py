@@ -57,8 +57,8 @@ def _clean_zai_model(value: str | None) -> str:
 
 def _find_qwen_hook_script() -> Path:
     candidates = [
-        Path.home() / ".qwen" / "extensions" / "ar" / "hooks" / "hook_entry.py",
         HOOK_ENTRY,
+        Path.home() / ".qwen" / "extensions" / "ar" / "hooks" / "hook_entry.py",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -232,7 +232,7 @@ def test_qwen_zai_glm52_task_pause_recovery_real_money(tmp_path):
     if not shutil.which("qwen"):
         pytest.skip("Qwen Code not installed (qwen command not found)")
     if not installed_task_pause_command_is_current(QWEN_TASK_COMMAND):
-        pytest.skip(
+        pytest.fail(
             "Qwen's installed autorun command assets predate task pause. "
             "After active sessions are safe to interrupt, run "
             "`uv run --project plugins/autorun python -m autorun --install --force` "
@@ -256,6 +256,10 @@ def test_qwen_zai_glm52_task_pause_recovery_real_money(tmp_path):
 
     combined = result.stdout + "\n" + result.stderr
     if "Insufficient balance or no resource package" in combined:
-        pytest.skip("Z.AI returned 429 Insufficient balance or no resource package")
+        pytest.fail(
+            "Qwen launched but Z.AI rejected the enabled live test with 429: "
+            "Insufficient balance or no resource package.\n"
+            + combined[-2000:]
+        )
     assert result.returncode == 0, combined[-2000:]
     assert find_task_recovery_marker(combined), combined[-2000:]

@@ -6,7 +6,7 @@
     "name": "Andrew Hundt",
     "email": "ATHundt@gmail.com"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": ["pdf", "extraction", "ocr", "markdown", "data"],
   "commands": "./commands/",
   "skills": "./skills/"

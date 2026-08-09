@@ -281,6 +281,6 @@ See `plugins/clautorun/src/clautorun/core.py` for reference implementation:
 ## See Also
 
 - Gemini CLI Hooks API: `notes/gemini-cli-hooks-api.md`
-- Daemon implementation: `plugins/clautorun/src/clautorun/core.py`
-- Hook configuration: `plugins/clautorun/hooks/claude-hooks.json`
+- Daemon implementation: `plugins/autorun/src/autorun/core.py`
+- Hook configuration: `plugins/autorun/hooks/hooks.json`
 - Official Claude docs: https://code.claude.com/docs/en/hooks

@@ -41,7 +41,6 @@ def _pretooluse(ctx):
     if result is not None:
         return result
     return ctx.allow()
-from autorun.command_detection import BASHLEX_AVAILABLE
 from autorun.config import BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
 from autorun.session_manager import clear_test_session_state, session_state
 
@@ -389,7 +388,6 @@ class TestSystemMessageQuality:
             "Message doesn't show AUTOFILE_JUSTIFICATION tag"
 
 
-@pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required")
 class TestPipeDetectionComprehensive:
     """Comprehensive pipe detection tests (requires bashlex)."""
 

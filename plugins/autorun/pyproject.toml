@@ -6,14 +6,14 @@ build-backend = "setuptools.build_meta"
 # Project name is "autorun" - the plugin uses "ar" as command prefix for ergonomic typing
 name = "autorun"
 version = "1.0.0rc1"
-description = "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally"
-readme = {file = "CLAUDE.md", content-type = "text/markdown"}
+description = "Task lifecycle and safety hooks for AI coding harnesses"
+readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
     {name = "Andrew Hundt", email = "ATHundt@gmail.com"},
 ]
-keywords = ["claude", "agent-sdk", "autorun", "cli", "command-interceptor"]
+keywords = ["claude", "autorun", "task-lifecycle", "cli", "safety-hooks"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -25,8 +25,6 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "claude-agent-sdk>=0.1.4",
-    "ruff>=0.14.1",
     "bashlex>=0.18",
     "psutil",
     "filelock>=3.12.0",
@@ -43,7 +41,6 @@ dependencies = [
 # every Claude and Codex user a dependency they do not need.
 
 [project.optional-dependencies]
-bashlex = ["bashlex>=0.18"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -51,13 +48,7 @@ dev = [
     "pytest-mock>=3.10.0",
     "black>=23.0.0",
     "mypy>=1.0.0",
-    "bashlex>=0.18",
 ]
-claude-code = [
-    "claude-agent-sdk>=0.1.4",
-]
-# All optional features
-all = ["bashlex>=0.18"]
 
 [tool.uv]
 # WARNING: Do NOT add deprecated fields here (e.g., default-extras).
@@ -81,6 +72,9 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.setuptools.package-data]
+autorun = ["metadata.json"]
 
 [tool.ruff]
 line-length = 160
@@ -113,6 +107,7 @@ markers = [
     "stress: marks stress tests",
     "race: marks race condition tests",
     "benchmark: marks storage cost measurements (AUTORUN_ENABLE_STATE_BENCHMARK=1)",
+    "release: builds and installs clean release artifacts in an isolated environment",
 ]
 asyncio_mode = "auto"
 
@@ -151,7 +146,7 @@ exclude_lines = [
     "pass  # Silently",
     "pass  # pragma",
 ]
-fail_under = 60
+fail_under = 75
 
 [dependency-groups]
 dev = [

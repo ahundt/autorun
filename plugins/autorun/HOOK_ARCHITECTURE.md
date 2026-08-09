@@ -797,16 +797,16 @@ def test_gemini_cat_blocked_through_normalization():
 
 ```bash
 # All hook tests
-uv run pytest plugins/autorun/tests/test_*hook*.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_*hook*.py -v
 
 # Gemini integration tests (requires Gemini CLI installed)
-uv run pytest plugins/autorun/tests/test_gemini_before_tool_hooks.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_gemini_before_tool_hooks.py -v
 
 # Format validation
-uv run pytest plugins/autorun/tests/test_hooks_format.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_hooks_format.py -v
 
 # Command blocking
-uv run pytest plugins/autorun/tests/test_actual_command_blocking.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_actual_command_blocking.py -v
 ```
 
 ### Integration Testing via Tmux
@@ -904,7 +904,7 @@ if __name__ == "__main__":
 1. Check `hooks.json` uses `${CLAUDE_PLUGIN_ROOT}` (Claude)
 2. Check `hooks.json` uses `${extensionPath}` (Gemini)
 3. Verify no environment variable assignment in Gemini hooks
-4. Run format validation tests: `uv run pytest test_hooks_format.py`
+4. Run format validation tests: `uv run --project plugins/autorun pytest plugins/autorun/tests/test_hooks_format.py`
 
 **Payload Issues**:
 1. Add debug logging to `hook_entry.py`
@@ -951,7 +951,7 @@ cd ~/.claude/autorun
 vim plugins/autorun/hooks/hooks.json
 
 # Reinstall
-uv run python -m plugins.autorun.src.autorun.install --install --gemini-only --force
+uv run --project plugins/autorun python -m autorun --install --gemini-only --force
 ```
 
 **Reason**: Installed extensions are overwritten on reinstall.

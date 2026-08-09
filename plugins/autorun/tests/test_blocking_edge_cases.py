@@ -428,9 +428,15 @@ class TestCommandWithQuotedArguments:
 class TestBlockingNoneSessionId:
     """Test handling of None or invalid session_id."""
 
-    def test_none_session_id_ignored(self):
-        """Test that EventContext with None session_id handles gracefully."""
-        # EventContext with empty session_id uses ThreadSafeDB isolation anyway
+    def test_none_session_id_is_rejected_before_state_can_alias(self):
+        """An empty identifier must not collapse unrelated hooks into one row.
+
+        Hook payload normalization assigns a deterministic fallback before it
+        constructs EventContext; direct callers that bypass normalization get
+        the persistence contract's explicit error.
+        """
+        from autorun.session_manager import SessionStateError
+
         ctx = EventContext(
             session_id="",
             event="PreToolUse",
@@ -439,8 +445,8 @@ class TestBlockingNoneSessionId:
             store=ThreadSafeDB(),
         )
         acc = plugins.ScopeAccessor(ctx, "session")
-        blocks = acc.get()
-        assert blocks is not None  # Not None — empty list
+        with pytest.raises(SessionStateError, match="non-empty string"):
+            acc.get()
 
     def test_empty_string_session_id(self):
         """Test EventContext with empty string session_id."""

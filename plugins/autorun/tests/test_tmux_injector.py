@@ -14,8 +14,6 @@ import sys
 import os
 from unittest.mock import patch
 
-pytestmark = pytest.mark.tmux
-
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -60,10 +58,13 @@ def kill_test_session():
 
 
 # Skip all tests if tmux is not available
-pytestmark = pytest.mark.skipif(
-    not is_tmux_available(),
-    reason="tmux is not available on this system"
-)
+pytestmark = [
+    pytest.mark.tmux,
+    pytest.mark.skipif(
+        not is_tmux_available(),
+        reason="tmux is not available on this system",
+    ),
+]
 
 
 @pytest.fixture(autouse=True)

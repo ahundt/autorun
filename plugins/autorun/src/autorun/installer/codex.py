@@ -40,6 +40,8 @@ __all__ = [
     "without_ours",
     "WHOLLY_OURS",
     "unknown_top_level",
+    "validate_hooks",
+    "validate_marketplace",
     "wrap",
     "merge_hooks",
     "shadowing_override",
@@ -72,6 +74,33 @@ def unknown_top_level(document: Mapping[str, object]) -> tuple[str, ...]:
     hooks are already disabled and nothing said so.
     """
     return tuple(sorted(set(document) - ALLOWED_TOP_LEVEL))
+
+
+def _validate_hooks_document(path: Path, document: Mapping[str, object]) -> None:
+    if rejected := unknown_top_level(document):
+        raise ValueError(
+            f"{path} has top-level key(s) Codex rejects: {', '.join(rejected)}. "
+            "Codex drops every hook in a file with an unknown key, so autorun "
+            "will not add to it. Remove the key, then re-run the install."
+        )
+    events = document.get("hooks", {})
+    if not isinstance(events, dict):
+        raise ValueError(
+            f"{path}: 'hooks' must be an object, found {type(events).__name__}"
+        )
+    malformed = sorted(name for name, entries in events.items() if not isinstance(entries, list))
+    if malformed:
+        raise ValueError(
+            f"{path}: hook event(s) must contain lists: {', '.join(malformed)}"
+        )
+
+
+def validate_hooks(path: Path) -> None:
+    """Read and validate a user-owned hooks file without writing it."""
+    if not path.is_file():
+        return
+    with json_document(path) as document:
+        _validate_hooks_document(path, document)
 
 
 def is_ours(entry: object, mark: str = COMMAND_MARK) -> bool:
@@ -172,22 +201,12 @@ def merge_hooks(
     accepted the name, and the entry outlived several versions.
     """
     with json_document(path, lambda: {"hooks": {}}) as document:
-        if rejected := unknown_top_level(document):
-            raise ValueError(
-                f"{path} has top-level key(s) Codex rejects: {', '.join(rejected)}. "
-                "Codex drops every hook in a file with an unknown key, so autorun "
-                "will not add to it. Remove the key, then re-run the install."
-            )
+        _validate_hooks_document(path, document)
         if description and "description" not in document:
             document["description"] = description
         events = document.setdefault("hooks", {})
-        if not isinstance(events, dict):
-            raise ValueError(f"{path}: 'hooks' must be an object, found {type(events).__name__}")
-
         for event in [*events, *(e for e in ours if e not in events)]:
             entries = events.get(event, [])
-            if not isinstance(entries, list):
-                continue  # the user's malformed event, left exactly as found
             kept = [e for e in (without_ours(e, mark) for e in entries) if e is not WHOLLY_OURS]
             commands = ours.get(event, ())
             events[event] = [*kept, wrap(commands)] if commands else kept
@@ -250,17 +269,7 @@ def publish_marketplace(
         if display and "interface" not in document:
             document["interface"] = {"displayName": display}
         plugins = document.setdefault("plugins", [])
-        if not isinstance(plugins, list):
-            raise ValueError(f"{path}: 'plugins' must be a list, found {type(plugins).__name__}")
-        if any(
-            isinstance(p, Mapping)
-            and p.get("name") == entry.get("name")
-            and not _same_marketplace_source(p, entry)
-            for p in plugins
-        ):
-            raise ValueError(
-                f"{path}: plugin {entry.get('name')!r} already uses a different source"
-            )
+        _validate_marketplace_document(path, document, entry)
         others = [
             p for p in plugins
             if not _same_marketplace_source(p, entry)
@@ -268,6 +277,38 @@ def publish_marketplace(
         document["plugins"] = [*others, dict(entry)]
         changed = json.dumps(document, sort_keys=True) != before
     return changed
+
+
+def _validate_marketplace_document(
+    path: Path,
+    document: Mapping[str, object],
+    entry: Mapping[str, object] | None = None,
+) -> None:
+    plugins = document.get("plugins", [])
+    if not isinstance(plugins, list):
+        raise ValueError(
+            f"{path}: 'plugins' must be a list, found {type(plugins).__name__}"
+        )
+    if entry is not None and any(
+        isinstance(plugin, Mapping)
+        and plugin.get("name") == entry.get("name")
+        and not _same_marketplace_source(plugin, entry)
+        for plugin in plugins
+    ):
+        raise ValueError(
+            f"{path}: plugin {entry.get('name')!r} already uses a different source"
+        )
+
+
+def validate_marketplace(
+    path: Path,
+    entry: Mapping[str, object] | None = None,
+) -> None:
+    """Read and validate a user-owned marketplace without writing it."""
+    if not path.is_file():
+        return
+    with json_document(path) as document:
+        _validate_marketplace_document(path, document, entry)
 
 
 def withdraw_from_marketplace(path: Path, entry: Mapping[str, object]) -> bool:

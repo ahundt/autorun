@@ -25,18 +25,19 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
-from itertools import takewhile
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 __all__ = [
-    "UvCommand", "has_uv", "python_runner", "Probe", "probe_runtime",
+    "DirectCommand", "UvCommand", "hook_command", "has_uv", "python_runner", "Probe", "probe_runtime", "probe_hook_runtime",
     "Outcome", "Runner", "bootstrap", "restart_daemon",
     "sync_dependencies_argv", "uv_tool_install_argv",
     "Version", "self_update", "update_argv", "detect_update_method",
@@ -53,6 +54,27 @@ def has_uv() -> bool:
 def python_runner() -> tuple[str, ...]:
     """How to run Python for user-facing instructions, uv first, pip fallback."""
     return ("uv", "run", "python") if has_uv() else ("python",)
+
+
+@dataclass(frozen=True, slots=True)
+class DirectCommand:
+    """An argv command for an already-installed Python distribution."""
+
+    command: tuple[str, ...]
+
+    def argv(self) -> tuple[str, ...]:
+        return self.command
+
+    def shell(self) -> str:
+        return shlex.join(self.command)
+
+    def run(self, *, timeout: int = 30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            self.command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +132,32 @@ class UvCommand:
         )
 
 
+def hook_command(
+    plugin_dir: Path,
+    *,
+    cli: str,
+    python: str = "",
+    no_sync: bool = True,
+) -> UvCommand | DirectCommand:
+    """Build the hook command for a checkout or installed distribution.
+
+    A checkout owns a ``pyproject.toml`` and deliberately uses uv's project
+    environment.  A wheel has already installed its dependencies and contains
+    no project file, so running ``uv --project site-packages/autorun`` can never
+    work; invoke its packaged hook with the current interpreter instead.
+    """
+    script = plugin_dir / "hooks" / "hook_entry.py"
+    if (plugin_dir / "pyproject.toml").is_file():
+        return UvCommand(
+            project=plugin_dir,
+            script=script,
+            args=("--cli", cli),
+            python=python,
+            no_sync=no_sync,
+        )
+    return DirectCommand((sys.executable, str(script), "--cli", cli))
+
+
 @dataclass(frozen=True, slots=True)
 class Probe:
     """What uv actually selected, for install and status diagnostics."""
@@ -124,10 +172,8 @@ class Probe:
     def describe(self) -> str:
         if not self.ok:
             return f"hook runtime: unavailable — {self.reason}"
-        return (
-            f"uv={self.uv_path}, python={self.executable}, "
-            f"arch={self.machine}, os={self.system}"
-        )
+        prefix = f"uv={self.uv_path}, " if self.uv_path else ""
+        return f"{prefix}python={self.executable}, arch={self.machine}, os={self.system}"
 
 
 #: Printed by the probed interpreter. One line, JSON, so a warning on stderr
@@ -170,6 +216,29 @@ def probe_runtime(project: Path, *, python: str = "", no_sync: bool = True,
     )
 
 
+def probe_hook_runtime(
+    plugin_dir: Path,
+    *,
+    python: str = "",
+    no_sync: bool = True,
+    timeout: int = 10,
+) -> Probe:
+    """Report the interpreter used by source or installed hook commands."""
+    if (plugin_dir / "pyproject.toml").is_file():
+        return probe_runtime(
+            plugin_dir,
+            python=python,
+            no_sync=no_sync,
+            timeout=timeout,
+        )
+    return Probe(
+        True,
+        executable=sys.executable,
+        machine=platform.machine(),
+        system=platform.system(),
+    )
+
+
 def _first_line(text: str) -> str:
     return next((line.strip() for line in text.splitlines() if line.strip()), "")
 
@@ -192,11 +261,22 @@ class Outcome:
 #: The subprocess boundary, injectable so a test never spawns uv, never installs
 #: a tool into the developer's home, and never signals the live daemon. Passing a
 #: fake here is the only way those tests can be both real and safe.
-Runner = Callable[[Sequence[str]], subprocess.CompletedProcess]
+Runner = Callable[..., subprocess.CompletedProcess]
 
 
-def _spawn(argv: Sequence[str], *, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout)
+def _spawn(
+    argv: Sequence[str],
+    *,
+    timeout: int = 120,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        list(argv),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env={**os.environ, **env} if env else None,
+    )
 
 
 def sync_dependencies_argv(plugin_dir: Path, *, uv_tool_env: bool = False) -> tuple[str, ...]:
@@ -209,10 +289,7 @@ def sync_dependencies_argv(plugin_dir: Path, *, uv_tool_env: bool = False) -> tu
     """
     if uv_tool_env:
         return ("uv", "pip", "install", "--python", sys.executable, "-q", "bashlex")
-    return (
-        "uv", "sync", "--project", str(plugin_dir),
-        "--extra", "claude-code", "--extra", "bashlex",
-    )
+    return ("uv", "sync", "--project", str(plugin_dir))
 
 
 def uv_tool_install_argv(package_dir: Path, *, python: str = "") -> tuple[str, ...]:
@@ -243,6 +320,18 @@ def bootstrap(
     failure then surfaces inside a hook rather than during the install that
     caused it.
     """
+    if (
+        not uv_tool_env
+        and not (plugin_dir / "pyproject.toml").is_file()
+        and (plugin_dir / "__main__.py").is_file()
+    ):
+        return (
+            Outcome(
+                "installed distribution",
+                True,
+                "dependencies and CLI are supplied by the package installer",
+            ),
+        )
     steps = (
         ("dependencies", sync_dependencies_argv(plugin_dir, uv_tool_env=uv_tool_env)),
     ) + (
@@ -286,7 +375,12 @@ def restart_daemon(*, run: Runner = _spawn) -> Outcome:
 # --- self-update ------------------------------------------------------------
 
 #: Where an upgrade comes from when autorun was installed from source control.
-REPOSITORY = "git+https://github.com/ahundt/autorun.git"
+#: The repository root is a workspace-only distribution with no ``autorun``
+#: entry point, so every Python installer must select the plugin subproject.
+REPOSITORY = (
+    "git+https://github.com/ahundt/autorun.git"
+    "#subdirectory=plugins/autorun"
+)
 
 #: Extension names autorun has shipped under, newest first. An installation made
 #: by an older version still answers to its old name, and updating the wrong one
@@ -323,9 +417,15 @@ def update_argv(
             (name for name in ("claude", "gemini") if available(name)), "claude"
         )
     return {
-        "claude": ((("claude", "plugin", "update", "autorun")),),
+        "claude": ((("claude", "plugin", "update", "ar@autorun")),),
         "gemini": ((("gemini", "extensions", "update", extension)),),
-        "uv": (("uv", "pip", "install", "--upgrade", REPOSITORY), _REREGISTER),
+        "uv": (
+            (
+                "uv", "pip", "install", "--python", sys.executable,
+                "--upgrade", REPOSITORY,
+            ),
+            _REREGISTER,
+        ),
         "pip": ((sys.executable, "-m", "pip", "install", "--upgrade", REPOSITORY), _REREGISTER),
     }[method]
 
@@ -338,17 +438,44 @@ def installed_extension_name(extensions_dir: Path) -> str:
     )
 
 
-def detect_update_method(*, available: Callable[[str], bool] = shutil.which) -> str:
-    """How autorun was installed, and therefore how it must be upgraded.
+def _is_within(path: Path, parent: Path) -> bool:
+    """Whether ``path`` is below ``parent``, without string-prefix mistakes."""
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
-    Order matters: a plugin installation upgraded with pip leaves the harness
-    still loading the old copy from its own cache, so the harness CLIs are
-    asked first and the language package managers last.
+
+def detect_update_method(
+    *,
+    origin: Path | None = None,
+    home: Path | None = None,
+    available: Callable[[str], bool] = shutil.which,
+) -> str:
+    """Infer the owning install route from this module's location.
+
+    A harness executable on ``PATH`` proves only that the user installed the
+    harness, not that it owns this copy of autorun.  Cache/extension locations
+    are positive provenance.  Everything else is a Python distribution and is
+    upgraded in the current interpreter (uv is only the transport when present).
     """
-    for binary, method in (("claude", "claude"), ("gemini", "gemini"), ("uv", "uv")):
-        if available(binary):
-            return method
-    return "pip"
+    source = (origin or Path(__file__)).resolve()
+    base = (home or Path(os.environ.get("HOME", str(Path.home())))).resolve()
+    from ..platforms import PLATFORMS
+    from . import discovery
+
+    claude_config = discovery.config_dir(PLATFORMS["claude"], home=base)
+    gemini_config = discovery.config_dir(PLATFORMS["gemini"], home=base)
+    claude_roots = (
+        claude_config / "plugins" / "cache",
+        claude_config / "plugins" / "marketplaces",
+    )
+    if any(_is_within(source, root) for root in claude_roots):
+        return "claude"
+    if _is_within(source, gemini_config / "extensions"):
+        return "gemini"
+    return "uv" if available("uv") else "pip"
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,15 +521,27 @@ def _as_tuple(version: str) -> tuple:
     Numbers and their suffixes are therefore split into separate slots, and the
     suffix slot sorts a release above any prerelease of the same number.
     """
-    key: list = []
-    for chunk in version.lstrip("vV").split("+")[0].replace("-", ".").split("."):
-        digits = "".join(takewhile(str.isdigit, chunk))
-        suffix = chunk[len(digits):]
-        key.append(int(digits) if digits else 0)
-        # 1 for a plain number, 0 for one carrying a prerelease suffix, so
-        # 2.3.4 outranks 2.3.4rc1 rather than sorting below it alphabetically.
-        key.append((1, "") if not suffix else (0, suffix))
-    return tuple(key)
+    normalized = version.lstrip("vV").split("+", 1)[0]
+    match = re.fullmatch(
+        r"(?P<release>\d+(?:\.\d+)*)(?:[-_.]?(?P<phase>[A-Za-z]+)(?P<number>\d*)(?P<tail>.*))?",
+        normalized,
+    )
+    if match is None:
+        return ((), (0, normalized.casefold(), 0, ""))
+    numbers = [int(part) for part in match.group("release").split(".")]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    phase = match.group("phase")
+    if phase is None:
+        prerelease = (1, "", 0, "")
+    else:
+        prerelease = (
+            0,
+            phase.casefold(),
+            int(match.group("number") or 0),
+            (match.group("tail") or "").casefold(),
+        )
+    return (tuple(numbers), prerelease)
 
 
 def self_update(
@@ -419,6 +558,8 @@ def self_update(
     subprocess at all — an upgrade command that reinstalls the same version
     still restarts the daemon and invalidates every harness's plugin cache.
     """
+    if "unknown" in (version.current, version.latest):
+        return Outcome("self-update", False, version.describe())
     if not version.update_available:
         return Outcome("self-update", True, version.describe())
     resolved = detect_update_method(available=available) if method == "auto" else method
@@ -540,6 +681,8 @@ def demo() -> None:
     assert not Version("1.0.0", "1.0.0rc1").update_available, "an rc never beats the release"
     assert Version("1.0.0rc1", "1.0.0rc2").update_available
     assert not Version("1.0.0rc2", "1.0.0rc1").update_available
+    assert Version("1.0.0rc9", "1.0.0rc10").update_available
+    assert not Version("1.0.0rc10", "1.0.0rc2").update_available
 
     calls.clear()
     assert self_update(Version("1.0.0", "1.0.0"), run=ok).ok
@@ -550,7 +693,13 @@ def demo() -> None:
     # the old version, with nothing reporting the mismatch.
     calls.clear()
     assert self_update(Version("1.0.0", "1.0.1"), method="uv", run=ok).ok
-    assert calls == [("uv", "pip", "install", "--upgrade", REPOSITORY), _REREGISTER], calls
+    assert calls == [
+        (
+            "uv", "pip", "install", "--python", sys.executable,
+            "--upgrade", REPOSITORY,
+        ),
+        _REREGISTER,
+    ], calls
 
     calls.clear()
     self_update(Version("1.0.0", "1.0.1"), method="gemini", extension="autorun-workspace", run=ok)
@@ -560,7 +709,7 @@ def demo() -> None:
     # The retired `plugin` spelling still resolves, to whichever CLI is here.
     calls.clear()
     self_update(Version("1.0.0", "1.0.1"), method="plugin", run=ok, available=lambda _: False)
-    assert calls == [("claude", "plugin", "update", "autorun")], calls
+    assert calls == [("claude", "plugin", "update", "ar@autorun")], calls
     calls.clear()
     self_update(
         Version("1.0.0", "1.0.1"), method="plugin", run=ok,
@@ -589,11 +738,29 @@ def demo() -> None:
         (exts / "ar").mkdir()
         assert installed_extension_name(exts) == "ar", "newest spelling wins"
 
-    # Harness CLIs are asked before language package managers.
-    assert detect_update_method(available=lambda b: b == "claude") == "claude"
-    assert detect_update_method(available=lambda b: b in {"gemini", "uv"}) == "gemini"
-    assert detect_update_method(available=lambda b: b == "uv") == "uv"
-    assert detect_update_method(available=lambda b: False) == "pip"
+    # Provenance, not unrelated binaries on PATH, selects a harness updater.
+    with _tf.TemporaryDirectory() as provenance_tmp:
+        from ..platforms import PLATFORMS as _PLATFORMS
+        from . import discovery as _discovery
+
+        home = Path(provenance_tmp)
+        claude_config = _discovery.config_dir(_PLATFORMS["claude"], home=home)
+        gemini_config = _discovery.config_dir(_PLATFORMS["gemini"], home=home)
+        assert claude_config is not None and gemini_config is not None
+        claude_origin = (
+            claude_config / "plugins" / "cache" / "autorun" / "ar"
+            / "1.0.0" / "runtime.py"
+        )
+        gemini_origin = gemini_config / "extensions" / "ar" / "runtime.py"
+        package_origin = home / "venv" / "site-packages" / "autorun" / "runtime.py"
+        assert detect_update_method(origin=claude_origin, home=home) == "claude"
+        assert detect_update_method(origin=gemini_origin, home=home) == "gemini"
+        assert detect_update_method(
+            origin=package_origin, home=home, available=lambda b: b == "uv"
+        ) == "uv"
+        assert detect_update_method(
+            origin=package_origin, home=home, available=lambda _b: False
+        ) == "pip"
 
     print("installer.runtime: all self-checks passed")
 

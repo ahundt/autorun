@@ -14,6 +14,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from autorun import session_manager as sm  # noqa: E402
+from autorun.config import CONFIG  # noqa: E402
 from autorun.core import EventContext, ThreadSafeDB  # noqa: E402
 from autorun.session_manager import TaskRepository, session_state  # noqa: E402
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig  # noqa: E402
@@ -52,6 +53,53 @@ def _task(task_id: str, status: str = "pending") -> dict:
     }
 
 
+def _stop_context(event: str = "Stop", transcript_path: str = "") -> EventContext:
+    ctx = EventContext(
+        session_id="sqlite-contract",
+        event=event,
+        tool_name="",
+        tool_input={},
+        tool_result="",
+        session_transcript=[],
+        transcript_path=transcript_path,
+        store=ThreadSafeDB(),
+        cli_type="claude",
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_1
+    return ctx
+
+
+def _seed_delegation(lifecycle: TaskLifecycle, *, expired: bool = False) -> str:
+    agent_id = "a1b2c3d4e5f6a7b8c"
+    delegated_at = (
+        time.time() - float(CONFIG["delegation_ttl_seconds"]) - 60
+        if expired
+        else time.time()
+    )
+    lifecycle.create_task("delegated", {"subject": "Delegated"}, "created")
+    repository = sm.get_session_manager().task_repository()
+    task = repository.get_task(lifecycle.global_key, "delegated")
+    task["status"] = "delegated"
+    task["metadata"] = {
+        "delegated_to_session": agent_id,
+        "delegated_at": delegated_at,
+    }
+    repository.put_task(lifecycle.global_key, "delegated", task)
+    with session_state(lifecycle.global_key) as state:
+        state["session_metadata"] = {
+            "agent_spawns": [
+                {
+                    "id": agent_id,
+                    "at": delegated_at,
+                    "claimed": True,
+                    "returned": False,
+                }
+            ]
+        }
+    return agent_id
+
+
 def test_legacy_task_blob_moves_to_rows_once_and_is_removed(sqlite_lifecycle):
     lifecycle = sqlite_lifecycle
     with session_state(lifecycle.global_key) as state:
@@ -70,6 +118,70 @@ def test_legacy_task_blob_moves_to_rows_once_and_is_removed(sqlite_lifecycle):
     with session_state(lifecycle.global_key) as state:
         assert "tasks" not in state
         assert state["task_rows_migrated"] is True
+
+
+def test_subagent_stop_returns_row_backed_delegation(sqlite_lifecycle):
+    agent_id = _seed_delegation(sqlite_lifecycle)
+    ctx = _stop_context(
+        "SubagentStop",
+        f"/tmp/example-session/agent-{agent_id}.jsonl",
+    )
+
+    assert TaskLifecycle(ctx=ctx, config=sqlite_lifecycle.config).handle_stop(ctx) is None
+    assert sqlite_lifecycle.tasks["delegated"]["status"] == "delegation-returned"
+
+
+def test_codex_child_session_returns_parent_row_backed_delegation(
+    sqlite_lifecycle,
+):
+    """The cross-session agent receipt and task transition share SQLite."""
+    parent = sqlite_lifecycle
+    agent_id = "01997b21-0e6f-7bb2-9d1e-4f0a2c3d5e6f"
+    store = ThreadSafeDB()
+    spawn_ctx = EventContext(
+        session_id=parent.session_id,
+        event="PostToolUse",
+        tool_name="spawn_agent",
+        tool_result={"agent_id": agent_id, "status": "spawned"},
+        store=store,
+        cli_type="codex",
+    )
+    parent.record_agent_spawn(spawn_ctx)
+    parent.create_task("codex", {"subject": "Codex child"}, "created")
+    parent.update_task(
+        "codex",
+        {
+            "status": "delegated",
+            "metadata": {
+                "delegated_to_session": agent_id,
+                "delegated_at": time.time(),
+            },
+        },
+        "delegated",
+    )
+    child_ctx = EventContext(
+        session_id="sqlite-codex-child",
+        event="SubagentStop",
+        tool_name="",
+        agent_id=agent_id,
+        transcript_path="/tmp/codex/parent.jsonl",
+        agent_transcript_path=f"/tmp/codex/agent-{agent_id}.jsonl",
+        store=store,
+        cli_type="codex",
+    )
+
+    assert TaskLifecycle(ctx=child_ctx, config=parent.config).handle_stop(child_ctx) is None
+    assert parent.tasks["codex"]["status"] == "delegation-returned"
+
+
+def test_expired_row_backed_delegation_reverts_to_pending(sqlite_lifecycle):
+    _seed_delegation(sqlite_lifecycle, expired=True)
+    ctx = _stop_context()
+
+    response = TaskLifecycle(ctx=ctx, config=sqlite_lifecycle.config).handle_stop(ctx)
+
+    assert response is not None
+    assert sqlite_lifecycle.tasks["delegated"]["status"] == "pending"
 
 
 def test_blob_to_row_conversion_rolls_back_as_one_unit(
@@ -221,6 +333,119 @@ def test_clear_session_rolls_back_dependents_and_closes_connection_on_failure(
 
     assert set(repository.list_tasks(lifecycle.global_key)) == {"preserved"}
     assert len(repository.events(lifecycle.global_key, task_id="preserved")) == 1
+    assert store.open_connection_count() == 0
+
+
+def test_cli_clear_failure_preserves_parent_delegation_receipt(sqlite_lifecycle):
+    """Receipt authority is removed only after the parent session commits."""
+    lifecycle = sqlite_lifecycle
+    lifecycle.create_task("preserved", {"subject": "Preserved"}, "created")
+    key = "claude:a1b2c3d4e5f6a7b8c"
+    with session_state("__task_delegation_receipts__") as state:
+        state["receipts"] = {
+            key: {
+                "agent_id": "a1b2c3d4e5f6a7b8c",
+                "cli_type": "claude",
+                "parent_session_id": lifecycle.session_id,
+                "parent_global_key": lifecycle.global_key,
+                "at": time.time(),
+                "returned": False,
+            }
+        }
+
+    store = sm.get_session_manager().task_repository()._store
+    with store.operation_scope(30.0) as owner:
+        with store.write_transaction(owner) as connection:
+            connection.execute(
+                "CREATE TRIGGER refuse_cli_clear "
+                "BEFORE DELETE ON sessions BEGIN "
+                "SELECT RAISE(ABORT, 'injected cli clear failure'); END"
+            )
+
+    assert TaskLifecycle.cli_clear(
+        session_id=lifecycle.session_id, confirm=False
+    ) == 1
+    with session_state("__task_delegation_receipts__") as state:
+        assert key in state["receipts"]
+    assert set(lifecycle.tasks) == {"preserved"}
+
+
+def test_cli_clear_receipt_failure_rolls_back_parent_deletion(sqlite_lifecycle):
+    """Failure while pruning the registry preserves parent authority too."""
+    lifecycle = sqlite_lifecycle
+    lifecycle.create_task("preserved", {"subject": "Preserved"}, "created")
+    key = "claude:a1b2c3d4e5f6a7b8c"
+    with session_state("__task_delegation_receipts__") as state:
+        state["receipts"] = {
+            key: {
+                "agent_id": "a1b2c3d4e5f6a7b8c",
+                "cli_type": "claude",
+                "parent_session_id": lifecycle.session_id,
+                "parent_global_key": lifecycle.global_key,
+                "at": time.time(),
+                "returned": False,
+            }
+        }
+
+    store = sm.get_session_manager().task_repository()._store
+    with store.operation_scope(30.0) as owner:
+        with store.write_transaction(owner) as connection:
+            connection.execute(
+                "CREATE TRIGGER refuse_receipt_cleanup "
+                "BEFORE DELETE ON state "
+                "WHEN OLD.session = '__task_delegation_receipts__' BEGIN "
+                "SELECT RAISE(ABORT, 'injected receipt cleanup failure'); END"
+            )
+
+    assert TaskLifecycle.cli_clear(
+        session_id=lifecycle.session_id, confirm=False
+    ) == 1
+    assert set(lifecycle.tasks) == {"preserved"}
+    with session_state("__task_delegation_receipts__") as state:
+        assert key in state["receipts"]
+    assert store.open_connection_count() == 0
+
+
+def test_cli_clear_all_failure_rolls_back_every_parent_and_receipt(sqlite_lifecycle):
+    """A later parent-delete failure rolls back earlier deletes in the batch."""
+    first = sqlite_lifecycle
+    second = TaskLifecycle(
+        session_id="sqlite-clear-second",
+        config=first.config,
+    )
+    first.create_task("first", {"subject": "First"}, "created")
+    second.create_task("second", {"subject": "Second"}, "created")
+    receipts = {}
+    for lifecycle, agent_id in (
+        (first, "a1b2c3d4e5f6a7b8c"),
+        (second, "b1c2d3e4f5a6b7c8d"),
+    ):
+        receipts[f"claude:{agent_id}"] = {
+            "agent_id": agent_id,
+            "cli_type": "claude",
+            "parent_session_id": lifecycle.session_id,
+            "parent_global_key": lifecycle.global_key,
+            "at": time.time(),
+            "returned": False,
+        }
+    with session_state("__task_delegation_receipts__") as state:
+        state["receipts"] = receipts
+
+    store = sm.get_session_manager().task_repository()._store
+    with store.operation_scope(30.0) as owner:
+        with store.write_transaction(owner) as connection:
+            connection.execute(
+                "CREATE TRIGGER refuse_second_parent_clear "
+                "BEFORE DELETE ON sessions "
+                f"WHEN OLD.session = '{second.global_key}' BEGIN "
+                "SELECT RAISE(ABORT, 'injected second parent failure'); END"
+            )
+
+    assert TaskLifecycle.cli_clear(all_sessions=True, confirm=False) == 1
+    assert set(first.tasks) == {"first"}
+    assert set(second.tasks) == {"second"}
+    with session_state("__task_delegation_receipts__") as state:
+        assert state["receipts"] == receipts
     assert store.open_connection_count() == 0
 
 

@@ -402,7 +402,7 @@ class HookProtocol:
         """Deny one tool when autorun cannot reach its permission daemon."""
         return self.pretool_response("deny", reason, event_name)
 
-    def response_for_unhandled_hook(self) -> dict:
+    def response_for_unhandled_hook(self, event: str | None = None) -> dict:
         """Return the native no-op output required when no handler responds."""
         return {"continue": True} if self.requires_json_for_unhandled_hook else {}
 
@@ -522,6 +522,148 @@ class QwenHookProtocol(HookProtocol):
 
 
 @dataclass(frozen=True, slots=True)
+class AntigravityHookProtocol(HookProtocol):
+    """Google Antigravity 2.0's event-specific hook wire contract."""
+
+    @staticmethod
+    def _message(response: dict) -> str:
+        hook_output = response.get("hookSpecificOutput")
+        nested = hook_output if isinstance(hook_output, dict) else {}
+        for value in (
+            response.get("reason"),
+            response.get("systemMessage"),
+            nested.get("additionalContext"),
+            nested.get("permissionDecisionReason"),
+        ):
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
+    @staticmethod
+    def _native_handler(handler: dict, event: str) -> dict:
+        native = {key: value for key, value in handler.items() if key != "name"}
+        command = native.get("command")
+        if (
+            isinstance(command, str)
+            and ("hook_entry.py" in command or "autorun --cli" in command)
+            and "--event" not in command
+        ):
+            native["command"] = f"{command} --event {event}"
+        # The shared Gemini manifest stores milliseconds; Antigravity's field
+        # is seconds. Five seconds preserves the same wrapper budget.
+        if native.get("timeout") == 5000:
+            native["timeout"] = 5
+        return native
+
+    def translate_manifest(
+        self,
+        data: dict,
+        event_map: Mapping[str, str | None],
+    ) -> dict:
+        translated = HookProtocol.translate_manifest(self, data, event_map)
+        events = translated.get(self.hook_manifest_container_key)
+        if not isinstance(events, dict):
+            return translated
+        for event, entries in events.items():
+            if not isinstance(entries, list):
+                continue
+            native_entries = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                handlers = entry.get("hooks")
+                if isinstance(handlers, list):
+                    native_entries.append(
+                        {
+                            "matcher": entry.get("matcher", "*"),
+                            "hooks": [
+                                self._native_handler(handler, event)
+                                for handler in handlers
+                                if isinstance(handler, dict)
+                            ],
+                        }
+                    )
+                else:
+                    native_entries.append(self._native_handler(entry, event))
+            events[event] = native_entries
+        return translated
+
+    def response_for_unhandled_hook(self, event: str | None = None) -> dict:
+        if event == "PreToolUse":
+            return {"decision": "allow"}
+        if event in {"Stop", "SubagentStop"}:
+            return {"decision": ""}
+        return {}
+
+    def filter_response_to_harness_schema(
+        self,
+        event: str,
+        response: dict,
+    ) -> dict | None:
+        """Emit only fields documented for the current native event."""
+        if event == "PreToolUse":
+            hook_output = response.get("hookSpecificOutput")
+            nested = hook_output if isinstance(hook_output, dict) else {}
+            decision = (
+                response.get("decision")
+                or response.get("permissionDecision")
+                or nested.get("permissionDecision")
+            )
+            decision = {
+                "approve": "allow",
+                "block": "deny",
+            }.get(decision, decision)
+            reason = self._message(response)
+            if decision not in {
+                "allow",
+                "deny",
+                "ask",
+                "force_ask",
+                "deny_unless_prior_grant",
+            }:
+                decision = "deny"
+                reason = (
+                    "[AR_EVENT_V1:invalid_antigravity_pretool_response] "
+                    "Antigravity PreToolUse received no valid permission decision; "
+                    "the tool was blocked. Restart the autorun daemon, then retry."
+                )
+            native = {"decision": decision}
+            if reason:
+                native["reason"] = reason
+            overrides = response.get("permissionOverrides")
+            if isinstance(overrides, list):
+                native["permissionOverrides"] = overrides
+            return native
+        if event == "PostToolUse":
+            return {}
+        if event in {"BeforeModel", "UserPromptSubmit", "AfterModel"}:
+            message = self._message(response)
+            native = (
+                {"injectSteps": [{"ephemeralMessage": message}]}
+                if message
+                else {}
+            )
+            if event == "AfterModel" and response.get("terminationBehavior") in {
+                "force_continue",
+                "terminate",
+                "",
+            }:
+                native["terminationBehavior"] = response["terminationBehavior"]
+            return native
+        if event in {"Stop", "SubagentStop"}:
+            native = {
+                "decision": "continue"
+                if response.get("decision") == "continue"
+                else ""
+            }
+            reason = self._message(response)
+            if reason:
+                native["reason"] = reason
+            return native
+        return {}
+
+
+@dataclass(frozen=True, slots=True)
 class CodexHookProtocol(HookProtocol):
     """Codex-only strict responses used by EventContext and the client.
 
@@ -620,13 +762,10 @@ QWEN_HOOKS = QwenHookProtocol(
     manifest_events_without_matchers=frozenset({"UserPromptSubmit", "Stop"}),
 )
 
-# Agy (Google Antigravity CLI): root tool decisions, continue+reason to reject
-# Stop, flat invocation handlers under the autorun manifest key.
-# https://antigravity.google/docs/cli-plugins
-# Closed-binary discovery hint, not wire-contract proof: installed Agy strings
-# include "permissionOverrides" and "force_ask"; retain regression tests because
-# no open-source response parser is available to cross-check the documentation.
-ANTIGRAVITY_HOOKS = HookProtocol(
+# Google Antigravity 2.0: every event has its own native response schema, and
+# invocation/Stop handlers are flat under one named hook container.
+# https://www.antigravity.google/docs/hooks
+ANTIGRAVITY_HOOKS = AntigravityHookProtocol(
     "antigravity",
     pretool_decision_location="root",
     supports_ask_decision=True,
@@ -635,10 +774,6 @@ ANTIGRAVITY_HOOKS = HookProtocol(
     stop_blocking_decision="continue",
     stop_response_uses_only_decision_and_reason=True,
     requires_json_for_unhandled_hook=True,
-    # Agy keeps autorun's established feedback-only context behavior, including
-    # PostToolUse additionalContext; no verified native contract requires
-    # discarding that existing feedback.
-    # https://antigravity.google/docs/cli-plugins
     hook_manifest_container_key="autorun",
     manifest_events_with_flat_handlers=frozenset(
         {
@@ -794,6 +929,11 @@ class Platform:
     # Native protocol identity and the smallest per-harness differences used by
     # the shared response builder and manifest translator.
     hook_protocol: HookProtocol = CLAUDE_HOOKS
+    # Native support is not the same as installed ownership. A hook with no
+    # autorun handler costs a subprocess per event and can still fail, so the
+    # installer registers only the explicit handled subset.
+    native_hook_events: frozenset[str] = field(default_factory=frozenset)
+    installed_hook_events: frozenset[str] = field(default_factory=frozenset)
 
     # === Bug workaround applicability ===
     has_exit2_workaround: bool = False  # Claude #4669
@@ -948,6 +1088,25 @@ _GEMINI_TOOLS = {
     "task_progress": "write_todos",
     "task_title": "title",
     "task_id_param": "id",
+}
+
+_ANTIGRAVITY_TOOLS = {
+    **_GEMINI_TOOLS,
+    "grep": "grep_search",
+    "glob": "find_by_name",
+    "read": "view_file",
+    "write": "write_to_file",
+    "edit": "replace_file_content",
+    "bash": "run_command",
+    "ls": "list_dir",
+    # Antigravity 2.0 documents no checklist/task CRUD tool. These values are
+    # prose fallbacks for shared guidance, not invented API tool identifiers.
+    "task_create": "autorun task markers",
+    "task_update": "autorun task markers",
+    "task_list": "autorun task status",
+    "task_progress": "autorun task markers",
+    "task_title": "task title",
+    "task_id_param": "task id",
 }
 
 # OpenCode's model-facing tool ids are lowercase (probed against 1.18.13; the
@@ -1163,26 +1322,41 @@ ANTIGRAVITY = register(
         harness_cli_to_autorun_events={
             # Agy's Invocation names are model lifecycle hooks, not tool hooks:
             # PostToolUse remains PostToolUse while PostInvocation is AfterModel.
-            # https://antigravity.google/docs/cli-plugins
+            # https://www.antigravity.google/docs/hooks
             "PreToolUse": "PreToolUse",
             "PostToolUse": "PostToolUse",
-            "PreInvocation": "UserPromptSubmit",
+            "PreInvocation": "BeforeModel",
             "PostInvocation": "AfterModel",
             "Stop": "Stop",
         },
         autorun_to_harness_cli_events={
             "PreToolUse": "PreToolUse",
             "PostToolUse": "PostToolUse",
-            "UserPromptSubmit": "PreInvocation",
+            "BeforeModel": "PreInvocation",
             "AfterModel": "PostInvocation",
             "Stop": "Stop",
         },
         has_hooks=True,
         schema_type="permissive",
         hook_protocol=ANTIGRAVITY_HOOKS,
+        native_hook_events=frozenset(
+            {
+                "PreToolUse",
+                "PostToolUse",
+                "PreInvocation",
+                "PostInvocation",
+                "Stop",
+            }
+        ),
+        installed_hook_events=frozenset(
+            {"PreToolUse", "PostToolUse", "Stop"}
+        ),
         has_exit2_workaround=False,
         drops_additional_context=False,
-        config_dir="~/.gemini/antigravity-cli/",
+        # Agy 1.1.7 materializes native plugins and its import receipt under
+        # ~/.gemini/config.  ~/.gemini/antigravity-cli remains a runtime/log
+        # location and therefore stays only in detection hints.
+        config_dir="~/.gemini/config/",
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
         extension_manifest_name="plugin.json",
@@ -1192,13 +1366,9 @@ ANTIGRAVITY = register(
         native_skills=ExtensionSkills("plugins"),
         extensions_subdir="plugins",
         uninstall_cmd=("agy", "plugin", "uninstall", "{name}"),
-        tool_names=_GEMINI_TOOLS,
-        task_management_style="bulk_todos",
-        task_create_tools=GEMINI.task_create_tools,
-        task_update_tools=GEMINI.task_update_tools,
-        task_review_tools=GEMINI.task_review_tools,
-        task_bulk_tools=GEMINI.task_bulk_tools,
-        supports_additional_context_events=GEMINI.supports_additional_context_events,
+        tool_names=_ANTIGRAVITY_TOOLS,
+        task_management_style="none",
+        supports_additional_context_events=frozenset({"BeforeModel", "AfterModel"}),
         app_bundle_ids=("com.google.antigravity",),
         app_paths=("/Applications/Antigravity.app",),
     )

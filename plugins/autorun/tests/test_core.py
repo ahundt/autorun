@@ -355,6 +355,7 @@ class TestThreadSafeDB:
 
         assert calls == [("session-1", 0.123)]
         assert "session-1" in str(raised.value) and "file_policy" in str(raised.value)
+        monkeypatch.undo()
         assert db.get("session-1:file_policy", "unset") == "unset", (
             "The cache is serving a value that never reached storage."
         )

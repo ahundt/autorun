@@ -28,7 +28,6 @@ from e2e_support import (
 # Check for AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 
-pytestmark = pytest.mark.e2e
 paid_gemini_e2e = pytest.mark.skipif(
     not ENABLE_REAL_MONEY_TESTS,
     reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for legacy model tests.",
@@ -50,9 +49,11 @@ def gemini_cli_check():
             timeout=5
         )
         if result.returncode != 0:
-            pytest.skip(f"Gemini CLI not working: {result.stderr}")
-    except Exception as e:
-        pytest.skip(f"Gemini CLI check failed: {e}")
+            pytest.fail(f"Installed Gemini CLI is not runnable: {result.stderr}")
+    except subprocess.TimeoutExpired:
+        pytest.fail("Installed Gemini CLI --version timed out (>5s)")
+    except OSError as error:
+        pytest.fail(f"Installed Gemini CLI check failed: {error}")
 
 
 @pytest.fixture(scope="module")
@@ -70,19 +71,20 @@ def gemini_extension_check():
             timeout=30  # Extensions list loads credentials + experiments
         )
         if result.returncode != 0:
-            pytest.skip(f"Could not list Gemini extensions: {result.stderr}")
+            pytest.fail(f"Installed Gemini extension list failed: {result.stderr}")
 
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
         if not autorun_extension_listed(combined_output):
             pytest.skip("ar (autorun) extension not installed in Gemini CLI")
     except subprocess.TimeoutExpired:
-        pytest.skip("gemini extensions list timed out (>30s)")
-    except Exception as e:
-        pytest.skip(f"Extension check failed: {e}")
+        pytest.fail("Installed Gemini extension list timed out (>30s)")
+    except OSError as error:
+        pytest.fail(f"Installed Gemini extension check failed: {error}")
 
 
 @paid_gemini_e2e
+@pytest.mark.e2e
 class TestGeminiE2ERealMoney:
     """Real Gemini CLI E2E tests that make actual API calls.
 
@@ -108,7 +110,7 @@ class TestGeminiE2ERealMoney:
                 timeout=45
             )
         except subprocess.TimeoutExpired:
-            pytest.skip(
+            pytest.fail(
                 "Gemini CLI basic response timed out; current Gemini CLI may be "
                 "blocked by the migration to Antigravity."
             )
@@ -121,16 +123,11 @@ class TestGeminiE2ERealMoney:
         assert "four" in output_lower or "4" in output_lower, \
             f"Unexpected response: {result.stdout}"
 
-    @pytest.mark.skipif(
-        True,  # Always skip until user confirms they want to test
-        reason="Interactive test requires manual confirmation - costs real money"
-    )
     def test_gemini_slash_command_recognition(self, gemini_cli_check, gemini_extension_check):
         """Test /ar:st command in Gemini (COSTS REAL MONEY).
 
-        ⚠️ This test is ALWAYS SKIPPED by default.
-
-        To enable: Remove @pytest.mark.skipif decorator
+        The class-level paid-test opt-in and retired-backend gate prevent an
+        accidental call during normal runs.
         Estimated cost: < $0.001
 
         Note: Piped mode may not provide shell execution tools.
@@ -149,6 +146,7 @@ class TestGeminiE2ERealMoney:
             f"Unexpected error: {result.stderr}"
 
 
+@pytest.mark.e2e
 class TestGeminiExtensionRegistration:
     """Verify the installed extension registration without API or model calls."""
 

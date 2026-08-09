@@ -193,6 +193,11 @@ def test_pause_command_dispatch_returns_valid_response_for_every_hook_platform(p
             response.get("hookSpecificOutput", {}).get("additionalContext", ""),
         )
     )
+    rendered += " " + " ".join(
+        str(step.get("ephemeralMessage", ""))
+        for step in response.get("injectSteps", ())
+        if isinstance(step, dict)
+    )
 
     assert isinstance(response, dict)
     assert "Task enforcement pause: active" in rendered

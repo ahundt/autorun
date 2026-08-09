@@ -37,6 +37,7 @@ __all__ = [
     "config_dir", "extensions_dir", "expand_home", "build_timestamp",
     "skill_destinations", "shared_root", "codex_plugin_source",
     "personal_marketplace", "plugin_name", "PLUGIN_MANIFEST",
+    "plugin_runtime_root",
     "redirected_home", "process_home",
     "python_too_old", "MINIMUM_PYTHON",
 ]
@@ -231,8 +232,10 @@ def _layouts(root: Path, name: str) -> Iterator[Path]:
     yield root / "plugins" / name      # workspace layout
     yield root / name                  # flat layout
     yield root.parent / name           # legacy sibling layout
-    if root.name == name:
-        yield root                     # the root is the plugin
+    if root.name == name or (
+        (root / PLUGIN_MANIFEST).is_file() and plugin_name(root) == name
+    ):
+        yield root                     # the root is the installed plugin package
 
 
 def plugin_dir(root: Path, name: str) -> Path | None:
@@ -261,6 +264,18 @@ def plugin_name(directory: Path) -> str:
     except (OSError, AttributeError, json.JSONDecodeError):
         declared = None
     return declared if isinstance(declared, str) and declared else directory.name
+
+
+def plugin_runtime_root(directory: Path) -> Path:
+    """Return the Python resource root in a checkout or installed wheel.
+
+    Source trees keep templates under ``src/autorun`` so Claude does not scan
+    Gemini hook manifests as its own.  Wheel resources are already isolated
+    inside the installed ``autorun`` package and live directly beside the
+    Python modules.
+    """
+    source = directory / "src" / "autorun"
+    return source if source.is_dir() else directory
 
 
 def resolve_plugins(root: Path, names: Sequence[str]) -> tuple[tuple[Path, ...], tuple[str, ...]]:

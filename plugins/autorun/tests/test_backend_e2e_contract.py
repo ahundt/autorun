@@ -70,7 +70,7 @@ def test_gemini_extension_identity_accepts_current_id_and_legacy_aliases(listing
     assert autorun_extension_listed(listing) is expected
 
 
-@pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])
+@pytest.mark.parametrize("cli", ["claude", "gemini", "qwen", "codex"])
 def test_registered_hook_backends_execute_isolated_process(cli, tmp_path):
     """Every hook backend must complete one real, daemon-free hook process."""
     plugin_root = TEST_ROOT.parent
@@ -89,7 +89,7 @@ def test_registered_hook_backends_execute_isolated_process(cli, tmp_path):
         assert isinstance(json.loads(result.stdout), dict)
 
 
-@pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])
+@pytest.mark.parametrize("cli", ["claude", "gemini", "qwen", "codex"])
 @pytest.mark.parametrize("root", ["task", "tasks"])
 def test_task_pause_command_returns_recovery_marker_through_real_hook_process(
     cli,
@@ -118,7 +118,7 @@ def test_task_pause_command_returns_recovery_marker_through_real_hook_process(
         assert "permanent" in result.stdout
 
 
-@pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])
+@pytest.mark.parametrize("cli", ["claude", "gemini", "qwen", "codex"])
 def test_bare_task_pause_is_five_minutes_through_real_hook_process(
     cli,
     tmp_path,
@@ -148,6 +148,27 @@ def test_bare_task_pause_is_five_minutes_through_real_hook_process(
     seconds = minutes * 60 + int(countdown.group(2))
     assert 240 <= seconds <= 300, result.stdout
     assert find_task_recovery_marker(result.stdout), result.stdout
+
+
+def test_antigravity_does_not_claim_a_prompt_hook_or_task_command(tmp_path):
+    """The official Agy hook list has no user-prompt event or checklist API."""
+    plugin_root = TEST_ROOT.parent
+    result = run_isolated_hook(
+        plugin_root=plugin_root,
+        hook_script=plugin_root / "hooks" / "hook_entry.py",
+        cli="antigravity",
+        event="UserPromptSubmit",
+        payload={
+            "conversationId": f"agy-no-prompt-{uuid.uuid4().hex}",
+            "workspacePaths": [str(tmp_path)],
+            "prompt": "ar:task pause",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {}
+    assert PLATFORMS["antigravity"].task_management_style == "none"
+    assert "UserPromptSubmit" not in PLATFORMS["antigravity"].native_hook_events
 
 
 def test_installed_task_pause_command_generation_check_is_fail_closed(tmp_path):

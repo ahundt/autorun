@@ -59,7 +59,7 @@ Set FontSize 20
 Set Width 1200
 Set Height 700
 Set Theme "Dracula"
-Type "uv run python plugins/autorun/tests/test_demo.py --play"
+Type "uv run --project plugins/autorun python plugins/autorun/tests/test_demo.py --play"
 Enter
 Sleep 60s
 ```

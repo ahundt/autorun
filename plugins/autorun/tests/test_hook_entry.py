@@ -9,7 +9,6 @@ import json
 import io
 import builtins
 import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -297,6 +296,60 @@ class TestHookEntryExecutionPriority:
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "invalid response" in response["reason"]
 
+    @pytest.mark.parametrize(
+        ("cli_type", "expected"),
+        [
+            ("claude", {"continue": True}),
+            ("gemini", {"continue": True}),
+            ("qwen", {"continue": True}),
+            ("codex", {}),
+            ("antigravity", {}),
+        ],
+    )
+    def test_connected_daemon_invalid_lifecycle_response_uses_native_noop(
+        self, tmp_path, monkeypatch, capsys, cli_type, expected
+    ):
+        """Malformed lifecycle replies never leak Claude fields to other CLIs."""
+        hook_entry = load_hook_entry_module()
+        (tmp_path / "daemon.sock").touch()
+
+        class InvalidResponseSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def settimeout(self, _timeout):
+                return None
+
+            def connect(self, _path):
+                return None
+
+            def sendall(self, _data):
+                return None
+
+            def makefile(self, *_args, **_kwargs):
+                return io.StringIO("not-json\n")
+
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+        monkeypatch.setattr(
+            hook_entry.socket, "socket", lambda *_args: InvalidResponseSocket()
+        )
+        payload = json.dumps(
+            {"hook_event_name": "SessionStart", "cli_type": cli_type}
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.try_daemon(payload, cli_type)
+
+        assert exc.value.code == 0
+        response = json.loads(capsys.readouterr().out)
+        if cli_type == "claude":
+            assert response["continue"] is True
+        else:
+            assert response == expected
+
     def test_hook_timeout_is_platform_specific(self):
         """Hook wrapper budgets must match CONFIG when autorun imports work."""
         from autorun.config import CONFIG
@@ -327,6 +380,34 @@ class TestHookEntryExecutionPriority:
 
         assert "antigravity" in hook_entry._VALID_CLI_TYPES
 
+    def test_antigravity_entry_injects_manifest_event_and_common_aliases(
+        self, monkeypatch
+    ):
+        """Native stdin omits its event; the installed command supplies it."""
+        hook_entry = load_hook_entry_module()
+        monkeypatch.setattr(
+            hook_entry.sys,
+            "argv",
+            ["hook_entry.py", "--cli", "antigravity", "--event", "PreToolUse"],
+        )
+        payload = hook_entry.prepare_hook_payload(
+            {
+                "conversationId": "conversation",
+                "workspacePaths": ["/workspace/project"],
+                "transcriptPath": "/tmp/transcript.jsonl",
+                "toolCall": {
+                    "name": "run_command",
+                    "args": {"CommandLine": "rm -rf build"},
+                },
+            },
+            "antigravity",
+        )
+
+        assert payload["hook_event_name"] == "PreToolUse"
+        assert payload["cli_type"] == "antigravity"
+        assert payload["transcript_path"] == "/tmp/transcript.jsonl"
+        assert payload["cwd"] == "/workspace/project"
+
     def test_autorun_bin_resolves_beside_the_running_interpreter(self, tmp_path, monkeypatch):
         """A venv python running this file must find the autorun beside it.
 
@@ -352,6 +433,18 @@ class TestHookEntryExecutionPriority:
         assert hook_entry._can_use_direct_daemon(resolved), (
             "the interpreter-sibling binary must qualify for the direct-daemon fast path"
         )
+
+    def test_direct_daemon_fast_path_honors_explicit_disable(
+        self, tmp_path, monkeypatch
+    ):
+        """Isolated hooks must not connect merely because a socket exists."""
+        hook_entry = load_hook_entry_module()
+        autorun_bin = tmp_path / ".venv" / "bin" / "autorun"
+        autorun_bin.parent.mkdir(parents=True)
+        autorun_bin.touch()
+        monkeypatch.setenv("AUTORUN_USE_DAEMON", "0")
+
+        assert hook_entry._can_use_direct_daemon(autorun_bin) is False
 
     def test_autorun_bin_falls_back_to_the_workspace_root_venv(self, tmp_path, monkeypatch):
         """The source-tree shape: one uv workspace venv at the repo root.
@@ -404,24 +497,39 @@ class TestHookEntryExecutionPriority:
             f"detector: {missing}"
         )
 
-    def test_antigravity_tool_gate_fail_closed_uses_permissive_schema(self, capsys):
-        """Antigravity shares Gemini-family hook response schema."""
+    @pytest.mark.parametrize(
+        ("cli_type", "event_name"),
+        [
+            ("gemini", "BeforeTool"),
+            ("qwen", "PreToolUse"),
+            ("antigravity", "PreToolUse"),
+            ("codex", "PreToolUse"),
+        ],
+    )
+    def test_tool_gate_fail_closed_matches_canonical_platform_schema(
+        self, capsys, cli_type, event_name
+    ):
+        from autorun.platforms import platform_for
+
         hook_entry = load_hook_entry_module()
 
         with pytest.raises(SystemExit) as exc:
             hook_entry.fail_closed_tool_gate(
-                "broken antigravity hook path",
-                cli_type="antigravity",
-                event_name="BeforeTool",
+                "broken hook path",
+                cli_type=cli_type,
+                event_name=event_name,
             )
 
         assert exc.value.code == 0
         output = json.loads(capsys.readouterr().out)
-        assert output["decision"] == "deny"
-        assert output["reason"].startswith("[autorun] broken antigravity hook path")
-        assert "Blocking tool use to avoid fail-open" in output["reason"]
-        assert output["systemMessage"].startswith("[autorun] broken antigravity hook path")
-        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+        reason = (
+            "[autorun] broken hook path. Blocking tool use to avoid fail-open. "
+            "Run `autorun --restart-daemon` or `autorun --install --force`, then retry."
+        )
+        expected = platform_for(cli_type).hook_protocol.fail_closed_pretool_response(
+            reason, event_name
+        )
+        assert output == expected
 
     def test_qwen_project_dir_precedes_gemini_compat_env(self, monkeypatch):
         """Qwen hooks must not inherit a stale Gemini-compatible project root."""
@@ -713,6 +821,127 @@ class TestTryCliRobustness:
         assert output.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
         assert "Cannot locate plugin source" in output.get("reason", "")
 
+    @pytest.mark.parametrize(
+        ("cli_type", "expected"),
+        [
+            ("claude", {"continue": True}),
+            ("gemini", {"continue": True}),
+            ("qwen", {"continue": True}),
+            ("codex", {}),
+            ("antigravity", {}),
+        ],
+    )
+    def test_missing_source_lifecycle_uses_native_noop(
+        self, monkeypatch, capsys, cli_type, expected
+    ):
+        """The no-source branch follows each lifecycle response protocol."""
+        hook_entry = load_hook_entry_module()
+        monkeypatch.setattr(hook_entry, "get_plugin_root", lambda: None)
+        monkeypatch.setattr(hook_entry, "get_src_dir", lambda: None)
+        monkeypatch.setattr(sys, "argv", ["hook_entry.py", "--cli", cli_type])
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            io.StringIO(json.dumps({"hook_event_name": "SessionStart"})),
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.run_fallback()
+
+        assert exc.value.code == 0
+        response = json.loads(capsys.readouterr().out)
+        if cli_type == "claude":
+            assert response["continue"] is True
+        else:
+            assert response == expected
+
+    @pytest.mark.parametrize("failure", ["ImportError", "RuntimeError"])
+    def test_antigravity_fallback_failure_uses_root_deny_schema(
+        self, tmp_path, failure
+    ):
+        """Exercise run_fallback's real exception branches in a fresh process."""
+        plugin = tmp_path / "broken-plugin"
+        package = plugin / "src" / "autorun"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "__main__.py").write_text(
+            f"raise {failure}('injected fallback failure')\n",
+            encoding="utf-8",
+        )
+        runner = (
+            "import importlib.util, io, json, sys; "
+            f"spec=importlib.util.spec_from_file_location('hook', {str(HOOK_ENTRY)!r}); "
+            "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+            "sys.argv=['hook_entry.py','--cli','antigravity']; "
+            "sys.stdin=io.StringIO(json.dumps({'hook_event_name':'PreToolUse','tool_name':'run_command'})); "
+            "module.run_fallback()"
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "AUTORUN_PLUGIN_ROOT": str(plugin),
+                "AUTORUN_NO_BOOTSTRAP": "1",
+                "AUTORUN_HOME": str(tmp_path / "autorun-home"),
+            }
+        )
+
+        result = subprocess.run(
+            [_isolated_interpreter(tmp_path), "-c", runner],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+            cwd=tmp_path,
+        )
+
+        assert result.returncode == 0, result.stderr
+        response = json.loads(result.stdout)
+        assert set(response) == {"decision", "reason"}
+        assert response["decision"] == "deny"
+        assert "injected fallback failure" in response["reason"]
+        assert not {
+            "continue", "stopReason", "suppressOutput", "systemMessage"
+        } & response.keys()
+
+    def test_antigravity_lifecycle_fallback_failure_is_native_noop(self, tmp_path):
+        """A non-permission bootstrap failure must not emit Claude fields."""
+        plugin = tmp_path / "broken-plugin"
+        package = plugin / "src" / "autorun"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "__main__.py").write_text(
+            "raise RuntimeError('injected lifecycle failure')\n", encoding="utf-8"
+        )
+        runner = (
+            "import importlib.util, io, json, sys; "
+            f"spec=importlib.util.spec_from_file_location('hook', {str(HOOK_ENTRY)!r}); "
+            "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+            "sys.argv=['hook_entry.py','--cli','antigravity']; "
+            "sys.stdin=io.StringIO(json.dumps({'hook_event_name':'SessionStart'})); "
+            "module.run_fallback()"
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "AUTORUN_PLUGIN_ROOT": str(plugin),
+                "AUTORUN_NO_BOOTSTRAP": "1",
+                "AUTORUN_HOME": str(tmp_path / "autorun-home"),
+            }
+        )
+
+        result = subprocess.run(
+            [_isolated_interpreter(tmp_path), "-c", runner],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+            cwd=tmp_path,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {}
+        assert result.stderr == ""
+
     def test_stdin_read_once_in_main(self):
         """stdin must be read once in main(), not inside try_cli."""
         content = HOOK_ENTRY.read_text(encoding="utf-8")
@@ -919,106 +1148,17 @@ class TestHooksJson:
 
 
 # =============================================================================
-# Test: daemon.py Bootstrap Structure
+# Test: daemon startup owns no package-manager side effects
 # =============================================================================
 
 
-class TestDaemonBootstrapStructure:
-    """Test daemon bootstrap has correct structure (testable module-level functions)."""
+def test_daemon_startup_never_installs_packages_in_the_background():
+    content = DAEMON_PY.read_text(encoding="utf-8")
 
-    def test_has_bootstrap_function(self):
-        """daemon.py has _bootstrap_optional_deps function."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "_bootstrap_optional_deps" in content
-
-    def test_has_get_pip_command_function(self):
-        """daemon.py has _get_pip_command() helper (DRY)."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "def _get_pip_command(" in content
-
-    def test_has_ensure_uv_function(self):
-        """daemon.py has _ensure_uv() at module level (testable)."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        # Should be module-level, not nested
-        assert "\ndef _ensure_uv(" in content
-
-    def test_has_install_bashlex_function(self):
-        """daemon.py has _install_bashlex() at module level (testable)."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "\ndef _install_bashlex(" in content
-
-    def test_has_install_autorun_function(self):
-        """daemon.py has _install_autorun() to enable fast CLI path."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "def _install_autorun(" in content
-
-    def test_has_get_plugin_root_function(self):
-        """daemon.py has _get_plugin_root() to find local install path."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "def _get_plugin_root(" in content
-
-
-class TestDaemonBootstrapBehavior:
-    """Test daemon bootstrap behavior."""
-
-    def test_bootstrap_runs_in_background(self):
-        """Bootstrap runs in background thread."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "threading.Thread" in content
-        assert "daemon=True" in content
-
-    def test_bootstrap_installs_uv_if_missing(self):
-        """Bootstrap installs UV via pip if UV not available."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "pip" in content and "uv" in content
-
-    def test_bootstrap_prefers_uv(self):
-        """Bootstrap prefers UV over pip for package installs."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "shutil.which('uv')" in content
-
-    def test_bootstrap_installs_bashlex(self):
-        """Bootstrap installs bashlex for better command parsing."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "bashlex" in content
-
-    def test_bootstrap_called_in_main(self):
-        """Bootstrap is called in daemon main()."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "_bootstrap_optional_deps()" in content
-
-
-class TestDaemonBootstrapAutorun:
-    """Test autorun CLI installation in bootstrap."""
-
-    def test_checks_if_autorun_already_installed(self):
-        """_install_autorun() skips if CLI already available."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "shutil.which('autorun')" in content
-
-    def test_installs_from_local_path(self):
-        """_install_autorun() uses local plugin path, not GitHub."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        # Should use _get_plugin_root() or similar for local path
-        assert "_get_plugin_root" in content
-        # Should NOT install from GitHub
-        assert "github.com/ahundt/autorun" not in content
-
-    def test_uses_uv_tool_install(self):
-        """_install_autorun() uses 'uv tool install' for global CLI."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        assert "uv" in content and "tool" in content and "install" in content
-
-    def test_install_order_uv_then_autorun_then_bashlex(self):
-        """Bootstrap order: UV -> autorun -> bashlex."""
-        content = DAEMON_PY.read_text(encoding="utf-8")
-        # Find the _bootstrap_optional_deps function or install orchestration
-        uv_idx = content.find("_ensure_uv")
-        autorun_idx = content.find("_install_autorun")
-        bashlex_idx = content.find("_install_bashlex")
-        # UV should be installed before autorun, autorun before bashlex
-        assert uv_idx < autorun_idx < bashlex_idx, \
-            f"Wrong order: uv={uv_idx}, autorun={autorun_idx}, bashlex={bashlex_idx}"
+    assert "subprocess" not in content
+    assert "pip install" not in content
+    assert "threading.Thread" not in content
+    assert "Reinstall autorun before daemon startup" in content
 
 
 # =============================================================================
@@ -1060,10 +1200,6 @@ class TestUVCompatibility:
         - Invalid pyproject.toml syntax
         - Missing dependencies during resolution
         """
-        import shutil
-        if not shutil.which("uv"):
-            pytest.skip("UV not installed")
-
         result = subprocess.run(
             ["uv", "run", "--project", str(PLUGIN_ROOT), "python", "-c", "print('ok')"],
             capture_output=True,
@@ -1142,10 +1278,6 @@ class TestUVCompatibility:
 
         Any stderr output = Claude Code reports 'hook error' = hooks disabled.
         """
-        import shutil
-        if not shutil.which("uv"):
-            pytest.skip("UV not installed")
-
         env = os.environ.copy()
         env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
 
@@ -1200,10 +1332,6 @@ class TestUVCompatibility:
         2. Exit 0
         3. Produce no stderr warnings
         """
-        import shutil
-        if not shutil.which("uv"):
-            pytest.skip("UV not installed")
-
         env = os.environ.copy()
         env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
 
@@ -1256,6 +1384,7 @@ class TestCacheSync:
             return []
         return [d for d in self.CACHE_ROOT.iterdir() if d.is_dir() and (d / "pyproject.toml").exists()]
 
+    @pytest.mark.e2e
     def test_cache_pyproject_no_deprecated_uv_fields(self):
         """Cached pyproject.toml must not have deprecated [tool.uv] fields.
 
@@ -1581,6 +1710,7 @@ class TestAllLocationsSync:
             "metadata such as description belongs in plugin.json"
         )
 
+    @pytest.mark.e2e
     def test_cache_matches_source_hook_entry(self):
         """Location 4: Claude Code cache hook_entry.py must match source."""
         cache_versions = [
@@ -1609,6 +1739,7 @@ class TestAllLocationsSync:
         assert argv[:3] == ("uv", "tool", "install")
         assert "--editable" in argv
 
+    @pytest.mark.e2e
     def test_gemini_extension_hooks_match_source(self):
         """Gemini extension hooks.json must match the Gemini TEMPLATE source
         (not the Claude plugin's hooks.json). Post-split-layout, Claude's

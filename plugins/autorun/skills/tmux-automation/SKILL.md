@@ -198,7 +198,7 @@ byobu send-keys -t "autorun" "/plugin marketplace add \$HOME/.claude/autorun" C-
 sleep 3
 
 # Install plugin
-byobu send-keys -t "autorun" "/plugin install autorun@autorun" C-m
+byobu send-keys -t "autorun" "/plugin install ar@autorun" C-m
 sleep 5
 
 # Test commands

@@ -226,7 +226,7 @@ def test_override_visible_in_pending_injection_every_block(
     )
 
 
-# === Codex parity (forward-compatible — must not regress when Codex is added) ===
+# === Codex parity ===
 
 @pytest.mark.parametrize("block_count", [1, 3, 5])
 def test_override_visible_for_codex_cli_type(
@@ -236,13 +236,9 @@ def test_override_visible_for_codex_cli_type(
     command spelling. Current Codex may intercept unknown slash commands before
     prompt hooks see them, so the override text must teach `ar:*` forms.
     """
-    try:
-        from autorun.config import detect_cli_type
-        known = detect_cli_type({"cli_type": "codex"})
-        if known != "codex":
-            pytest.skip("Codex platform not yet registered (pre-C3)")
-    except Exception:
-        pytest.skip("Codex platform not yet registered (pre-C3)")
+    from autorun.config import detect_cli_type
+
+    assert detect_cli_type({"cli_type": "codex"}) == "codex"
 
     cfg = TaskLifecycleConfig(
         enabled=True,

@@ -218,12 +218,12 @@ that the contract itself is wrong.
 From the repository root:
 
 ```bash
-uv run pytest plugins/autorun/tests/test_database_functionality.py \
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_database_functionality.py \
   plugins/autorun/tests/test_cache_guard.py \
   plugins/autorun/tests/test_scoped_permissions.py \
   plugins/autorun/tests/test_daemon_restart_safety.py -q
 
-uv run pytest plugins/autorun/tests/ -q
+uv run --project plugins/autorun pytest plugins/autorun/tests/ -q
 ```
 
 Before and after the full suite, compare the production daemon PID and the

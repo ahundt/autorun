@@ -151,6 +151,30 @@ def test_readme_documents_custom_harness_grammar_and_values():
         assert flavor in readme
 
 
+def test_readme_skill_placement_matches_shared_skill_registry():
+    """The primary placement guide must name every shared-root harness."""
+    from autorun.platforms import PLATFORMS
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    placement = readme.split("#### Choosing where skills are installed", 1)[1].split(
+        "#### Bundled Skills", 1
+    )[0]
+    shared = {
+        platform.display_name
+        for platform in PLATFORMS.values()
+        if platform.loads_shared_agents_skills
+    }
+
+    for display_name in shared:
+        documented = {
+            "Codex CLI": "Codex",
+            "Legacy Gemini CLI": "legacy Gemini",
+        }.get(display_name, display_name)
+        assert documented in placement
+    assert "Command Code" not in placement
+    assert "`opencode`" in placement
+
+
 # Agent memory files are injected into model context repeatedly, so a stale
 # path or method name in them is expensive: it sends every future session to a
 # file or symbol that does not exist. A 2026-08-05 review found four such
@@ -246,6 +270,29 @@ def test_release_checklist_names_only_files_that_exist():
         "docs/version_update_checklist.md names paths that do not exist, so a "
         "release will skip them silently:\n  " + "\n  ".join(missing)
     )
+
+
+def test_public_install_guides_use_release_artifact_identities():
+    """The workspace root is not the installable autorun distribution, and
+    Claude registers the plugin as ``ar`` inside marketplace ``autorun``."""
+    documents = (
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "AGENTS.md",
+        PLUGIN_ROOT / "README.md",
+        PLUGIN_ROOT / "AGENTS.md",
+        PLUGIN_ROOT / "docs" / "INTEGRATION_GUIDE.md",
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in documents)
+
+    assert "plugin install https://github.com/ahundt/autorun.git" not in combined
+    assert "plugin install autorun@autorun" not in combined
+    assert "hooks/claude-hooks.json" not in combined
+
+    root_readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    artifact_readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+    for text in (root_readme, artifact_readme):
+        assert "#subdirectory=plugins/autorun" in text
+        assert "claude plugin install ar@autorun" in text
 
 
 def test_release_checklist_covers_every_file_carrying_the_version():

@@ -11,7 +11,6 @@ from __future__ import annotations
 import pytest
 
 from autorun.command_detection import (
-    BASHLEX_AVAILABLE,
     ExtractedCommands,
     ParsedPattern,
     command_matches_pattern,
@@ -96,7 +95,6 @@ def test_extract_commands(cmd: str, expected: set[str]) -> None:
     assert expected <= names
 
 
-@pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required")
 @pytest.mark.parametrize(
     "cmd",
     [

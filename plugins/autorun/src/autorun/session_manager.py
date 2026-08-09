@@ -251,9 +251,22 @@ class _JSONStore:
     def _load(self) -> dict:
         try:
             with open(self._state_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+                loaded = json.load(f)
+        except FileNotFoundError:
             return {}
+        except json.JSONDecodeError as exc:
+            raise SessionBackendError(
+                f"State file contains invalid JSON and was preserved: {self._state_file}: {exc}"
+            ) from exc
+        except (OSError, UnicodeError) as exc:
+            raise SessionBackendError(
+                f"Could not read state file {self._state_file}: {exc}"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise SessionBackendError(
+                f"State file root must be a JSON object and was preserved: {self._state_file}"
+            )
+        return loaded
 
     def _save(self):
         atomic_write_json(Path(self._state_file), self._data)
@@ -519,6 +532,100 @@ class SessionStateManager:
             return
         with self._store.session(session_id, timeout) as state:
             state.clear()
+
+    def clear_sessions_atomically(
+        self,
+        session_ids,
+        *,
+        related_session: str | None = None,
+        related_updater=None,
+        timeout: float = DEFAULT_SESSION_TIMEOUT,
+    ) -> None:
+        """Clear session roots and one related registry in one durable commit.
+
+        Task lifecycle stores parent work under per-session roots while the
+        child-return authority registry is global. Clearing those scopes with
+        separate ``clear_session`` calls can delete the parent and then fail
+        before deleting its receipts. SQLite uses one transaction here; JSON
+        uses one file lock and one atomic save. An updater exception or storage
+        failure therefore preserves every involved scope.
+        """
+        sessions = tuple(dict.fromkeys(str(value) for value in session_ids))
+        for session_id in sessions:
+            _validate_session_id(session_id)
+        if related_session is not None:
+            _validate_session_id(related_session)
+        if (related_session is None) != (related_updater is None):
+            raise ValueError(
+                "related_session and related_updater must be supplied together"
+            )
+        if not sessions and related_session is None:
+            return
+
+        if isinstance(self._store, SQLiteStore):
+            try:
+                with self._store.operation_scope(timeout) as owner:
+                    with self._store.write_transaction(owner) as conn:
+                        related_empty = False
+                        if related_session is not None:
+                            with self._store.session(
+                                related_session, timeout
+                            ) as related_state:
+                                related_updater(related_state)
+                                related_empty = len(related_state) == 0
+                        conn.executemany(
+                            "DELETE FROM sessions WHERE session = ?",
+                            ((session_id,) for session_id in sessions),
+                        )
+                        if related_empty:
+                            conn.execute(
+                                "DELETE FROM sessions WHERE session = ?",
+                                (related_session,),
+                            )
+            except sqlite3.Error as exc:
+                raise SessionBackendError(
+                    f"Could not clear sessions atomically: {exc}"
+                ) from exc
+            return
+
+        anchor = sessions[0] if sessions else related_session
+        with self._store.session(anchor, timeout):
+            for session_id in sessions:
+                with self._store.session(session_id, timeout) as state:
+                    state.clear()
+            if related_session is not None:
+                with self._store.session(related_session, timeout) as related_state:
+                    related_updater(related_state)
+
+    def list_sessions(
+        self,
+        *,
+        namespace: str | None = None,
+        timeout: float = DEFAULT_SESSION_TIMEOUT,
+    ) -> tuple[str, ...]:
+        """List durable session roots without exposing backend internals."""
+        if isinstance(self._store, SQLiteStore):
+            with self._store.operation_scope(timeout) as owner:
+                if namespace is None:
+                    rows = owner.connection.execute(
+                        "SELECT session FROM sessions ORDER BY session"
+                    ).fetchall()
+                else:
+                    rows = owner.connection.execute(
+                        "SELECT session FROM sessions WHERE namespace = ? "
+                        "ORDER BY session",
+                        (namespace,),
+                    ).fetchall()
+            return tuple(row[0] for row in rows)
+
+        with self._store.all_state(timeout=timeout) as state:
+            sessions = {str(key).split("/", 1)[0] for key in state}
+        if namespace is not None:
+            sessions = {
+                session for session in sessions
+                if _namespace_for(session) == namespace
+            }
+        return tuple(sorted(sessions))
 
     def clear_test_sessions_batch(self, session_ids):
         """Clear multiple test sessions in one save operation (O(1) disk writes).

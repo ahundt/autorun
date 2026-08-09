@@ -314,35 +314,15 @@ class TestDualPlatformResponse:
             ),
             (
                 "antigravity",
-                "UserPromptSubmit",
+                "BeforeModel",
                 {
-                    "continue": True,
-                    "stopReason": "",
-                    "suppressOutput": False,
-                    "systemMessage": "Blocked",
-                    "decision": "allow",
-                    "reason": "",
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreInvocation",
-                        "additionalContext": "Blocked",
-                    },
+                    "injectSteps": [{"ephemeralMessage": "Blocked"}],
                 },
             ),
             (
                 "antigravity",
                 "PostToolUse",
-                {
-                    "continue": True,
-                    "stopReason": "",
-                    "suppressOutput": False,
-                    "systemMessage": "Blocked",
-                    "hookSpecificOutput": {
-                        # Agy names tool-result hooks PostToolUse. PostInvocation
-                        # is its separate model-lifecycle event (AfterModel).
-                        "hookEventName": "PostToolUse",
-                        "additionalContext": "Blocked",
-                    },
-                },
+                {},
             ),
             (
                 "codex",
@@ -433,6 +413,8 @@ class TestDualPlatformResponse:
         response = EventContext("stop-allow", "Stop", cli_type=cli_type).respond("allow", "Reason")
         if cli_type == "qwen":
             assert response == {}
+        elif cli_type == "antigravity":
+            assert response == {"decision": "", "reason": "Reason"}
         else:
             assert response == {
                 "continue": True,
@@ -443,14 +425,20 @@ class TestDualPlatformResponse:
 
     @pytest.mark.parametrize("cli_type", HARNESSES)
     def test_session_start_matrix_exact(self, cli_type):
-        assert EventContext("start-matrix", "SessionStart", cli_type=cli_type).respond("allow", "Reason") == {
+        response = EventContext(
+            "start-matrix", "SessionStart", cli_type=cli_type
+        ).respond("allow", "Reason")
+        if cli_type == "antigravity":
+            assert response == {}
+            return
+        assert response == {
             "continue": True,
             "stopReason": "",
             "suppressOutput": False,
             "systemMessage": "Reason",
         }
 
-    @pytest.mark.parametrize("cli_type", ("claude", "gemini", "qwen", "antigravity"))
+    @pytest.mark.parametrize("cli_type", ("claude", "gemini", "qwen"))
     def test_context_channel_routing_preserves_pre_protocol_semantics(self, cli_type):
         response = EventContext("channel-matrix", "UserPromptSubmit", cli_type=cli_type).respond("allow", "Reason", to_human=False, to_ai="AI only")
         assert response.get("systemMessage") == "AI only"
@@ -468,7 +456,7 @@ class TestDualPlatformResponse:
     [
         ("gemini", "BeforeTool", "PreToolUse"),
         ("qwen", "PreToolUse", "PreToolUse"),
-        ("antigravity", "PreInvocation", "UserPromptSubmit"),
+        ("antigravity", "PreInvocation", "BeforeModel"),
         ("antigravity", "PostInvocation", "AfterModel"),
         ("codex", "Stop", "Stop"),
     ],

@@ -5,7 +5,7 @@ and MCP Server integration modes have been superseded by the daemon-based v0.7 a
 
 ## Current Integration Architecture (v0.7+)
 
-autorun operates as a Unix socket daemon that processes Claude Code hook events efficiently.
+autorun normally uses a local daemon to process Claude Code hook events.
 The integration path is:
 
 ```
@@ -15,8 +15,6 @@ Claude Code hook event
   → src/autorun/core.py     (AutorunDaemon; async dispatch)
   → src/autorun/plugins.py  (hook handlers: file policy, blocking, plan export)
 ```
-
-**Performance**: 1–5ms per hook event (daemon mode) vs 50–150ms (legacy direct mode).
 
 ## Integration Options
 
@@ -32,11 +30,10 @@ autorun --status
 autorun --restart-daemon
 ```
 
-The daemon handles all hook events (UserPromptSubmit, PreToolUse, PostToolUse, SessionStart,
-Stop, SubagentStop) through `hooks/claude-hooks.json` for Claude Code and `hooks/hooks.json`
-for Gemini CLI.
+The daemon handles Claude events declared in `hooks/hooks.json`. Gemini-family
+extensions receive their own generated hook manifests during installation.
 
-**When to use**: All production usage. Fastest, most reliable.
+**When to use**: Normal production usage.
 
 ### 2. Direct Mode (No Daemon — Debugging)
 
@@ -55,8 +52,7 @@ echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/ar:st", "session_id": 
 AUTORUN_USE_DAEMON=0 autorun
 ```
 
-**When to use**: Debugging hook logic, systems without Unix socket support.
-**Performance**: 50–150ms per event (acceptable for debugging; use daemon in production).
+**When to use**: Debugging hook logic or isolating daemon problems.
 
 ### 3. Hook Integration (Slash Commands via .md Files)
 
@@ -94,18 +90,18 @@ and `_make_block_op()` factory patterns.
 
 | Filename | CLI | Notes |
 |----------|-----|-------|
-| `hooks/claude-hooks.json` | Claude Code | Referenced by `plugin.json` |
-| `hooks/hooks.json` | Gemini CLI | **Filename required by Gemini — cannot rename** |
+| `hooks/hooks.json` | Claude Code | Referenced by `plugin.json` |
+| generated extension `hooks/hooks.json` | Gemini-family CLIs | Published by the installer |
 
 ## Testing
 
 ```bash
 # Run full test suite:
-uv run pytest plugins/autorun/tests/ -v --tb=short
+uv run --project plugins/autorun pytest plugins/autorun/tests/ -v --tb=short
 
 # Test specific hook behavior:
-uv run pytest plugins/autorun/tests/test_core.py -v
-uv run pytest plugins/autorun/tests/test_integrations.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_core.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_integrations.py -v
 ```
 
 ## Bug #4669 Workaround (Claude Code v1.0.62+)

@@ -16,37 +16,12 @@
 """
 Centralized error handling utilities for autorun
 Follows DRY principles - use this for all import/module structure errors
-Compatible with Python 2.7+ and Python 3.x
+Requires Python 3.10 or newer.
 """
 
+import subprocess
 import sys
-
-# Python 2/3 compatibility
-import os
-try:
-    # Python 3
-    from pathlib import Path
-    import subprocess
-except ImportError:
-    # Python 2.7 fallback
-    try:
-        from pathlib2 import Path
-        import subprocess
-    except ImportError:
-        # If pathlib2 not available, create simple Path fallback
-        class Path:
-            def __init__(self, path):
-                self.path = str(path)
-            def exists(self):
-                return os.path.exists(self.path)
-            def parent(self):
-                return Path(os.path.dirname(self.path))
-            def __str__(self):
-                return self.path
-            def __truediv__(self, other):
-                return Path(os.path.join(self.path, str(other)))
-            def __div__(self, other):  # Python 2 division
-                return Path(os.path.join(self.path, str(other)))
+from pathlib import Path
 
 
 def show_comprehensive_uv_error(error_type="IMPORT ERROR", error_message="Module structure issue detected"):
@@ -75,35 +50,24 @@ def show_comprehensive_uv_error(error_type="IMPORT ERROR", error_message="Module
     print("   # If UV is not installed, install it:")
     print("   curl -LsSf https://astral.sh/uv/install.sh | sh")
     print()
-    print("2. CREATE AND ACTIVATE UV VIRTUAL ENVIRONMENT:")
-    print("   # Create virtual environment (Python 3.10+ preferred for full compatibility):")
-    print("   uv venv")
-    print("   # Or specify Python version (3.10+ recommended):")
-    print("   uv venv --python 3.10")
-    print("   # Activate the environment:")
-    print("   source .venv/bin/activate")
-    print("   # Install dependencies:")
-    print("   uv sync --extra claude-code")
+    print("2. INSTALL THE PYTHON TOOL:")
+    print("   uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'")
     print()
-    print("3. INSTALL PLUGIN USING UV:")
-    print("   # Method A: Install via UV (recommended)")
-    print("   uv run autorun install")
-    print("   # Method B: Manual installation with activated environment")
-    print("   source .venv/bin/activate")
-    print("   python src/autorun/install.py install")
+    print("3. PUBLISH AUTORUN TO DETECTED HARNESSES:")
+    print("   autorun --install")
     print()
     print("4. CHECK INSTALLATION:")
     print("   # Verify plugin is working:")
-    print("   uv run autorun check")
-    print("   # Test plugin functionality:")
-    print("   echo '{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"/afst\", \"session_id\": \"test\"}' | uv run python src/autorun/main.py")
+    print("   autorun --status")
     print()
     print("🔧 ALTERNATIVE SOLUTIONS:")
-    print("5. INSTALL FROM GITHUB (production):")
-    print("   /plugin install https://github.com/ahundt/autorun.git")
+    print("5. INSTALL THROUGH CLAUDE CODE INSTEAD:")
+    print("   claude plugin marketplace add https://github.com/ahundt/autorun.git")
+    print("   claude plugin install ar@autorun")
     print()
-    print("6. USE EXPLICIT PYTHON PATH (development):")
-    print("   PYTHONPATH=/path/to/autorun/src python3 plugin.py")
+    print("6. RUN FROM A SOURCE CHECKOUT (development):")
+    print("   uv sync --project plugins/autorun")
+    print("   uv run --project plugins/autorun autorun --install")
     print()
     print("=" * 70)
 
@@ -124,34 +88,20 @@ def check_uv_environment():
     }
 
     try:
-        # Check if UV is installed - Python 2/3 compatible
-        if hasattr(subprocess, 'run'):  # Python 3.5+
-            result = subprocess.run(
-                ["uv", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            uv_output = result.stdout
-            returncode = result.returncode
-        else:  # Python 2.7 fallback
-            import subprocess as sp
-            result = sp.Popen(["uv", "--version"], stdout=sp.PIPE, stderr=sp.PIPE)
-            uv_output, error = result.communicate()
-            returncode = result.returncode
-            if isinstance(uv_output, bytes):
-                uv_output = uv_output.decode('utf-8', errors='ignore')
+        result = subprocess.run(
+            ["uv", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        uv_output = result.stdout
+        returncode = result.returncode
 
         if returncode == 0:
             details['uv_installed'] = True
             details['uv_version'] = uv_output.strip()
 
-        # Check if we're in a UV project - Python 2/3 compatible
-        try:
-            current_dir = Path.cwd()
-        except AttributeError:
-            # Python 2.7 fallback
-            current_dir = Path(os.getcwd())
+        current_dir = Path.cwd()
 
         while str(current_dir) != str(current_dir.parent):
             uv_toml = current_dir / "pyproject.toml"
@@ -164,24 +114,20 @@ def check_uv_environment():
                 if venv_dir.exists():
                     details['venv_exists'] = True
 
-                    # Check if autorun commands are available - Python 2/3 compatible
                     try:
-                        if hasattr(subprocess, 'run'):  # Python 3.5+
-                            autorun_result = subprocess.run(
-                                ["uv", "run", "which", "autorun"],
-                                capture_output=True,
-                                text=True,
-                                timeout=5
-                            )
-                            if autorun_result.returncode == 0:
-                                details['autorun_available'] = True
-                        else:  # Python 2.7 fallback
-                            import subprocess as sp
-                            autorun_result = sp.Popen(["uv", "run", "which", "autorun"],
-                                                       stdout=sp.PIPE, stderr=sp.PIPE)
-                            output, error = autorun_result.communicate()
-                            if autorun_result.returncode == 0:
-                                details['autorun_available'] = True
+                        autorun_result = subprocess.run(
+                            [
+                                "uv",
+                                "run",
+                                "python",
+                                "-c",
+                                "import shutil,sys;sys.exit(0 if shutil.which('autorun') else 1)",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=5,
+                        )
+                        details['autorun_available'] = autorun_result.returncode == 0
                     except (OSError, FileNotFoundError):
                         pass
                 break
@@ -266,6 +212,6 @@ def show_uv_environment_status():
             print("   uv venv --python 3.10")
             print("   source .venv/bin/activate")
         if not details['dependencies_synced']:
-            print("   uv sync --extra claude-code")
+            print("   uv sync")
 
     return is_configured

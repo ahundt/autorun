@@ -99,6 +99,22 @@ def bounds(text: str, block: Block) -> tuple[int, int] | None:
     return (opened, closed) if opened != -1 and closed != -1 else None
 
 
+def validate(target: Path, block: Block) -> None:
+    """Reject ambiguous ownership markers before an installer writes anything."""
+    if not target.is_file():
+        return
+    text = target.read_text(encoding="utf-8")
+    opened = text.count(block.start)
+    closed = text.count(block.end)
+    if opened == closed == 0:
+        return
+    if opened != 1 or closed != 1 or text.find(block.end) < text.find(block.start):
+        raise ValueError(
+            f"{target} has a malformed [{block.slug}] autorun region; "
+            "repair its sentinel pair, then retry"
+        )
+
+
 def _rendered(text: str, block: Block, body: str) -> str:
     """The file's new contents with ``body`` in the region, or removed if empty.
 

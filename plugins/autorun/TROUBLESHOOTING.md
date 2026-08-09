@@ -63,7 +63,7 @@ This guide helps resolve common issues with autorun hooks in both Claude Code an
    **Fix**: Reinstall extension
    ```bash
    cd /path/to/autorun
-   uv run python -m plugins.autorun.src.autorun.install --install --gemini-only --force
+   uv run --project plugins/autorun python -m autorun --install --gemini-only --force
    ```
 
 4. **Check hooks.json Exists**
@@ -98,7 +98,7 @@ This guide helps resolve common issues with autorun hooks in both Claude Code an
    **Fix**: Reinstall plugin
    ```bash
    cd /path/to/autorun
-   uv run python -m plugins.autorun.src.autorun.install --install --claude-only --force
+   uv run --project plugins/autorun python -m autorun --install --claude-only --force
    ```
 
 2. **Check Hook File Format**
@@ -119,7 +119,7 @@ This guide helps resolve common issues with autorun hooks in both Claude Code an
 
    **Fix**: Restart daemon
    ```bash
-   uv run python plugins/autorun/scripts/restart_daemon.py
+   uv run --project plugins/autorun python -m autorun --restart-daemon
    ```
 
 ---
@@ -248,13 +248,13 @@ chmod +x ~/.claude/plugins/cache/autorun/autorun/*/hooks/hook_entry.py
    Gemini:
    ```bash
    cd ~/.claude/autorun
-   uv run python -m plugins.autorun.src.autorun.install --install --gemini-only --force
+   uv run --project plugins/autorun python -m autorun --install --gemini-only --force
    ```
 
    Claude Code:
    ```bash
    cd ~/.claude/autorun
-   uv run python -m plugins.autorun.src.autorun.install --install --claude-only --force
+   uv run --project plugins/autorun python -m autorun --install --claude-only --force
    ```
 
 ---
@@ -344,7 +344,7 @@ When testing in new directory, Gemini shows trust prompt. This restarts session.
 
 **Fix**: Restart daemon
 ```bash
-uv run python plugins/autorun/scripts/restart_daemon.py
+uv run --project plugins/autorun python -m autorun --restart-daemon
 ```
 
 Or use the `/ar:restart-daemon` command in Claude Code session

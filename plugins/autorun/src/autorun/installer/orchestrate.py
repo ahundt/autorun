@@ -35,13 +35,14 @@ registration command. A preview spawns nothing.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from . import discovery, registration, skills, status, steps, teardown
-from ..platforms import ExtensionSkills, PluginPackageSkills
-from .fs import Verdict
+from . import claude, codex, discovery, extension, memory, registration, skills, status, steps, teardown
+from ..platforms import PLATFORMS, ExtensionSkills, PluginPackageSkills
+from .fs import Verdict, owns, preserved_paths, read_marker, record_tree
 from .runtime import Outcome, Runner, _spawn
 from .traversal import Context, Mode, retirements, run, targets
 
@@ -96,6 +97,45 @@ def _values(root: Path, plugin: str, market: str, extension: Path | None) -> dic
     }
 
 
+def _preflight_user_files(
+    harnesses: Sequence[object],
+    ctx: Context,
+    marketplaces: Sequence[steps.Marketplace],
+    *,
+    removing: bool,
+) -> tuple[status.Finding, ...]:
+    """Validate every shared user file before the first durable mutation."""
+    failures: list[status.Finding] = []
+
+    def check(label: str, action) -> None:
+        try:
+            action()
+        except (OSError, ValueError) as error:
+            failures.append(
+                status.Finding(
+                    "installer preflight",
+                    status.Level.BROKEN,
+                    f"{label}: {error}",
+                    "repair the user-owned file, then retry",
+                )
+            )
+
+    for harness in harnesses:
+        for region in steps.regions_for(harness, ctx, removing=removing):
+            check(region.describe(), lambda region=region: memory.validate(region.path, region.block))
+        for hooks in steps.hooks_for(harness, ctx, removing=removing):
+            check(hooks.describe(), lambda hooks=hooks: codex.validate_hooks(hooks.path))
+    for marketplace in marketplaces:
+        expected = None if removing else marketplace.entry
+        check(
+            marketplace.describe(),
+            lambda marketplace=marketplace, expected=expected: codex.validate_marketplace(
+                marketplace.path, expected
+            ),
+        )
+    return tuple(failures)
+
+
 def perform(
     mode: Mode,
     *,
@@ -121,6 +161,9 @@ def perform(
     from ..platforms import PLATFORMS
 
     resolved = dict(settings or {})
+    resolved["_available_binaries"] = (
+        tuple(available) if available is not None else None
+    )
     codex_marketplace = str(resolved.get("codex_plugin_marketplace", "personal"))
     resolved.setdefault(
         "_registration_variants", {"codex": f"codex:{codex_marketplace}"}
@@ -209,6 +252,16 @@ def perform(
                 harness, staged, removing=mode is Mode.UNINSTALL
             )
         )
+        findings.extend(
+            _preflight_user_files(
+                selected,
+                staged,
+                marketplaces,
+                removing=mode is Mode.UNINSTALL,
+            )
+        )
+        if any(finding.level is status.Level.BROKEN for finding in findings):
+            return Result(mode, findings=tuple(findings), missing=missing)
         # Uninstall tells the harness first: removing the files under a
         # registration leaves the harness caching a path that no longer exists.
         if mode is Mode.UNINSTALL:
@@ -218,6 +271,13 @@ def perform(
                     removing=True, run=run_command, available=available,
                 )
             )
+            if any(not outcome.ok for outcome in registrations):
+                return Result(
+                    mode,
+                    registrations=tuple(registrations),
+                    findings=tuple(findings),
+                    missing=(),
+                )
             try:
                 for harness in selected:
                     notes.extend(steps.apply_hooks(
@@ -234,8 +294,24 @@ def perform(
                     findings=tuple(findings), missing=(),
                 )
 
-        decisions = run(paired, staged, mode)
+        materializations = tuple(
+            steps.extension_materialization_intents(selected, staged)
+        )
+        decisions = []
+        if mode is Mode.UNINSTALL:
+            decisions.extend(run((), staged, mode, extra=materializations))
+        decisions.extend(run(paired, staged, mode))
+        if mode is not Mode.UNINSTALL:
+            decisions.extend(run((), staged, mode, extra=materializations))
         claimed = [decision.target for decision in decisions]
+        if mode is not Mode.UNINSTALL:
+            # A live native CLI owns these links/copies, but retirement still
+            # needs to know they are current. Otherwise a healthy copied
+            # extension is classified as an orphan and deleted before the CLI
+            # gets its registration call.
+            claimed.extend(
+                steps.extension_materialization_targets(selected, staged)
+            )
         stale = retirements(
             _config_roots(selected, staged),
             () if mode is Mode.UNINSTALL else claimed,
@@ -349,39 +425,185 @@ def _registrations(
                 if isinstance(staged, Mapping) and plugin in staged
             }
         for plugin in registration_plugins:
-            values = _values(
-                root, plugin, registration_market,
-                staged.get(plugin) if isinstance(staged, Mapping) else None,
+            extension_target = (
+                extension.extension_dir(ctx, platform, plugin)
+                if getattr(platform, "extensions_subdir", "")
+                else None
             )
-            if ctx.force and not removing:
+            extension_source = (
+                extension.registration_source_dir(ctx, name, plugin)
+                if extension_target is not None
+                else None
+            )
+            target_present = bool(
+                extension_target is not None
+                and (extension_target.exists() or extension_target.is_symlink())
+            )
+            registration_owned = (
+                _registration_owned(
+                    platform,
+                    plugin,
+                    registration_market,
+                    named=plugins,
+                    ctx=ctx,
+                )
+                if target_present or removing
+                else False
+            )
+            if removing and not registration_owned:
+                continue
+            if not removing and target_present and not registration_owned:
+                # A same-name native extension with no exact marker/receipt is
+                # the user's. Force never broadens ownership.
+                continue
+            values = _values(
+                root,
+                plugin,
+                registration_market,
+                extension_source or (
+                    staged.get(plugin) if isinstance(staged, Mapping) else None
+                ),
+            )
+            needs_reinstall = bool(
+                not removing
+                and target_present
+                and extension_source is not None
+                and not extension.materialization_tracks_source(
+                    extension_target, extension_source
+                )
+                and not extension.materialization_matches_source(
+                    extension_target, extension_source
+                )
+            )
+            force_registration = ctx.force or needs_reinstall
+            allow_fallback = flavor != "antigravity" or _registration_owned(
+                PLATFORMS["gemini"],
+                plugin,
+                registration_market,
+                named=plugins,
+                ctx=ctx,
+            )
+            rollback_paths: list[Path] = []
+            if force_registration and target_present and registration_owned:
+                rollback_paths.append(extension_target)
+                if flavor == "antigravity":
+                    base = discovery.config_dir(platform, home=ctx.home)
+                    if base is not None:
+                        rollback_paths.append(base / "import_manifest.json")
+            with preserved_paths(rollback_paths) as commit_registration:
+                if (
+                    force_registration
+                    and not removing
+                    and (registration_owned or not target_present)
+                ):
+                    if isinstance(custom_entry, registration.Registration):
+                        withdrawn = registration.withdraw_entry(
+                            custom_entry,
+                            values,
+                            run=run,
+                            available=available,
+                            label=name,
+                        )
+                    else:
+                        withdrawn = registration.withdraw(
+                            registration_name,
+                            values,
+                            run=run,
+                            available=available,
+                        )
+                    done.extend(withdrawn)
+                    if any(not outcome.ok for outcome in withdrawn):
+                        continue
                 if isinstance(custom_entry, registration.Registration):
-                    done.extend(registration.withdraw_entry(
-                        custom_entry, values, run=run, available=available, label=name
-                    ))
+                    if removing:
+                        outcomes = registration.withdraw_entry(
+                            custom_entry,
+                            values,
+                            run=run,
+                            available=available,
+                            label=name,
+                        )
+                    else:
+                        outcomes = registration.register_entry(
+                            custom_entry,
+                            values,
+                            run=run,
+                            available=available,
+                            label=name,
+                            force=force_registration,
+                            allow_fallback=allow_fallback,
+                        )
                 else:
-                    done.extend(registration.withdraw(
-                        registration_name, values, run=run, available=available
-                    ))
-            if isinstance(custom_entry, registration.Registration):
-                if removing:
-                    done.extend(registration.withdraw_entry(
-                        custom_entry, values, run=run, available=available, label=name
-                    ))
-                else:
-                    done.extend(registration.register_entry(
-                        custom_entry, values, run=run, available=available,
-                        label=name, force=ctx.force,
-                    ))
-            else:
-                if removing:
-                    done.extend(registration.withdraw(
-                        registration_name, values, run=run, available=available
-                    ))
-                else:
-                    done.extend(registration.register(
-                        registration_name, values, run=run, available=available,
-                        force=ctx.force,
-                    ))
+                    if removing:
+                        outcomes = registration.withdraw(
+                            registration_name,
+                            values,
+                            run=run,
+                            available=available,
+                        )
+                    else:
+                        outcomes = registration.register(
+                            registration_name,
+                            values,
+                            run=run,
+                            available=available,
+                            force=force_registration,
+                            allow_fallback=allow_fallback,
+                        )
+                done.extend(outcomes)
+                if outcomes and all(outcome.ok for outcome in outcomes):
+                    commit_registration()
+                used_import_fallback = any(
+                    outcome.step.endswith("native registration fallback")
+                    for outcome in outcomes
+                )
+                if (
+                    not removing
+                    and outcomes
+                    and all(outcome.ok for outcome in outcomes)
+                    and extension_target is not None
+                    and extension_source is not None
+                    and (
+                        extension.native_receipt_names_source(
+                            ctx,
+                            platform,
+                            plugin,
+                            extension_target,
+                            extension_source,
+                        )
+                        or (
+                            used_import_fallback
+                            and extension.antigravity_receipt_names_plugin(
+                                ctx, platform, plugin
+                            )
+                        )
+                    )
+                ):
+                    record_tree(
+                        extension_target,
+                        plugin=plugin,
+                        ownership_proof=(
+                            lambda installed,
+                            selected=platform,
+                            plugin_name=plugin,
+                            expected=extension_source:
+                            (
+                                extension.native_receipt_names_source(
+                                    ctx,
+                                    selected,
+                                    plugin_name,
+                                    installed,
+                                    expected,
+                                )
+                                or (
+                                    used_import_fallback
+                                    and extension.antigravity_receipt_names_plugin(
+                                        ctx, selected, plugin_name
+                                    )
+                                )
+                            )
+                        ),
+                    )
         # Companions are separate products. Installing one when requested does
         # not authorize removing it as a side effect of uninstalling autorun.
         wanted = [] if removing else _companions_wanted(ctx)
@@ -396,6 +618,86 @@ def _registrations(
             ).values():
                 done.extend(outcomes)
     return done
+
+
+def _registration_owned(
+    platform: object,
+    plugin: str,
+    market: str,
+    *,
+    named: Mapping[str, Path],
+    ctx: Context,
+) -> bool:
+    """Whether this home positively contains this harness registration.
+
+    Executable presence is not ownership: a user can have every supported CLI
+    without ever installing autorun.  Native uninstallers are allowed only
+    when a cache, owned plugin/extension tree, hook entry, or marketplace entry
+    proves this exact plugin was installed in the redirected home.
+    """
+    flavor = (
+        getattr(platform, "install_flavor", "")
+        or getattr(platform, "name", "")
+    )
+    if flavor == "claude":
+        return bool(
+            claude.installed_versions(
+                platform,
+                market=market,
+                plugin=plugin,
+                home=ctx.home,
+            )
+        )
+    if flavor == "codex":
+        target = discovery.codex_plugin_source(plugin, home=ctx.home)
+        marker = read_marker(target)
+        if marker is not None and owns(marker, plugin):
+            return True
+        base = discovery.config_dir(platform, home=ctx.home)
+        hooks_path = base / "hooks.json" if base is not None else None
+        if hooks_path is not None and hooks_path.is_file():
+            try:
+                document = json.loads(hooks_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                document = {}
+            if any(
+                codex.is_ours(entry)
+                for entries in document.get("hooks", {}).values()
+                if isinstance(entries, list)
+                for entry in entries
+            ):
+                return True
+        return False
+    if getattr(platform, "extensions_subdir", ""):
+        base = discovery.extensions_dir(platform, home=ctx.home)
+        source = named.get(plugin)
+        if base is None or source is None:
+            return False
+        durable = extension.registration_source_dir(
+            ctx, getattr(platform, "name", ""), plugin
+        )
+        template = (
+            discovery.plugin_runtime_root(source) / steps.GEMINI_TEMPLATE_SUBDIR
+        )
+        return extension.materialization_unchanged(
+            base / plugin,
+            durable,
+            plugin=plugin,
+            legacy_sources=(template,),
+            receipt_proof=lambda installed: (
+                extension.native_receipt_names_source(
+                    ctx,
+                    platform,
+                    plugin,
+                    installed,
+                    durable,
+                )
+                or extension.receipt_names_any_source(
+                    installed, (durable, template)
+                )
+            ),
+        )
+    return False
 
 
 def _companions_wanted(ctx: Context) -> list[str]:
@@ -417,6 +719,12 @@ def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
         ) == "codex":
             found.append(discovery.codex_plugin_source(home=ctx.home).parent)
     found.append(discovery.shared_root(home=ctx.home).parent)
+    source_root = ctx.settings.get("_extension_source_root")
+    found.append(
+        Path(str(source_root))
+        if source_root
+        else ctx.home / ".autorun" / "installer" / "extension-sources"
+    )
     return found
 
 

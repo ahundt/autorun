@@ -32,8 +32,7 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 
 def _hook_script() -> Path:
     script = PLUGIN_ROOT / "hooks" / "hook_entry.py"
-    if not script.exists():
-        pytest.skip(f"hook_entry.py not found at {script}")
+    assert script.is_file(), f"required hook entrypoint is missing: {script}"
     return script
 
 
