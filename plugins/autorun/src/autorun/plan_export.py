@@ -205,16 +205,67 @@ _PLAN_EXPORT_TOOLS = frozenset(WRITE_TOOLS | EDIT_TOOLS | PLAN_TOOLS)
 # Global key for cross-session state (survives Option 1 fresh context)
 GLOBAL_SESSION_ID = "__plan_export__"
 
-# Default config for compatibility
+@dataclass(frozen=True)
+class NotesComponent:
+    """One place autorun writes under the notes tree.
+
+    Each component owns a destination and an on/off, and nothing else knows a
+    component exists: the command parser, the status text and the config
+    accessors all read this table, so adding one is a row rather than an edit
+    in four places. ``enabled_key`` and ``dir_key`` are the names used in the
+    config file, which is why they keep their pre-table spellings.
+    """
+
+    name: str
+    enabled_key: str
+    dir_key: str
+    default_enabled: bool
+    default_dir: str
+    label: str
+
+
+NOTES_COMPONENTS: tuple[NotesComponent, ...] = (
+    NotesComponent(
+        name="accepted",
+        enabled_key="export_accepted",
+        dir_key="output_plan_dir",
+        default_enabled=True,
+        default_dir="notes",
+        label="Accepted plans",
+    ),
+    NotesComponent(
+        name="rejected",
+        enabled_key="export_rejected",
+        dir_key="output_rejected_plan_dir",
+        default_enabled=True,
+        default_dir="notes/rejected",
+        label="Plans not accepted",
+    ),
+)
+
+_NOTES_COMPONENTS_BY_NAME = {c.name: c for c in NOTES_COMPONENTS}
+
+
+def _component_name(rejected: bool) -> str:
+    """Map the `rejected` flag threaded through export onto a component name.
+
+    The flag predates the table and is still the argument every caller passes,
+    so this is the single place the two spellings meet.
+    """
+    return "rejected" if rejected else "accepted"
+
+
+# Default config for compatibility. The per-component entries are generated
+# from NOTES_COMPONENTS so a new component cannot be added with a default here
+# that disagrees with the table.
 DEFAULT_CONFIG = {
     "enabled": True,
-    "output_plan_dir": "notes",
     "filename_pattern": "{datetime}_{name}",
     "extension": ".md",
-    "export_rejected": True,
-    "output_rejected_plan_dir": "notes/rejected",
     "debug_logging": False,
     "notify_claude": True,
+    **{c.enabled_key: c.default_enabled for c in NOTES_COMPONENTS},
+    **{c.dir_key: c.default_dir for c in NOTES_COMPONENTS},
 }
 
 def _claude_config_home() -> Path:
@@ -397,6 +448,17 @@ def record_export(plan_path, dest_path) -> None:
         state["tracking"] = tracking
 
 
+
+
+def notes_component(name: str) -> NotesComponent:
+    """Return the component called ``name``, or raise KeyError naming it."""
+    try:
+        return _NOTES_COMPONENTS_BY_NAME[name]
+    except KeyError:
+        known = ", ".join(sorted(_NOTES_COMPONENTS_BY_NAME))
+        raise KeyError(f"unknown notes component {name!r}; known: {known}") from None
+
+
 @dataclass
 class PlanExportConfig:
     """Configuration with all current plan_export.py capabilities."""
@@ -404,10 +466,27 @@ class PlanExportConfig:
     output_plan_dir: str = "notes"
     filename_pattern: str = "{datetime}_{name}"
     extension: str = ".md"
+    export_accepted: bool = True
     export_rejected: bool = True
     output_rejected_plan_dir: str = "notes/rejected"
     debug_logging: bool = False
     notify_claude: bool = True
+
+    def component_enabled(self, name: str) -> bool:
+        """Whether this component alone is switched on, ignoring the master."""
+        return bool(getattr(self, notes_component(name).enabled_key))
+
+    def component_dir(self, name: str) -> str:
+        """Where this component writes, relative to the project directory."""
+        return str(getattr(self, notes_component(name).dir_key))
+
+    def component_active(self, name: str) -> bool:
+        """Whether this component will actually write.
+
+        Both switches must allow it: ``enabled`` gates the feature for the
+        project, and the component's own flag gates that one destination.
+        """
+        return bool(self.enabled) and self.component_enabled(name)
 
     @classmethod
     def load(cls, project_dir: "Path | str | None" = None) -> "PlanExportConfig":
@@ -473,18 +552,24 @@ def _ctx_project_dir(ctx) -> "Path | None":
     return Path(cwd) if cwd else None
 
 
+_NOTES_COMPONENT_NAMES = "|".join(c.name for c in NOTES_COMPONENTS)
+
+# Built from NOTES_COMPONENTS so the help cannot describe a different set of
+# components than the parser accepts.
 _PLAN_EXPORT_USAGE = (
     "Usage: /ar:pe [on|off|globalon|globaloff|dir <path>|pattern <template>"
-    "|rejected [on|off|dir <path>]|reset]\n"
-    "  (no argument)         show status\n"
+    f"|<component> [on|off|dir <path>]|reset]\n"
+    "  (no argument)         show status, including each component\n"
     "  on | off              pin plan export for this project\n"
     "  globalon | globaloff  set the default for every project\n"
-    "  dir <path>            set the export directory (template variables allowed)\n"
+    "  dir <path>            set the accepted-plan directory (templates allowed)\n"
     "  pattern <template>    set the filename pattern\n"
-    "  rejected              toggle rejected-plan export; `rejected on|off` sets it,\n"
-    "                        `rejected dir <path>` sets its directory\n"
+    f"  <component>           one of: {_NOTES_COMPONENT_NAMES}\n"
+    "                        bare name toggles it; `<component> on|off` sets it,\n"
+    "                        `<component> dir <path>` sets where it writes\n"
     "  reset                 restore defaults (also clears project pins)\n"
-    "  A project pin beats the global default."
+    "  A project pin beats the global default; a component writes only when\n"
+    "  both plan export and that component are on."
 )
 
 
@@ -551,23 +636,31 @@ def plan_export_command(
             return render(_PLAN_EXPORT_USAGE)
         return save_setting("filename_pattern", value, f"Plan filename pattern: {value}")
 
-    if sub == "rejected":
+    # One branch serves every notes component. `rejected on|off|dir <path>`
+    # keeps its former spelling because "rejected" is a component name, and
+    # every other component gets the same three forms for free.
+    if sub in _NOTES_COMPONENTS_BY_NAME:
+        component = notes_component(sub)
         second = tokens[1].lower() if len(tokens) > 1 else ""
         if second == "dir":
             value = args.split(None, 2)[2].strip() if len(tokens) > 2 else ""
             if not value:
                 return render(_PLAN_EXPORT_USAGE)
             return save_setting(
-                "output_rejected_plan_dir", value, f"Rejected-plan directory: {value}"
+                component.dir_key, value, f"{component.label} directory: {value}"
             )
         if second in ("on", "off"):
             enabled = second == "on"
         elif second == "":
-            enabled = not load_data().get("export_rejected", True)
+            enabled = not load_data().get(
+                component.enabled_key, component.default_enabled
+            )
         else:
             return render(_PLAN_EXPORT_USAGE)
         return save_setting(
-            "export_rejected", enabled, f"Rejected-plan export {'on' if enabled else 'off'}."
+            component.enabled_key,
+            enabled,
+            f"{component.label} export {'on' if enabled else 'off'}.",
         )
 
     if sub == "reset":
@@ -618,6 +711,16 @@ def plan_export_command(
         ]
         if pin is not None:
             lines.append(f"  This project ({project_dir}): {'on' if pin else 'off'}")
+        # Read the component table rather than naming components here, so a new
+        # one shows up in status without touching this function.
+        for component in NOTES_COMPONENTS:
+            state = (
+                "on"
+                if data.get(component.enabled_key, component.default_enabled)
+                else "off"
+            )
+            where = data.get(component.dir_key, component.default_dir)
+            lines.append(f"  {component.name}: {state} -> {where}")
         lines.append(f"  {_PLAN_EXPORT_CONFIG_HINT}")
         return render("\n".join(lines))
 
@@ -937,8 +1040,7 @@ class PlanExport:
         An existing file is therefore never overwritten: if the name is
         taken, the next suffix is tried.
         """
-        dir_key = "output_rejected_plan_dir" if rejected else "output_plan_dir"
-        output_dir = getattr(self.config, dir_key)
+        output_dir = self.config.component_dir(_component_name(rejected))
         useful_name = self.extract_useful_name(plan_path)
 
         expanded_dir = self.expand_template(output_dir, plan_path, useful_name)
@@ -1122,6 +1224,15 @@ class PlanExport:
             rejected: Export to rejected directory
             force: Skip content-hash dedup check (for explicit re-export)
         """
+        component = _component_name(rejected)
+        # One gate for every component. Without it a component's off switch
+        # only changed a stored flag while the export still wrote.
+        if not self.config.component_active(component):
+            return {
+                "success": False,
+                "skipped": True,
+                "error": f"{component} plan export is switched off",
+            }
         try:
             content_hash = get_content_hash(plan_path)
             if not content_hash:
@@ -1228,10 +1339,13 @@ class PlanExport:
           - permission_mode changed to accepted mode → promote backup to notes/
           - permission_mode unchanged/unaccepted → finalize_backup() records in tracking
 
-        Skips if config.export_rejected=False (user opted out of notes/rejected/ entirely).
+        Skips when the rejected component is not active, either because the
+        user switched it off or because plan export is off for this project.
+        Reading component_active rather than the raw flag is what makes the
+        master switch reach this path too.
         Returns the backup file path string, or None on failure/skip.
         """
-        if not self.config.export_rejected:
+        if not self.config.component_active("rejected"):
             return None
         try:
             # Reserved and written before any state is touched, for the same

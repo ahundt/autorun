@@ -24,8 +24,9 @@ os.environ.setdefault(
 )
 
 from autorun import plan_export as pe_mod  # noqa: E402
-from autorun.core import app  # noqa: E402
+from autorun.core import EventContext, ThreadSafeDB, app  # noqa: E402
 from autorun.plan_export import (  # noqa: E402
+    NOTES_COMPONENTS,
     PlanExportConfig,
     plan_export_command,
     with_plan_export_config_hint,
@@ -201,6 +202,153 @@ class TestSettingsSubcommands:
             PlanExportConfig.load(project).output_rejected_plan_dir
             == "archive/rejected"
         )
+
+class TestComponentGatingActuallyStopsWrites:
+    """A component switched off must not write, not merely record a flag."""
+
+    def _exporter(self, project, marker="shared"):
+        """Build an exporter rooted at `project`, matching test_plan_export_class.
+
+        `marker` keeps each test's plan content distinct: export dedups on the
+        content hash, so identical bodies make a later test skip the write and
+        assert against a destination an earlier test already claimed.
+        """
+        plan = project / "plan.md"
+        plan.write_text(f"# Plan\n\nbody {marker}\n", encoding="utf-8")
+        ctx = EventContext(
+            session_id="notes-component-test",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project)},
+            store=ThreadSafeDB(),
+        )
+        return pe_mod.PlanExport(ctx, PlanExportConfig.load(project)), plan
+
+    def test_accepted_off_stops_the_accepted_export(
+        self, config_path, project
+    ):
+        plan_export_command("accepted off", project, "claude")
+        exporter, plan = self._exporter(project, "accepted-off")
+        result = exporter.export(plan, rejected=False)
+        assert not result.get("success"), result
+        assert not (project / "notes").exists()
+
+    def test_accepted_on_still_exports(self, config_path, project):
+        exporter, plan = self._exporter(project, "accepted-on")
+        result = exporter.export(plan, rejected=False)
+        assert result.get("success"), result
+
+    def test_rejected_off_stops_the_rejected_export(
+        self, config_path, project
+    ):
+        plan_export_command("rejected off", project, "claude")
+        exporter, plan = self._exporter(project, "rejected-off")
+        result = exporter.export(plan, rejected=True)
+        assert not result.get("success"), result
+
+    def test_a_component_writes_to_its_configured_destination(
+        self, config_path, project
+    ):
+        plan_export_command("accepted dir archive/plans", project, "claude")
+        exporter, plan = self._exporter(project, "custom-dir")
+        result = exporter.export(plan, rejected=False)
+        assert result.get("success"), result
+        assert (project / "archive" / "plans").is_dir()
+
+
+class TestNotesComponents:
+    """Every notes component answers the same two questions, through one path.
+
+    A component is a place autorun writes under the notes tree. Each one has a
+    destination and an independent on/off, so a user can keep accepted plans
+    and stop rejected ones, or send either somewhere else, without the other
+    moving. The table in plan_export.NOTES_COMPONENTS is the only place that
+    knows a component exists; the command parser, the status output and the
+    config resolution all read it, so adding a component is a row rather than
+    an edit in four files.
+    """
+
+    def test_the_table_names_every_component_once(self):
+        names = [component.name for component in NOTES_COMPONENTS]
+        assert names == sorted(set(names)), names
+        assert {"accepted", "rejected"} <= set(names)
+
+    def test_each_component_declares_a_distinct_config_key_pair(self):
+        enabled_keys = [c.enabled_key for c in NOTES_COMPONENTS]
+        dir_keys = [c.dir_key for c in NOTES_COMPONENTS]
+        assert len(set(enabled_keys)) == len(enabled_keys), enabled_keys
+        assert len(set(dir_keys)) == len(dir_keys), dir_keys
+
+    @pytest.mark.parametrize("name", ["accepted", "rejected"])
+    def test_a_component_turns_off_and_on_by_name(self, config_path, project, name):
+        plan_export_command(f"{name} off", project, "claude")
+        assert not PlanExportConfig.load(project).component_enabled(name)
+        plan_export_command(f"{name} on", project, "claude")
+        assert PlanExportConfig.load(project).component_enabled(name)
+
+    @pytest.mark.parametrize("name", ["accepted", "rejected"])
+    def test_a_component_destination_is_set_by_name(self, config_path, project, name):
+        plan_export_command(f"{name} dir archive/{name}", project, "claude")
+        assert PlanExportConfig.load(project).component_dir(name) == f"archive/{name}"
+
+    def test_turning_one_component_off_leaves_the_other_alone(
+        self, config_path, project
+    ):
+        plan_export_command("rejected off", project, "claude")
+        config = PlanExportConfig.load(project)
+        assert config.component_enabled("accepted")
+        assert not config.component_enabled("rejected")
+
+    def test_moving_one_component_leaves_the_other_where_it_was(
+        self, config_path, project
+    ):
+        plan_export_command("rejected dir archive/rejected", project, "claude")
+        config = PlanExportConfig.load(project)
+        assert config.component_dir("accepted") == "notes"
+        assert config.component_dir("rejected") == "archive/rejected"
+
+    def test_the_master_switch_still_gates_every_component(self, config_path, project):
+        plan_export_command("globaloff", project, "claude")
+        config = PlanExportConfig.load(project)
+        for component in NOTES_COMPONENTS:
+            assert not config.component_active(component.name), component.name
+
+    def test_a_component_is_active_only_when_both_switches_allow_it(
+        self, config_path, project
+    ):
+        plan_export_command("rejected off", project, "claude")
+        config = PlanExportConfig.load(project)
+        assert config.component_active("accepted")
+        assert not config.component_active("rejected")
+
+    def test_status_reports_each_component_state_and_destination(
+        self, config_path, project
+    ):
+        plan_export_command("rejected dir archive/rejected", project, "claude")
+        plan_export_command("rejected off", project, "claude")
+        status = plan_export_command("", project, "claude")
+        assert "accepted" in status and "notes" in status
+        assert "rejected" in status and "archive/rejected" in status
+
+    def test_unknown_component_returns_usage_and_writes_nothing(
+        self, config_path, project
+    ):
+        reply = plan_export_command("nosuchcomponent off", project, "claude")
+        assert "dir <path>" in reply
+        assert not config_path.exists()
+
+    def test_bare_dir_still_targets_the_accepted_component(self, config_path, project):
+        """The pre-table spelling keeps working; it is the accepted dir."""
+        plan_export_command("dir exported plans", project, "claude")
+        config = PlanExportConfig.load(project)
+        assert config.component_dir("accepted") == "exported plans"
+        assert config.output_plan_dir == "exported plans"
+
+    def test_component_accessors_reject_an_unknown_name(self, config_path, project):
+        config = PlanExportConfig.load(project)
+        with pytest.raises(KeyError):
+            config.component_dir("nosuchcomponent")
+
 
     def test_reset_restores_defaults_and_clears_pins(self, config_path, project):
         plan_export_command("off", project, "claude")
