@@ -1712,24 +1712,24 @@ class TestAllLocationsSync:
 
     @pytest.mark.e2e
     def test_cache_matches_source_hook_entry(self):
-        """Location 4: Claude Code cache hook_entry.py must match source."""
-        cache_versions = [
-            p for p in Path.home().glob(
-                ".claude/plugins/cache/autorun/ar/*/hooks/hook_entry.py"
-            )
-            if not p.parts[-3].endswith(".backup")  # Ignore install-time rollback backups
-        ]
-
-        if not cache_versions:
+        """Location 4: the current Claude cache must match current source."""
+        cache_root = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
+        if not cache_root.is_dir():
             pytest.skip("Claude Code cache not installed")
 
+        manifest = json.loads(
+            (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        cache_file = cache_root / manifest["version"] / "hooks" / "hook_entry.py"
+        assert cache_file.is_file(), (
+            f"Current Claude cache {cache_file} is missing. "
+            "Run: uv run --project plugins/autorun python -m autorun --install ar --force --claude"
+        )
         source_content = (PLUGIN_ROOT / "hooks" / "hook_entry.py").read_text(encoding="utf-8")
-
-        for cache_file in cache_versions:
-            cache_content = cache_file.read_text(encoding="utf-8")
-            assert cache_content == source_content, \
-                f"Cache {cache_file} doesn't match source. " \
-                f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+        assert cache_file.read_text(encoding="utf-8") == source_content, (
+            f"Cache {cache_file} doesn't match source. "
+            "Run: uv run --project plugins/autorun python -m autorun --install ar --force --claude"
+        )
 
     def test_uv_tool_is_editable_not_copy(self):
         """The generated UV command requests an editable installation."""

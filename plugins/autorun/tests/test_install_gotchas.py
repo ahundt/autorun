@@ -567,6 +567,68 @@ def test_uninstall_never_removes_a_companion_product_as_a_side_effect(tmp_path, 
     assert all("conductor" not in call for call in exercise(True))
 
 
+def test_failed_claude_registration_fills_its_versioned_cache(tmp_path, monkeypatch):
+    import subprocess
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "1.2.3"}), encoding="utf-8"
+    )
+    (plugin / "hooks").mkdir()
+    (plugin / "hooks" / "hook_entry.py").write_text("current hook\n", encoding="utf-8")
+
+    def offline(argv):
+        return subprocess.CompletedProcess(argv, 1, "", "network unavailable")
+
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
+        removing=False, run=offline, available=("claude",),
+    )
+
+    cached = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
+    assert (cached / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "current hook\n"
+    assert outcomes and all(outcome.ok for outcome in outcomes)
+    assert outcomes[-1].step == "claude: cache fallback"
+
+
+def test_successful_claude_registration_expands_the_cached_hook_root(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "1.2.3"}), encoding="utf-8"
+    )
+    (plugin / "hooks").mkdir()
+    (plugin / "hooks" / "hooks.json").write_text(
+        '${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py\n', encoding="utf-8"
+    )
+    cached = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
+
+    def native_update(argv):
+        if tuple(argv[:3]) == ("claude", "plugin", "update"):
+            cached.parent.mkdir(parents=True)
+            shutil.copytree(plugin, cached)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
+        removing=False, run=native_update, available=("claude",),
+    )
+
+    hooks = (cached / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    assert str(cached) in hooks and "${CLAUDE_PLUGIN_ROOT}" not in hooks
+    assert outcomes and all(outcome.ok for outcome in outcomes)
+
+
 def test_conductor_registration_is_noninteractive_and_idempotent():
     import subprocess
     from autorun.installer.registration import companions

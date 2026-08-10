@@ -550,6 +550,50 @@ def _registrations(
                             force=force_registration,
                             allow_fallback=allow_fallback,
                         )
+                if (
+                    not removing
+                    and flavor == "claude"
+                    and outcomes
+                ):
+                    source = registration_plugins.get(plugin)
+                    if source is not None:
+                        failed = next(
+                            (outcome.detail for outcome in outcomes if not outcome.ok), ""
+                        )
+                        cached = None
+                        try:
+                            cached = claude.cache_dir(
+                                platform,
+                                market=registration_market,
+                                plugin=plugin,
+                                version=steps._version(source),
+                                home=ctx.home,
+                            )
+                            if cached is not None and (failed or not cached.is_dir()):
+                                cached = claude.cache_fallback(
+                                    source,
+                                    platform,
+                                    market=registration_market,
+                                    plugin=plugin,
+                                    version=steps._version(source),
+                                    home=ctx.home,
+                                )
+                            if cached is not None:
+                                claude.substitute_root(cached)
+                        except Exception as error:
+                            cache_failure = Outcome(
+                                f"{name}: cache fallback",
+                                False,
+                                "; ".join(filter(None, (
+                                    failed, f"{type(error).__name__}: {error}"
+                                ))),
+                            )
+                            outcomes = (cache_failure,) if failed else (*outcomes, cache_failure)
+                        else:
+                            if failed and cached is not None:
+                                outcomes = (Outcome(
+                                    f"{name}: cache fallback", True, failed
+                                ),)
                 done.extend(outcomes)
                 if outcomes and all(outcome.ok for outcome in outcomes):
                     commit_registration()
