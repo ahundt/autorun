@@ -213,6 +213,21 @@ git pull origin main
 ```
 
 ### Stage 3: Wait for CI
+
+All eleven jobs must be green, not just the matrix. The seven-entry matrix
+covers Python 3.10-3.14 on Ubuntu plus macOS 3.13 and Windows 3.13; four more
+run once each: `coverage` (75% floor), `release-artifacts` (`-m release`),
+`tmux-integration` (`-m tmux`), and `state-benchmark` (`-m benchmark`). Those
+four are the only place their markers run, since the matrix deselects them.
+
+Two failure shapes are worth recognising before reading logs. A job that dies
+in "Install dependencies" with "Unable to find lockfile at `uv.lock`" means the
+lockfile is missing from the checkout, not that a dependency broke. A job whose
+JUnit XML never appears, with a `+++ Timeout +++` stack dump instead of a test
+summary, hit the global per-test timeout in `pyproject.toml`: pytest-timeout
+kills the whole session, so the remaining tests never run and the first
+reported failure is the only one you get.
+
 ```bash
 # Check latest run
 gh run list --limit 3
