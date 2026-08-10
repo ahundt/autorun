@@ -39,7 +39,7 @@ class TestSessionTargetingRegression:
         self.tmux = get_tmux_utilities(self.test_session)
 
         # Store initial current session content for leakage detection
-        initial_capture = subprocess.run(['tmux', 'capture-pane', '-p'],
+        initial_capture = subprocess.run(['tmux', 'capture-pane', '-p', '-J'],
                                         capture_output=True, text=True, timeout=5)
         self.initial_current_content = initial_capture.stdout
 
@@ -53,8 +53,16 @@ class TestSessionTargetingRegression:
                       capture_output=True, timeout=5)
 
     def _capture_session_content(self, session_name):
-        """Helper to capture content from a specific session"""
-        result = subprocess.run(['tmux', 'capture-pane', '-t', session_name, '-p'],
+        """Helper to capture content from a specific session.
+
+        `-J` joins wrapped lines. Without it capture-pane returns the pane as
+        it is displayed, so a command longer than the pane is split by a
+        newline mid-token and a substring search for the whole command fails.
+        The CI runner hit this because its prompt (`runner@runnervmvrwv9:
+        ~/work/autorun/autorun/plugins/autorun$ `) pushes an echo past 80
+        columns, which no developer's shorter prompt does.
+        """
+        result = subprocess.run(['tmux', 'capture-pane', '-t', session_name, '-p', '-J'],
                               capture_output=True, text=True, timeout=5)
         return result.stdout if result.returncode == 0 else ""
 
@@ -302,9 +310,9 @@ class TestSessionTargetingRegression:
             time.sleep(0.2)
 
             # Verify isolation
-            capture1 = subprocess.run(['tmux', 'capture-pane', '-t', session1, '-p'],
+            capture1 = subprocess.run(['tmux', 'capture-pane', '-t', session1, '-p', '-J'],
                                     capture_output=True, text=True, timeout=5)
-            capture2 = subprocess.run(['tmux', 'capture-pane', '-t', session2, '-p'],
+            capture2 = subprocess.run(['tmux', 'capture-pane', '-t', session2, '-p', '-J'],
                                     capture_output=True, text=True, timeout=5)
 
             assert text1 in capture1.stdout, "Text1 should appear in session1"
