@@ -345,6 +345,15 @@ def claude_cli_check():
 # =============================================================================
 
 
+# The per-test budget must exceed the sum of the per-subprocess timeouts a test
+# is allowed to spend, or the subprocess timeout can never fire: the global
+# 30s timeout (pyproject.toml:94) expires first and pytest-timeout kills the
+# whole session, losing the JUnit XML and every test after it. Lifecycle tests
+# here issue up to 7 `uv run` hook calls at timeout=15 each, which fits in 30s
+# on Linux and macOS but not on the slower Windows runners, where this aborted
+# the run at 8% completion. A hang still fails fast through each call's own
+# timeout; this bound only stops one slow test from taking the session with it.
+@pytest.mark.timeout(180)
 class TestClaudeHookEntryPoint:
     """FREE hook-level tests — no Claude API calls, no real money spent.
 
@@ -2380,6 +2389,11 @@ class TestClaudeE2ERealMoney:
 # =============================================================================
 
 
+# Same reasoning as TestClaudeHookEntryPoint: these tests allow a single hook
+# call up to 30s and a concurrent batch up to 120s, both at or above the global
+# 30s per-test timeout, so on a slow runner pytest-timeout would kill the
+# session before either bound could report which call was stuck.
+@pytest.mark.timeout(300)
 class TestClaudeStateDurabilityThroughHooks:
     """State written by one hook process must be there for the next one.
 

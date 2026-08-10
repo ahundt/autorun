@@ -426,17 +426,34 @@ class TestBoundaryValues:
             state["big"] = payload
         assert store.read_field("s", "big") == payload
 
-    def test_a_deeply_nested_value_names_the_field_it_could_not_store(self, store):
-        """A bare RecursionError from inside json says nothing about the cause."""
-        value = current = {}
-        for _ in range(20000):
-            current["next"] = {}
-            current = current["next"]
+    def test_a_deeply_nested_value_names_the_field_it_could_not_store(
+        self, store, monkeypatch
+    ):
+        """A bare RecursionError from inside json says nothing about the cause.
+
+        The RecursionError is injected rather than provoked by nesting. The C
+        json encoder guards on remaining C stack, which neither
+        sys.setrecursionlimit nor a fixed nesting depth controls: the previous
+        20000-deep value stopped raising on CPython 3.14, and any replacement
+        constant would only move the version where it stops raising. What has
+        to hold is the wrapping — that a RecursionError out of json is reported
+        as a state error naming the field, and that the field stays unstored.
+        """
+        value = {"nested": "too deep to encode"}
+        real_dumps = json.dumps
+
+        def dumps(obj, **kwargs):
+            if obj is value:
+                raise RecursionError("maximum recursion depth exceeded")
+            return real_dumps(obj, **kwargs)
+
+        monkeypatch.setattr(json, "dumps", dumps)
 
         with pytest.raises(SessionBackendError, match="deep"):
             with store.session("s") as state:
                 state["deep"] = value
 
+        monkeypatch.undo()
         assert store.read_field("s", "deep") is MISSING
 
     def test_an_unpaired_surrogate_is_rejected_and_the_field_is_named(self, store):

@@ -65,7 +65,9 @@ MANIFEST
 
 # UV Package Manager
 .uv_cache/
-uv.lock
+# uv.lock is committed on purpose: CI runs `uv sync --locked`, which needs the
+# lockfile in the checkout to pin the environment. It is never published in the
+# wheel or sdist, so it constrains only this repo's dev and CI installs.
 
 # Installer leak: `autorun --install` used to write generated artifacts
 # (metadata.json, gemini_template/) to the workspace-root src/autorun/

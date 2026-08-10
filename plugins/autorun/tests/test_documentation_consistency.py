@@ -301,10 +301,17 @@ def test_release_checklist_covers_every_file_carrying_the_version():
     Read the version from the autorun package rather than hardcoding it, so
     this keeps working across releases.
     """
-    import tomllib
-
+    # Read with a regex rather than tomllib: tomllib is stdlib only on 3.11+,
+    # and autorun supports 3.10 (pyproject.toml requires-python). Same approach
+    # as build_support.build_metadata, which reads this field the same way.
     pyproject = REPO_ROOT / "plugins" / "autorun" / "pyproject.toml"
-    version = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+    match = re.search(
+        r'^version\s*=\s*["\']([^"\']+)["\']',
+        pyproject.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert match, f"no version field in {pyproject}"
+    version = match.group(1)
 
     listed = _checklist_paths()
     uncovered = []

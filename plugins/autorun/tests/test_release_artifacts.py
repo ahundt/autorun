@@ -20,6 +20,12 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.subprocess,
     pytest.mark.serial,
+    # The module fixture builds every artifact twice and the tests install the
+    # wheels, which _run allows 180s apiece. The global 30s per-test timeout
+    # (pyproject.toml:94) covers fixture setup too, so without this the first
+    # test would be killed mid-build on a cold, slower runner and take the
+    # whole session with it. 17.7s locally with a warm uv cache.
+    pytest.mark.timeout(600),
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]

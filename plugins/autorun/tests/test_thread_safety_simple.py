@@ -184,7 +184,16 @@ class TestBasicThreadSafety:
 
 
 class TestMultiprocessingBasic:
-    """Basic multiprocessing tests that work with pickling limitations"""
+    """Basic multiprocessing tests that work with pickling limitations
+
+    These use an explicit spawn context rather than the platform default.
+    Python 3.14 made forkserver the Linux default, and a forkserver is started
+    once per session and forks every later worker from the environment it
+    captured at that moment. The suite repoints AUTORUN_TEST_STATE_DIR per test,
+    so workers inherited a stale state directory: they reported success while
+    writing somewhere the parent never reads. spawn re-reads the current
+    environment for each worker, which is what test_task_pause.py already does.
+    """
 
     @pytest.mark.unit
     def test_multiprocess_command_execution(self):
@@ -195,7 +204,7 @@ class TestMultiprocessingBasic:
         work_items = [(session_id, i, "command") for i in range(3)]
 
         # Run in multiple processes
-        with multiprocessing.Pool(processes=2) as pool:
+        with multiprocessing.get_context("spawn").Pool(processes=2) as pool:
             results = pool.map(multiprocess_worker, work_items)
 
         # Verify all processes completed
@@ -218,7 +227,7 @@ class TestMultiprocessingBasic:
         work_items = [(session_ids[i % 2], i, "set") for i in range(4)]
 
         # Run in multiple processes
-        with multiprocessing.Pool(processes=2) as pool:
+        with multiprocessing.get_context("spawn").Pool(processes=2) as pool:
             results = pool.map(multiprocess_worker, work_items)
 
         # Verify all operations succeeded
@@ -244,7 +253,7 @@ class TestMultiprocessingBasic:
         work_items = [(session_id, i, "increment") for i in range(num_workers)]
 
         # Run in multiple processes
-        with multiprocessing.Pool(processes=num_workers) as pool:
+        with multiprocessing.get_context("spawn").Pool(processes=num_workers) as pool:
             results = pool.map(multiprocess_worker, work_items)
 
         # Verify all workers completed

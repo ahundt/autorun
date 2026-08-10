@@ -25,6 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 HOOK_PATH = REPO_ROOT / ".githooks" / "pre-commit"
 
 _IPV4 = re.compile(r"(?<![\w.])((?:\d{1,3}\.){3}\d{1,3})(?![\w.])")
+_GENERATED_LOCKFILES = {"uv.lock"}
+_URL_HOST = re.compile(r"//$")
 _IP_ALLOWLIST_PREFIXES = (
     "127.",          # loopback
     "0.0.0.0",       # wildcard bind
@@ -163,6 +165,16 @@ def test_tracked_files_contain_no_real_ip_addresses():
             if any(int(octet) > 255 for octet in ip.split(".")):
                 continue  # version-like number, not an address
             if ip.startswith(_IP_ALLOWLIST_PREFIXES):
+                continue
+            if name in _GENERATED_LOCKFILES and not _URL_HOST.search(
+                text[max(0, match.start() - 2):match.start()]
+            ):
+                # uv.lock is generated, and CUDA and OpenCV publish four-part
+                # versions that are indistinguishable from an address by shape
+                # alone -- both as a version field and inside every wheel
+                # filename. Only a match in URL host position is reported here,
+                # which is where a private index reached by address would show
+                # up; hand-authored files stay fully checked.
                 continue
             offenders.append(f"{name}: {ip}")
     assert not offenders, (
