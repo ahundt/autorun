@@ -108,6 +108,17 @@ marketplace itself carries a separate `version` field.
 - `_expand_home` gives `~` expansion a single seam; install and uninstall
   previously resolved through `Path.home()` and `Path.expanduser()`
   respectively, which differ under test.
+- **`uv.lock` is committed.** CI runs `uv sync --locked`, which needs the
+  lockfile in the checkout; without it the flag pinned nothing, because the
+  matrix jobs happened to run `uv run` first and that writes a lockfile as a
+  side effect. Contributors get the same resolution CI does. The lockfile is
+  not published in the wheel or sdist, so it does not constrain consumers.
+- **The CI matrix covers Python 3.10 through 3.14**, plus dedicated coverage,
+  release-artifact, tmux, and state-benchmark jobs. The added versions found
+  two real breaks: an unguarded `tomllib` import, which is stdlib only on
+  3.11+, and multiprocessing tests that relied on workers inheriting the
+  parent's environment, which stops holding when 3.14 makes forkserver the
+  default start method on Linux.
 
 ## [0.12.0]
 
