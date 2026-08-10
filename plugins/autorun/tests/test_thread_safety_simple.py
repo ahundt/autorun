@@ -6,6 +6,7 @@ Realistic thread safety and multiprocessing tests for autorun session state
 import pytest
 import threading
 import multiprocessing
+import os
 import time
 
 # Add src directory to Python path
@@ -13,8 +14,21 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from autorun import session_manager
 from autorun.session_manager import session_state
 from autorun.config import CONFIG
+
+
+def _shared_state_dir():
+    """Directory both the parent and its workers must agree on.
+
+    The parent may already hold a store opened against an earlier value, so it
+    is reset here too: otherwise the parent reads one directory while a worker
+    that re-read the environment writes to another, and the worker reports
+    success for a write the parent never sees.
+    """
+    session_manager._reset_for_testing()
+    return os.environ["AUTORUN_TEST_STATE_DIR"]
 
 # COMMAND_HANDLERS removed — canonical: plugins.app.commands + app.dispatch()
 # Policy handlers available via: plugins._make_policy_handler(policy)(ctx)
@@ -30,7 +44,13 @@ def _policy_response(command: str, state: dict) -> str:
 # Global functions for multiprocessing (must be at module level)
 def multiprocess_worker(args):
     """Worker function for multiprocessing tests"""
-    session_id, worker_id, operation = args
+    session_id, worker_id, operation, state_dir = args
+    # A worker that was not forked starts with no inherited module state, so
+    # point it at the directory the parent is using and drop any cached store
+    # before touching session_state. test_task_pause.py prepares its spawned
+    # processes the same way.
+    os.environ["AUTORUN_TEST_STATE_DIR"] = state_dir
+    session_manager._reset_for_testing()
     try:
         with session_state(session_id) as state:
             if operation == "set":
@@ -201,7 +221,8 @@ class TestMultiprocessingBasic:
         session_id = "multiprocess_command_test"
 
         # Prepare work items
-        work_items = [(session_id, i, "command") for i in range(3)]
+        state_dir = _shared_state_dir()
+        work_items = [(session_id, i, "command", state_dir) for i in range(3)]
 
         # Run in multiple processes
         with multiprocessing.get_context("spawn").Pool(processes=2) as pool:
@@ -224,7 +245,8 @@ class TestMultiprocessingBasic:
         session_ids = ["mp_iso_1", "mp_iso_2"]
 
         # Prepare work items for different sessions
-        work_items = [(session_ids[i % 2], i, "set") for i in range(4)]
+        state_dir = _shared_state_dir()
+        work_items = [(session_ids[i % 2], i, "set", state_dir) for i in range(4)]
 
         # Run in multiple processes
         with multiprocessing.get_context("spawn").Pool(processes=2) as pool:
@@ -250,7 +272,8 @@ class TestMultiprocessingBasic:
         num_workers = 4
 
         # Prepare work items
-        work_items = [(session_id, i, "increment") for i in range(num_workers)]
+        state_dir = _shared_state_dir()
+        work_items = [(session_id, i, "increment", state_dir) for i in range(num_workers)]
 
         # Run in multiple processes
         with multiprocessing.get_context("spawn").Pool(processes=num_workers) as pool:
