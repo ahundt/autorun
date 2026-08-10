@@ -690,8 +690,16 @@ class PlanExport:
     # --- Plan File Detection ---
 
     def is_plan_file(self, path: str) -> bool:
-        """Check if path is a Claude plan file."""
-        return "/.claude/plans/" in path and path.endswith(".md")
+        """Check if path is a Claude plan file.
+
+        Separators are normalised first. Windows hands this
+        ``C:\\Users\\<user>\\.claude\\plans\\<name>.md``, which never contains
+        the literal ``/.claude/plans/``, so the unnormalised check answered
+        False for every plan on that platform: nothing was tracked, and export
+        and recovery both did nothing while reporting success.
+        """
+        normalized = str(path).replace("\\", "/")
+        return "/.claude/plans/" in normalized and normalized.endswith(".md")
 
     # --- Template Expansion (preserves all current variables) ---
 
@@ -1197,7 +1205,10 @@ class PlanExport:
         receipt["phase"] = "COMPLETE"
         self._write_receipt(receipt_path, receipt)
 
-        rel_path = dest_path.relative_to(self.project_dir)
+        # as_posix keeps the displayed path in the same vocabulary as CONFIG
+        # ("notes/rejected") and the hardcoded fallback messages below, which
+        # all use forward slashes. str(Path) would print notes\\... on Windows.
+        rel_path = dest_path.relative_to(self.project_dir).as_posix()
         log_warning(f"Exported plan to {rel_path}", self.config)
         return {
             "success": True,
@@ -1248,7 +1259,7 @@ class PlanExport:
                 plans[plan_key] = entry
                 state["active_plans"] = plans
 
-            rel = dest_path.relative_to(self.project_dir)
+            rel = dest_path.relative_to(self.project_dir).as_posix()
             log_warning(f"Backed up plan to {rel} (pending acceptance decision)", self.config)
             return backup_path_str
 
@@ -1291,7 +1302,7 @@ class PlanExport:
             # Compute relative path for human-readable message (same pattern as export() lines 753-755)
             if backup_path:
                 try:
-                    rel = Path(backup_path).relative_to(self.project_dir)
+                    rel = Path(backup_path).relative_to(self.project_dir).as_posix()
                     msg = f"Plan retained in {rel} (not accepted)"
                 except ValueError:
                     msg = "Plan retained in notes/rejected/ (not accepted)"
@@ -1628,7 +1639,7 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
                 dest = result.get("destination", "")
                 if dest:
                     try:
-                        dest_display = str(Path(dest).relative_to(exporter.project_dir))
+                        dest_display = Path(dest).relative_to(exporter.project_dir).as_posix()
                     except ValueError:
                         dest_display = dest
                     export_msg = f"📋 Plan exported from {plan} to: {dest_display}"
