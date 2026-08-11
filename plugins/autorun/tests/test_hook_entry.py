@@ -704,6 +704,11 @@ class TestHookEntryExecutionPriority:
         """A large hook debug log must be rotated before appending."""
         hook_entry = load_hook_entry_module()
         monkeypatch.setenv("HOME", str(tmp_path))
+        # Path.home() reads USERPROFILE on Windows and HOME elsewhere, so a
+        # redirect that sets one name only moves the log on one platform: the
+        # rotation happened against the real profile and the assertions below
+        # looked at an empty tmp_path.
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         monkeypatch.setattr(hook_entry, "DEBUG_LOG_MAX_BYTES", 100)
 
         log_dir = tmp_path / ".autorun"

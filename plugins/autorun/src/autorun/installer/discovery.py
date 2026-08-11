@@ -370,15 +370,25 @@ def redirected_home(home: Path) -> Iterator[Path]:
     self-check that looked isolated, which is why ``Context`` now refuses the
     mismatch and why this exists to make the right form the easy one.
     """
-    previous = os.environ.get("HOME")
-    os.environ["HOME"] = str(home)
+    # Both names, on every platform. Path.home() resolves through
+    # os.path.expanduser, which reads USERPROFILE on Windows and HOME
+    # elsewhere, and never consults the other one. Setting only HOME left
+    # Path.home() pointing at the real profile on Windows -- the redirect this
+    # function exists to make reliable would have read a sandbox and written a
+    # live home there, which is the failure the docstring above describes.
+    # Setting the unused name costs nothing and removes the branch.
+    names = ("HOME", "USERPROFILE")
+    previous = {name: os.environ.get(name) for name in names}
+    for name in names:
+        os.environ[name] = str(home)
     try:
         yield home
     finally:
-        if previous is None:
-            os.environ.pop("HOME", None)
-        else:
-            os.environ["HOME"] = previous
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def shared_root(*, home: Path | None = None) -> Path:
