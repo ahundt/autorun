@@ -315,11 +315,14 @@ class TestLoopbackServerIsolation:
     permitted" -- one project, test, or install per machine, and every hook in
     the others fell through to a CLI that waited for a daemon that could never
     start.
+
+    Everything runs inside one event loop. Starting a server with its own
+    asyncio.run leaves it bound to a loop that has already closed, and closing
+    it then fails with "'NoneType' object has no attribute '_stop_serving'" on
+    the Windows proactor loop.
     """
 
-    def _start(self, monkeypatch, tmp_path, name):
-        import asyncio
-
+    def _configure(self, monkeypatch, tmp_path, name):
         from autorun import ipc
 
         home = tmp_path / name
@@ -327,47 +330,60 @@ class TestLoopbackServerIsolation:
         monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", False)
         monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
         monkeypatch.setattr(ipc, "PORT_FILE", home / "daemon.port")
+        return ipc, home
 
+    async def _serve(self, ipc, home):
         async def handler(_reader, _writer):  # pragma: no cover - never called
             pass
 
-        server = asyncio.run(ipc.start_server(handler))
+        server = await ipc.start_server(handler)
         published = int((home / "daemon.port").read_text(encoding="utf-8").strip())
         return server, published
 
     def test_two_homes_get_two_ports(self, monkeypatch, tmp_path):
-        first, first_port = self._start(monkeypatch, tmp_path, "home-a")
-        try:
-            second, second_port = self._start(monkeypatch, tmp_path, "home-b")
-        except OSError as error:  # pragma: no cover - the bug being guarded
-            first.close()
-            raise AssertionError(
-                f"the second daemon could not bind: {error}. Two homes must "
-                "not share one port."
-            ) from error
-        try:
-            assert first_port != second_port, (
-                f"both homes published port {first_port}"
-            )
-        finally:
-            first.close()
-            second.close()
+        import asyncio
+
+        async def body():
+            ipc, home_a = self._configure(monkeypatch, tmp_path, "home-a")
+            first, first_port = await self._serve(ipc, home_a)
+            try:
+                _ipc, home_b = self._configure(monkeypatch, tmp_path, "home-b")
+                try:
+                    second, second_port = await self._serve(_ipc, home_b)
+                except OSError as error:  # pragma: no cover - the bug guarded
+                    raise AssertionError(
+                        f"the second daemon could not bind: {error}. Two homes "
+                        "must not share one port."
+                    ) from error
+                try:
+                    assert first_port != second_port, (
+                        f"both homes published port {first_port}"
+                    )
+                finally:
+                    second.close()
+                    await second.wait_closed()
+            finally:
+                first.close()
+                await first.wait_closed()
+
+        asyncio.run(body())
 
     def test_the_published_port_is_the_one_actually_bound(self, monkeypatch, tmp_path):
-        server, published = self._start(monkeypatch, tmp_path, "home-c")
-        try:
-            bound = server.sockets[0].getsockname()[1]
-            assert published == bound, (
-                f"clients read {published} but the daemon listens on {bound}"
-            )
-        finally:
-            server.close()
+        import asyncio
 
-    def test_the_published_port_is_ephemeral(self, monkeypatch, tmp_path):
-        """Port 0 asks the OS for a free one, which is what avoids the clash."""
-        server, published = self._start(monkeypatch, tmp_path, "home-d")
-        try:
-            assert published > 0
-        finally:
-            server.close()
+        async def body():
+            ipc, home = self._configure(monkeypatch, tmp_path, "home-c")
+            server, published = await self._serve(ipc, home)
+            try:
+                bound = server.sockets[0].getsockname()[1]
+                assert published == bound, (
+                    f"clients read {published} but the daemon listens on {bound}"
+                )
+                assert published > 0, "port 0 asks the OS for a free port"
+            finally:
+                server.close()
+                await server.wait_closed()
+
+        asyncio.run(body())
+
 
