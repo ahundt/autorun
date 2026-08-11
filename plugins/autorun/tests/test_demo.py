@@ -341,7 +341,29 @@ def run_hook(event: str, payload: dict, plugin_root: Path = None,
             parsed = json.loads(result.stdout.strip())
         except json.JSONDecodeError:
             pass
-    return result.returncode, parsed, result.stderr
+    stderr = result.stderr
+    if "daemon_unavailable_or_timeout" in stderr:
+        # The client reports that no daemon answered and names the connection
+        # error, but the reason the daemon itself failed is only in its own log,
+        # which no CI output ever showed. Every assertion below then reads as
+        # "the block message was wrong" when the real fact is that no daemon
+        # exists. Appending the tail here keeps that evidence attached to the
+        # failure that revealed it.
+        stderr += "\n" + _daemon_log_tail()
+    return result.returncode, parsed, stderr
+
+
+def _daemon_log_tail(limit: int = 2000) -> str:
+    """Last bytes of the daemon log for the AUTORUN_HOME this test ran under."""
+    home = os.environ.get("AUTORUN_HOME")
+    if not home:
+        return "[daemon log: AUTORUN_HOME unset]"
+    log = Path(home) / "daemon.log"
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return f"[daemon log unreadable at {log}: {exc}]"
+    return f"[daemon log tail from {log}]\n{text[-limit:]}"
 
 
 def make_pretooluse(session_id: str, tool: str, **tool_input) -> dict:
