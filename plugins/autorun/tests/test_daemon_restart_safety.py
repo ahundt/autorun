@@ -236,7 +236,11 @@ class TestAcquireDaemonLock:
 
         assert result is True
         assert lock_path.exists()
-        assert lock_path.read_text().strip() == str(os.getpid())
+        # "<pid> <start-time-units>": a pid alone is reused, so a stale
+        # record read as a live daemon and no client ever spawned one.
+        recorded_pid, recorded_start = lock_path.read_text().split()
+        assert recorded_pid == str(os.getpid())
+        assert int(recorded_start) > 0, "no identity to reject a reused pid"
         # Cleanup
         if daemon._daemon_lock:
             daemon._daemon_lock.release()
@@ -273,7 +277,7 @@ class TestAcquireDaemonLock:
 
         assert result is True
         # Verify the written PID matches current process
-        written_pid = int(lock_path.read_text().strip())
+        written_pid = int(lock_path.read_text().split()[0])
         assert written_pid == os.getpid()
         daemon._daemon_lock.release()
 
@@ -293,7 +297,11 @@ class TestAcquireDaemonLock:
         assert result is True
         assert lock_path.parent.exists()
         assert lock_path.exists()
-        assert lock_path.read_text().strip() == str(os.getpid())
+        # "<pid> <start-time-units>": a pid alone is reused, so a stale
+        # record read as a live daemon and no client ever spawned one.
+        recorded_pid, recorded_start = lock_path.read_text().split()
+        assert recorded_pid == str(os.getpid())
+        assert int(recorded_start) > 0, "no identity to reject a reused pid"
         daemon._daemon_lock.release()
 
     def test_acquire_returns_false_when_flock_held(self, tmp_path):

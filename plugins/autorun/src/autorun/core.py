@@ -67,6 +67,25 @@ from .logging_utils import get_logger
 # === CONFIGURATION ===
 ipc.ensure_config_dir()
 LOCK_PATH = ipc.AUTORUN_LOCK_PATH
+
+#: Same units client.py uses for the harness pid, so the two agree.
+PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
+
+
+def _process_start_units(pid: int) -> int:
+    """Process creation time, or 0 when it cannot be read.
+
+    Zero means "unverifiable", never "matches": a reader must not accept a
+    stale record because the writer could not describe itself.
+    """
+    try:
+        import psutil
+
+        return round(psutil.Process(pid).create_time() * PROCESS_BIRTH_UNITS_PER_SECOND)
+    except Exception:
+        return 0
+
+
 IDLE_TIMEOUT = 1800  # 30 minutes
 # Hooks must stay under strict harness budgets. Persistent session state is a
 # shared JSON file; advisory hook paths should skip persistence on contention
@@ -3035,10 +3054,19 @@ class AutorunDaemon:
             if not lock_dir.is_dir():
                 lock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
                 logger.info(f"Created missing daemon dir: {lock_dir}")
-            LOCK_PATH.write_text(str(pid), encoding="utf-8")
+            # "<pid> <start-time-units>", not a bare pid. A pid alone does not
+            # identify a process: the number is reused, aggressively so on
+            # Windows, and a reader that only asks whether the pid exists
+            # believes any unrelated process that inherited the number. A stale
+            # file then reads as a live daemon forever, so no client ever
+            # spawns one -- the wedged state that produced "no daemon was
+            # spawned by this client" on every attempt. The start time is what
+            # makes the pair unique, and client.py already carries the same
+            # units for the harness pid.
+            LOCK_PATH.write_text(f"{pid} {_process_start_units(pid)}", encoding="utf-8")
             # Verify the write succeeded (guards against silent truncation or wrong inode)
             written = LOCK_PATH.read_text(encoding="utf-8").strip()
-            if written != str(pid):
+            if written.split()[0] != str(pid):
                 logger.error(f"PID file verification failed: wrote {pid}, read back '{written}'")
             else:
                 logger.info(f"Wrote PID {pid} to {LOCK_PATH}")

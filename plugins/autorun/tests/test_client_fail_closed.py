@@ -174,6 +174,65 @@ def test_the_wrapper_and_the_client_agree_on_the_deadline_variable():
     assert module.DEADLINE_ENV_VAR == DEADLINE_ENV_VAR
 
 
+class TestDaemonRecordIdentity:
+    """A pid alone cannot say whether the recorded daemon still exists.
+
+    The number is reused, aggressively so on Windows. The client consults this
+    only when no daemon holds the flock, and the one branch that declined to
+    spawn without a flock holder trusted `psutil.pid_exists`, so any unrelated
+    process inheriting the number kept a stale record alive forever. Every
+    attempt then reported "no daemon was spawned by this client" -- a wedge no
+    timeout could clear, because nothing was ever starting.
+    """
+
+    def test_a_record_matching_a_live_process_is_live(self, tmp_path):
+        import os
+
+        from autorun.client import daemon_record_is_live
+        from autorun.core import _process_start_units
+
+        record = tmp_path / "daemon.lock"
+        record.write_text(f"{os.getpid()} {_process_start_units(os.getpid())}")
+        assert daemon_record_is_live(record) is True
+
+    def test_a_reused_pid_is_not_live(self, tmp_path):
+        """Same pid, different birth: the process that wrote this is gone."""
+        import os
+
+        from autorun.client import daemon_record_is_live
+        from autorun.core import _process_start_units
+
+        record = tmp_path / "daemon.lock"
+        record.write_text(f"{os.getpid()} {_process_start_units(os.getpid()) - 1}")
+        assert daemon_record_is_live(record) is False
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "",
+            "not-a-pid",
+            "4294967295 12345",  # a pid that does not exist
+            pytest.param("1234", id="legacy-bare-pid-cannot-be-verified"),
+        ],
+    )
+    def test_an_unverifiable_record_is_not_live(self, tmp_path, content):
+        """Refusing to spawn is worse than spawning twice.
+
+        A second daemon loses the flock race and exits; a client that never
+        spawns leaves every hook without one for the life of the record.
+        """
+        from autorun.client import daemon_record_is_live
+
+        record = tmp_path / "daemon.lock"
+        record.write_text(content)
+        assert daemon_record_is_live(record) is False
+
+    def test_a_missing_record_is_not_live(self, tmp_path):
+        from autorun.client import daemon_record_is_live
+
+        assert daemon_record_is_live(tmp_path / "absent.lock") is False
+
+
 def test_the_attempt_cap_cannot_bind_before_the_deadline():
     """The retry cap is a recursion guard, not the cold-start bound.
 

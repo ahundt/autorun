@@ -137,6 +137,46 @@ def client_total_budget(cli_type: str) -> float:
 #: Set by hooks/hook_entry.py to the monotonic instant its wrapper gives up.
 DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
 
+#: How many attempts to allow a pid that is alive but holds no daemon flock.
+#: The gap between a daemon starting and taking its flock is short; anything
+#: longer is a stale record, and no daemon flock is held either way.
+_STALE_PID_PATIENCE_ATTEMPTS = 10
+
+
+def daemon_record_is_live(lock_path) -> bool:
+    """Whether daemon.lock names a process that is really this daemon.
+
+    The file holds ``"<pid> <start-time-units>"``. A pid on its own does not
+    identify anything: the number is reused, aggressively so on Windows, so
+    ``psutil.pid_exists`` answers yes for whatever unrelated process inherited
+    it. The client then believed a stale record indefinitely and never spawned
+    a daemon -- every attempt reported "no daemon was spawned by this client",
+    and no timeout could fix it because nothing was ever starting.
+
+    Comparing the recorded start time to the live process rejects a reused pid.
+    A record written by an older version carries no start time and cannot be
+    verified; it is treated as not live, because the caller only consults this
+    when no daemon holds the flock, and spawning a second daemon is recoverable
+    while refusing to spawn any is not.
+    """
+    try:
+        parts = lock_path.read_text(encoding="utf-8").split()
+        pid = int(parts[0])
+        recorded = int(parts[1]) if len(parts) > 1 else 0
+    except (IndexError, OSError, ValueError):
+        return False
+    if recorded <= 0:
+        return False
+    try:
+        import psutil
+
+        actual = round(
+            psutil.Process(pid).create_time() * _PROCESS_BIRTH_UNITS_PER_SECOND
+        )
+    except Exception:
+        return False
+    return actual == recorded
+
 
 def client_deadline(cli_type: str) -> float:
     """The monotonic instant this client must stop by.
@@ -597,16 +637,18 @@ def run_client() -> int:
                     # Check PID file for process that hasn't cleaned up
                     lock_path = ipc.AUTORUN_LOCK_PATH
                     if lock_path.exists():
-                        try:
-                            pid = int(lock_path.read_text().strip())
-                            import psutil
-
-                            if psutil.pid_exists(pid):
-                                pass  # PID alive but socket not ready — wait
-                            else:
+                        if daemon_record_is_live(lock_path):
+                            # A daemon that has started but not yet taken the
+                            # flock. Real, and narrow, so it is worth one wait
+                            # -- but only a bounded one: this branch is the
+                            # single path that declines to spawn without any
+                            # daemon holding the flock, and waiting in it
+                            # forever is what left every attempt reporting that
+                            # no daemon was spawned.
+                            if depth >= _STALE_PID_PATIENCE_ATTEMPTS:
                                 lock_path.unlink(missing_ok=True)
                                 should_spawn = True
-                        except (ValueError, OSError):
+                        else:
                             lock_path.unlink(missing_ok=True)
                             should_spawn = True
                     else:
