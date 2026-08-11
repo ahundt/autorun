@@ -629,9 +629,42 @@ def _emit_cli_result(result: subprocess.CompletedProcess[str]) -> int | None:
     return result.returncode
 
 
+def _autorun_home() -> Path:
+    """Return the runtime directory the daemon publishes itself in."""
+    return Path(os.environ.get("AUTORUN_HOME", Path.home() / ".autorun"))
+
+
 def _daemon_socket_path() -> Path:
     """Return the shared daemon socket path without importing autorun."""
-    return Path(os.environ.get("AUTORUN_HOME", Path.home() / ".autorun")) / "daemon.sock"
+    return _autorun_home() / "daemon.sock"
+
+
+def _daemon_port_path() -> Path:
+    """Return the port file the daemon writes where AF_UNIX is unavailable."""
+    return _autorun_home() / "daemon.port"
+
+
+def _daemon_endpoint() -> "tuple[int, object] | None":
+    """Return (family, address) for a live daemon, or None if there is none.
+
+    CPython does not expose socket.AF_UNIX on Windows
+    (https://github.com/python/cpython/issues/77589), so the daemon listens on
+    loopback there and publishes its port beside where the socket would be --
+    the same split ipc.py already makes for the package. Reading both here
+    means try_daemon has one body instead of a platform branch, and Windows
+    stops falling through to the CLI path on every single event.
+    """
+    if hasattr(socket, "AF_UNIX"):
+        socket_path = _daemon_socket_path()
+        if not socket_path.exists():
+            return None
+        return socket.AF_UNIX, str(socket_path)
+
+    try:
+        port = int(_daemon_port_path().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return socket.AF_INET, ("127.0.0.1", port)
 
 
 def _can_use_direct_daemon(autorun_bin: Path | None) -> bool:
@@ -696,13 +729,11 @@ def _emit_daemon_result(
 
 
 def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
-    """Send one hook directly to the live Unix daemon without a child Python."""
-    if not hasattr(socket, "AF_UNIX"):
+    """Send one hook directly to the live daemon without a child Python."""
+    endpoint = _daemon_endpoint()
+    if endpoint is None:
         return False, 0
-
-    socket_path = _daemon_socket_path()
-    if not socket_path.exists():
-        return False, 0
+    family, address = endpoint
 
     try:
         payload = json.loads(stdin_data or "{}")
@@ -722,9 +753,9 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     event_name = payload.get("hook_event_name", "unknown")
     connected = False
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as daemon_socket:
+        with socket.socket(family, socket.SOCK_STREAM) as daemon_socket:
             daemon_socket.settimeout(hook_timeout_for_cli(cli_type))
-            daemon_socket.connect(str(socket_path))
+            daemon_socket.connect(address)
             connected = True
             daemon_socket.sendall(json.dumps(payload).encode("utf-8") + b"\n")
             with daemon_socket.makefile("r", encoding="utf-8") as response_stream:

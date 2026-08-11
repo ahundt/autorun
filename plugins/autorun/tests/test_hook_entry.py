@@ -27,6 +27,22 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 HOOK_ENTRY = PLUGIN_ROOT / "hooks" / "hook_entry.py"
 
 
+def stage_daemon_endpoint(tmp_path: Path):
+    """Make a daemon look live and return the address a client should reach.
+
+    The two IPC shapes are staged the same way hook_entry reads them: a socket
+    file where AF_UNIX exists, a port file where it does not. Tests assert
+    against the returned address rather than hardcoding a path, so the same
+    test body covers both platforms.
+    """
+    if hasattr(socket, "AF_UNIX"):
+        unix_socket = tmp_path / "daemon.sock"
+        unix_socket.touch()
+        return str(unix_socket)
+    (tmp_path / "daemon.port").write_text("49999", encoding="utf-8")
+    return ("127.0.0.1", 49999)
+
+
 def write_fake_cli(
     directory: Path,
     *,
@@ -236,8 +252,7 @@ class TestHookEntryExecutionPriority:
     ):
         """Fast IPC preserves daemon routing metadata and Codex denial JSON."""
         hook_entry = load_hook_entry_module()
-        socket_path = tmp_path / "daemon.sock"
-        socket_path.touch()
+        expected_address = stage_daemon_endpoint(tmp_path)
         sent = bytearray()
 
         class FakeSocket:
@@ -250,8 +265,8 @@ class TestHookEntryExecutionPriority:
             def settimeout(self, timeout):
                 assert timeout == hook_entry.hook_timeout_for_cli("codex")
 
-            def connect(self, path):
-                assert path == str(socket_path)
+            def connect(self, address):
+                assert address == expected_address
 
             def sendall(self, data):
                 sent.extend(data)
@@ -300,7 +315,7 @@ class TestHookEntryExecutionPriority:
     ):
         """A connected but stalled permission gate is not sent a second time."""
         hook_entry = load_hook_entry_module()
-        (tmp_path / "daemon.sock").touch()
+        stage_daemon_endpoint(tmp_path)
 
         class TimeoutSocket:
             def __enter__(self):
@@ -312,7 +327,7 @@ class TestHookEntryExecutionPriority:
             def settimeout(self, _timeout):
                 return None
 
-            def connect(self, _path):
+            def connect(self, _address):
                 return None
 
             def sendall(self, _data):
@@ -335,7 +350,7 @@ class TestHookEntryExecutionPriority:
     def test_connected_daemon_invalid_response_fails_closed(self, tmp_path, monkeypatch, capsys):
         """A processed permission event is never replayed after malformed output."""
         hook_entry = load_hook_entry_module()
-        (tmp_path / "daemon.sock").touch()
+        stage_daemon_endpoint(tmp_path)
 
         class InvalidResponseSocket:
             def __enter__(self):
@@ -347,7 +362,7 @@ class TestHookEntryExecutionPriority:
             def settimeout(self, _timeout):
                 return None
 
-            def connect(self, _path):
+            def connect(self, _address):
                 return None
 
             def sendall(self, _data):
@@ -385,7 +400,7 @@ class TestHookEntryExecutionPriority:
     ):
         """Malformed lifecycle replies never leak Claude fields to other CLIs."""
         hook_entry = load_hook_entry_module()
-        (tmp_path / "daemon.sock").touch()
+        stage_daemon_endpoint(tmp_path)
 
         class InvalidResponseSocket:
             def __enter__(self):
@@ -397,7 +412,7 @@ class TestHookEntryExecutionPriority:
             def settimeout(self, _timeout):
                 return None
 
-            def connect(self, _path):
+            def connect(self, _address):
                 return None
 
             def sendall(self, _data):
