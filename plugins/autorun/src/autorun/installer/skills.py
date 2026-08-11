@@ -503,18 +503,13 @@ def demo() -> None:
         # The READ route is what the bridge targets, so that is what must be a
         # symlink for the refusal to trigger.
         (linked_home / ".fake" / "read-skills").symlink_to(shared)
-        previous_home = os.environ.get("HOME")
-        os.environ["HOME"] = str(linked_home)
-        try:
+        # Same reason as orchestrate's self-check: the shared helper moves
+        # HOME and USERPROFILE together, so the redirect holds on Windows too.
+        with discovery.redirected_home(linked_home):
             assert not list(bridge_intents(
                 writer, Context(marketplace_root=root, home=linked_home),
                 shared_root_override=shared,
             )), "claude-code#38051: never bridge into a symlinked skills directory"
-        finally:
-            if previous_home is None:
-                os.environ.pop("HOME", None)
-            else:
-                os.environ["HOME"] = previous_home
 
         # --- refusals that must happen BEFORE anything is written ----------
         # ForgeCode's real shape: reads the shared root, has no native route.

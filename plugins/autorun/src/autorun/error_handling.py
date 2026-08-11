@@ -19,6 +19,7 @@ Follows DRY principles - use this for all import/module structure errors
 Requires Python 3.10 or newer.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -207,10 +208,19 @@ def show_uv_environment_status():
         print("⚠️  UV environment not properly configured")
         print("   Run the following commands:")
         if not details['uv_installed']:
-            print("   curl -LsSf https://astral.sh/uv/install.sh | sh")
+            # The installer and the activate line are the two commands that
+            # differ by platform. A user who is told to run `source
+            # .venv/bin/activate` on Windows gets an error from the fix.
+            if os.name == "nt":
+                print('   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"')
+            else:
+                print("   curl -LsSf https://astral.sh/uv/install.sh | sh")
         if not details['venv_exists']:
             print("   uv venv --python 3.10")
-            print("   source .venv/bin/activate")
+            if os.name == "nt":
+                print(r"   .venv\Scripts\activate")
+            else:
+                print("   source .venv/bin/activate")
         if not details['dependencies_synced']:
             print("   uv sync")
 

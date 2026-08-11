@@ -73,6 +73,13 @@ DEBUG_LOG_MAX_BYTES = 1_000_000
 DEBUG_VALUE_MAX_CHARS = 4_000
 
 
+# DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, named rather than imported:
+# these attributes do not exist in subprocess on POSIX, where 0 is correct.
+_DETACHED_PROCESS_FLAGS = (
+    (0x00000008 | 0x00000200) if os.name == "nt" else 0
+)
+
+
 def _debug_log_path() -> Path:
     """Return the bounded hook debug log path."""
     return Path.home() / ".autorun" / "hook_entry_debug.log"
@@ -1064,9 +1071,16 @@ def spawn_background_bootstrap() -> bool:
                 tool_or_reason,
                 str(plugin_root),
             ),
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            # start_new_session calls setsid() and does nothing on Windows, so
+            # the bootstrap worker stayed in this hook's process tree and died
+            # with it -- the install it was spawned to perform never finished.
+            # ipc.detached_spawn_kwargs says the same thing for the package;
+            # hook_entry is stdlib-only and cannot import it.
             start_new_session=True,
+            creationflags=_DETACHED_PROCESS_FLAGS,
         )
         return True
     except OSError:

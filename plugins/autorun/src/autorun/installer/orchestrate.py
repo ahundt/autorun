@@ -812,15 +812,11 @@ def demo() -> None:
         # and writes the real one; an earlier version of this self-check did
         # exactly that and uninstalled skills from a live machine. `Context`
         # now refuses the mismatch, and this is the correct form.
-        previous = os.environ.get("HOME")
-        os.environ["HOME"] = str(home)
-        try:
+        # discovery.redirected_home, not a hand-rolled save/restore: it moves
+        # HOME and USERPROFILE together, and Path.home() reads the second one
+        # on Windows, so redirecting only the first isolates on one platform.
+        with discovery.redirected_home(home):
             _exercise(root, home, record, calls)
-        finally:
-            if previous is None:
-                os.environ.pop("HOME", None)
-            else:
-                os.environ["HOME"] = previous
 
     print("installer.orchestrate: all self-checks passed")
 
