@@ -196,7 +196,7 @@ See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS lis
 | `/ar:pe [on\|off\|globalon\|globaloff]` | `/ar:planexport […]` | Status, per-project pin, or global default; a pin beats the global default |
 | `/ar:pe dir <path>` | `/ar:planexport dir <path>` | Set the export directory |
 | `/ar:pe pattern <template>` | `/ar:planexport pattern <template>` | Set the filename pattern |
-| `/ar:pe rejected [on\|off\|dir <path>]` | `/ar:planexport rejected […]` | Toggle or set rejected-plan export and its directory |
+| `/ar:pe <component> [on\|off\|dir <path>]` | `/ar:planexport <component> […]` | Per-component switch and destination. Components are `accepted` and `rejected`; a bare name toggles it. A component writes only when both plan export and that component are on |
 | `/ar:pe reset` | `/ar:planexport reset` | Restore defaults (also clears project pins) |
 
 **Task Tracking** (v0.9+):

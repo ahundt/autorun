@@ -952,6 +952,30 @@ def run_hook_handler() -> int:
         return run_direct()
 
 
+def _use_utf8_output() -> None:
+    """Make this process's stdout and stderr able to carry autorun's output.
+
+    Windows gives a non-UTF-8 console and pipe encoding (cp1252 on the CI
+    runners), and autorun's own status text contains characters it cannot
+    represent, so `autorun task clear` died with "'charmap' codec can't encode
+    characters in position 0-1" before it could report anything -- including
+    the refusal it was being asked for. Reconfiguring here covers every
+    subcommand from one place; `errors="replace"` keeps a stray character from
+    turning readable output into a crash. Streams that already speak UTF-8,
+    which is every POSIX default, are left untouched.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        if (getattr(stream, "encoding", "") or "").lower().replace("-", "") == "utf8":
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):  # pragma: no cover - detached stream
+            pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point.
 
@@ -961,6 +985,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns:
         Exit code: 0 = success, 1 = failure
     """
+    _use_utf8_output()
+
     parser = create_parser()
     args, remaining = parser.parse_known_args(argv)
 

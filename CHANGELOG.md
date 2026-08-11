@@ -37,8 +37,33 @@ marketplace itself carries a separate `version` field.
   `codex_plugin_source_dir` in CONFIG. Install and uninstall read the same keys,
   so relocating one moves both.
 
+- **Each notes component has its own switch and destination.** Accepted and
+  rejected plans are now described by one table, so `/ar:pe accepted off` and
+  `/ar:pe accepted dir <path>` work exactly like their `rejected` counterparts,
+  a bare `/ar:pe <component>` toggles it, and `/ar:pe` reports every component's
+  state and destination. A component writes only when both plan export and that
+  component are on. Adding a component is a table row rather than an edit to the
+  parser, the status text, the config dataclass and the defaults.
+
 ### Fixed
 
+- **Plan export did nothing on Windows.** `is_plan_file` tested the raw path
+  for the literal `/.claude/plans/`, which a Windows path
+  (`C:\Users\<user>\.claude\plans\<name>.md`) never contains, so no plan was
+  ever tracked and export, recovery and the rejected-plan backup all skipped
+  silently while reporting success.
+- **Hooks took the slow path on every Windows event.** `get_autorun_bin`
+  looked for `autorun` beside the interpreter and at `.venv/bin/autorun`; a
+  Windows venv writes `.venv/Scripts/autorun.exe`, so all three plugin-local
+  tiers missed and resolution fell through to the global binary, which the
+  direct-daemon check refuses. Both layouts are now accepted on every platform.
+- **`autorun` CLI subcommands crashed on a non-UTF-8 console.** Windows
+  reported `'charmap' codec can't encode characters in position 0-1` instead of
+  the command's own output, including refusals the user had asked for.
+- **Concurrent first-run processes could fail to create the state database.**
+  SQLite does not run the busy handler while taking the exclusive lock a
+  journal-mode change needs, so a process losing that race was refused with
+  "database is locked" even though `busy_timeout` was set.
 - **`--uninstall` no longer leaves most of the install behind.** It now removes
   Gemini, Qwen and Antigravity extension directories (asking each harness CLI
   first, so its registry stays consistent), ForgeCode command files, plugin

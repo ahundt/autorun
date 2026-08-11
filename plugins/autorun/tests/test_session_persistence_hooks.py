@@ -11,6 +11,13 @@ import uuid
 from pathlib import Path
 
 # Add src to path
+#
+# Paths interpolated into generated Python source below use !r, not a
+# quoted {path}. On Windows the path is D:\\a\\autorun\\... and a plain
+# interpolation turns \\a into a bell character and \\p into an invalid
+# escape, so the child imported from the wrong directory and failed with
+# a SyntaxWarning. repr() emits a correctly escaped literal everywhere.
+# SRC_DIR_LITERAL_NOTE
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from conftest import register_test_session
@@ -32,7 +39,7 @@ class TestSessionPersistenceAcrossHooks:
             f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
+sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
 from autorun.main import session_state
 
 with session_state('{self.session_id}') as state:
@@ -51,7 +58,7 @@ print('WRITE_OK')
             f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
+sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
 from autorun.main import session_state
 
 with session_state('{self.session_id}') as state:
@@ -75,7 +82,7 @@ print(policy)
                 f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
+sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
 from autorun.main import session_state
 
 with session_state('{self.session_id}') as state:
@@ -89,7 +96,7 @@ with session_state('{self.session_id}') as state:
                 f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
+sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
 from autorun.main import session_state
 
 with session_state('{self.session_id}') as state:
@@ -114,7 +121,7 @@ with session_state('{self.session_id}') as state:
             f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
+sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
 from autorun.main import session_state
 
 with session_state('{session_a}') as state:
@@ -128,7 +135,7 @@ with session_state('{session_a}') as state:
             f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
+sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
 from autorun.main import session_state
 
 with session_state('{session_b}') as state:
@@ -142,7 +149,7 @@ with session_state('{session_b}') as state:
             f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
+sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
 from autorun.main import session_state
 
 with session_state('{session_a}') as state:
@@ -156,7 +163,7 @@ with session_state('{session_a}') as state:
             f"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
+sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
 from autorun.main import session_state
 
 with session_state('{session_b}') as state:

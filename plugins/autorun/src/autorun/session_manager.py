@@ -1404,13 +1404,39 @@ class SQLiteStore:
 
                 # journal_mode cannot change inside a transaction. Every
                 # initializer reaches this only after a validated commit.
-                conn.execute("PRAGMA journal_mode = WAL")
+                self._enable_wal(conn, DEFAULT_SESSION_TIMEOUT)
         except sqlite3.Error as exc:
             raise SessionBackendError(
                 f"Could not initialize state database {self._db_path}: {exc}"
             ) from exc
 
         self._initialized = True
+
+    def _enable_wal(self, conn, timeout: float) -> None:
+        """Switch the database to WAL, tolerating a concurrent initializer.
+
+        Changing journal mode needs a brief exclusive lock, and SQLite does
+        not run the busy handler while taking it, so ``busy_timeout`` does not
+        cover this statement: a process that loses the race is refused
+        immediately with "database is locked" even though every other write
+        would have waited. Bootstrapping processes all want the same end
+        state, so a loser waits for the winner and confirms the result rather
+        than failing the whole initialization.
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
+        delay = 0.005
+        while True:
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+                return
+            except sqlite3.OperationalError:
+                mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+                if str(mode).lower() == "wal":
+                    return
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.05)
 
     def _validate_existing_database(self, conn) -> None:
         """Refuse an unrecognized database inside the initialization lock.
