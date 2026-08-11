@@ -335,7 +335,9 @@ def _start_daemon(src_dir: Path) -> bool:
     # Enhanced daemon startup with detailed logging
     daemon_code = (
         f"import sys; "
-        f"sys.path.insert(0, r'{src_dir}'); "
+        # repr rather than r'...': a raw literal still ends at a quote and
+        # cannot end in a backslash, both of which a real path may contain.
+        f"sys.path.insert(0, {str(src_dir)!r}); "
         f"import autorun; "
         f"print(f'=== Daemon Startup Diagnostics ===', flush=True); "
         f"print(f'autorun loaded from: {{autorun.__file__}}', flush=True); "

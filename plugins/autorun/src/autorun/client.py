@@ -482,7 +482,17 @@ def run_client() -> int:
             if should_spawn:
                 logger.info("Daemon not running, auto-starting...")
                 src_dir = Path(__file__).parent.parent
-                daemon_code = ("import sys; sys.path.insert(0, '{0}'); from autorun.daemon import main; main()").format(str(src_dir))
+                # !r, not a quoted {0}: on Windows src_dir is C:\Users\...,
+                # and inside a plain literal \U is an invalid escape, so the
+                # spawned interpreter died with a SyntaxError. The daemon then
+                # never existed, every hook fell through to the CLI, and the
+                # CLI waited on the daemon it had just failed to start until
+                # the caller's timeout -- the "autorun CLI timed out after 5s"
+                # every Windows event reported. repr() quotes and escapes.
+                daemon_code = (
+                    "import sys; sys.path.insert(0, {0!r}); "
+                    "from autorun.daemon import main; main()"
+                ).format(str(src_dir))
                 subprocess.Popen(
                     [sys.executable, "-c", daemon_code],
                     stdin=subprocess.DEVNULL,

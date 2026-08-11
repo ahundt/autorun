@@ -296,3 +296,43 @@ class TestNoRegressions:
         from autorun.restart_daemon import restart_daemon
         source = inspect.getsource(restart_daemon)
         assert '5.0' in source, "Socket poll timeout should be 5 seconds"
+
+class TestGeneratedDaemonCodeSurvivesAnyPath:
+    """The spawn string is Python source: a path in it must be a valid literal.
+
+    client.py built it with a plain '{0}' substitution. On Windows src_dir is
+    C:\\Users\\..., where \\U is an invalid escape, so the spawned interpreter
+    died with a SyntaxError before importing anything. No daemon existed, every
+    hook fell through to the CLI, and the CLI waited on the daemon it had just
+    failed to start until the caller gave up -- reported as "autorun CLI timed
+    out after 5s" on every Windows event.
+    """
+
+    @pytest.mark.parametrize(
+        "src_dir",
+        [
+            "/home/user/src",
+            "C:\\Users\\runneradmin\\autorun\\src",
+            "C:\\temp\\new\\autorun\\src",
+            "/tmp/it's here/src",
+        ],
+    )
+    def test_the_path_round_trips_through_the_generated_source(self, src_dir):
+        import ast
+
+        code = (
+            "import sys; sys.path.insert(0, {0!r}); "
+            "from autorun.daemon import main; main()"
+        ).format(src_dir)
+
+        tree = ast.parse(code)  # a SyntaxError here is the whole bug
+
+        literals = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+        assert src_dir in literals, (
+            f"the path did not survive into the generated source: {literals}"
+        )
+

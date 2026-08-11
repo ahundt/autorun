@@ -111,9 +111,14 @@ class TestInstallerPlacesTheShim:
         assert "__AUTORUN_PORT_FILE__" not in text, "port placeholder was not substituted"
         assert "daemon.port" in text
         assert not any(
-            line.strip().startswith(("const SOCKET", "const PORT_FILE")) and '"~' in line
+            line.strip().startswith(("const SOCKET", "const PORT_FILE")) and "~" in line
             for line in text.splitlines()
         ), "daemon paths must be absolute, not tilde-relative"
+        # The substituted values must be complete JS literals. A raw Windows
+        # path would leave backslash escapes that change or break the string.
+        for name in ("const SOCKET = ", "const PORT_FILE = "):
+            line = next(l for l in text.splitlines() if l.startswith(name))
+            assert json.loads(line[len(name):].strip()), line
 
     def test_uninstall_removes_the_shim_it_owns(self, tmp_path, monkeypatch):
         from autorun.installer import entrypoint
@@ -436,8 +441,10 @@ def _run_shim(
     # command makes the unreachable-daemon path exercise the last-resort block.
     shim.write_text(
         SHIM_SOURCE.read_text(encoding="utf-8")
-        .replace("__AUTORUN_SOCKET__", str(socket_path))
-        .replace("__AUTORUN_PORT_FILE__", str(port_file))
+        # Same JSON encoding the installer applies: the placeholders carry no
+        # quotes of their own, so a raw path would not even be a JS literal.
+        .replace("__AUTORUN_SOCKET__", json.dumps(str(socket_path)))
+        .replace("__AUTORUN_PORT_FILE__", json.dumps(str(port_file)))
         .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", hook_entry_command),
         encoding="utf-8",
     )

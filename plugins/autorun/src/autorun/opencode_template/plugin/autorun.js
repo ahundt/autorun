@@ -25,8 +25,8 @@
 
 import { existsSync, readFileSync } from "node:fs"
 
-const SOCKET = "__AUTORUN_SOCKET__"
-const PORT_FILE = "__AUTORUN_PORT_FILE__"
+const SOCKET = __AUTORUN_SOCKET__
+const PORT_FILE = __AUTORUN_PORT_FILE__
 
 /**
  * Where the daemon is listening, in the form Bun.connect wants.

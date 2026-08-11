@@ -650,10 +650,14 @@ def stage_opencode_shim(
         directory.mkdir(parents=True, exist_ok=True)
         text = (
             source.read_text(encoding="utf-8")
-            .replace("__AUTORUN_SOCKET__", socket)
-            .replace("__AUTORUN_PORT_FILE__", port_file)
-            # JSON-encoded: the command is embedded in a JS literal, and a path
-            # containing a quote or backslash would otherwise break the module.
+            # Every one of these is JSON-encoded, and the placeholders in the
+            # template carry no surrounding quotes. A path is embedded in a JS
+            # literal, and on Windows it is C:\Users\..., where \U and \t are
+            # escape sequences: substituting raw produced a shim whose socket
+            # and port paths were silently mangled, so it reported the daemon
+            # unreachable on the platform the port file exists for.
+            .replace("__AUTORUN_SOCKET__", json.dumps(socket))
+            .replace("__AUTORUN_PORT_FILE__", json.dumps(port_file))
             .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(argv))
         )
         (directory / "autorun.js").write_text(text, encoding="utf-8")
