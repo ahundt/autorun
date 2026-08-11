@@ -37,6 +37,7 @@ References:
 import os
 import sys
 import json
+import time
 import asyncio
 import subprocess
 import datetime
@@ -60,8 +61,15 @@ DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _STABLE_PID_PARENT_SCAN_DEPTH = 12
 _PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
-DAEMON_START_ATTEMPTS = 8
 DAEMON_START_RETRY_SECONDS = 0.1
+#: Recursion guard only. The real bound is the deadline from
+#: client_total_budget(); forward() recurses, so a runaway needs a hard stop.
+#: This must never bind before the deadline does, or the client gives up with
+#: budget still unspent -- which is what a cap of 8 did, ending a cold start at
+#: 0.8s on a host whose interpreter needs longer to boot than that.
+#: test_the_attempt_cap_cannot_bind_before_the_deadline holds it above the
+#: largest budget divided by this sleep.
+DAEMON_START_ATTEMPTS = 64
 
 
 def _hook_platform_process_markers() -> tuple[str, ...]:
@@ -94,6 +102,36 @@ def daemon_response_timeout_for_cli(cli_type: str) -> float:
 
     timeouts = CONFIG["daemon_client_response_timeouts_seconds"]
     return float(timeouts.get(cli_type, timeouts["claude"]))
+
+
+#: Slack left inside the wrapper budget for reading stdin, detecting the CLI,
+#: and writing the response. The client must return *before* the wrapper fires,
+#: not exactly when it does.
+CLIENT_BUDGET_MARGIN_SECONDS = 0.2
+
+
+def client_total_budget(cli_type: str) -> float:
+    """Total wall-clock the client may spend, cold start and response together.
+
+    A cold start and a response used to be two independent constants that were
+    each checked against the wrapper budget but never checked as a sum. They
+    exceed it on four of seven harnesses: gemini, antigravity and qwen wait
+    0.8s starting the daemon plus 3.5s for a reply against a 4.0s wrapper, and
+    opencode 0.8 + 4.0 against 4.5. The wrapper kills the hook first, so the
+    client's own bound is unreachable and its failure response -- the one that
+    explains what happened -- is never written. This is also why a Windows cold
+    start, which is slower than the 0.143s a POSIX host needs, could not fit in
+    the fixed 0.8s allowance no matter how the daemon behaved.
+
+    Deriving one budget from the wrapper makes the sum correct by construction:
+    a slow cold start spends the response's share rather than failing at a
+    constant, and no pair of constants can drift past the wrapper again.
+    """
+    from .config import CONFIG
+
+    wrappers = CONFIG["hook_wrapper_timeouts_seconds"]
+    wrapper = float(wrappers.get(cli_type, wrappers["claude"]))
+    return max(wrapper - CLIENT_BUDGET_MARGIN_SECONDS, 0.1)
 
 
 def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
@@ -376,16 +414,19 @@ def run_client() -> int:
     # a missing endpoint, a refused connection, and a daemon that exits on
     # startup. A list because forward() rebinds it from a nested scope.
     last_connect_error: list = []
+    deadline = time.monotonic() + client_total_budget(cli_type)
 
     async def forward(depth: int = 0):
-        if depth >= DAEMON_START_ATTEMPTS:
+        remaining = deadline - time.monotonic()
+        if depth >= DAEMON_START_ATTEMPTS or remaining <= 0:
             cause = (
                 f": last connection error was {last_connect_error[0]!r}"
                 if last_connect_error
                 else ""
             )
+            spent = "budget exhausted" if remaining <= 0 else f"{DAEMON_START_ATTEMPTS} attempts"
             raise RuntimeError(
-                f"Daemon failed to start after {DAEMON_START_ATTEMPTS} attempts"
+                f"Daemon failed to start after {spent}"
                 f"{cause}. Daemon startup output, if any, is in {ipc.AUTORUN_LOG_FILE}"
             )
         try:
@@ -398,7 +439,15 @@ def run_client() -> int:
 
                 resp = await asyncio.wait_for(
                     reader.readuntil(b"\n"),
-                    timeout=daemon_response_timeout_for_cli(cli_type),
+                    # Whichever is smaller: the configured per-harness wait, or
+                    # what is left of the shared budget. A cold start that
+                    # already spent part of the budget must not then start a
+                    # full-length response wait and push the total past the
+                    # wrapper timeout.
+                    timeout=min(
+                        daemon_response_timeout_for_cli(cli_type),
+                        max(deadline - time.monotonic(), 0.05),
+                    ),
                 )
                 resp_text = resp.decode().strip()
 
@@ -550,9 +599,11 @@ def run_client() -> int:
             else:
                 logger.debug(f"Waiting for daemon (depth={depth})")
 
-            # Keep the whole cold-start wait below one second so the daemon's
-            # configured response budget still fits inside the hook wrapper.
-            await asyncio.sleep(DAEMON_START_RETRY_SECONDS)
+            # Never sleep past the shared deadline: the next attempt has to be
+            # able to report the failure while the wrapper is still listening.
+            await asyncio.sleep(
+                min(DAEMON_START_RETRY_SECONDS, max(deadline - time.monotonic(), 0.0))
+            )
             return await forward(depth + 1)
 
     try:

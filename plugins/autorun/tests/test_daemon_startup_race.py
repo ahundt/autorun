@@ -175,12 +175,36 @@ class TestFirstRunSpawn:
 
 
 class TestBoundedStartupWait:
-    """Keep daemon readiness inside the hook wrapper's remaining budget."""
+    """Keep daemon readiness inside the hook wrapper's remaining budget.
 
-    def test_total_startup_wait_stays_below_one_second(self):
-        from autorun.client import DAEMON_START_ATTEMPTS, DAEMON_START_RETRY_SECONDS
+    The bound is the deadline from ``client_total_budget``, not a constant.
+    Asserting the constant product was 0.8s pinned a cold start to 0.8s on
+    every host, including ones whose interpreter takes longer than that to
+    boot, and it could not see that 0.8s plus a 3.5s response overruns a 4.0s
+    wrapper. Those two properties are owned by
+    ``test_client_fail_closed.py::test_a_cold_start_and_a_response_together_fit_inside_the_wrapper``
+    and ``::test_the_attempt_cap_cannot_bind_before_the_deadline``.
+    """
 
-        assert DAEMON_START_ATTEMPTS * DAEMON_START_RETRY_SECONDS == pytest.approx(0.8)
+    def test_the_retry_sleep_allows_several_attempts_in_the_smallest_budget(self):
+        """Granularity, which is this module's own concern.
+
+        A sleep close to the budget would spend it in one or two attempts, so a
+        daemon that needs a moment longer than the first poll never gets a
+        second look however large the budget is.
+        """
+        from autorun.client import DAEMON_START_RETRY_SECONDS, client_total_budget
+        from autorun.config import CONFIG
+
+        smallest = min(
+            client_total_budget(name)
+            for name in CONFIG["hook_wrapper_timeouts_seconds"]
+        )
+        attempts = smallest / DAEMON_START_RETRY_SECONDS
+        assert attempts >= 10, (
+            f"a {DAEMON_START_RETRY_SECONDS}s sleep gives only {attempts:.0f} "
+            f"attempts inside the smallest budget of {smallest}s"
+        )
 
 
 # ─── Test Group 5: Multi-process contention scenarios ───
