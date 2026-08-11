@@ -25,6 +25,7 @@ import asyncio
 import hashlib
 import os
 import socket
+import subprocess
 from pathlib import Path
 
 def _get_autorun_config_dir() -> Path:
@@ -59,6 +60,36 @@ PORT_FILE = AUTORUN_PORT_FILE
 # does not expose socket.AF_UNIX on Windows (https://github.com/python/cpython/issues/77589).
 HAS_UNIX_SOCKETS = hasattr(socket, "AF_UNIX")
 
+
+
+def detached_spawn_kwargs(windows: bool | None = None) -> dict:
+    """Popen options that let the daemon outlive the process starting it.
+
+    ``start_new_session`` calls setsid() and is POSIX-only: Python accepts it
+    on Windows and does nothing, so the daemon stayed in its parent's console
+    and process tree. A CI runner or any launcher that reaps a job object then
+    kills the daemon the moment the spawning CLI exits, the next hook finds no
+    daemon and spawns another that dies the same way, and every event pays the
+    client's retry backoff before failing -- which is what "autorun CLI timed
+    out" on Windows actually was. DETACHED_PROCESS plus
+    CREATE_NEW_PROCESS_GROUP is the Windows equivalent of setsid().
+
+    Both keys are always returned: creationflags is 0 on POSIX and
+    start_new_session is ignored on Windows, so one call site covers both and
+    neither platform needs a branch around the spawn itself.
+
+    ``windows`` overrides the platform for tests; production passes nothing.
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    creationflags = 0
+    if windows:
+        # Named rather than imported from subprocess: these attributes do not
+        # exist on POSIX, so referencing them directly would break the import.
+        creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+        )
+    return {"start_new_session": True, "creationflags": creationflags}
 
 def _get_tcp_port() -> int:
     """Deterministic TCP port for this user, avoiding well-known ports.

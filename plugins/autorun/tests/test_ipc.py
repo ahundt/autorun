@@ -259,3 +259,43 @@ class TestIPCCodeQuality:
                 context = '\n'.join(lines[max(0, i-10):i+1])
                 assert 'HAS_UNIX_SOCKETS' in context or 'hasattr' in context, \
                     f"socket.AF_UNIX at line {i+1} not guarded by HAS_UNIX_SOCKETS"
+
+class TestDetachedSpawnKwargs:
+    """The daemon must survive the process that starts it, on both platforms.
+
+    start_new_session is POSIX-only and silently ignored on Windows, so the
+    daemon stayed inside its parent's process tree there and was reaped with
+    it. Both keys are always returned so the spawn sites need no branch.
+    """
+
+    def test_posix_uses_setsid_and_no_creation_flags(self):
+        from autorun import ipc
+
+        options = ipc.detached_spawn_kwargs(windows=False)
+        assert options["start_new_session"] is True
+        assert options["creationflags"] == 0
+
+    def test_windows_detaches_and_makes_a_new_process_group(self):
+        from autorun import ipc
+
+        options = ipc.detached_spawn_kwargs(windows=True)
+        assert options["start_new_session"] is True
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        assert options["creationflags"] == 0x00000008 | 0x00000200
+
+    def test_both_platforms_answer_the_same_keys(self):
+        """A spawn site passes **kwargs blind; a missing key would be a crash."""
+        from autorun import ipc
+
+        assert set(ipc.detached_spawn_kwargs(windows=True)) == set(
+            ipc.detached_spawn_kwargs(windows=False)
+        )
+
+    def test_the_default_follows_the_running_platform(self, monkeypatch):
+        from autorun import ipc
+
+        monkeypatch.setattr(ipc.os, "name", "nt")
+        assert ipc.detached_spawn_kwargs()["creationflags"] != 0
+        monkeypatch.setattr(ipc.os, "name", "posix")
+        assert ipc.detached_spawn_kwargs()["creationflags"] == 0
+

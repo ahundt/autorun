@@ -357,9 +357,10 @@ def _start_daemon(src_dir: Path) -> bool:
     with open(log_path, "w", encoding="utf-8") as startup_log:
         subprocess.Popen(
             [str(daemon_python), "-c", daemon_code],
+            stdin=subprocess.DEVNULL,
             stdout=startup_log,
             stderr=startup_log,
-            start_new_session=True,
+            **ipc.detached_spawn_kwargs(),
         )
 
     return True

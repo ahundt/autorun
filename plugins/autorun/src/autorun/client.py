@@ -485,9 +485,10 @@ def run_client() -> int:
                 daemon_code = ("import sys; sys.path.insert(0, '{0}'); from autorun.daemon import main; main()").format(str(src_dir))
                 subprocess.Popen(
                     [sys.executable, "-c", daemon_code],
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    start_new_session=True,
+                    **ipc.detached_spawn_kwargs(),
                 )
             else:
                 logger.debug(f"Waiting for daemon (depth={depth})")
