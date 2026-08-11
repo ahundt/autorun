@@ -5,6 +5,8 @@ Permission-gate hooks must never fail open when the daemon is slow, missing,
 or returns invalid data. Lifecycle/context events may continue permissively.
 """
 
+from pathlib import Path
+
 import pytest
 
 from autorun.client import (
@@ -122,6 +124,54 @@ def test_a_cold_start_and_a_response_together_fit_inside_the_wrapper():
         assert budget == wrapper - CLIENT_BUDGET_MARGIN_SECONDS
 
     assert client_total_budget("unknown") == client_total_budget("claude")
+
+
+def test_the_client_deadline_comes_from_the_wrapper_when_it_supplies_one(monkeypatch):
+    """Startup cost belongs to the wrapper's clock, not to a fresh local one.
+
+    Budgeting from the wrapper timeout alone assumes the clock starts inside
+    the client, but the wrapper began counting before spawning it, and
+    interpreter startup plus a `uv run` resolve is charged to the same
+    allowance. The client then overran by its own startup cost and the wrapper
+    killed it mid-request, so the harness reported "autorun CLI timed out
+    after 5s" and the client's own explanation was never written.
+    """
+    import time as _time
+
+    from autorun.client import (
+        CLIENT_BUDGET_MARGIN_SECONDS,
+        DEADLINE_ENV_VAR,
+        client_deadline,
+        client_total_budget,
+    )
+
+    supplied = _time.monotonic() + 2.0
+    monkeypatch.setenv(DEADLINE_ENV_VAR, repr(supplied))
+    assert client_deadline("claude") == supplied - CLIENT_BUDGET_MARGIN_SECONDS
+
+    # A deadline that already passed, is unparseable, or is implausibly distant
+    # is a stale or foreign value; falling back beats failing every hook.
+    local_budget = client_total_budget("claude")
+    for value in (repr(_time.monotonic() - 5.0), "not-a-float", repr(_time.monotonic() + 3600)):
+        monkeypatch.setenv(DEADLINE_ENV_VAR, value)
+        assert client_deadline("claude") > _time.monotonic() + local_budget - 1.0
+
+    monkeypatch.delenv(DEADLINE_ENV_VAR, raising=False)
+    assert client_deadline("claude") > _time.monotonic()
+
+
+def test_the_wrapper_and_the_client_agree_on_the_deadline_variable():
+    """One name, spelled in a stdlib-only hook and in the package."""
+    import importlib.util
+
+    from autorun.client import DEADLINE_ENV_VAR
+
+    hook_path = Path(__file__).resolve().parents[1] / "hooks" / "hook_entry.py"
+    spec = importlib.util.spec_from_file_location("_hook_entry_deadline", hook_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.DEADLINE_ENV_VAR == DEADLINE_ENV_VAR
 
 
 def test_the_attempt_cap_cannot_bind_before_the_deadline():

@@ -181,6 +181,32 @@ def hook_timeout_for_cli(cli_type: str) -> float:
     return float(HOOK_TIMEOUT_BY_CLI.get(cli_type, HOOK_TIMEOUT_BY_CLI["claude"]))
 
 
+#: Absolute monotonic instant the wrapper stops waiting, handed to the CLI.
+DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
+
+
+def cli_env_with_deadline(cli_type: str) -> dict:
+    """Environment for the CLI child carrying this wrapper's actual deadline.
+
+    The child cannot derive its own budget from the wrapper timeout alone,
+    because it does not know how much of that timeout is already gone. Between
+    the wrapper starting its clock and the child's first line of Python there
+    is interpreter startup, and under ``uv run`` a resolve as well -- cheap on
+    POSIX and not on Windows. A child that budgets the full wrapper timeout
+    minus a small margin therefore overruns by however long its own startup
+    took, and the wrapper kills it mid-request. The client's careful budget was
+    then irrelevant: the observed failure went straight back to "autorun CLI
+    timed out after 5s", which is the wrapper speaking, not the client.
+
+    ``time.monotonic()`` is a system-wide clock on every supported platform --
+    CLOCK_MONOTONIC on Linux, mach_absolute_time on macOS, GetTickCount64 on
+    Windows -- so an instant recorded here is directly comparable in the child.
+    """
+    env = dict(os.environ)
+    env[DEADLINE_ENV_VAR] = repr(time.monotonic() + hook_timeout_for_cli(cli_type))
+    return env
+
+
 def detect_cli_type(payload: dict | None = None) -> str:
     """Detect which CLI is calling the hook.
 
@@ -881,6 +907,7 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -
             capture_output=True,
             text=True,
             timeout=hook_timeout_for_cli(cli_type),
+            env=cli_env_with_deadline(cli_type),
         )
 
         # Debug logging (ALWAYS enabled to diagnose hook issues)
@@ -1359,6 +1386,7 @@ def main() -> None:
                 capture_output=True,
                 text=True,
                 timeout=hook_timeout_for_cli(cli_type),
+                env=cli_env_with_deadline(cli_type),
             )
             log_debug(f"CLI exit code: {result.returncode}")
             log_debug(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout}")

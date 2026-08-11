@@ -134,6 +134,49 @@ def client_total_budget(cli_type: str) -> float:
     return max(wrapper - CLIENT_BUDGET_MARGIN_SECONDS, 0.1)
 
 
+#: Set by hooks/hook_entry.py to the monotonic instant its wrapper gives up.
+DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
+
+
+def client_deadline(cli_type: str) -> float:
+    """The monotonic instant this client must stop by.
+
+    Prefer the wrapper's own deadline when it supplied one. Budgeting from the
+    wrapper timeout alone assumes the clock starts when this function runs, but
+    the wrapper started counting before spawning this process, and interpreter
+    startup -- plus a ``uv run`` resolve, which is not cheap on Windows -- comes
+    out of the same allowance. Deriving locally therefore overruns by exactly
+    the startup cost, and the wrapper kills the client before it can write the
+    failure response that explains itself. That is the difference between the
+    client reporting why the daemon did not answer and the harness reporting
+    only "autorun CLI timed out".
+
+    ``time.monotonic()`` is system-wide on Linux, macOS and Windows, so the
+    instant recorded in the parent is meaningful here. A value that is absent,
+    unparseable, already past, or improbably far ahead falls back to the local
+    budget: a stale variable inherited from an unrelated process must not make
+    every hook fail instantly.
+    """
+    local = time.monotonic() + client_total_budget(cli_type)
+    raw = os.environ.get(DEADLINE_ENV_VAR)
+    if not raw:
+        return local
+    try:
+        supplied = float(raw)
+    except (TypeError, ValueError):
+        return local
+    remaining = supplied - time.monotonic()
+    if remaining <= 0 or remaining > _MAX_PLAUSIBLE_WRAPPER_SECONDS:
+        return local
+    return supplied - CLIENT_BUDGET_MARGIN_SECONDS
+
+
+#: Any wrapper budget beyond this is a stale or foreign value, not ours. The
+#: largest configured wrapper timeout is 5s; 60s leaves room for a future one
+#: while still rejecting a deadline inherited from an unrelated process.
+_MAX_PLAUSIBLE_WRAPPER_SECONDS = 60.0
+
+
 def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
     """Return the harness CLI event name placed in hookSpecificOutput."""
     try:
@@ -414,7 +457,7 @@ def run_client() -> int:
     # a missing endpoint, a refused connection, and a daemon that exits on
     # startup. A list because forward() rebinds it from a nested scope.
     last_connect_error: list = []
-    deadline = time.monotonic() + client_total_budget(cli_type)
+    deadline = client_deadline(cli_type)
 
     async def forward(depth: int = 0):
         remaining = deadline - time.monotonic()
