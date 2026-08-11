@@ -364,7 +364,6 @@ class TestColdStartReachability:
     """
 
     def test_a_spawned_daemon_publishes_an_endpoint(self, tmp_path, monkeypatch):
-        import importlib
         import subprocess
         import sys
         import time
@@ -384,7 +383,14 @@ class TestColdStartReachability:
 
         from autorun import ipc
 
-        ipc = importlib.reload(ipc)
+        # Monkeypatch the module's paths rather than reloading it: a reload
+        # rebinds AUTORUN_CONFIG_DIR for the whole session, which left a later
+        # test asserting isolation against this test's directory. The child
+        # re-imports and reads AUTORUN_HOME itself, so only the parent's view
+        # needs redirecting here.
+        monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
+        monkeypatch.setattr(ipc, "SOCKET_PATH", home / "daemon.sock")
+        monkeypatch.setattr(ipc, "PORT_FILE", home / "daemon.port")
         src_dir = str(Path(ipc.__file__).resolve().parents[1])
         log = tmp_path / "daemon-startup.log"
 

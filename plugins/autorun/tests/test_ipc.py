@@ -40,31 +40,36 @@ class TestPlatformDetection:
         assert HAS_UNIX_SOCKETS == hasattr(socket_mod, "AF_UNIX")
 
 
-class TestTCPPort:
-    """Test deterministic TCP port generation."""
+class TestPublishedPort:
+    """Where the port comes from, now that nothing derives it.
 
-    def test_port_in_dynamic_range(self):
-        """Port must be in IANA dynamic/private range (49152-65535)."""
-        from autorun.ipc import _get_tcp_port
-        port = _get_tcp_port()
-        assert 49152 <= port <= 65535
+    It used to be a hash of the username, which made every daemon on the
+    machine choose the same one; the client always read the port from the
+    file, so the value never needed to be predictable, and being predictable
+    is what made two homes collide. The daemon now binds port 0 and publishes
+    what the OS gave it.
+    """
 
-    def test_port_deterministic(self):
-        """Same user produces same port."""
-        from autorun.ipc import _get_tcp_port
-        p1 = _get_tcp_port()
-        p2 = _get_tcp_port()
-        assert p1 == p2
+    def test_a_published_port_is_read_back(self, tmp_path, monkeypatch):
+        from autorun import ipc
 
-    def test_different_users_different_ports(self):
-        """Different usernames produce different ports (with high probability)."""
-        from autorun.ipc import _get_tcp_port
-        with mock.patch.dict(os.environ, {"USER": "alice", "USERNAME": "alice"}):
-            port_alice = _get_tcp_port()
-        with mock.patch.dict(os.environ, {"USER": "bob", "USERNAME": "bob"}):
-            port_bob = _get_tcp_port()
-        # Collision probability is ~1/16383, acceptable to assert inequality
-        assert port_alice != port_bob
+        monkeypatch.setattr(ipc, "PORT_FILE", tmp_path / "daemon.port")
+        (tmp_path / "daemon.port").write_text("51234\n", encoding="utf-8")
+        assert ipc._published_port() == 51234
+
+    def test_no_file_means_no_daemon_rather_than_a_guess(self, tmp_path, monkeypatch):
+        """Guessing is what produced a port nothing was listening on."""
+        from autorun import ipc
+
+        monkeypatch.setattr(ipc, "PORT_FILE", tmp_path / "absent.port")
+        assert ipc._published_port() is None
+
+    def test_unreadable_contents_mean_no_daemon(self, tmp_path, monkeypatch):
+        from autorun import ipc
+
+        monkeypatch.setattr(ipc, "PORT_FILE", tmp_path / "daemon.port")
+        (tmp_path / "daemon.port").write_text("not a port", encoding="utf-8")
+        assert ipc._published_port() is None
 
 
 class TestGetAddress:
@@ -298,4 +303,71 @@ class TestDetachedSpawnKwargs:
         assert ipc.detached_spawn_kwargs()["creationflags"] != 0
         monkeypatch.setattr(ipc.os, "name", "posix")
         assert ipc.detached_spawn_kwargs()["creationflags"] == 0
+
+class TestLoopbackServerIsolation:
+    """Two daemons with different homes must not fight over one port.
+
+    The port was derived from a hash of the username, so every daemon on the
+    machine wanted the same one. On POSIX that is invisible: the socket lives
+    under AUTORUN_HOME, so separate homes are separate endpoints. Where there
+    is no AF_UNIX the port is the endpoint, and the second daemon died with
+    "[Errno 10048] only one usage of each socket address is normally
+    permitted" -- one project, test, or install per machine, and every hook in
+    the others fell through to a CLI that waited for a daemon that could never
+    start.
+    """
+
+    def _start(self, monkeypatch, tmp_path, name):
+        import asyncio
+
+        from autorun import ipc
+
+        home = tmp_path / name
+        home.mkdir()
+        monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", False)
+        monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
+        monkeypatch.setattr(ipc, "PORT_FILE", home / "daemon.port")
+
+        async def handler(_reader, _writer):  # pragma: no cover - never called
+            pass
+
+        server = asyncio.run(ipc.start_server(handler))
+        published = int((home / "daemon.port").read_text(encoding="utf-8").strip())
+        return server, published
+
+    def test_two_homes_get_two_ports(self, monkeypatch, tmp_path):
+        first, first_port = self._start(monkeypatch, tmp_path, "home-a")
+        try:
+            second, second_port = self._start(monkeypatch, tmp_path, "home-b")
+        except OSError as error:  # pragma: no cover - the bug being guarded
+            first.close()
+            raise AssertionError(
+                f"the second daemon could not bind: {error}. Two homes must "
+                "not share one port."
+            ) from error
+        try:
+            assert first_port != second_port, (
+                f"both homes published port {first_port}"
+            )
+        finally:
+            first.close()
+            second.close()
+
+    def test_the_published_port_is_the_one_actually_bound(self, monkeypatch, tmp_path):
+        server, published = self._start(monkeypatch, tmp_path, "home-c")
+        try:
+            bound = server.sockets[0].getsockname()[1]
+            assert published == bound, (
+                f"clients read {published} but the daemon listens on {bound}"
+            )
+        finally:
+            server.close()
+
+    def test_the_published_port_is_ephemeral(self, monkeypatch, tmp_path):
+        """Port 0 asks the OS for a free one, which is what avoids the clash."""
+        server, published = self._start(monkeypatch, tmp_path, "home-d")
+        try:
+            assert published > 0
+        finally:
+            server.close()
 

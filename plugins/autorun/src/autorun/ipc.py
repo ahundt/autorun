@@ -22,7 +22,6 @@ Usage:
 """
 
 import asyncio
-import hashlib
 import os
 import socket
 import subprocess
@@ -91,15 +90,12 @@ def detached_spawn_kwargs(windows: bool | None = None) -> dict:
         )
     return {"start_new_session": True, "creationflags": creationflags}
 
-def _get_tcp_port() -> int:
-    """Deterministic TCP port for this user, avoiding well-known ports.
-
-    Hashes the username to produce a port in range 49152-65535 (dynamic/private ports).
-    This ensures different users on the same machine don't collide.
-    """
-    username = os.getenv("USERNAME", os.getenv("USER", "default"))
-    h = int(hashlib.sha256(username.encode()).hexdigest(), 16)
-    return 49152 + (h % (65535 - 49152))
+def _published_port() -> int | None:
+    """The port the running daemon published, or None if none has."""
+    try:
+        return int(PORT_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
 
 
 def get_address() -> str:
@@ -110,7 +106,8 @@ def get_address() -> str:
     """
     if HAS_UNIX_SOCKETS:
         return f"unix:{SOCKET_PATH}"
-    return f"tcp:127.0.0.1:{_get_tcp_port()}"
+    port = _published_port()
+    return f"tcp:127.0.0.1:{port}" if port else "tcp:127.0.0.1:<not started>"
 
 
 async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.AbstractServer:
@@ -130,11 +127,19 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
             client_handler, str(SOCKET_PATH), limit=limit
         )
     else:
-        port = _get_tcp_port()
+        # Port 0: the OS hands out a free one. The port used to be a hash of
+        # the username, which made it the same for every daemon on the machine
+        # -- and where there is no AF_UNIX the port *is* the endpoint, so two
+        # AUTORUN_HOMEs were one endpoint. The second daemon died with "only
+        # one usage of each socket address is normally permitted", and every
+        # hook belonging to it fell through to a CLI waiting for a daemon that
+        # could not start. Clients read the port from this file and always
+        # did, so nothing needed the value to be predictable.
         server = await asyncio.start_server(
-            client_handler, "127.0.0.1", port, limit=limit
+            client_handler, "127.0.0.1", 0, limit=limit
         )
-        # Write port to file so clients know where to connect
+        port = server.sockets[0].getsockname()[1]
+        # Written after binding, so the file names a port that is listening.
         PORT_FILE.write_text(str(port), encoding="utf-8")
         return server
 

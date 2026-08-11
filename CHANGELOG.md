@@ -57,6 +57,30 @@ marketplace itself carries a separate `version` field.
   Windows venv writes `.venv/Scripts/autorun.exe`, so all three plugin-local
   tiers missed and resolution fell through to the global binary, which the
   direct-daemon check refuses. Both layouts are now accepted on every platform.
+- **The daemon never started on Windows.** The spawn string embedded the source
+  directory in generated Python without escaping, so `C:\Users\...` made `\U`
+  an invalid escape and the interpreter died before importing anything. Every
+  hook then fell through to the CLI, which waited on the daemon it had just
+  failed to start until the caller gave up — reported as `autorun CLI timed out
+  after 5s`. The daemon was also spawned with `start_new_session` alone, which
+  is POSIX-only, so even when it did start it was reaped with its parent.
+- **The daemon fast path did not exist on Windows.** `try_daemon` returned
+  immediately when `socket.AF_UNIX` was absent instead of using the loopback
+  endpoint the daemon publishes there, so every event paid a second interpreter
+  start.
+- **The OpenCode shim could not reach the daemon on Windows.** It connected
+  only over a Unix socket, and the installer substituted the socket and port
+  paths into JavaScript string literals without escaping, so both were mangled
+  by the backslashes in a Windows path.
+- **`autorun task` prompted where it was told not to.** `sys.stdin.isatty()`
+  is true for `NUL` on Windows, which is what `subprocess.DEVNULL` supplies, so
+  a deliberately non-interactive run prompted and then died on EOF instead of
+  printing its settings or refusing.
+- **A durable checkpoint could undo another process's work.** The task-staleness
+  counter was blind-set at one point while other processes advanced it through
+  an atomic update, so a process that had crossed the reminder boundary and
+  reset the counter was pushed back and the boundary was crossed twice. Three
+  of eight concurrent processes emitted a reminder that must be emitted once.
 - **`autorun` CLI subcommands crashed on a non-UTF-8 console.** Windows
   reported `'charmap' codec can't encode characters in position 0-1` instead of
   the command's own output, including refusals the user had asked for.
