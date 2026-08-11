@@ -36,7 +36,12 @@ def sandbox(tmp_path, monkeypatch):
     """A home nothing outside this test can see."""
     home = tmp_path / "home"
     home.mkdir()
+    # Both names: Path.home() resolves through os.path.expanduser, which reads
+    # USERPROFILE on Windows and HOME elsewhere and never consults the other,
+    # so setting one isolates this test on one platform and lets it write the
+    # real home on the other.
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     # OpenCode honours XDG_CONFIG_HOME as an explicit parent override.  A CI
     # runner may export it globally, so clear it here or the OpenCode command
     # and plugin intents intentionally land outside this sandbox.

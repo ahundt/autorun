@@ -786,7 +786,12 @@ def test_skill_search_paths_include_every_documented_read_tier(tmp_path, monkeyp
     autorun writes."""
     from autorun.installer.discovery import skill_destinations
 
+    # Both names: Path.home() resolves through os.path.expanduser, which reads
+    # USERPROFILE on Windows and HOME elsewhere and never consults the other,
+    # so setting one isolates this test on one platform and lets it write the
+    # real home on the other.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     # Keep this registry-shape check on the default HOME route.  XDG_CONFIG_HOME
     # is tested separately as an explicit OpenCode relocation override.
@@ -810,6 +815,7 @@ def test_skill_search_paths_include_the_shared_root_exactly_when_it_is_read(
     from autorun.installer.discovery import shared_root, skill_destinations
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     shared = shared_root()
 
@@ -829,6 +835,7 @@ def test_missing_read_tiers_are_skipped_without_error(tmp_path, monkeypatch):
     from autorun.installer.discovery import skill_destinations
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     for platform in PLATFORMS.values():

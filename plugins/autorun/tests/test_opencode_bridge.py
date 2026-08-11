@@ -76,7 +76,12 @@ class TestInstallerPlacesTheShim:
     def _install(self, tmp_path, monkeypatch):
         from autorun.installer import entrypoint
 
+        # Both names: Path.home() resolves through os.path.expanduser, which reads
+        # USERPROFILE on Windows and HOME elsewhere and never consults the other,
+        # so setting one isolates this test on one platform and lets it write the
+        # real home on the other.
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         monkeypatch.setenv("AUTORUN_HOME", f"/tmp/aoc-{tmp_path.name[-8:]}")
         monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", f"/tmp/aocs-{tmp_path.name[-8:]}")
         monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)

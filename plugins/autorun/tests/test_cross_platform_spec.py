@@ -51,11 +51,28 @@ SRC = PLUGIN_ROOT / "src" / "autorun"
 HOOKS = PLUGIN_ROOT / "hooks"
 
 
+TESTS = PLUGIN_ROOT / "tests"
+
+
 def _python_sources() -> list[Path]:
     files = [p for p in SRC.rglob("*.py") if "__pycache__" not in p.parts]
     files += [p for p in HOOKS.rglob("*.py") if "__pycache__" not in p.parts]
     # gemini_template/hooks/hook_entry.py is a symlink to hooks/hook_entry.py.
     return sorted({p.resolve() for p in files})
+
+
+def _isolation_sources() -> list[Path]:
+    """Product sources plus the tests, for checks about test isolation.
+
+    The home-redirect check originally scanned src/ and hooks/ only, which
+    skipped the one directory where home redirects actually live: a fixture
+    moving HOME to a tmp_path is the whole mechanism of test isolation, and
+    every offender was in tests/. A checker aimed at isolation that cannot see
+    the isolation code passes forever and reads as coverage.
+    """
+    files = _python_sources()
+    files += [p.resolve() for p in TESTS.rglob("*.py") if "__pycache__" not in p.parts]
+    return sorted(set(files))
 
 
 # --- 1. paths interpolated into generated source -----------------------------
@@ -272,8 +289,11 @@ def home_writes_without_userprofile(source: str, filename: str = "<test>") -> li
 
 
 def test_no_home_redirect_forgets_userprofile():
+    # _isolation_sources, not _python_sources: a test fixture redirecting HOME
+    # to a tmp_path is exactly the code this check is about, and scanning only
+    # the product missed all nine offenders.
     offenders = []
-    for path in _python_sources():
+    for path in _isolation_sources():
         for lineno in home_writes_without_userprofile(
             path.read_text(encoding="utf-8"), str(path)
         ):

@@ -48,7 +48,12 @@ def isolated_plan_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     plans_dir = home / ".claude" / "plans"
     plans_dir.mkdir(parents=True)
+    # Both names: Path.home() resolves through os.path.expanduser, which reads
+    # USERPROFILE on Windows and HOME elsewhere and never consults the other,
+    # so setting one isolates this test on one platform and lets it write the
+    # real home on the other.
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(plan_export_module, "PLANS_DIR", plans_dir)
 
 

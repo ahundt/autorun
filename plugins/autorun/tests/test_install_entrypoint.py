@@ -149,7 +149,12 @@ def _agy_copy_runner(
 def isolated(monkeypatch, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
+    # Both names: Path.home() resolves through os.path.expanduser, which reads
+    # USERPROFILE on Windows and HOME elsewhere and never consults the other,
+    # so setting one isolates this test on one platform and lets it write the
+    # real home on the other.
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     # Keep the default harness roots inside this fixture.  OpenCode honours an
     # explicit XDG_CONFIG_HOME, which CI may export globally; relocation itself
     # is covered by the discovery tests.

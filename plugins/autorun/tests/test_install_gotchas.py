@@ -60,7 +60,12 @@ def _home_context(tmp_path, monkeypatch, marketplace_root):
     """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
+    # Both names: Path.home() resolves through os.path.expanduser, which reads
+    # USERPROFILE on Windows and HOME elsewhere and never consults the other,
+    # so setting one isolates this test on one platform and lets it write the
+    # real home on the other.
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     return Context(marketplace_root=marketplace_root, home=home)
 
 
@@ -116,6 +121,7 @@ def test_shared_file_preflight_prevents_every_durable_install_write(
     home = tmp_path / poison / "home"
     home.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     if poison == "hooks":
         target = home / ".codex" / "hooks.json"
         content = '{"hooks":'
@@ -490,6 +496,7 @@ def test_uninstall_uses_receipts_when_the_marketplace_source_is_gone(tmp_path, m
     from autorun.platforms import PLATFORMS
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     installed = tmp_path / ".codex" / "skills" / "demo"
     source = tmp_path / "source"
     source.mkdir()
@@ -521,6 +528,7 @@ def test_retirement_of_shared_files_keeps_the_users_directory(tmp_path, monkeypa
     from autorun.installer.traversal import retirements
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     source = tmp_path / "source"
     source.mkdir()
     (source / "ar-go.md").write_text("ours\n", encoding="utf-8")
@@ -542,6 +550,7 @@ def test_uninstall_never_removes_a_companion_product_as_a_side_effect(tmp_path, 
     from autorun.installer.orchestrate import _registrations
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     harness = SimpleNamespace(name="gemini")
     plugins = {"ar": tmp_path / "ar", "pdf-extractor": tmp_path / "pdf"}
 
@@ -840,6 +849,7 @@ def test_a_moved_harness_config_dir_moves_the_native_skill_route(monkeypatch, tm
 
     # $HOME is the seam; Context.home must agree with it rather than replace it.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     ctx = _home_context(tmp_path, monkeypatch, tmp_path)
 
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
@@ -884,6 +894,7 @@ def test_every_skill_destination_honours_a_redirected_home(monkeypatch, tmp_path
     from autorun.platforms import PLATFORMS
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     # An explicit XDG_CONFIG_HOME is a supported relocation, not part of this
     # HOME-only isolation assertion.  CI commonly exports it globally.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)

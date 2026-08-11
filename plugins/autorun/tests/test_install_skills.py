@@ -55,7 +55,12 @@ def _home_context(tmp_path, monkeypatch, marketplace_root):
     """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
+    # Both names: Path.home() resolves through os.path.expanduser, which reads
+    # USERPROFILE on Windows and HOME elsewhere and never consults the other,
+    # so setting one isolates this test on one platform and lets it write the
+    # real home on the other.
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     return Context(marketplace_root=marketplace_root, home=home)
 
 
@@ -262,6 +267,7 @@ def test_the_bridge_refuses_a_symlinked_skills_directory(tmp_path, shared, monke
     (home / ".fake").mkdir(parents=True)
     (home / ".fake" / "skills").symlink_to(shared)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
     intents = list(bridge_intents(
         FakePlatform("w", False, native_skills=Route("plugins"),

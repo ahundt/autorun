@@ -170,7 +170,12 @@ def test_shared_and_codex_locations_follow_their_one_config_authority(
 ):
     from autorun.config import CONFIG
 
+    # Both names: Path.home() resolves through os.path.expanduser, which reads
+    # USERPROFILE on Windows and HOME elsewhere and never consults the other,
+    # so setting one isolates this test on one platform and lets it write the
+    # real home on the other.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setitem(CONFIG, "shared_agents_dir", "~/shared")
     monkeypatch.setitem(CONFIG, "shared_agents_skills_subdir", "skill-box")
     monkeypatch.setitem(CONFIG, "codex_plugin_source_dir", "~/plugin-box")
@@ -186,6 +191,7 @@ def test_config_and_skill_routes_share_override_env_default_precedence(
     from autorun.config import CONFIG
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     platform = SimpleNamespace(
         name="demo",
         config_dir="~/.demo",
