@@ -1,7 +1,10 @@
 """Cross-platform IPC abstraction for daemon communication.
 
 Unix: AF_UNIX socket at ~/.autorun/daemon.sock (fast, no port conflicts)
-Windows: TCP 127.0.0.1 on a deterministic port (AF_UNIX unavailable in Python on Windows)
+Windows: TCP 127.0.0.1 on an OS-assigned port, published in daemon.port beside
+where the socket would be (AF_UNIX unavailable in Python on Windows). The port
+was once derived from the username, which gave every daemon on the machine the
+same one and let only the first AUTORUN_HOME hold an endpoint.
 
 All consumers use this module instead of directly referencing AF_UNIX or TCP.
 This keeps platform branching in ONE place (DRY).
