@@ -12,6 +12,8 @@ Safe to run alongside live daemons.
 """
 
 import multiprocessing
+import os
+import shutil
 import time
 from pathlib import Path
 from unittest import mock
@@ -336,3 +338,99 @@ class TestGeneratedDaemonCodeSurvivesAnyPath:
             f"the path did not survive into the generated source: {literals}"
         )
 
+
+
+def _tail(path: Path, limit: int = 4000) -> str:
+    """The end of a log file, or why it could not be read."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+    except OSError as error:
+        return f"<unreadable: {error}>"
+
+
+class TestColdStartReachability:
+    """A spawned daemon must end up as something a client can connect to.
+
+    Every fast path depends on this. When it does not hold, no hook fails
+    loudly: try_daemon finds no endpoint, try_cli starts a CLI that waits for
+    the daemon it just spawned, and the caller's budget expires. The user sees
+    "autorun CLI timed out after 5s" and a blocked tool, with nothing anywhere
+    naming the cause -- which is exactly what Windows reported for every hook
+    call while this test did not exist.
+
+    The daemon is spawned here with its output captured rather than sent to
+    DEVNULL as production does, so a failure carries the child's own traceback
+    instead of only the absence of a socket.
+    """
+
+    def test_a_spawned_daemon_publishes_an_endpoint(self, tmp_path, monkeypatch):
+        import importlib
+        import subprocess
+        import sys
+        import time
+
+        # A short home, not tmp_path: the socket lives under AUTORUN_HOME and
+        # sun_path is 104 bytes, which pytest's tmp_path alone can exceed --
+        # the daemon then dies with "AF_UNIX path too long" and looks exactly
+        # like the unreachable daemon this test exists to detect.
+        import tempfile
+
+        root = Path(tempfile.mkdtemp(prefix="ard", dir="/tmp" if os.path.isdir("/tmp") else None))
+        home = root / "h"
+        home.mkdir()
+        monkeypatch.setenv("AUTORUN_HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        from autorun import ipc
+
+        ipc = importlib.reload(ipc)
+        src_dir = str(Path(ipc.__file__).resolve().parents[1])
+        log = tmp_path / "daemon-startup.log"
+
+        code = (
+            "import sys; sys.path.insert(0, {0!r}); "
+            "from autorun.daemon import main; main()"
+        ).format(src_dir)
+
+        with open(log, "w", encoding="utf-8") as sink:
+            child = subprocess.Popen(
+                [sys.executable, "-c", code],
+                stdin=subprocess.DEVNULL,
+                stdout=sink,
+                stderr=subprocess.STDOUT,
+                **ipc.detached_spawn_kwargs(),
+            )
+        try:
+            deadline = time.monotonic() + 30
+            published = None
+            while time.monotonic() < deadline:
+                if ipc.HAS_UNIX_SOCKETS:
+                    if Path(ipc.SOCKET_PATH).exists():
+                        published = str(ipc.SOCKET_PATH)
+                        break
+                elif Path(ipc.PORT_FILE).exists():
+                    published = Path(ipc.PORT_FILE).read_text(encoding="utf-8").strip()
+                    break
+                if child.poll() is not None:
+                    break
+                time.sleep(0.2)
+
+            assert published, (
+                "the daemon published no endpoint within 30s, so no client "
+                "could ever reach it.\n"
+                f"  transport: {'unix socket' if ipc.HAS_UNIX_SOCKETS else 'loopback port file'}\n"
+                f"  expected at: {ipc.SOCKET_PATH if ipc.HAS_UNIX_SOCKETS else ipc.PORT_FILE}\n"
+                f"  config dir: {ipc.AUTORUN_CONFIG_DIR} exists={Path(ipc.AUTORUN_CONFIG_DIR).exists()}\n"
+                f"  contents: {sorted(p.name for p in Path(ipc.AUTORUN_CONFIG_DIR).glob('*')) if Path(ipc.AUTORUN_CONFIG_DIR).exists() else 'n/a'}\n"
+                f"  child exit code: {child.poll()}\n"
+                f"  child output:\n{log.read_text(encoding='utf-8', errors='replace')[-4000:]}\n"
+                f"  daemon log:\n{_tail(Path(ipc.AUTORUN_CONFIG_DIR) / 'daemon.log')}"
+            )
+        finally:
+            child.terminate()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:  # pragma: no cover - stubborn child
+                child.kill()
+            shutil.rmtree(root, ignore_errors=True)
