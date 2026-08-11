@@ -229,3 +229,59 @@ class TestOutputEncoding:
         monkeypatch.setattr("sys.stderr", io.StringIO())
 
         use_utf8_output()
+
+class TestCanPrompt:
+    """Prompting is only possible when a read would actually block for input.
+
+    isatty() is not that question on Windows: the CRT calls every character
+    device a tty and subprocess.DEVNULL is NUL, so a non-interactive run
+    reported itself interactive, prompted, and died on EOF.
+    """
+
+    class _Stream:
+        def __init__(self, tty, peeked=b""):
+            self._tty = tty
+            self._peeked = peeked
+
+        def isatty(self):
+            return self._tty
+
+        def peek(self, _size):
+            return self._peeked
+
+    def test_a_non_tty_cannot_prompt(self, monkeypatch):
+        from autorun.task_lifecycle import can_prompt
+
+        monkeypatch.setattr("sys.stdin", self._Stream(tty=False))
+        assert can_prompt() is False
+
+    def test_a_character_device_at_eof_cannot_prompt(self, monkeypatch):
+        """NUL on Windows: claims to be a tty, has nothing to give."""
+        from autorun.task_lifecycle import can_prompt
+
+        monkeypatch.setattr("sys.stdin", self._Stream(tty=True, peeked=b""))
+        assert can_prompt() is False
+
+    def test_a_terminal_with_input_can_prompt(self, monkeypatch):
+        from autorun.task_lifecycle import can_prompt
+
+        monkeypatch.setattr("sys.stdin", self._Stream(tty=True, peeked=b"y\n"))
+        assert can_prompt() is True
+
+    def test_a_stream_without_peek_is_trusted(self, monkeypatch):
+        """Never refuse a real terminal because the stream lacks an optional API."""
+        from autorun.task_lifecycle import can_prompt
+
+        class Bare:
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr("sys.stdin", Bare())
+        assert can_prompt() is True
+
+    def test_a_missing_stdin_cannot_prompt(self, monkeypatch):
+        from autorun.task_lifecycle import can_prompt
+
+        monkeypatch.setattr("sys.stdin", None)
+        assert can_prompt() is False
+

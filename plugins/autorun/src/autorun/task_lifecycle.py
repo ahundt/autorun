@@ -227,6 +227,37 @@ def _stale_clear_marker_example() -> str:
     return CONFIG["ghost_clear_marker_template"].replace("{id}", "<id>[,<id>...]")
 
 
+def can_prompt() -> bool:
+    """Whether asking the user a question can actually succeed.
+
+    ``sys.stdin.isatty()`` alone is not the answer on Windows. The CRT reports
+    every character device as a tty, and ``subprocess.DEVNULL`` is ``NUL``,
+    which is one -- so a deliberately non-interactive run looked interactive,
+    the CLI prompted, and the first ``input()`` raised EOFError. ``autorun task
+    --configure`` exited 1 with "EOF when reading a line" instead of printing
+    the settings it was asked for, and the clear guards prompted instead of
+    refusing.
+
+    Reading zero bytes is the platform-independent test: NUL is at EOF
+    immediately, a pipe with no writer is too, and a real terminal is not.
+    """
+    import sys
+
+    stream = sys.stdin
+    if stream is None or not stream.isatty():
+        return False
+    peek = getattr(stream, "peek", None)
+    if peek is None:
+        buffer = getattr(stream, "buffer", None)
+        peek = getattr(buffer, "peek", None)
+    if peek is None:
+        return True
+    try:
+        return peek(1) != b""
+    except (OSError, ValueError):
+        return True
+
+
 # === Configuration (dataclass pattern from PlanExportConfig) ===
 
 CONFIG_PATH = ipc.AUTORUN_CONFIG_DIR / "task-lifecycle.config.json"
@@ -2780,7 +2811,7 @@ class TaskLifecycle:
             config = TaskLifecycleConfig.load()
 
             if all_sessions:
-                if confirm and not sys.stdin.isatty():
+                if confirm and not can_prompt():
                     print("⚠️ Refusing to clear all sessions in non-interactive mode")
                     print("Use --no-confirm flag to proceed")
                     return 2
@@ -2839,7 +2870,7 @@ class TaskLifecycle:
                 task_count = len(tasks)
 
                 if confirm:
-                    if not sys.stdin.isatty():
+                    if not can_prompt():
                         print("⚠️ Refusing to clear session in non-interactive mode")
                         print("Use --no-confirm flag to proceed")
                         return 2
@@ -3072,7 +3103,7 @@ class TaskLifecycle:
 
             # Confirmation prompt (unless dry-run or confirm=False)
             if not dry_run and confirm:
-                if not sys.stdin.isatty():
+                if not can_prompt():
                     print("⚠️  ERROR: Cannot prompt for confirmation in non-interactive mode")
                     print("Use --task-dry-run to preview, or --task-no-confirm to force")
                     return 2
@@ -3304,7 +3335,7 @@ class TaskLifecycle:
             print()
 
             # Check if interactive mode possible
-            if not interactive and not sys.stdin.isatty():
+            if not interactive and not can_prompt():
                 print("(Non-interactive mode - showing current settings only)")
                 print("Use --interactive flag to modify settings")
                 return 0

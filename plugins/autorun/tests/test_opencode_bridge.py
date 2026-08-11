@@ -149,6 +149,16 @@ class TestDaemonSocketFrames:
     """The shim speaks the wire the daemon already speaks: one newline-ended
     JSON request, one newline-ended JSON response."""
 
+    # These three stand the stub daemon up on an AF_UNIX socket, which Windows
+    # cannot bind at all: the limitation is in the test's own server, not in
+    # the shim. The Windows transport is covered by
+    # test_shim_reaches_a_loopback_daemon_when_there_is_no_socket, which serves
+    # the same frames over loopback and runs everywhere.
+    unix_only = pytest.mark.skipif(
+        not hasattr(socket, "AF_UNIX"),
+        reason="the stub daemon binds AF_UNIX; the loopback test covers this platform",
+    )
+
     def _serve(self, socket_path, replies, connections=2):
         """Answer N frames the way the daemon does: one connection each.
 
@@ -259,6 +269,7 @@ class TestDaemonSocketFrames:
         ], frames
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
     def test_shim_denies_by_throwing_when_the_daemon_says_deny(self, tmp_path, short_socket_dir):
         # AF_UNIX paths cap near 104 bytes, well under pytest's tmp_path depth.
         socket_path = short_socket_dir / "daemon.sock"
@@ -305,6 +316,7 @@ class TestDaemonSocketFrames:
         assert "restart-daemon" in result.stdout, "the block must name the way out"
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
     def test_command_tool_executor_returns_the_daemon_reply(self, tmp_path, short_socket_dir):
         """`runArCommand("st")` is a UserPromptSubmit frame, answered in text.
 
@@ -345,6 +357,7 @@ class TestDaemonSocketFrames:
         assert "restart-daemon" in result.stdout
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
     def test_wedged_hook_entry_fallback_times_out_and_blocks(self, tmp_path):
         """A fallback interpreter that never answers must not hang the tool call.
 
