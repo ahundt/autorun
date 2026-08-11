@@ -6,6 +6,7 @@ This guide helps resolve common issues with autorun hooks in both Claude Code an
 
 ## Table of Contents
 
+- [Every Tool Call Is Blocked](#every-tool-call-is-blocked)
 - [Hooks Not Firing](#hooks-not-firing)
 - [Hook Execution Errors](#hook-execution-errors)
 - [Wrong Hook Version Installed](#wrong-hook-version-installed)
@@ -14,6 +15,56 @@ This guide helps resolve common issues with autorun hooks in both Claude Code an
 - [Claude Code Specific Issues](#claude-code-specific-issues)
 - [Debug Logging](#debug-logging)
 - [Known Issues](#known-issues)
+
+---
+
+## Every Tool Call Is Blocked
+
+**Symptoms**: every tool call in the session is denied with a message like
+
+```
+[autorun] Import error: No module named 'autorun'. Cannot bootstrap:
+previous bootstrap failed: .../.venv/bin/python: No module named autorun.
+Blocking tool use to avoid fail-open.
+```
+
+Autorun could not import its own runtime, so it cannot evaluate a permission
+gate. It denies rather than allowing, because a gate that fails open silently
+stops blocking `rm -rf` and everything else it exists to block.
+
+**This state does not clear on its own, and the AI cannot fix it for you.** The
+gate denies every command, including the repair, on purpose: a permission gate
+a caller can talk its way through is not a permission gate. `/ar:sos` cannot
+help either — the failure happens at `import autorun`, before any session state
+is read.
+
+**Fix it from a terminal, outside the AI session:**
+
+```bash
+uv run --project <repo>/plugins/autorun python -m autorun --install --force
+```
+
+If the message names a plugin-cache venv that is missing the package, install
+into that interpreter directly:
+
+```bash
+uv pip install --python ~/.claude/plugins/cache/autorun/ar/<version>/.venv/bin/python -e <repo>/plugins/autorun
+```
+
+**To keep working before repairing it**, stand autorun down for the session:
+
+```bash
+export AUTORUN_DISABLE=1
+```
+
+`AUTORUN_DISABLE=1` is read before autorun is imported, so it works in exactly
+the state where nothing else does. It disables every autorun protection —
+command blocking, file policies, task enforcement — until it is unset. It is
+not a fix; repair the install.
+
+`AUTORUN_NO_BOOTSTRAP=1` is a different switch: it stops autorun from trying to
+reinstall itself in the background, but the gate still denies. Use it when
+repeated bootstrap attempts are the problem, not the blocking.
 
 ---
 
