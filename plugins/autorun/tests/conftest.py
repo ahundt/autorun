@@ -485,17 +485,24 @@ def _live_install_fingerprint() -> dict:
     for pattern in _LIVE_INSTALL_GLOBS:
         expanded = os.path.expanduser(pattern)
         matches = _glob.glob(expanded, recursive=True)
+        # normpath, because these keys are compared against paths built
+        # elsewhere. expanduser substitutes a backslash home on Windows but
+        # leaves the rest of the pattern's forward slashes, so a match comes
+        # back as C:\Users\...\.claude/settings.json -- equal to no str(Path)
+        # any caller can produce, while POSIX matches by coincidence.
+        #
         # Record the pattern itself when nothing matches, so an artifact that
         # is *deleted* during the run is caught, not just one that is edited.
         if not matches:
-            fingerprint[expanded] = None
+            fingerprint[os.path.normpath(expanded)] = None
             continue
         for path in matches:
+            key = os.path.normpath(path)
             try:
                 stat = os.stat(path)
-                fingerprint[path] = (stat.st_size, stat.st_mtime_ns)
+                fingerprint[key] = (stat.st_size, stat.st_mtime_ns)
             except OSError:
-                fingerprint[path] = None
+                fingerprint[key] = None
     return fingerprint
 
 

@@ -119,7 +119,18 @@ def _process_stop(
             ghost_clear_enabled=False,
         ),
     )
-    return manager.handle_stop(_stop_context(manager, ThreadSafeDB()))
+    # ThreadSafeDB defaults to HOOK_STATE_LOCK_TIMEOUT (0.5s), a production
+    # latency guarantee: a hook must never hang the harness waiting on state.
+    # This test manufactures contention no hook sees -- six processes entering
+    # the same critical section at once -- and on a Windows runner six
+    # serialised read-modify-write cycles exceed 500ms, so the last waiter got
+    # filelock.Timeout and the run failed on lock latency rather than on the
+    # bound it exists to check. The assertion here is that exactly
+    # stop_block_max_count Stops block, which is a correctness property and
+    # independent of how long the queue takes to drain. Ten seconds is far
+    # above the observed contention and far below the suite timeout, so a
+    # genuine deadlock still fails rather than hanging.
+    return manager.handle_stop(_stop_context(manager, ThreadSafeDB(state_timeout=10.0)))
 
 
 @pytest.mark.parametrize("prompt", ["Discuss the release.", "/test"])
