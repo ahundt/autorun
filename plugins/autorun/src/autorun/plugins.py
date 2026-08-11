@@ -2313,7 +2313,14 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         # Preserve one early durable checkpoint without returning to a write on
         # every fifth call. A daemon restart can replay at most the remaining
         # phase span, while ordinary calls stay on volatile daemon state.
-        if count == min(5, threshold):
+        if count == min(5, threshold) and ctx.uses_volatile_store:
+            # Only worth writing when the counter lives in daemon memory. With
+            # no store the advance above already wrote durably, and repeating
+            # it here is a blind set of a field other processes are
+            # incrementing: one that had already crossed the boundary and
+            # reset to 0 was pushed back to this count, so the next process
+            # crossed the same boundary again and the "exactly one reminder"
+            # guarantee failed -- three of eight processes emitted it.
             _task_progress_state_set(
                 ctx,
                 "tool_calls_since_task_update",

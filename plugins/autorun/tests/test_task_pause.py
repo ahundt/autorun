@@ -769,3 +769,64 @@ def test_session_start_injects_current_pause_once_without_arming_enforcement():
     assert "Discuss release risks" in rendered
     assert second is None
     assert not ctx.task_staleness_enforce_next
+
+class TestDurableCheckpointDoesNotClobberTheCounter:
+    """The early checkpoint must never write a field others are incrementing.
+
+    check_task_staleness keeps one durable checkpoint so a daemon restart does
+    not replay a whole phase. That write is a blind set of
+    tool_calls_since_task_update. When the counter is already durable -- which
+    is exactly the case when no daemon store is attached -- the set adds
+    nothing and can undo another process's increment: a process that had
+    crossed the reminder boundary and reset the counter to 0 was pushed back
+    to 5, so a later process crossed the same boundary a second time.
+    """
+
+    def _ctx(self, session_id, store):
+        ctx = EventContext(
+            session_id=session_id,
+            event="PostToolUse",
+            prompt="",
+            tool_name="exec_command",
+            store=store,
+            session_identity_authority="payload",
+            cli_type="codex",
+        )
+        ctx.task_staleness_threshold = PAUSE_REMINDER_THRESHOLD
+        return ctx
+
+    def test_no_blind_set_without_a_daemon_store(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "state"))
+        session_manager._reset_for_testing()
+        writes = []
+        monkeypatch.setattr(
+            plugins,
+            "_task_progress_state_set",
+            lambda ctx, name, value: writes.append((name, value)),
+        )
+
+        ctx = self._ctx("checkpoint-no-store", None)
+        for _ in range(min(5, PAUSE_REMINDER_THRESHOLD) + 1):
+            plugins.check_task_staleness(ctx)
+
+        assert ("tool_calls_since_task_update", 5) not in writes, writes
+
+    def test_the_checkpoint_still_happens_with_a_daemon_store(
+        self, monkeypatch, tmp_path
+    ):
+        """Removing it entirely would lose the restart guarantee it exists for."""
+        monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "state"))
+        session_manager._reset_for_testing()
+        writes = []
+        monkeypatch.setattr(
+            plugins,
+            "_task_progress_state_set",
+            lambda ctx, name, value: writes.append((name, value)),
+        )
+
+        ctx = self._ctx("checkpoint-with-store", ThreadSafeDB())
+        for _ in range(min(5, PAUSE_REMINDER_THRESHOLD) + 1):
+            plugins.check_task_staleness(ctx)
+
+        assert ("tool_calls_since_task_update", 5) in writes, writes
+

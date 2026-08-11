@@ -1924,6 +1924,19 @@ class EventContext:
             state = object.__getattribute__(self, "_state")
             state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value
 
+    @property
+    def uses_volatile_store(self) -> bool:
+        """Whether advisory updates land in daemon memory rather than on disk.
+
+        ``state_update_volatile`` writes to the daemon's ThreadSafeDB when one
+        is attached and falls back to durable state when it is not. A caller
+        that adds a durable checkpoint *because* volatile state dies with the
+        daemon has to know which of the two happened: without a store the
+        advisory write is already durable, and repeating it is not free -- a
+        blind set of a field other processes are incrementing loses their work.
+        """
+        return object.__getattribute__(self, "_store") is not None
+
     def state_update_volatile(
         self,
         name: str,
