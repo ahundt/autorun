@@ -249,15 +249,43 @@ def can_prompt() -> bool:
         return False
     if sys.platform != "win32":
         return True
+    return windows_tty_is_a_console(stream)
+
+
+def windows_tty_is_a_console(stream) -> bool:
+    """Whether a Windows stream that claims to be a tty is a real console.
+
+    Separate from :func:`can_prompt` so it can be exercised off Windows. Inside
+    ``can_prompt`` this branch runs only when ``sys.platform == "win32"``, so
+    every test of it passed vacuously on macOS and Linux and the one platform
+    that runs it had no coverage until Windows CI did.
+
+    Two outcomes are not the same and were once conflated:
+
+    * ``GetConsoleMode`` ran and said no -- ``NUL`` (what ``subprocess.DEVNULL``
+      supplies) always yields a real handle, so this is the authoritative "not
+      interactive" answer and the reason this function exists.
+    * No handle could be obtained at all -- a captured, wrapped, or synthetic
+      stream that still reports a tty. That is missing evidence, not evidence
+      of ``NUL``, and returning False there refuses to prompt on a genuine
+      terminal because the stream lacks an optional API. ``isatty()`` stands.
+    """
     try:
         import ctypes
         import msvcrt
 
-        mode = ctypes.c_ulong()
         handle = msvcrt.get_osfhandle(stream.fileno())
+    except (AttributeError, ImportError, OSError, ValueError):
+        # ImportError covers msvcrt being absent, which is every non-Windows
+        # platform: without it this helper cannot be exercised off Windows,
+        # and the branch would keep the zero coverage that let it regress.
+        return True
+
+    try:
+        mode = ctypes.c_ulong()
         return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
     except (AttributeError, OSError, ValueError):
-        return False
+        return True
 
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===

@@ -22,6 +22,20 @@ Intercepts autorun commands before they reach Claude Code, saving tokens and pro
 
 import sys
 
+# This launcher prints recovery steps at a moment when the autorun package may
+# not be importable, so it cannot reach logging_utils.use_utf8_output() -- that
+# lives in the package that just failed to import. A Windows console (or any
+# PYTHONIOENCODING=cp1252 parent) cannot encode the emoji below, and without
+# this the user gets a UnicodeEncodeError traceback in place of the very
+# instructions that would fix their install. errors="replace" is stdlib, needs
+# no import, and degrades one glyph instead of losing the whole message.
+# Bootstrap behaviour is unchanged: this only affects how output is encoded.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass  # Python 2, a detached stream, or a stream that is not a TextIOWrapper.
+
 # Check Python version compatibility first (before any imports that require Python 3)
 if sys.version_info[0] >= 3:
     # Only import if we have Python 3+

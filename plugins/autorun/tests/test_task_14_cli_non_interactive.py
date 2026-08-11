@@ -27,6 +27,20 @@ def isolated_autorun_home(tmp_path):
     return tmp_path / "autorun-home"
 
 
+#: ``python -c`` puts the working directory on ``sys.path[0]``, and
+#: ``plugins/autorun/autorun.py`` is a launcher shim named exactly like the
+#: package it launches. A child started from the plugin root therefore imports
+#: the shim, which cannot reach ``autorun.error_handling`` from inside itself
+#: and exits 1 by design (``error_handling.py`` matches "is not a package" and
+#: prints recovery steps). CI runs pytest from the plugin root, so every child
+#: below inherited that shadowing and asserted on it instead of on the encoding
+#: and terminal behaviour it names. Any child importing ``autorun`` gets a
+#: neutral directory so the import resolves to the installed package.
+def spawn_kwargs(cwd: Path) -> dict:
+    """Subprocess options that keep ``import autorun`` off the launcher shim."""
+    return {"cwd": str(cwd), "env": dict(os.environ)}
+
+
 def run_task_lifecycle_cli(*args: str, autorun_home: Path, **kwargs) -> subprocess.CompletedProcess:
     """Run the task lifecycle CLI through the autorun project environment."""
     env = dict(os.environ)
@@ -232,10 +246,10 @@ class TestOutputEncoding:
             capture_output=True,
             text=True,
             encoding="cp1252",
-            env=env,
             timeout=5,
+            **{**spawn_kwargs(tmp_path), "env": env},
         )
-        assert result.returncode == 0
+        assert result.returncode == 0, result.stdout + result.stderr
         assert "client" in result.stdout
 
     def test_a_stream_that_cannot_reconfigure_is_not_fatal(self, monkeypatch):
@@ -270,7 +284,7 @@ class TestCanPrompt:
         assert can_prompt() is False
 
     @pytest.mark.skipif(os.name != "nt", reason="Windows NUL semantics")
-    def test_a_character_device_at_eof_cannot_prompt(self):
+    def test_a_character_device_at_eof_cannot_prompt(self, tmp_path):
         """NUL on Windows: claims to be a tty, has nothing to give."""
         result = subprocess.run(
             [sys.executable, "-c", "from autorun.task_lifecycle import can_prompt; print(can_prompt())"],
@@ -278,7 +292,7 @@ class TestCanPrompt:
             capture_output=True,
             text=True,
             timeout=5,
-            env=os.environ,
+            **spawn_kwargs(tmp_path),
         )
         assert result.stdout.strip() == "False"
 
@@ -289,7 +303,7 @@ class TestCanPrompt:
         assert can_prompt() is True
 
     @pytest.mark.skipif(os.name == "nt", reason="pty is POSIX-only")
-    def test_an_idle_terminal_is_detected_without_reading(self):
+    def test_an_idle_terminal_is_detected_without_reading(self, tmp_path):
         import pty
 
         master, slave = pty.openpty()
@@ -299,7 +313,7 @@ class TestCanPrompt:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env=os.environ,
+            **spawn_kwargs(tmp_path),
         )
         os.close(slave)
         try:
@@ -329,3 +343,95 @@ class TestCanPrompt:
 
         monkeypatch.setattr("sys.stdin", None)
         assert can_prompt() is False
+
+
+class TestWindowsConsoleProbe:
+    """The Windows branch, exercised on every platform.
+
+    ``can_prompt`` returns True at the ``sys.platform != "win32"`` guard, so
+    every test above passes without running the console probe anywhere except
+    Windows. That is how a change making the probe refuse any stream lacking
+    ``fileno()`` reached Windows CI green everywhere else: two of these cases
+    were only ever asserted on the one platform that never ran them.
+    """
+
+    def test_a_stream_with_no_fileno_is_trusted(self):
+        from autorun.task_lifecycle import windows_tty_is_a_console
+
+        class NoFileno:
+            def isatty(self):
+                return True
+
+        assert windows_tty_is_a_console(NoFileno()) is True
+
+    def test_a_stream_whose_fileno_raises_is_trusted(self):
+        """pytest's captured stdin raises io.UnsupportedOperation from fileno."""
+        import io
+
+        from autorun.task_lifecycle import windows_tty_is_a_console
+
+        class Captured:
+            def isatty(self):
+                return True
+
+            def fileno(self):
+                raise io.UnsupportedOperation("fileno")
+
+        assert windows_tty_is_a_console(Captured()) is True
+
+    def test_a_handle_that_is_not_a_console_cannot_prompt(self, monkeypatch):
+        """NUL yields a real handle and GetConsoleMode refuses it."""
+        import sys
+
+        from autorun import task_lifecycle
+
+        class FakeKernel32:
+            @staticmethod
+            def GetConsoleMode(handle, mode_ref):
+                return 0
+
+        fake_ctypes = type(sys)("ctypes")
+        fake_ctypes.c_ulong = lambda: 0
+        fake_ctypes.byref = lambda value: value
+        fake_ctypes.windll = type("windll", (), {"kernel32": FakeKernel32})
+        fake_msvcrt = type(sys)("msvcrt")
+        fake_msvcrt.get_osfhandle = lambda fd: 7
+        monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
+        monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+
+        class RealHandle:
+            def isatty(self):
+                return True
+
+            def fileno(self):
+                return 0
+
+        assert task_lifecycle.windows_tty_is_a_console(RealHandle()) is False
+
+    def test_a_console_handle_can_prompt(self, monkeypatch):
+        import sys
+
+        from autorun import task_lifecycle
+
+        class FakeKernel32:
+            @staticmethod
+            def GetConsoleMode(handle, mode_ref):
+                return 1
+
+        fake_ctypes = type(sys)("ctypes")
+        fake_ctypes.c_ulong = lambda: 0
+        fake_ctypes.byref = lambda value: value
+        fake_ctypes.windll = type("windll", (), {"kernel32": FakeKernel32})
+        fake_msvcrt = type(sys)("msvcrt")
+        fake_msvcrt.get_osfhandle = lambda fd: 7
+        monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
+        monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+
+        class Console:
+            def isatty(self):
+                return True
+
+            def fileno(self):
+                return 0
+
+        assert task_lifecycle.windows_tty_is_a_console(Console()) is True
