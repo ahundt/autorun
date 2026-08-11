@@ -27,6 +27,65 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 HOOK_ENTRY = PLUGIN_ROOT / "hooks" / "hook_entry.py"
 
 
+def write_fake_cli(
+    directory: Path,
+    *,
+    name: str = "autorun",
+    stdout: str = "",
+    stderr: str = "",
+    exit_code: int = 0,
+    sleep_seconds: int = 0,
+) -> Path:
+    """Write a stub `autorun` the running platform can actually execute.
+
+    POSIX gets a /bin/sh script with the executable bit set. Windows gets a
+    .cmd, because chmod is a no-op there and CreateProcess will not run a file
+    whose only claim to being executable is a shebang -- try_cli then never
+    spawned anything, never reached its SystemExit, and ten tests reported
+    "DID NOT RAISE" for a stub that had simply not run.
+
+    This is the only place that difference lives; callers pass behaviour, not
+    a script, and never branch on the platform themselves.
+    """
+    if os.name == "nt":
+        path = directory / f"{name}.cmd"
+        lines = ["@echo off"]
+        if sleep_seconds:
+            # No sleep.exe on a bare runner; ping loops back once per second.
+            lines.append(f"ping -n {sleep_seconds + 1} 127.0.0.1 >nul")
+        if stdout:
+            lines.append(f"echo|set /p={_cmd_quote(stdout)}")
+        if stderr:
+            lines.append(f"echo {_cmd_quote(stderr)} 1>&2")
+        lines.append(f"exit /b {exit_code}")
+        path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+        return path
+
+    path = directory / name
+    lines = ["#!/bin/sh"]
+    if sleep_seconds:
+        lines.append(f"sleep {sleep_seconds}")
+    if stdout:
+        lines.append(f"printf '%s' {_sh_quote(stdout)}")
+    if stderr:
+        lines.append(f"printf '%s\\n' {_sh_quote(stderr)} >&2")
+    lines.append(f"exit {exit_code}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _sh_quote(text: str) -> str:
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def _cmd_quote(text: str) -> str:
+    """cmd.exe has no quoting that survives these characters; escape them."""
+    for char in "^&<>|":
+        text = text.replace(char, "^" + char)
+    return text
+
+
 def _isolated_interpreter(tmp_path: Path) -> str:
     """A python whose bin directory carries no `autorun` sibling.
 
@@ -37,7 +96,19 @@ def _isolated_interpreter(tmp_path: Path) -> str:
     design, so a bare symlink outside any venv is a complete interpreter for
     it, and sys.executable inside the child is the symlink's own path.
     """
-    link = tmp_path / "python"
+    # The interpreter that created this venv already satisfies the
+    # requirement and needs no filesystem trick: it lives outside the venv, so
+    # no autorun sits beside it. The previous symlink was not portable --
+    # Windows resolves an interpreter's home from its own path, so a link in
+    # an unrelated directory produced "failed to locate pyvenv.cfg" and three
+    # tests failed before reaching what they meant to check.
+    base = getattr(sys, "_base_executable", None)
+    if base and base != sys.executable:
+        base_dir = Path(base).parent
+        if not any((base_dir / n).exists() for n in ("autorun", "autorun.exe")):
+            return base
+
+    link = tmp_path / Path(sys.executable).name
     link.symlink_to(sys.executable)
     return str(link)
 SRC_DIR = PLUGIN_ROOT / "src"
@@ -470,6 +541,65 @@ class TestHookEntryExecutionPriority:
         assert resolved == workspace_bin / "autorun"
         assert hook_entry._can_use_direct_daemon(resolved)
 
+    def test_autorun_bin_resolves_beside_a_windows_interpreter(self, tmp_path, monkeypatch):
+        """The same tier-1 rule, in the layout Windows actually produces.
+
+        A Windows venv puts executables in Scripts/ and suffixes them .exe, so
+        `Path(sys.executable).with_name("autorun")` named a file that never
+        exists there. Tier 1 could not match, and resolution fell through to
+        the global binary that _can_use_direct_daemon rejects: every hook on
+        Windows paid the second interpreter this tier exists to avoid.
+        """
+        hook_entry = load_hook_entry_module()
+        scripts = tmp_path / ".venv" / "Scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "python.exe").touch()
+        (scripts / "autorun.exe").touch()
+        monkeypatch.setattr(hook_entry.sys, "executable", str(scripts / "python.exe"))
+
+        resolved = hook_entry.get_autorun_bin()
+
+        assert resolved == scripts / "autorun.exe"
+        assert hook_entry._can_use_direct_daemon(resolved), (
+            "a Windows plugin-local venv binary must reach the fast path too"
+        )
+
+    def test_autorun_bin_falls_back_to_a_windows_workspace_venv(self, tmp_path, monkeypatch):
+        """Tier 3 in the Windows layout: <repo>/.venv/Scripts/autorun.exe."""
+        hook_entry = load_hook_entry_module()
+        repo = tmp_path / "repo"
+        plugin_root = repo / "plugins" / "autorun"
+        plugin_root.mkdir(parents=True)
+        scripts = repo / ".venv" / "Scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "autorun.exe").touch()
+
+        monkeypatch.setattr(
+            hook_entry.sys, "executable", str(tmp_path / "nowhere" / "python.exe")
+        )
+        monkeypatch.setattr(hook_entry, "get_plugin_root", lambda: str(plugin_root))
+
+        resolved = hook_entry.get_autorun_bin()
+
+        assert resolved == scripts / "autorun.exe"
+        assert hook_entry._can_use_direct_daemon(resolved)
+
+    def test_a_global_binary_is_still_refused_by_the_direct_daemon_check(self, tmp_path):
+        """Accepting the Windows shape must not accept everything.
+
+        The fast path is limited to a complete plugin-local installation; a
+        global install is exactly what tiers 1-3 exist to beat.
+        """
+        hook_entry = load_hook_entry_module()
+        for candidate in (
+            tmp_path / "usr" / "local" / "bin" / "autorun",
+            tmp_path / "Program Files" / "autorun" / "autorun.exe",
+            tmp_path / ".venv" / "bin" / "autorunner",
+        ):
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.touch()
+            assert hook_entry._can_use_direct_daemon(candidate) is False, candidate
+
     def test_standalone_detector_carries_every_registered_platform(self):
         """hook_entry's detection data is a hand copy; this pins it.
 
@@ -687,9 +817,7 @@ class TestTryCliRobustness:
 
     def test_try_cli_accepts_empty_stdout_success_as_implicit_allow(self, tmp_path, capsys):
         """Empty stdout with exit 0 is a valid hook allow response."""
-        fake_autorun = tmp_path / "autorun"
-        fake_autorun.write_text("#!/bin/sh\nexit 0\n")
-        fake_autorun.chmod(0o755)
+        fake_autorun = write_fake_cli(tmp_path)
 
         hook_entry = load_hook_entry_module()
 
@@ -703,14 +831,9 @@ class TestTryCliRobustness:
 
     def test_try_cli_suppresses_child_stderr_on_success(self, tmp_path, capsys):
         """Successful hooks must not leak dependency warnings to harness stderr."""
-        fake_autorun = tmp_path / "autorun"
-        fake_autorun.write_text(
-            "#!/bin/sh\n"
-            "printf '%s' '{\"continue\": true}'\n"
-            "printf '%s\\n' 'uv warning' >&2\n",
-            encoding="utf-8",
+        fake_autorun = write_fake_cli(
+            tmp_path, stdout='{"continue": true}', stderr="uv warning"
         )
-        fake_autorun.chmod(0o755)
 
         hook_entry = load_hook_entry_module()
 
@@ -724,9 +847,7 @@ class TestTryCliRobustness:
 
     def test_try_cli_rejects_non_json_success_without_protocol_noise(self, tmp_path, capsys):
         """Invalid child stdout must trigger fallback without reaching the harness."""
-        fake_autorun = tmp_path / "autorun"
-        fake_autorun.write_text("#!/bin/sh\nprintf '%s\\n' 'not hook json'\n", encoding="utf-8")
-        fake_autorun.chmod(0o755)
+        fake_autorun = write_fake_cli(tmp_path, stdout="not hook json")
 
         hook_entry = load_hook_entry_module()
 
@@ -737,15 +858,12 @@ class TestTryCliRobustness:
 
     def test_try_cli_forwards_stderr_only_for_exit_two(self, tmp_path, capsys):
         """Claude's exit-2 block path must retain its denial feedback."""
-        fake_autorun = tmp_path / "autorun"
-        fake_autorun.write_text(
-            "#!/bin/sh\n"
-            "printf '%s' '{\"decision\": \"block\"}'\n"
-            "printf '%s\\n' 'blocked for safety' >&2\n"
-            "exit 2\n",
-            encoding="utf-8",
+        fake_autorun = write_fake_cli(
+            tmp_path,
+            stdout='{"decision": "block"}',
+            stderr="blocked for safety",
+            exit_code=2,
         )
-        fake_autorun.chmod(0o755)
 
         hook_entry = load_hook_entry_module()
 
@@ -759,9 +877,7 @@ class TestTryCliRobustness:
 
     def test_main_does_not_fallback_when_cli_allows_with_empty_stdout(self, tmp_path):
         """Empty successful CLI output must not trigger fallback source lookup."""
-        fake_autorun = tmp_path / "autorun"
-        fake_autorun.write_text("#!/bin/sh\nexit 0\n")
-        fake_autorun.chmod(0o755)
+        fake_autorun = write_fake_cli(tmp_path)
 
         extension_root = tmp_path / "gemini-extension-no-src"
         extension_root.mkdir()
@@ -790,9 +906,7 @@ class TestTryCliRobustness:
 
     def test_tool_gate_fails_closed_when_cli_fails_and_extension_has_no_source(self, tmp_path):
         """A broken CLI fast path must not fail open for Gemini tool gates."""
-        fake_autorun = tmp_path / "autorun"
-        fake_autorun.write_text("#!/bin/sh\nexit 1\n")
-        fake_autorun.chmod(0o755)
+        fake_autorun = write_fake_cli(tmp_path, exit_code=1)
 
         extension_root = tmp_path / "gemini-extension-no-src"
         extension_root.mkdir()
@@ -990,9 +1104,7 @@ class TestTryCliRobustness:
     def test_main_does_not_run_fallback_after_cli_timeout_for_prompt(self, tmp_path, monkeypatch, capsys):
         """Prompt hooks must fail open promptly after CLI timeout without fallback."""
         module = load_hook_entry_module()
-        fake_autorun = tmp_path / "autorun"
-        fake_autorun.write_text("#!/bin/sh\nsleep 99\n", encoding="utf-8")
-        fake_autorun.chmod(0o755)
+        fake_autorun = write_fake_cli(tmp_path, sleep_seconds=99)
 
         def timeout_run(*args, **kwargs):
             raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 0))
@@ -1023,9 +1135,7 @@ class TestTryCliRobustness:
     def test_main_fails_closed_after_cli_timeout_for_tool_gate(self, tmp_path, monkeypatch, capsys):
         """Permission gates must fail closed promptly after CLI timeout without fallback."""
         module = load_hook_entry_module()
-        fake_autorun = tmp_path / "autorun"
-        fake_autorun.write_text("#!/bin/sh\nsleep 99\n", encoding="utf-8")
-        fake_autorun.chmod(0o755)
+        fake_autorun = write_fake_cli(tmp_path, sleep_seconds=99)
 
         def timeout_run(*args, **kwargs):
             raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 0))

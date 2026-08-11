@@ -491,6 +491,33 @@ def fail_after_fallback_error(message: str) -> NoReturn:
 # =============================================================================
 
 
+# A venv's executable layout is the only thing that differs across platforms
+# here: POSIX writes .venv/bin/autorun, Windows writes .venv/Scripts/autorun.exe.
+# Both shapes are accepted on every platform rather than branching on os.name,
+# so one code path serves both and a test can exercise either layout anywhere.
+# Probing a name that cannot exist locally costs one stat on the miss path.
+_VENV_BIN_DIRS = ("bin", "Scripts")
+_AUTORUN_EXE_NAMES = ("autorun", "autorun.exe")
+
+
+def _autorun_in(directory: Path) -> Path | None:
+    """Return the autorun executable directly inside `directory`, or None."""
+    for name in _AUTORUN_EXE_NAMES:
+        candidate = directory / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _venv_autorun(venv_root: Path) -> Path | None:
+    """Return the autorun executable inside `venv_root`, either layout."""
+    for bin_dir in _VENV_BIN_DIRS:
+        found = _autorun_in(venv_root / bin_dir)
+        if found:
+            return found
+    return None
+
+
 def get_autorun_bin() -> Path | None:
     """Find autorun executable with priority: interpreter sibling > venv > global.
 
@@ -516,20 +543,20 @@ def get_autorun_bin() -> Path | None:
 
     Safety: Works with both Claude Code and Gemini CLI via get_plugin_root().
     """
-    exe_sibling = Path(sys.executable).with_name("autorun")
-    if exe_sibling.exists():
+    exe_sibling = _autorun_in(Path(sys.executable).parent)
+    if exe_sibling:
         return exe_sibling
 
     plugin_root = get_plugin_root()
 
     if plugin_root:
-        venv_bin = Path(plugin_root) / ".venv" / "bin" / "autorun"
-        if venv_bin.exists():
+        venv_bin = _venv_autorun(Path(plugin_root) / ".venv")
+        if venv_bin:
             return venv_bin
         # Source-tree shape: <repo>/plugins/autorun/hooks/hook_entry.py with
         # the workspace venv two levels above the plugin root.
-        workspace_bin = Path(plugin_root).parent.parent / ".venv" / "bin" / "autorun"
-        if workspace_bin.exists():
+        workspace_bin = _venv_autorun(Path(plugin_root).parent.parent / ".venv")
+        if workspace_bin:
             return workspace_bin
 
     global_bin = shutil.which("autorun")
@@ -592,7 +619,11 @@ def _can_use_direct_daemon(autorun_bin: Path | None) -> bool:
     if autorun_bin is None:
         return False
     normalized = str(autorun_bin).replace("\\", "/")
-    return normalized.endswith("/.venv/bin/autorun")
+    return any(
+        normalized.endswith(f"/.venv/{bin_dir}/{name}")
+        for bin_dir in _VENV_BIN_DIRS
+        for name in _AUTORUN_EXE_NAMES
+    )
 
 
 def _unhandled_response(cli_type: str, event_name: str) -> dict | None:
