@@ -334,6 +334,7 @@ def run_hook(event: str, payload: dict, plugin_root: Path = None,
          "python", str(hook_script), "--cli", "claude"],
         input=json.dumps(payload),
         capture_output=True, text=True, timeout=timeout,
+        env=_isolated_daemon_env(),
     )
     parsed = None
     if result.stdout.strip():
@@ -353,9 +354,39 @@ def run_hook(event: str, payload: dict, plugin_root: Path = None,
     return result.returncode, parsed, stderr
 
 
+#: One AUTORUN_HOME for this module, separate from the session-wide one.
+_DEMO_HOME: list = []
+
+
+def _isolated_daemon_env() -> dict:
+    """Environment whose daemon cannot be one another test file left behind.
+
+    The suite shares a single AUTORUN_HOME, so every test file shares one
+    daemon socket, port file, lock and flock. test_daemon_restart_safety.py
+    runs stub daemons that deliberately take the flock and fail, and they never
+    publish a port. A stub that outlives its test leaves this module's client
+    reading a held flock -- "a daemon is running, wait" -- while connect() gets
+    FileNotFoundError for the port file that stub never wrote. The client then
+    declines to spawn on every attempt and reports "no daemon was spawned by
+    this client", which is what these tests failed with on Windows while
+    passing everywhere else.
+
+    A private home gives this module its own endpoint, so what it exercises is
+    autorun's cold start rather than another file's leftovers.
+    """
+    if not _DEMO_HOME:
+        # Short, because the POSIX socket path lives under it and sun_path is
+        # 104 bytes on macOS; a long temp path overflows and reads as a hook
+        # timeout. Left on disk deliberately: the daemon outlives this call,
+        # and deleting the directory under a live daemon is worse than a few
+        # kilobytes in the system temp area, which the OS reclaims.
+        _DEMO_HOME.append(tempfile.mkdtemp(prefix="ardemo_"))
+    return dict(os.environ, AUTORUN_HOME=_DEMO_HOME[0])
+
+
 def _daemon_log_tail(limit: int = 2000) -> str:
     """Last bytes of the daemon log for the AUTORUN_HOME this test ran under."""
-    home = os.environ.get("AUTORUN_HOME")
+    home = _isolated_daemon_env().get("AUTORUN_HOME")
     if not home:
         return "[daemon log: AUTORUN_HOME unset]"
     log = Path(home) / "daemon.log"
