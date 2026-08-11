@@ -672,7 +672,9 @@ class TestHookEntryExecutionPriority:
         output = json.loads(capsys.readouterr().out)
         reason = (
             "[autorun] broken hook path. Blocking tool use to avoid fail-open. "
-            "Run `autorun --restart-daemon` or `autorun --install --force`, then retry."
+            "This does not clear on its own and retrying will not help. In a "
+            "terminal, run `autorun --install --force`, or set AUTORUN_DISABLE=1 "
+            "to stand autorun down."
         )
         expected = platform_for(cli_type).hook_protocol.fail_closed_pretool_response(
             reason, event_name

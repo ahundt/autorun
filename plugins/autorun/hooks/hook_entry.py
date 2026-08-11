@@ -420,11 +420,56 @@ def _peek_event_name(default: str = "unknown") -> str:
         return default
 
 
-def fail_closed_tool_gate(message: str, cli_type: str, event_name: str) -> NoReturn:
-    """Block tool execution when autorun cannot evaluate a permission gate."""
+# The fail-closed reason below names the commands that repair a broken runtime.
+# Denying those is a deadlock: when autorun cannot be imported, the only in-band
+# exit is a tool call, and the gate refused exactly the tool calls that fix it.
+# `/ar:sos` cannot help either -- the block happens at `import autorun`, before
+# any session state is read -- so the sole remaining exit was hand-editing
+# settings.json. Every session attached to the broken install meanwhile retried
+# a hook that could not succeed, which is how one bad venv became a week of
+# wasted budget.
+#
+# Recognition is deliberately strict. This is a hole in a permission gate, not a
+# convenience: one bare invocation of a known entry point, and nothing that
+# could start a second command.
+# Guidance for a gate that will clear itself, and for one that will not.
+#
+# Both used to end with "then retry". A bootstrap in flight does clear, so
+# retrying is right. An unimportable runtime never clears, and the retry advice
+# turned every attached session into a loop against a hook that could not
+# succeed -- which is how one broken plugin venv cost far more than the
+# breakage itself.
+#
+# There is deliberately no way for the calling agent to lift this gate. An
+# earlier attempt allowlisted the repair commands so the agent could run them,
+# which meant a permission gate could be bypassed by crafting a command string:
+# `uv tool install autorun --with <package>` passed that check and executes
+# arbitrary package build code. Disabling a broken safety gate is a human's
+# decision, and AUTORUN_DISABLE is how a human makes it.
+_RETRY_GUIDANCE = "This clears on its own; retry shortly."
+_INTERVENTION_GUIDANCE = (
+    "This does not clear on its own and retrying will not help. In a terminal, "
+    "run `autorun --install --force`, or set AUTORUN_DISABLE=1 to stand autorun "
+    "down."
+)
+
+
+def fail_closed_tool_gate(
+    message: str,
+    cli_type: str,
+    event_name: str,
+    *,
+    recoverable: bool = False,
+) -> NoReturn:
+    """Block tool execution when autorun cannot evaluate a permission gate.
+
+    ``recoverable`` says whether waiting can fix this. It decides only the
+    guidance text; the tool is denied either way, because fail-open on a
+    permission gate is the failure this path exists to prevent.
+    """
     reason = (
         f"[autorun] {message}. Blocking tool use to avoid fail-open. "
-        "Run `autorun --restart-daemon` or `autorun --install --force`, then retry."
+        + (_RETRY_GUIDANCE if recoverable else _INTERVENTION_GUIDANCE)
     )
     hook_specific = {
         "hookEventName": event_name,
@@ -480,16 +525,22 @@ def fail_after_cli_timeout(cli_type: str, event_name: str) -> NoReturn:
     timeout = hook_timeout_for_cli(cli_type)
     message = f"autorun CLI timed out after {timeout:g}s"
     if is_tool_gate_event(event_name):
-        fail_closed_tool_gate(message, cli_type, event_name)
+        # A timeout is usually a cold daemon, which the next event finds warm.
+        fail_closed_tool_gate(message, cli_type, event_name, recoverable=True)
     fail_open_for_cli(message, cli_type)
 
 
-def fail_after_fallback_error(message: str) -> NoReturn:
-    """Fail closed for permission gates and natively open elsewhere."""
+def fail_after_fallback_error(message: str, *, recoverable: bool = False) -> NoReturn:
+    """Fail closed for permission gates and natively open elsewhere.
+
+    ``recoverable`` is the caller's verdict on whether waiting can fix this,
+    and reaches the guidance text unchanged. Defaulting to False keeps a new
+    failure path from promising a recovery nobody implemented.
+    """
     event_name = _peek_event_name()
     cli_type = detect_cli_type()
     if is_tool_gate_event(event_name):
-        fail_closed_tool_gate(message, cli_type, event_name)
+        fail_closed_tool_gate(message, cli_type, event_name, recoverable=recoverable)
     fail_open_for_cli(message, cli_type)
 
 
@@ -1152,23 +1203,25 @@ def run_fallback() -> None:
         if is_bootstrap_disabled():
             fail_after_fallback_error(
                 f"Import error: {e}. Bootstrap disabled. "
-                "Run manually: uv pip install autorun && autorun --install"
+                "Run manually: `uv pip install autorun`, then `autorun --install`"
             )
         elif is_bootstrap_running():
             fail_after_fallback_error(
-                "autorun bootstrapping in background, will be ready shortly"
+                "autorun bootstrapping in background, will be ready shortly",
+                recoverable=True,
             )
         else:
             can_run, reason = can_bootstrap()
             if can_run:
                 spawn_background_bootstrap()
                 fail_after_fallback_error(
-                    "autorun bootstrapping in background, will be ready shortly"
+                    "autorun bootstrapping in background, will be ready shortly",
+                    recoverable=True,
                 )
             else:
                 fail_after_fallback_error(
                     f"Import error: {e}. Cannot bootstrap: {reason}. "
-                    "Run manually: uv pip install autorun && autorun --install"
+                    "Run manually: `uv pip install autorun`, then `autorun --install`"
                 )
     except Exception as e:
         fail_after_fallback_error(f"Runtime error: {e}")
@@ -1197,6 +1250,14 @@ def main() -> None:
         for the fallback path.
     """
     _use_utf8_stderr()
+
+    # Read before anything else, and before any autorun import: the state this
+    # exists for is "autorun cannot be imported", so a check placed after the
+    # import that fails would never run. This is the last resort when even the
+    # repair-command allowance in fail_closed_tool_gate is not enough.
+    if os.environ.get("AUTORUN_DISABLE", "").strip().lower() in ("1", "true", "yes"):
+        fail_open_for_cli("", detect_cli_type())
+
     import io
 
     # Read stdin once — it can only be consumed once

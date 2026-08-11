@@ -47,6 +47,19 @@ marketplace itself carries a separate `version` field.
 
 ### Fixed
 
+- **A broken runtime blocked the commands that repair it.** When `import
+  autorun` failed, `fail_closed_tool_gate` denied every tool call — including
+  `autorun --install --force` and `autorun --restart-daemon`, the two commands
+  its own deny reason told the user to run. `/ar:sos` could not help either,
+  because the block happens at the import, before any session state is read, so
+  the only remaining exit was hand-editing `~/.claude/settings.json`. Each
+  denial ends with "then retry", so every session attached to the broken install
+  retried a hook that could never succeed. The gate now allows the exact repair
+  invocations it names, and `AUTORUN_DISABLE=1` — read at the top of `main()`,
+  before any autorun import — stands the hook down entirely. Everything else
+  still fails closed: `rm -rf` stays blocked while the runtime is broken.
+  Recognition rejects any shell chaining, so `trash -rf ~ && autorun --install`
+  is not a repair command.
 - **Plan export did nothing on Windows.** `is_plan_file` tested the raw path
   for the literal `/.claude/plans/`, which a Windows path
   (`C:\Users\<user>\.claude\plans\<name>.md`) never contains, so no plan was
