@@ -457,7 +457,28 @@ def run_client() -> int:
     # a missing endpoint, a refused connection, and a daemon that exits on
     # startup. A list because forward() rebinds it from a nested scope.
     last_connect_error: list = []
+    # Handles for daemons this client spawned. Popen was previously called and
+    # the result dropped, so a child that exited immediately looked exactly
+    # like one still booting: the client retried until its budget ran out and
+    # reported that no daemon answered, never that the daemon it started was
+    # already dead or why.
+    spawned: list = []
     deadline = client_deadline(cli_type)
+
+    def _spawn_outcome() -> str:
+        if not spawned:
+            return "no daemon was spawned by this client"
+        codes = [process.poll() for process in spawned]
+        if all(code is None for code in codes):
+            return f"{len(codes)} spawned daemon(s) still running"
+        # A Windows child that cannot initialise exits before running any of
+        # our code, which is why its log stays empty; the exit status is then
+        # the only evidence there is. 3221225785 (0xC0000142) is a DLL
+        # initialisation failure, and 1 with an empty log usually means the
+        # interpreter died before logging was configured.
+        return "spawned daemon exit codes: " + ", ".join(
+            "running" if code is None else str(code) for code in codes
+        )
 
     async def forward(depth: int = 0):
         remaining = deadline - time.monotonic()
@@ -470,7 +491,8 @@ def run_client() -> int:
             spent = "budget exhausted" if remaining <= 0 else f"{DAEMON_START_ATTEMPTS} attempts"
             raise RuntimeError(
                 f"Daemon failed to start after {spent}"
-                f"{cause}. Daemon startup output, if any, is in {ipc.AUTORUN_LOG_FILE}"
+                f"{cause}. {_spawn_outcome()}. Daemon startup output, if any, "
+                f"is in {ipc.AUTORUN_LOG_FILE}"
             )
         try:
             from .core import READ_BUFFER_LIMIT
@@ -626,12 +648,14 @@ def run_client() -> int:
                 except OSError:
                     startup_log = None
                 try:
-                    subprocess.Popen(
-                        [sys.executable, "-c", daemon_code],
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=startup_log or subprocess.DEVNULL,
-                        **ipc.detached_spawn_kwargs(),
+                    spawned.append(
+                        subprocess.Popen(
+                            [sys.executable, "-c", daemon_code],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=startup_log or subprocess.DEVNULL,
+                            **ipc.detached_spawn_kwargs(),
+                        )
                     )
                 finally:
                     # The child keeps its own duplicate of the descriptor, so
