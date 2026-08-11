@@ -639,14 +639,20 @@ def run_client() -> int:
                     if lock_path.exists():
                         if daemon_record_is_live(lock_path):
                             # A daemon that has started but not yet taken the
-                            # flock. Real, and narrow, so it is worth one wait
-                            # -- but only a bounded one: this branch is the
-                            # single path that declines to spawn without any
-                            # daemon holding the flock, and waiting in it
-                            # forever is what left every attempt reporting that
-                            # no daemon was spawned.
+                            # flock. Real, and narrow, so it is worth waiting
+                            # -- but only so long: this branch is the single
+                            # path that declines to spawn while no daemon holds
+                            # the flock, and waiting in it forever is what left
+                            # every attempt reporting that no daemon was
+                            # spawned.
+                            #
+                            # The record is NOT removed here. It names a
+                            # process that demonstrably exists, and deleting a
+                            # healthy daemon's discovery record to start a
+                            # competitor breaks the daemon that was about to
+                            # answer. Spawning alongside it is safe on its own:
+                            # the flock decides, and the loser exits.
                             if depth >= _STALE_PID_PATIENCE_ATTEMPTS:
-                                lock_path.unlink(missing_ok=True)
                                 should_spawn = True
                         else:
                             lock_path.unlink(missing_ok=True)
