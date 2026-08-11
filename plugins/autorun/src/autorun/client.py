@@ -371,9 +371,23 @@ def run_client() -> int:
 
     logger.debug(f"Forwarding hook to daemon: event={hook_event}, cli={cli_type}, tool={tool_name}")
 
+    # The connection error from the most recent attempt. Without it the caller
+    # is told only how many times the retry ran, which is the same message for
+    # a missing endpoint, a refused connection, and a daemon that exits on
+    # startup. A list because forward() rebinds it from a nested scope.
+    last_connect_error: list = []
+
     async def forward(depth: int = 0):
         if depth >= DAEMON_START_ATTEMPTS:
-            raise RuntimeError(f"Daemon failed to start after {DAEMON_START_ATTEMPTS} attempts")
+            cause = (
+                f": last connection error was {last_connect_error[0]!r}"
+                if last_connect_error
+                else ""
+            )
+            raise RuntimeError(
+                f"Daemon failed to start after {DAEMON_START_ATTEMPTS} attempts"
+                f"{cause}. Daemon startup output, if any, is in {ipc.AUTORUN_LOG_FILE}"
+            )
         try:
             from .core import READ_BUFFER_LIMIT
 
@@ -432,6 +446,7 @@ def run_client() -> int:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
 
+            last_connect_error[:] = [e]
             should_spawn = False
 
             # === RESTART-AWARE SPAWN DECISION ===
@@ -503,13 +518,35 @@ def run_client() -> int:
                     "import sys; sys.path.insert(0, {0!r}); "
                     "from autorun.daemon import main; main()"
                 ).format(str(src_dir))
-                subprocess.Popen(
-                    [sys.executable, "-c", daemon_code],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    **ipc.detached_spawn_kwargs(),
-                )
+                # stderr goes to the daemon's own log, not DEVNULL. A daemon
+                # that dies during startup used to leave nothing behind, so an
+                # import error, a failed bind, and a merely slow start all
+                # produced the same "Daemon failed to start after N attempts"
+                # with no way to tell them apart -- which is the state Windows
+                # reported with no log to explain it. This is the daemon's
+                # stderr written to a file, never a hook's stream, so it cannot
+                # be read as a hook failure.
+                try:
+                    ipc.ensure_config_dir()
+                    startup_log = open(
+                        ipc.AUTORUN_LOG_FILE, "a", encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    startup_log = None
+                try:
+                    subprocess.Popen(
+                        [sys.executable, "-c", daemon_code],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=startup_log or subprocess.DEVNULL,
+                        **ipc.detached_spawn_kwargs(),
+                    )
+                finally:
+                    # The child keeps its own duplicate of the descriptor, so
+                    # closing this one leaves the daemon's stderr intact and
+                    # does not leak a handle per spawn attempt.
+                    if startup_log is not None:
+                        startup_log.close()
             else:
                 logger.debug(f"Waiting for daemon (depth={depth})")
 
