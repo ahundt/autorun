@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("AUTORUN_HOME", "/tmp/autorun-test-home")
 os.environ.setdefault("AUTORUN_TEST_STATE_DIR", "/tmp/autorun-test-state")
 
-from autorun.installer import claude  # noqa: E402
+from autorun.installer import claude, fs  # noqa: E402
 from autorun.installer.fs import OWNED_MARKER_NAME, read_marker  # noqa: E402
 
 
@@ -75,13 +75,43 @@ def test_the_fallback_leaves_no_ownership_marker(source, home):
     assert read_marker(written) is None
 
 
-def test_replacing_a_version_is_a_replacement_not_a_merge(source, home):
+def test_fallback_never_replaces_a_harness_managed_cache(source, home):
     written = install(source, home)
+    runtime = written / ".venv" / "lib" / "site-packages" / "autorun"
+    runtime.mkdir(parents=True)
+    (runtime / "__init__.py").write_text("installed = True\n", encoding="utf-8")
     (written / "left-over.txt").write_text("from the previous copy\n", encoding="utf-8")
 
-    install(source, home)
+    assert claude.cache_fallback(
+        source, Harness(), market="autorun", plugin="ar", version="1.2.3", home=home
+    ) is None
 
-    assert not (written / "left-over.txt").exists()
+    assert (written / "left-over.txt").read_text(encoding="utf-8") == "from the previous copy\n"
+    assert (runtime / "__init__.py").read_text(encoding="utf-8") == "installed = True\n"
+
+
+def test_native_cache_creation_wins_a_fallback_publication_race(
+    source, home, monkeypatch
+):
+    target = claude.cache_dir(
+        Harness(), market="autorun", plugin="ar", version="1.2.3", home=home
+    )
+    assert target is not None
+    runtime = target / ".venv" / "lib" / "site-packages" / "autorun"
+    real_copytree = fs.shutil.copytree
+
+    def copytree(*args, **kwargs):
+        result = real_copytree(*args, **kwargs)
+        runtime.mkdir(parents=True, exist_ok=True)
+        (runtime / "__init__.py").write_text("native = True\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(fs.shutil, "copytree", copytree)
+
+    assert claude.cache_fallback(
+        source, Harness(), market="autorun", plugin="ar", version="1.2.3", home=home
+    ) is None
+    assert (runtime / "__init__.py").read_text(encoding="utf-8") == "native = True\n"
 
 
 def test_versions_sit_beside_each_other_and_none_is_pruned(source, home):
@@ -140,6 +170,22 @@ def test_substitution_is_idempotent(source, home):
     claude.substitute_root(written)
 
     assert claude.substitute_root(written) == ()
+
+
+def test_substitution_publishes_each_manifest_atomically(source, home, monkeypatch):
+    written = install(source, home)
+    calls = []
+    real_write = claude.atomic_write
+
+    def write(path, text):
+        calls.append(path)
+        real_write(path, text)
+
+    monkeypatch.setattr(claude, "atomic_write", write)
+
+    claude.substitute_root(written)
+
+    assert calls == [written / "hooks" / "hooks.json"]
 
 
 def test_the_bare_spelling_is_expanded_too(source, home):

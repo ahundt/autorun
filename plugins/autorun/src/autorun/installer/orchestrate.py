@@ -561,6 +561,7 @@ def _registrations(
                             (outcome.detail for outcome in outcomes if not outcome.ok), ""
                         )
                         cached = None
+                        filled = None
                         try:
                             cached = claude.cache_dir(
                                 platform,
@@ -569,8 +570,8 @@ def _registrations(
                                 version=steps._version(source),
                                 home=ctx.home,
                             )
-                            if cached is not None and (failed or not cached.is_dir()):
-                                cached = claude.cache_fallback(
+                            if cached is not None and not cached.is_dir():
+                                filled = claude.cache_fallback(
                                     source,
                                     platform,
                                     market=registration_market,
@@ -578,6 +579,8 @@ def _registrations(
                                     version=steps._version(source),
                                     home=ctx.home,
                                 )
+                                if filled is not None:
+                                    cached = filled
                             if cached is not None:
                                 claude.substitute_root(cached)
                         except Exception as error:
@@ -590,7 +593,7 @@ def _registrations(
                             )
                             outcomes = (cache_failure,) if failed else (*outcomes, cache_failure)
                         else:
-                            if failed and cached is not None:
+                            if failed and filled is not None:
                                 outcomes = (Outcome(
                                     f"{name}: cache fallback", True, failed
                                 ),)
@@ -798,8 +801,6 @@ def demo() -> None:
 
         calls.append(tuple(argv))
         return subprocess.CompletedProcess(argv, 0, "", "")
-
-    import os
 
     root = discovery.marketplace_root(Path(__file__).resolve())
     assert root is not None, "this package must be able to find its own marketplace"

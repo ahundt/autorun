@@ -174,7 +174,7 @@ def pytest_collection_modifyitems(config, items):
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun import CONFIG
+from autorun import CONFIG  # noqa: E402
 
 
 # =============================================================================
@@ -455,12 +455,12 @@ def unique_session_id():
 # instead of its fixture, edits the user's working install -- and the suite
 # still passes, because no assertion looks there.
 #
-# On 2026-08-11 a plugin cache venv lost its packages during a session of heavy
-# install- and daemon-path testing. The cause was never identified, which is
-# precisely the problem: nothing was watching, so there was no evidence either
-# way. These paths are installed artifacts. Under the default selection no test
-# has any business writing to them, so a change is a defect regardless of which
-# test did it.
+# On 2026-08-11 a plugin cache venv lost its packages during install- and
+# daemon-path testing. A later audit found a concrete deletion path: cache
+# fallback replaced an existing version while intentionally omitting ``.venv``.
+# No retained registration log proves that branch fired during the incident, so
+# this canary preserves the missing runtime evidence for any recurrence. These
+# are installed artifacts; a test may write them only with the explicit opt-out.
 #
 # Only code and configuration are fingerprinted. Sockets, PID files, logs, and
 # databases under ~/.autorun are excluded: the user's own daemon writes those
@@ -469,6 +469,8 @@ _LIVE_INSTALL_GLOBS = (
     "~/.claude/plugins/cache/autorun/*/*/hooks/hook_entry.py",
     "~/.claude/plugins/cache/autorun/*/*/pyproject.toml",
     "~/.claude/plugins/cache/autorun/*/*/.venv/pyvenv.cfg",
+    "~/.claude/plugins/cache/autorun/*/*/.venv/**/site-packages/autorun/**/*.py",
+    "~/.claude/plugins/cache/autorun/*/*/.venv/**/site-packages/filelock/**/*.py",
     "~/.claude/settings.json",
     "~/.codex/hooks.json",
     "~/.agents/plugins/marketplace.json",
@@ -482,7 +484,7 @@ def _live_install_fingerprint() -> dict:
     fingerprint = {}
     for pattern in _LIVE_INSTALL_GLOBS:
         expanded = os.path.expanduser(pattern)
-        matches = _glob.glob(expanded)
+        matches = _glob.glob(expanded, recursive=True)
         # Record the pattern itself when nothing matches, so an artifact that
         # is *deleted* during the run is caught, not just one that is edited.
         if not matches:
@@ -498,13 +500,8 @@ def _live_install_fingerprint() -> dict:
 
 
 def _live_install_canary_enabled(config) -> bool:
-    """Off when a selection that legitimately installs was requested."""
-    if os.environ.get("AUTORUN_ALLOW_LIVE_INSTALL_WRITES") == "1":
-        return False
-    # The e2e and release suites install on purpose. The default CI selection
-    # deselects both, and that is the selection this canary guards.
-    markers = config.getoption("-m", default="") or ""
-    return "not e2e" in markers and "not release" in markers
+    """Protect the live install unless a deliberate run explicitly opts out."""
+    return os.environ.get("AUTORUN_ALLOW_LIVE_INSTALL_WRITES") != "1"
 
 
 def pytest_sessionstart(session):

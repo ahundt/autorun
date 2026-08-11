@@ -52,6 +52,23 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     assert "_cwd" in payload
 
 
+def test_client_preserves_identity_already_supplied_by_the_hook_wrapper(monkeypatch):
+    monkeypatch.setattr(
+        "autorun.client.get_stable_process_identity",
+        lambda: StableProcessIdentity(12345, 67890),
+    )
+
+    payload, _ = prepare_payload_for_daemon(
+        {"_pid": 42, "_pid_started_at_units": 84}
+    )
+
+    assert payload["_pid"] == 42
+    assert payload["_pid_started_at_units"] == 84
+
+    payload, _ = prepare_payload_for_daemon({"_pid": 42})
+    assert "_pid_started_at_units" not in payload
+
+
 def test_client_response_timeouts_are_config_backed_and_above_dispatch_budget():
     """Client waits must outlast daemon dispatch, with values owned by CONFIG."""
     response_timeouts = CONFIG["daemon_client_response_timeouts_seconds"]

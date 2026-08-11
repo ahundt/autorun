@@ -17,9 +17,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    # No 3.14: markitdown pulls onnxruntime through magika, and onnxruntime
-    # publishes no cp314 wheel, so this package cannot be installed there yet.
-    # Restore the classifier when that wheel exists.
+    # No 3.14: markitdown requires magika <0.7, whose Windows dependency caps
+    # onnxruntime at 1.20.1; that release has no cp314 wheel. Restore this when
+    # markitdown permits a compatible magika/onnxruntime pair.
 ]
 
 dependencies = [

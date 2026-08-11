@@ -522,6 +522,7 @@ class PlanExportConfig:
             "output_plan_dir": self.output_plan_dir,
             "filename_pattern": self.filename_pattern,
             "extension": self.extension,
+            "export_accepted": self.export_accepted,
             "export_rejected": self.export_rejected,
             "output_rejected_plan_dir": self.output_rejected_plan_dir,
             "debug_logging": self.debug_logging,
@@ -1718,7 +1719,7 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
         return None
     try:
         config = PlanExportConfig.load(_ctx_project_dir(ctx))
-        if not config.enabled:
+        if not config.component_active("accepted"):
             return None
         exporter = PlanExport(ctx, config)
         plan = exporter.get_current_plan()

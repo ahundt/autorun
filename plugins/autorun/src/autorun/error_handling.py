@@ -217,10 +217,6 @@ def show_uv_environment_status():
                 print("   curl -LsSf https://astral.sh/uv/install.sh | sh")
         if not details['venv_exists']:
             print("   uv venv --python 3.10")
-            if os.name == "nt":
-                print(r"   .venv\Scripts\activate")
-            else:
-                print("   source .venv/bin/activate")
         if not details['dependencies_synced']:
             print("   uv sync")
 

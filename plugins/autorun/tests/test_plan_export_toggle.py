@@ -233,6 +233,24 @@ class TestComponentGatingActuallyStopsWrites:
         assert not result.get("success"), result
         assert not (project / "notes").exists()
 
+    def test_accepted_off_is_silent_at_the_hook_boundary(
+        self, config_path, project, monkeypatch
+    ):
+        plan_export_command("accepted off", project, "claude")
+        plan = project / "plan.md"
+        plan.write_text("# Plan\n", encoding="utf-8")
+        monkeypatch.setattr(pe_mod.PlanExport, "get_current_plan", lambda _self: plan)
+        ctx = EventContext(
+            session_id="accepted-off-hook",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project)},
+            store=ThreadSafeDB(),
+        )
+
+        assert pe_mod.export_on_exit_plan_mode(ctx) is None
+        assert ctx._chain_notifications == []
+
     def test_accepted_on_still_exports(self, config_path, project):
         exporter, plan = self._exporter(project, "accepted-on")
         result = exporter.export(plan, rejected=False)
@@ -312,6 +330,12 @@ class TestNotesComponents:
         config = PlanExportConfig.load(project)
         for component in NOTES_COMPONENTS:
             assert not config.component_active(component.name), component.name
+
+    def test_to_dict_preserves_every_component_switch(self):
+        config = PlanExportConfig(export_accepted=False, export_rejected=False)
+        serialized = config.to_dict()
+        assert serialized["export_accepted"] is False
+        assert serialized["export_rejected"] is False
 
     def test_a_component_is_active_only_when_both_switches_allow_it(
         self, config_path, project

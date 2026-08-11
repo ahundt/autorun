@@ -598,6 +598,13 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
         f"package={Path(__file__).resolve().parents[1]} "
         f"python={Path(sys.executable).resolve()}"
     )
+    hooks_disabled = os.environ.get("AUTORUN_DISABLE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if hooks_disabled:
+        print("BROKEN AUTORUN_DISABLE=1: every autorun hook is bypassed")
     root = _marketplace_root()
     try:
         plugins = parse_selection(root, "all")
@@ -670,7 +677,7 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
         print(probe.describe())
         probe_ok = probe.ok
     needs_install = any(getattr(decision, "verdict", None) in (Verdict.KEEP, Verdict.PUBLISH, Verdict.RETIRE) for decision in result.decisions)
-    return 0 if result.ok and not needs_install and probe_ok and all(finding.level is not status.Level.BROKEN for finding in findings) else 1
+    return 0 if not hooks_disabled and result.ok and not needs_install and probe_ok and all(finding.level is not status.Level.BROKEN for finding in findings) else 1
 
 
 def _latest_version(current: str) -> str:

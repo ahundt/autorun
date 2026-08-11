@@ -38,18 +38,17 @@ a caller can talk its way through is not a permission gate. `/ar:sos` cannot
 help either — the failure happens at `import autorun`, before any session state
 is read.
 
-**Fix it from a terminal, outside the AI session:**
-
-```bash
-uv run --project <repo>/plugins/autorun python -m autorun --install --force
-```
-
-If the message names a plugin-cache venv that is missing the package, install
-into that interpreter directly:
+**Fix it from a terminal, outside the AI session.** Run the exact
+`uv pip install --python ...` command in the denial. For a Claude plugin-cache
+venv it has this shape:
 
 ```bash
 uv pip install --python ~/.claude/plugins/cache/autorun/ar/<version>/.venv/bin/python -e <repo>/plugins/autorun
 ```
+
+This matters: `autorun --install --force` republishes native assets but does not
+populate Claude's cached venv. Run it only afterward if status reports stale
+hooks, commands, or skills.
 
 **To keep working before repairing it**, stand autorun down for the session:
 

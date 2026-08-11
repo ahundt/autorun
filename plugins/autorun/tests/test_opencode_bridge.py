@@ -122,7 +122,7 @@ class TestInstallerPlacesTheShim:
         # The substituted values must be complete JS literals. A raw Windows
         # path would leave backslash escapes that change or break the string.
         for name in ("const SOCKET = ", "const PORT_FILE = "):
-            line = next(l for l in text.splitlines() if l.startswith(name))
+            line = next(row for row in text.splitlines() if row.startswith(name))
             assert json.loads(line[len(name):].strip()), line
 
     def test_uninstall_removes_the_shim_it_owns(self, tmp_path, monkeypatch):
@@ -163,6 +163,11 @@ class TestDaemonSocketFrames:
         not hasattr(socket, "AF_UNIX"),
         reason="the stub daemon binds AF_UNIX; the loopback test covers this platform",
     )
+
+    def test_port_file_requires_one_complete_valid_port(self):
+        source = SHIM_SOURCE.read_text(encoding="utf-8")
+        assert "Number.parseInt" not in source
+        assert "port <= 65535" in source
 
     def _serve(self, socket_path, replies, connections=2):
         """Answer N frames the way the daemon does: one connection each.

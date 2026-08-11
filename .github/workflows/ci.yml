@@ -104,12 +104,11 @@ jobs:
           fail-on-error: false
 
       - name: Run PDF extractor tests
-        # Skipped on 3.14: markitdown, a default pdf-extractor dependency,
-        # pulls onnxruntime through magika, and onnxruntime publishes no cp314
-        # wheel, so the environment cannot be built at all. This is a wheel
-        # availability gap upstream, not a code failure -- autorun's own tests
-        # still run on 3.14 in the step above. Remove the condition once
-        # onnxruntime ships cp314.
+        # Skipped on 3.14: markitdown requires magika <0.7, whose Windows
+        # dependency caps onnxruntime at 1.20.1; that release has no cp314
+        # wheel. Newer onnxruntime releases support cp314 but cannot satisfy
+        # magika's cap. Remove the condition when markitdown permits a compatible
+        # magika/onnxruntime pair. Autorun's own tests still run above.
         if: matrix.python-version != '3.14'
         working-directory: plugins/pdf-extractor
         run: uv run --project . --locked --extra dev pytest tests/ --tb=short -v

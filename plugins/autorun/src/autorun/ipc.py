@@ -30,6 +30,8 @@ import socket
 import subprocess
 from pathlib import Path
 
+from .durable_io import atomic_write_text
+
 def _get_autorun_config_dir() -> Path:
     """Get autorun config/data directory (~/.autorun/).
 
@@ -142,8 +144,14 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
             client_handler, "127.0.0.1", 0, limit=limit
         )
         port = server.sockets[0].getsockname()[1]
-        # Written after binding, so the file names a port that is listening.
-        PORT_FILE.write_text(str(port), encoding="utf-8")
+        # Publish only a complete port value. If publication fails, do not
+        # strand a listener that no client can discover.
+        try:
+            atomic_write_text(PORT_FILE, str(port))
+        except OSError:
+            server.close()
+            await server.wait_closed()
+            raise
         return server
 
 

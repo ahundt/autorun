@@ -11,8 +11,6 @@ Validates:
 7. Address formatting
 """
 
-import asyncio
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -408,4 +406,29 @@ class TestLoopbackServerIsolation:
 
         asyncio.run(body())
 
+    def test_publication_failure_closes_the_bound_server(self, monkeypatch, tmp_path):
+        import asyncio
 
+        async def body():
+            ipc, home = self._configure(monkeypatch, tmp_path, "home-publish-failure")
+            ipc.PORT_FILE.mkdir()
+            real_start_server = asyncio.start_server
+            created = []
+
+            async def capture_server(*args, **kwargs):
+                server = await real_start_server(*args, **kwargs)
+                created.append(server)
+                return server
+
+            monkeypatch.setattr(ipc.asyncio, "start_server", capture_server)
+
+            async def handler(_reader, _writer):  # pragma: no cover - never called
+                pass
+
+            with pytest.raises(OSError):
+                await ipc.start_server(handler)
+
+            assert created and not created[0].is_serving()
+            await created[0].wait_closed()
+
+        asyncio.run(body())

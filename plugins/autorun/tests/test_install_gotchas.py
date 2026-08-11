@@ -88,7 +88,8 @@ def ctx(tmp_path: Path, monkeypatch) -> Context:
 def test_a_step_yielding_nothing_is_not_an_error(ctx):
     """A harness whose capability does not apply — no skills shipped, no
     commands — must contribute nothing rather than failing the whole install."""
-    empty: Step = lambda harness, context: ()
+    def empty(harness, context):
+        return ()
 
     assert list(walk([Fake("h", (empty,))], ctx)) == []
     assert run([Fake("h", (empty,))], ctx, Mode.INSTALL) == []
@@ -174,7 +175,8 @@ def test_two_steps_yielding_the_same_target_are_both_walked(ctx, source, tmp_pat
     both steps ran. Silently dropping one would hide a misconfigured step
     table."""
     target = tmp_path / "dest" / "demo"
-    step: Step = lambda h, c: (Intent(target=target, source=source, plugin="ar"),)
+    def step(h, c):
+        return (Intent(target=target, source=source, plugin="ar"),)
 
     decisions = run([Fake("h", (step, step))], ctx, Mode.INSTALL)
 
@@ -187,8 +189,11 @@ def test_a_shared_and_an_exclusive_intent_for_one_directory(ctx, source, tmp_pat
     claims the whole directory; the shared publish then finds its own files
     already recorded and adds nothing new, rather than corrupting the marker."""
     target = tmp_path / "dest" / "mixed"
-    exclusive: Step = lambda h, c: (Intent(target=target, source=source, plugin="ar"),)
-    shared: Step = lambda h, c: (Intent(target=target, source=source, plugin="ar", kind=Kind.FILES),)
+    def exclusive(h, c):
+        return (Intent(target=target, source=source, plugin="ar"),)
+
+    def shared(h, c):
+        return (Intent(target=target, source=source, plugin="ar", kind=Kind.FILES),)
 
     run([Fake("h", (exclusive, shared))], ctx, Mode.INSTALL)
 
@@ -472,7 +477,8 @@ def test_withdrawing_a_shared_file_the_user_edited_leaves_it(tmp_path):
 
 def test_preview_writes_nothing_even_where_a_directory_is_missing(ctx, source, tmp_path):
     target = tmp_path / "never" / "created" / "demo"
-    step: Step = lambda h, c: (Intent(target=target, source=source, plugin="ar"),)
+    def step(h, c):
+        return (Intent(target=target, source=source, plugin="ar"),)
 
     run([Fake("h", (step,))], ctx, Mode.PREVIEW)
 
@@ -481,7 +487,8 @@ def test_preview_writes_nothing_even_where_a_directory_is_missing(ctx, source, t
 
 def test_uninstall_of_something_never_installed_is_a_no_op(ctx, source, tmp_path):
     target = tmp_path / "dest" / "demo"
-    step: Step = lambda h, c: (Intent(target=target, source=source, plugin="ar"),)
+    def step(h, c):
+        return (Intent(target=target, source=source, plugin="ar"),)
 
     decisions = run([Fake("h", (step,))], ctx, Mode.UNINSTALL)
 
@@ -638,6 +645,35 @@ def test_successful_claude_registration_expands_the_cached_hook_root(tmp_path, m
     assert outcomes and all(outcome.ok for outcome in outcomes)
 
 
+def test_failed_registration_never_replaces_an_existing_claude_runtime(
+    tmp_path, monkeypatch
+):
+    import subprocess
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "1.2.3"}), encoding="utf-8"
+    )
+    cached = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
+    runtime = cached / ".venv" / "lib" / "site-packages" / "autorun"
+    runtime.mkdir(parents=True)
+    (runtime / "__init__.py").write_text("installed = True\n", encoding="utf-8")
+
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
+        removing=False,
+        run=lambda argv: subprocess.CompletedProcess(argv, 1, "", "network unavailable"),
+        available=("claude",),
+    )
+
+    assert (runtime / "__init__.py").read_text(encoding="utf-8") == "installed = True\n"
+    assert outcomes and not all(outcome.ok for outcome in outcomes)
+
+
 def test_conductor_registration_is_noninteractive_and_idempotent():
     import subprocess
     from autorun.installer.registration import companions
@@ -666,7 +702,8 @@ def test_an_intent_with_no_source_is_a_removal_in_every_mode(ctx, tmp_path, sour
     works."""
     target = tmp_path / "dest" / "demo"
     publish_tree(source, target, plugin="ar")
-    step: Step = lambda h, c: (Intent(target=target, source=None, plugin="ar"),)
+    def step(h, c):
+        return (Intent(target=target, source=None, plugin="ar"),)
 
     decisions = run([Fake("h", (step,))], ctx, Mode.INSTALL)
 

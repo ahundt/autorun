@@ -676,8 +676,8 @@ class TestHookEntryExecutionPriority:
         reason = (
             "[autorun] broken hook path. Blocking tool use to avoid fail-open. "
             "This does not clear on its own and retrying will not help. In a "
-            "terminal, run `autorun --install --force`, or set AUTORUN_DISABLE=1 "
-            "to stand autorun down."
+            "terminal, run the repair command in the error or `autorun --status` "
+            "for diagnosis; set AUTORUN_DISABLE=1 to stand autorun down."
         )
         expected = platform_for(cli_type).hook_protocol.fail_closed_pretool_response(
             reason, event_name
@@ -905,7 +905,7 @@ class TestTryCliRobustness:
 
     def test_main_does_not_fallback_when_cli_allows_with_empty_stdout(self, tmp_path):
         """Empty successful CLI output must not trigger fallback source lookup."""
-        fake_autorun = write_fake_cli(tmp_path)
+        write_fake_cli(tmp_path)
 
         extension_root = tmp_path / "gemini-extension-no-src"
         extension_root.mkdir()
@@ -934,7 +934,7 @@ class TestTryCliRobustness:
 
     def test_tool_gate_fails_closed_when_cli_fails_and_extension_has_no_source(self, tmp_path):
         """A broken CLI fast path must not fail open for Gemini tool gates."""
-        fake_autorun = write_fake_cli(tmp_path, exit_code=1)
+        write_fake_cli(tmp_path, exit_code=1)
 
         extension_root = tmp_path / "gemini-extension-no-src"
         extension_root.mkdir()

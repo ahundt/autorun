@@ -102,6 +102,24 @@ def test_a_deleted_artifact_is_detected(fake_home):
     )
 
 
+def test_deleted_cached_runtime_package_is_detected(fake_home):
+    """Catch the incident shape: the venv survived but its packages vanished."""
+    home, _ = fake_home
+    package = (
+        home
+        / ".claude/plugins/cache/autorun/ar/test-version/.venv/lib/python3.13/site-packages/autorun/__init__.py"
+    )
+    package.parent.mkdir(parents=True)
+    package.write_text("", encoding="utf-8")
+    canary = _load_canary()
+
+    before = canary._live_install_fingerprint()
+    package.unlink()
+    after = canary._live_install_fingerprint()
+
+    assert before != after, "cached runtime package deletion went unnoticed"
+
+
 def test_a_created_artifact_is_detected(tmp_path, monkeypatch):
     """A home with no install must still notice one appearing mid-run."""
     for name in ("HOME", "USERPROFILE"):
@@ -147,13 +165,12 @@ class _Config:
     ("markers", "enabled"),
     [
         ("not tmux and not e2e and not release", True),
-        # The e2e and release suites install on purpose.
-        ("e2e", False),
-        ("release", False),
-        ("", False),
+        ("e2e", True),
+        ("release", True),
+        ("", True),
     ],
 )
-def test_the_canary_runs_only_for_the_selection_that_never_installs(
+def test_the_canary_runs_for_every_selection(
     markers, enabled, monkeypatch
 ):
     canary = _load_canary()

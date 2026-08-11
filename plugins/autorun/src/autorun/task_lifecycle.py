@@ -238,24 +238,26 @@ def can_prompt() -> bool:
     the settings it was asked for, and the clear guards prompted instead of
     refusing.
 
-    Reading zero bytes is the platform-independent test: NUL is at EOF
-    immediately, a pipe with no writer is too, and a real terminal is not.
+    Never probe by reading: an idle terminal has no buffered byte and the probe
+    blocks. On Windows, ``GetConsoleMode`` distinguishes a console input handle
+    from NUL without consuming input.
     """
     import sys
 
     stream = sys.stdin
     if stream is None or not stream.isatty():
         return False
-    peek = getattr(stream, "peek", None)
-    if peek is None:
-        buffer = getattr(stream, "buffer", None)
-        peek = getattr(buffer, "peek", None)
-    if peek is None:
+    if sys.platform != "win32":
         return True
     try:
-        return peek(1) != b""
-    except (OSError, ValueError):
-        return True
+        import ctypes
+        import msvcrt
+
+        mode = ctypes.c_ulong()
+        handle = msvcrt.get_osfhandle(stream.fileno())
+        return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
+    except (AttributeError, OSError, ValueError):
+        return False
 
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
@@ -2805,8 +2807,6 @@ class TaskLifecycle:
         Returns:
             Exit code (0 = success, 1 = error, 2 = cancelled)
         """
-        import sys
-
         try:
             config = TaskLifecycleConfig.load()
 
@@ -3008,7 +3008,6 @@ class TaskLifecycle:
             # Clean old sessions, keep last 7 days
             TaskLifecycle.cli_gc(ttl_days=7)
         """
-        import sys
         import fnmatch
         import shutil
         from .session_manager import get_session_manager
@@ -3316,8 +3315,6 @@ class TaskLifecycle:
         Returns:
             Exit code (0 = success, 1 = error, 2 = non-interactive)
         """
-        import sys
-
         try:
             config = TaskLifecycleConfig.load()
 

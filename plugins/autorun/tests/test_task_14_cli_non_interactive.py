@@ -195,7 +195,7 @@ class TestOutputEncoding:
             self.calls.append(kwargs)
             self.encoding = kwargs.get("encoding", self.encoding)
 
-    def test_a_cp1252_stream_is_switched_to_utf8(self, monkeypatch):
+    def test_a_cp1252_stream_keeps_its_declared_encoding(self, monkeypatch):
         from autorun.logging_utils import use_utf8_output
 
         out = self._Stream("cp1252")
@@ -206,7 +206,7 @@ class TestOutputEncoding:
         use_utf8_output()
 
         for stream in (out, err):
-            assert stream.calls == [{"encoding": "utf-8", "errors": "replace"}]
+            assert stream.calls == [{"errors": "replace"}]
 
     def test_a_utf8_stream_is_left_alone(self, monkeypatch):
         """Reconfiguring an already-correct stream would discard its state."""
@@ -218,7 +218,25 @@ class TestOutputEncoding:
 
         use_utf8_output()
 
-        assert out.calls == []
+        assert out.calls == [{"errors": "replace"}]
+
+    def test_a_cp1252_parent_can_decode_cli_output(self, tmp_path):
+        env = dict(os.environ, PYTHONIOENCODING="cp1252")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from autorun.logging_utils import use_utf8_output; "
+                "use_utf8_output(); print('client ₁ daemon')",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="cp1252",
+            env=env,
+            timeout=5,
+        )
+        assert result.returncode == 0
+        assert "client" in result.stdout
 
     def test_a_stream_that_cannot_reconfigure_is_not_fatal(self, monkeypatch):
         """A replaced stdout (pytest capture, a StringIO) has no reconfigure."""
@@ -239,15 +257,11 @@ class TestCanPrompt:
     """
 
     class _Stream:
-        def __init__(self, tty, peeked=b""):
+        def __init__(self, tty):
             self._tty = tty
-            self._peeked = peeked
 
         def isatty(self):
             return self._tty
-
-        def peek(self, _size):
-            return self._peeked
 
     def test_a_non_tty_cannot_prompt(self, monkeypatch):
         from autorun.task_lifecycle import can_prompt
@@ -255,18 +269,49 @@ class TestCanPrompt:
         monkeypatch.setattr("sys.stdin", self._Stream(tty=False))
         assert can_prompt() is False
 
-    def test_a_character_device_at_eof_cannot_prompt(self, monkeypatch):
+    @pytest.mark.skipif(os.name != "nt", reason="Windows NUL semantics")
+    def test_a_character_device_at_eof_cannot_prompt(self):
         """NUL on Windows: claims to be a tty, has nothing to give."""
-        from autorun.task_lifecycle import can_prompt
-
-        monkeypatch.setattr("sys.stdin", self._Stream(tty=True, peeked=b""))
-        assert can_prompt() is False
+        result = subprocess.run(
+            [sys.executable, "-c", "from autorun.task_lifecycle import can_prompt; print(can_prompt())"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=os.environ,
+        )
+        assert result.stdout.strip() == "False"
 
     def test_a_terminal_with_input_can_prompt(self, monkeypatch):
         from autorun.task_lifecycle import can_prompt
 
-        monkeypatch.setattr("sys.stdin", self._Stream(tty=True, peeked=b"y\n"))
+        monkeypatch.setattr("sys.stdin", self._Stream(tty=True))
         assert can_prompt() is True
+
+    @pytest.mark.skipif(os.name == "nt", reason="pty is POSIX-only")
+    def test_an_idle_terminal_is_detected_without_reading(self):
+        import pty
+
+        master, slave = pty.openpty()
+        process = subprocess.Popen(
+            [sys.executable, "-c", "from autorun.task_lifecycle import can_prompt; print(can_prompt())"],
+            stdin=slave,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=os.environ,
+        )
+        os.close(slave)
+        try:
+            stdout, stderr = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            pytest.fail("can_prompt blocked while inspecting an idle terminal")
+        finally:
+            os.close(master)
+        assert process.returncode == 0, stderr
+        assert stdout.strip() == "True"
 
     def test_a_stream_without_peek_is_trusted(self, monkeypatch):
         """Never refuse a real terminal because the stream lacks an optional API."""
@@ -284,4 +329,3 @@ class TestCanPrompt:
 
         monkeypatch.setattr("sys.stdin", None)
         assert can_prompt() is False
-

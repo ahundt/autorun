@@ -819,8 +819,30 @@ def test_status_fails_when_an_owned_artifact_cannot_be_reconciled(monkeypatch, i
             decisions=(Decision(Verdict.KEEP, isolated / "skill", "user edit"),),
         ),
     )
+    assert entrypoint.show_status() == 1
+
+
+def test_status_reports_and_fails_for_the_hook_kill_switch(
+    monkeypatch, isolated, capsys
+):
+    from autorun.installer import entrypoint, orchestrate
+    from autorun.installer.traversal import Mode
+
+    monkeypatch.setattr(
+        entrypoint,
+        "_harnesses",
+        lambda *args, **kwargs: ((SimpleNamespace(name="test"),), {}, (), ()),
+    )
+    monkeypatch.setattr(entrypoint, "_runtime_settings", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestrate,
+        "preview",
+        lambda **kwargs: orchestrate.Result(Mode.PREVIEW, decisions=()),
+    )
+    monkeypatch.setenv("AUTORUN_DISABLE", "1")
 
     assert entrypoint.show_status() == 1
+    assert "BROKEN AUTORUN_DISABLE=1" in capsys.readouterr().out
 
 
 def test_a_declared_guidance_template_that_is_missing_is_an_install_error(tmp_path):

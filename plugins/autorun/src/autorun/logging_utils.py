@@ -26,25 +26,22 @@ DEBUG_ENABLED = os.environ.get('AUTORUN_DEBUG') == '1'
 
 
 def use_utf8_output() -> None:
-    """Make this process's stdout and stderr able to carry autorun's output.
+    """Make stdout and stderr tolerate text their declared encoding cannot carry.
 
     Windows gives a non-UTF-8 console and pipe encoding (cp1252 on the CI
     runners), and autorun's own status text contains characters it cannot
     represent, so `autorun task clear` died with "'charmap' codec can't encode
-    characters in position 0-1" before it could report anything -- including
-    the refusal it was being asked for. Reconfiguring here covers every
-    subcommand from one place; `errors="replace"` keeps a stray character from
-    turning readable output into a crash. Streams that already speak UTF-8,
-    which is every POSIX default, are left untouched.
+    characters in position 0-1". Preserve the stream's advertised encoding so
+    a parent using ``text=True`` decodes the same bytes; changing a cp1252 pipe
+    to UTF-8 caused its reader to fail with ``UnicodeDecodeError``. Replacing
+    only unrepresentable characters keeps the protocol internally consistent.
     """
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue
-        if (getattr(stream, "encoding", "") or "").lower().replace("-", "") == "utf8":
-            continue
         try:
-            reconfigure(encoding="utf-8", errors="replace")
+            reconfigure(errors="replace")
         except (OSError, ValueError):  # pragma: no cover - detached stream
             pass
 

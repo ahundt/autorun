@@ -146,6 +146,42 @@ def test_the_bootstrap_in_flight_path_is_marked_recoverable():
             )
 
 
+def test_manual_repair_targets_the_hook_interpreter_and_exact_source(
+    tmp_path, monkeypatch
+):
+    """Repair guidance must repopulate the venv that runs the broken hook."""
+    hook_entry = load_hook_entry_module()
+    plugin_root = tmp_path / "plugin source"
+    plugin_root.mkdir()
+    (plugin_root / "pyproject.toml").write_text("[project]\nname='autorun'\n")
+    monkeypatch.setattr(hook_entry.shutil, "which", lambda name: "/bin/uv")
+
+    command = hook_entry._manual_bootstrap_command(plugin_root)
+
+    assert "uv pip install --python" in command
+    assert hook_entry.sys.executable in command
+    assert str(plugin_root) in command
+    assert "--editable" in command
+    assert "uv pip install autorun" not in command
+
+
+def test_hook_stderr_keeps_the_encoding_its_parent_will_decode(monkeypatch):
+    hook_entry = load_hook_entry_module()
+
+    class Stream:
+        encoding = "cp1252"
+
+        def reconfigure(self, **kwargs):
+            self.kwargs = kwargs
+
+    stream = Stream()
+    monkeypatch.setattr(hook_entry.sys, "stderr", stream)
+
+    hook_entry._tolerate_stderr_encoding()
+
+    assert stream.kwargs == {"errors": "replace"}
+
+
 # --- 2. the gate still denies, and cannot be talked out of it ----------------
 
 # Fail-open on a permission gate is the failure this path exists to prevent.

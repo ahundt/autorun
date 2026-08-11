@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -449,8 +450,8 @@ def _peek_event_name(default: str = "unknown") -> str:
 _RETRY_GUIDANCE = "This clears on its own; retry shortly."
 _INTERVENTION_GUIDANCE = (
     "This does not clear on its own and retrying will not help. In a terminal, "
-    "run `autorun --install --force`, or set AUTORUN_DISABLE=1 to stand autorun "
-    "down."
+    "run the repair command in the error or `autorun --status` for diagnosis; "
+    "set AUTORUN_DISABLE=1 to stand autorun down."
 )
 
 
@@ -576,17 +577,14 @@ def _venv_autorun(venv_root: Path) -> Path | None:
     return None
 
 
-def _use_utf8_stderr() -> None:
-    """Let a deny reason reach a non-UTF-8 console instead of crashing.
+def _tolerate_stderr_encoding() -> None:
+    """Let a deny reason reach a non-UTF-8 stream instead of crashing.
 
     stderr only. stdout is the hook response channel: the harness parses
-    exactly what this process prints there, so it is not touched, and it does
-    not need to be -- responses go out through json.dumps, which escapes
-    non-ASCII, so they are already safe on any console encoding. The exit-two
-    path is the exception: it prints the deny reason to stderr as raw text,
-    and that text is autorun's own and contains characters cp1252 cannot
-    encode, so on Windows the hook died while writing the explanation for its
-    own refusal.
+    exactly what this process prints there, so it is not touched. The exit-two
+    path prints the deny reason to stderr as raw text. Preserve stderr's
+    advertised encoding so a parent using ``text=True`` decodes the same bytes,
+    and replace only characters that encoding cannot represent.
 
     Reconfiguring changes an encoding and writes nothing, so this cannot add
     output to either stream. hook_entry stays stdlib-only, so this is a
@@ -595,10 +593,8 @@ def _use_utf8_stderr() -> None:
     reconfigure = getattr(sys.stderr, "reconfigure", None)
     if reconfigure is None:
         return
-    if (getattr(sys.stderr, "encoding", "") or "").lower().replace("-", "") == "utf8":
-        return
     try:
-        reconfigure(encoding="utf-8", errors="replace")
+        reconfigure(errors="replace")
     except (OSError, ValueError):
         pass
 
@@ -1041,6 +1037,13 @@ def _bootstrap_install_argv(tool: str, plugin_root: Path) -> tuple[str, ...]:
     return (sys.executable, "-m", "pip", "install", *editable, source)
 
 
+def _manual_bootstrap_command(plugin_root: Path) -> str:
+    """Render the same exact-interpreter install used by the worker."""
+    tool = "uv" if shutil.which("uv") else "pip"
+    argv = _bootstrap_install_argv(tool, plugin_root)
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+
+
 def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
     """Install dependencies and publish native assets outside hook timeout."""
     lockfile = _bootstrap_path("bootstrap.lock")
@@ -1200,10 +1203,11 @@ def run_fallback() -> None:
         sys.exit(exit_code if exit_code is not None else 0)
     except ImportError as e:
         # Deps missing - try background bootstrap
+        repair = _manual_bootstrap_command(Path(plugin_root) if plugin_root else src_dir.parent)
         if is_bootstrap_disabled():
             fail_after_fallback_error(
                 f"Import error: {e}. Bootstrap disabled. "
-                "Run manually: `uv pip install autorun`, then `autorun --install`"
+                f"Run outside the hooked session: `{repair}`"
             )
         elif is_bootstrap_running():
             # A worker is already installing, so the next event finds it done.
@@ -1228,7 +1232,7 @@ def run_fallback() -> None:
                 # until a human acts, so this keeps the unrecoverable default.
                 fail_after_fallback_error(
                     f"Import error: {e}. Cannot bootstrap: {reason}. "
-                    "Run manually: `uv pip install autorun`, then `autorun --install`"
+                    f"Run outside the hooked session: `{repair}`"
                 )
     except Exception as e:
         fail_after_fallback_error(f"Runtime error: {e}")
@@ -1256,7 +1260,7 @@ def main() -> None:
         here and passed explicitly to try_cli, then restored via StringIO
         for the fallback path.
     """
-    _use_utf8_stderr()
+    _tolerate_stderr_encoding()
 
     # Read before anything else, and before any autorun import: the state this
     # exists for is "autorun cannot be imported", so a check placed after the

@@ -106,7 +106,7 @@ __all__ = [
     "withdrawn",
     "withdraw_files",
     "dereference_links",
-    "replace_tree",
+    "fill_tree",
     "json_document",
     "atomic_write",
     "OWNED_MARKER_NAME",
@@ -577,8 +577,8 @@ def published(
         )
 
 
-def replace_tree(source: Path, target: Path) -> Path:
-    """The transaction without the ownership claim. Use only where noted.
+def fill_tree(source: Path, target: Path) -> Path | None:
+    """Atomically fill an absent harness-owned tree without replacing it.
 
     Every other write here records a marker, which is what makes a user edit
     detectable and a retirement possible. This one deliberately does not, and
@@ -591,23 +591,24 @@ def replace_tree(source: Path, target: Path) -> Path:
     harness still tracks. Ownership is established by the path instead — nothing
     but a plugin cache is at ``<harness>/plugins/cache/<market>/<name>/<ver>``.
 
-    Atomicity and rollback are identical to :func:`published`, because an
-    interrupted write to a harness's cache is exactly as bad there.
+    Autorun callers share the lock. A native installer does not, so publication
+    also uses non-replacing ``rename``; if that installer wins the race, its
+    result wins and is never replaced.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+        if target.exists() or target.is_symlink():
+            return None
         with tempfile.TemporaryDirectory(
             prefix=f".autorun-cache-{target.name}-", dir=target.parent
         ) as tmp:
-            staged, backup = Path(tmp) / "next", Path(tmp) / "previous"
+            staged = Path(tmp) / "next"
             shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
-            if target.exists() or target.is_symlink():
-                os.replace(target, backup)
             try:
-                os.replace(staged, target)
-            except BaseException:
-                if backup.exists() or backup.is_symlink():
-                    os.replace(backup, target)
+                os.rename(staged, target)
+            except OSError:
+                if target.exists() or target.is_symlink():
+                    return None
                 raise
     return target
 

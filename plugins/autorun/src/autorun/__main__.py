@@ -855,7 +855,7 @@ def set_bootstrap_config(enabled: bool) -> int:
     return 0
 
 
-def run_direct() -> int:
+def run_direct(payload: dict | None = None) -> int:
     """Handle hook payload directly in-process without the daemon socket.
 
     Implements the same pipeline as the daemon (normalize → EventContext → dispatch)
@@ -875,27 +875,26 @@ def run_direct() -> int:
         normalize_hook_payload,
         resolve_session_identity,
     )
-    from .config import detect_cli_type
-    from .client import get_stable_process_identity, output_hook_response
+    from .client import output_hook_response, prepare_payload_for_daemon
 
     # Import plugins to register all handlers on the shared `app` object
     from . import plugins as _plugins  # noqa: F401 (side-effect: registers handlers)
     from .core import app
 
     # Read payload from stdin (mirrors client.py:run_client)
-    payload: dict = {}
-    try:
-        if not _sys.stdin.isatty():
-            payload = json.load(_sys.stdin)
-    except Exception:
-        pass
+    if payload is None:
+        payload = {}
+        try:
+            if not _sys.stdin.isatty():
+                payload = json.load(_sys.stdin)
+        except Exception:
+            pass
 
-    cli_type = detect_cli_type(payload)
+    payload, cli_type = prepare_payload_for_daemon(payload)
     normalized = normalize_hook_payload(payload)
-    process = get_stable_process_identity()
     identity = resolve_session_identity(
-        pid=process.pid,
-        process_started_at_units=process.started_at_units,
+        pid=payload["_pid"],
+        process_started_at_units=payload.get("_pid_started_at_units"),
         fallback_id=normalized["session_id"],
         transcript_path=normalized.get("transcript_path"),
     )

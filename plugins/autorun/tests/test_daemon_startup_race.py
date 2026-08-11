@@ -3,7 +3,7 @@
 Verifies:
 1. Client checks restart_lock before spawning (prevents rogue daemons during restart)
 2. Client checks daemon flock before spawning (prevents double-spawn)
-3. Capped exponential backoff prevents timeout and excessive waiting
+3. Bounded readiness polling keeps startup inside the hook timeout
 4. First-run case (no config dir) correctly falls through to spawn
 5. All existing tests remain unaffected (no timeout change to core.py)
 
@@ -14,7 +14,6 @@ Safe to run alongside live daemons.
 import multiprocessing
 import os
 import shutil
-import time
 from pathlib import Path
 from unittest import mock
 
@@ -172,31 +171,16 @@ class TestFirstRunSpawn:
         # Key behavior: no exception raised — probe succeeded on non-existent file
 
 
-# ─── Test Group 4: Exponential backoff ───
+# ─── Test Group 4: Bounded startup wait ───
 
 
-class TestExponentialBackoff:
-    """Verify capped exponential backoff timing."""
+class TestBoundedStartupWait:
+    """Keep daemon readiness inside the hook wrapper's remaining budget."""
 
-    def test_backoff_formula(self):
-        """Backoff: min(0.3 * 2^depth, 2.0) → 0.3, 0.6, 1.2, 2.0, 2.0, 2.0."""
-        expected = [0.3, 0.6, 1.2, 2.0, 2.0, 2.0]
-        for depth, want in enumerate(expected):
-            got = min(0.3 * (2 ** depth), 2.0)
-            assert got == pytest.approx(want), f"depth={depth}: {got} != {want}"
+    def test_total_startup_wait_stays_below_one_second(self):
+        from autorun.client import DAEMON_START_ATTEMPTS, DAEMON_START_RETRY_SECONDS
 
-    def test_total_backoff_under_10s(self):
-        """Total max wait across 6 retries: 0.3+0.6+1.2+2.0+2.0+2.0 = 8.1s."""
-        total = sum(min(0.3 * (2 ** d), 2.0) for d in range(6))
-        assert total == pytest.approx(8.1)
-        assert total < 10.0
-
-    def test_6_retries_before_failure(self):
-        """Client allows depths 0-5 (6 attempts) before raising."""
-        max_depth = 5
-        for depth in range(max_depth + 1):
-            assert depth <= max_depth  # All these depths should retry
-        assert max_depth + 1 > max_depth  # depth=6 would raise
+        assert DAEMON_START_ATTEMPTS * DAEMON_START_RETRY_SECONDS == pytest.approx(0.8)
 
 
 # ─── Test Group 5: Multi-process contention scenarios ───
@@ -277,20 +261,118 @@ class TestNoRegressions:
         assert hasattr(ipc, 'AUTORUN_CONFIG_DIR')
         assert hasattr(ipc, 'AUTORUN_LOCK_PATH')
 
-    def test_client_uses_6_retries(self):
-        """Client forward() uses depth > 5 (6 retries), not depth > 2."""
-        import inspect
-        from autorun.client import run_client
-        source = inspect.getsource(run_client)
-        assert 'depth > 5' in source, "Client should use 6 retries (depth > 5)"
-        assert 'depth > 2' not in source, "Old 3-retry limit should be removed"
+    def test_cold_start_delivers_the_first_request_through_the_daemon(self, tmp_path, monkeypatch):
+        """Cold start keeps one state owner and stays inside the hook budget."""
+        import io
+        import json
+        import sys
 
-    def test_client_uses_capped_backoff(self):
-        """Client uses min(0.3 * 2**depth, 2.0) capped backoff."""
-        import inspect
-        from autorun.client import run_client
-        source = inspect.getsource(run_client)
-        assert 'min(0.3' in source, "Client should use capped exponential backoff"
+        from autorun import client, ipc
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "cold-start",
+            "tool_name": "Bash",
+            "tool_input": {"command": "true"},
+            "cli_type": "claude",
+        }
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+        monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", tmp_path / "daemon.pid")
+
+        class Reader:
+            async def readuntil(self, _separator):
+                return b"{}\n"
+
+        class Writer:
+            def __init__(self):
+                self.sent = b""
+
+            def write(self, data):
+                self.sent += data
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+            async def wait_closed(self):
+                pass
+
+        writer = Writer()
+        attempts = 0
+
+        async def connect(**_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise FileNotFoundError
+            return Reader(), writer
+
+        sleeps = []
+        order = []
+
+        async def record_sleep(delay):
+            sleeps.append(delay)
+
+        monkeypatch.setattr(ipc, "connect", connect)
+        monkeypatch.setattr(client.asyncio, "sleep", record_sleep)
+        monkeypatch.setattr(
+            client.subprocess,
+            "Popen",
+            lambda *_args, **_kwargs: order.append("spawn") or object(),
+        )
+
+        with pytest.raises(SystemExit) as exited:
+            client.run_client()
+        assert exited.value.code == 0
+        assert json.loads(writer.sent)["session_id"] == "cold-start"
+        assert sleeps == [0.1]
+        assert order == ["spawn"]
+
+    def test_client_closes_its_daemon_connection(self, monkeypatch):
+        import io
+        import json
+        import sys
+
+        from autorun import client, ipc
+
+        class Reader:
+            async def readuntil(self, _separator):
+                return b"{}\n"
+
+        class Writer:
+            closed = False
+            waited = False
+
+            def write(self, _data):
+                pass
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                self.closed = True
+
+            async def wait_closed(self):
+                self.waited = True
+
+        writer = Writer()
+
+        async def connect(**_kwargs):
+            return Reader(), writer
+
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            io.StringIO(json.dumps({"hook_event_name": "SessionStart", "cli_type": "claude"})),
+        )
+        monkeypatch.setattr(ipc, "connect", connect)
+
+        with pytest.raises(SystemExit) as exited:
+            client.run_client()
+        assert exited.value.code == 0
+        assert writer.closed and writer.waited
 
     def test_poll_timeout_is_5s(self):
         """restart_daemon socket poll timeout is 5 seconds (not 3)."""

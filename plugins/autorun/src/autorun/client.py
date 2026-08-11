@@ -60,6 +60,8 @@ DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _STABLE_PID_PARENT_SCAN_DEPTH = 12
 _PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
+DAEMON_START_ATTEMPTS = 8
+DAEMON_START_RETRY_SECONDS = 0.1
 
 
 def _hook_platform_process_markers() -> tuple[str, ...]:
@@ -323,8 +325,9 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
 
     # Inject context for daemon lifecycle management.
     process = get_stable_process_identity()
-    payload["_pid"] = process.pid
-    payload["_pid_started_at_units"] = process.started_at_units
+    if "_pid" not in payload:
+        payload["_pid"] = process.pid
+        payload["_pid_started_at_units"] = process.started_at_units
     if "_cwd" not in payload:
         # Every supported harness reports the project directory in the payload's
         # "cwd" field (Claude Code, Gemini CLI, Qwen Code, Antigravity, Codex).
@@ -369,41 +372,48 @@ def run_client() -> int:
     logger.debug(f"Forwarding hook to daemon: event={hook_event}, cli={cli_type}, tool={tool_name}")
 
     async def forward(depth: int = 0):
-        if depth > 5:
-            raise RuntimeError("Daemon failed to start after 6 attempts")
+        if depth >= DAEMON_START_ATTEMPTS:
+            raise RuntimeError(f"Daemon failed to start after {DAEMON_START_ATTEMPTS} attempts")
         try:
             from .core import READ_BUFFER_LIMIT
 
             reader, writer = await ipc.connect(limit=READ_BUFFER_LIMIT)
-            writer.write(json.dumps(payload).encode() + b"\n")
-            await writer.drain()
-
-            resp = await asyncio.wait_for(
-                reader.readuntil(b"\n"),
-                timeout=daemon_response_timeout_for_cli(cli_type),
-            )
-            resp_text = resp.decode().strip()
-
-            _log_hook_lifecycle("DAEMON→CLIENT RAW RESPONSE", FullResponse=resp_text)
-
-            # Parse response and route through unified output handler
             try:
-                resp_json = json.loads(resp_text)
-                return output_hook_response(resp_json, event=hook_event, cli_type=cli_type, source="daemon")
-            except json.JSONDecodeError:
-                if is_tool_gate_event(hook_event):
-                    return output_hook_response(
-                        build_daemon_failure_response(
-                            hook_event,
-                            cli_type,
-                            "Daemon returned invalid JSON",
-                        ),
-                        event=hook_event,
-                        cli_type=cli_type,
-                        source="daemon-invalid-json",
-                    )
-                # Not valid JSON, output as-is
-                return output_hook_response(resp_text, event=hook_event, cli_type=cli_type, source="daemon-raw")
+                writer.write(json.dumps(payload).encode() + b"\n")
+                await writer.drain()
+
+                resp = await asyncio.wait_for(
+                    reader.readuntil(b"\n"),
+                    timeout=daemon_response_timeout_for_cli(cli_type),
+                )
+                resp_text = resp.decode().strip()
+
+                _log_hook_lifecycle("DAEMON→CLIENT RAW RESPONSE", FullResponse=resp_text)
+
+                # Parse response and route through unified output handler
+                try:
+                    resp_json = json.loads(resp_text)
+                    return output_hook_response(resp_json, event=hook_event, cli_type=cli_type, source="daemon")
+                except json.JSONDecodeError:
+                    if is_tool_gate_event(hook_event):
+                        return output_hook_response(
+                            build_daemon_failure_response(
+                                hook_event,
+                                cli_type,
+                                "Daemon returned invalid JSON",
+                            ),
+                            event=hook_event,
+                            cli_type=cli_type,
+                            source="daemon-invalid-json",
+                        )
+                    # Not valid JSON, output as-is
+                    return output_hook_response(resp_text, event=hook_event, cli_type=cli_type, source="daemon-raw")
+            finally:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
 
         except asyncio.LimitOverrunError as e:
             # Response from daemon exceeded buffer (shouldn't happen - response is tiny)
@@ -503,8 +513,9 @@ def run_client() -> int:
             else:
                 logger.debug(f"Waiting for daemon (depth={depth})")
 
-            # Capped exponential backoff: 0.3, 0.6, 1.2, 2.0, 2.0, 2.0s
-            await asyncio.sleep(min(0.3 * (2**depth), 2.0))
+            # Keep the whole cold-start wait below one second so the daemon's
+            # configured response budget still fits inside the hook wrapper.
+            await asyncio.sleep(DAEMON_START_RETRY_SECONDS)
             return await forward(depth + 1)
 
     try:

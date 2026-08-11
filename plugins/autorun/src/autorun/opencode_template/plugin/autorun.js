@@ -50,8 +50,10 @@ function daemonTarget() {
     // An unreadable socket path is simply not a usable daemon.
   }
   try {
-    const port = Number.parseInt(readFileSync(PORT_FILE, "utf8").trim(), 10)
-    if (Number.isInteger(port) && port > 0) return { hostname: "127.0.0.1", port }
+    const port = Number(readFileSync(PORT_FILE, "utf8").trim())
+    if (Number.isInteger(port) && port > 0 && port <= 65535) {
+      return { hostname: "127.0.0.1", port }
+    }
   } catch {
     // No port file: nothing is listening that way either.
   }

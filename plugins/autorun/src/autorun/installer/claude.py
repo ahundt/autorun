@@ -17,7 +17,8 @@ degrades to "installed but not registered" rather than "not installed".
 Ownership there is by *path*, not by marker: the cache belongs to Claude, is
 keyed by version, and Claude's installer prunes it. A marker would make
 autorun's retirement sweep offer to delete state Claude still tracks, which is
-why :func:`fs.replace_tree` exists and why this is its only caller.
+why :func:`fs.fill_tree` exists and why this is its only caller. An existing
+cache is never replaced: Claude may have added its managed ``.venv`` there.
 
 THE PLACEHOLDER
 ===============
@@ -39,7 +40,7 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 from . import discovery, harness
-from .fs import replace_tree
+from .fs import atomic_write, fill_tree
 
 __all__ = [
     "CACHE_SUBDIR", "SUBSTITUTED_NAMES",
@@ -97,14 +98,14 @@ def cache_fallback(
 ) -> Path | None:
     """Fill Claude's cache directly, for when its own CLI could not.
 
-    Returns the directory written, or None when Claude declares no config
-    directory — which is a real answer for a machine without Claude, not a
-    failure to report.
+    Returns the directory newly written, or None when it already exists or
+    Claude declares no config directory. Existing cache contents belong to
+    Claude and may include its managed runtime, so fallback never replaces them.
     """
     target = cache_dir(platform, market=market, plugin=plugin, version=version, home=home)
     if target is None or not source.is_dir():
         return None
-    return replace_tree(source, target)
+    return fill_tree(source, target)
 
 
 def substitute_root(directory: Path, *, names: Iterable[str] = SUBSTITUTED_NAMES) -> tuple[str, ...]:
@@ -125,7 +126,7 @@ def substitute_root(directory: Path, *, names: Iterable[str] = SUBSTITUTED_NAMES
             continue
         after = harness.substitute(before, directory)
         if after != before:
-            path.write_text(after, encoding="utf-8")
+            atomic_write(path, after)
             # The receipt is portable between hosts; do not persist Windows
             # separators in a list that is later compared on POSIX.
             changed.append(path.relative_to(directory).as_posix())
@@ -199,12 +200,13 @@ def demo() -> None:
             "1.2.3", "1.2.4",
         )
 
-        # Replacing a version is atomic and complete, not a merge.
+        # An existing version belongs to Claude and may contain its managed
+        # runtime. Fallback fills an absence; it never replaces that tree.
         (written / "stale.txt").write_text("from the previous copy\n", encoding="utf-8")
-        cache_fallback(
+        assert cache_fallback(
             source, FakeClaude(), market="autorun", plugin="ar", version="1.2.3", home=home
-        )
-        assert not (written / "stale.txt").exists(), "a replaced cache entry is not a merge"
+        ) is None
+        assert (written / "stale.txt").is_file(), "fallback replaced Claude's cache"
 
         # A harness with no config directory is a real answer, not a failure.
         class Bare:
