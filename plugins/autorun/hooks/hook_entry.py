@@ -518,6 +518,28 @@ def _venv_autorun(venv_root: Path) -> Path | None:
     return None
 
 
+def _use_utf8_output() -> None:
+    """Let a deny reason reach a non-UTF-8 console instead of crashing.
+
+    Hook responses are JSON and json.dumps escapes non-ASCII, so they are
+    safe anywhere. The exit-two path prints the deny reason as raw text, and
+    that text is autorun's own and contains characters cp1252 cannot encode:
+    on Windows the hook would die writing the explanation for its refusal.
+    hook_entry stays stdlib-only, so this is a deliberate copy of
+    logging_utils.use_utf8_output rather than an import.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        if (getattr(stream, "encoding", "") or "").lower().replace("-", "") == "utf8":
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
 def get_autorun_bin() -> Path | None:
     """Find autorun executable with priority: interpreter sibling > venv > global.
 
@@ -1124,6 +1146,7 @@ def main() -> None:
         here and passed explicitly to try_cli, then restored via StringIO
         for the fallback path.
     """
+    _use_utf8_output()
     import io
 
     # Read stdin once — it can only be consumed once

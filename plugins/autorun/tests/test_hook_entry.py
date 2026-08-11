@@ -56,7 +56,10 @@ def write_fake_cli(
         if stdout:
             lines.append(f"echo|set /p={_cmd_quote(stdout)}")
         if stderr:
-            lines.append(f"echo {_cmd_quote(stderr)} 1>&2")
+            # The redirect goes first: `echo text 1>&2` echoes the space
+            # before the operator too, which showed up as a trailing space
+            # in the captured stderr.
+            lines.append(f"1>&2 echo {_cmd_quote(stderr)}")
         lines.append(f"exit /b {exit_code}")
         path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
         return path
