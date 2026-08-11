@@ -670,6 +670,9 @@ class TestHookEntryExecutionPriority:
 
         assert exc.value.code == 0
         output = json.loads(capsys.readouterr().out)
+        # Unrecoverable guidance: no "then retry". A gate that cannot clear
+        # must not advise retrying, or every attached session loops on it.
+        # See tests/test_hook_bootstrap_deadlock.py for the split.
         reason = (
             "[autorun] broken hook path. Blocking tool use to avoid fail-open. "
             "This does not clear on its own and retrying will not help. In a "

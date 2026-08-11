@@ -167,6 +167,23 @@ marketplace itself carries a separate `version` field.
   install or uninstall path is hardcoded, when a teardown function deletes
   without consulting an ownership marker, or when a claimed location has no
   uninstall-side reader.
+- **A canary fails the suite when a test modifies autorun's installed copy.**
+  `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` redirect state, but nothing
+  redirected the installed plugin, the harness settings pointing at it, or the
+  shared marketplace registry — so a test that shelled out to an installer, or
+  resolved a path from the real home instead of its fixture, edited the user's
+  working install and the suite still passed. `tests/conftest.py` now
+  fingerprints those artifacts at session start and reports any create, edit, or
+  delete at session finish, with a non-zero exit. Only code and configuration
+  are watched; sockets, PID files, logs and databases under `~/.autorun` are
+  excluded because a user's own daemon writes them while the suite runs, and a
+  canary with false positives gets deleted. `e2e` and `release` selections
+  install on purpose and are exempt, as is
+  `AUTORUN_ALLOW_LIVE_INSTALL_WRITES=1`.
+  `tests/test_live_install_canary.py` exercises every branch against a fake
+  home, including an end-to-end pytest run whose test writes to the install and
+  must exit non-zero — a canary nobody has seen fail reads as coverage while
+  providing none.
 - `_expand_home` gives `~` expansion a single seam; install and uninstall
   previously resolved through `Path.home()` and `Path.expanduser()`
   respectively, which differ under test.

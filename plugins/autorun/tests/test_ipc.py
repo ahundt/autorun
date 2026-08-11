@@ -323,20 +323,40 @@ class TestLoopbackServerIsolation:
     """
 
     def _configure(self, monkeypatch, tmp_path, name):
+        """Point the module at a fresh home and force the no-AF_UNIX path.
+
+        Split from _serve because configuration is synchronous and binding is
+        not: keeping them together forced every caller into an event loop just
+        to redirect a directory.
+
+        Attributes are monkeypatched rather than reloading the module.
+        importlib.reload re-runs _get_autorun_config_dir at import time and the
+        new value outlives the test, which leaked AUTORUN_CONFIG_DIR into
+        test_daemon_restart_safety.
+        """
         from autorun import ipc
 
         home = tmp_path / name
         home.mkdir()
+        # Windows has no AF_UNIX in CPython, and that is the branch under test;
+        # forcing it here means the assertion runs on every platform's CI.
         monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", False)
         monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
         monkeypatch.setattr(ipc, "PORT_FILE", home / "daemon.port")
         return ipc, home
 
     async def _serve(self, ipc, home):
+        """Bind a server and return it with the port it published.
+
+        Async, and awaited by the caller inside a single asyncio.run, so the
+        server stays bound to a loop that is still open when it is closed.
+        """
         async def handler(_reader, _writer):  # pragma: no cover - never called
             pass
 
         server = await ipc.start_server(handler)
+        # Read the file a client would read, not getsockname(): the contract
+        # under test is what the daemon publishes, not what it happens to bind.
         published = int((home / "daemon.port").read_text(encoding="utf-8").strip())
         return server, published
 
@@ -360,6 +380,8 @@ class TestLoopbackServerIsolation:
                         f"both homes published port {first_port}"
                     )
                 finally:
+                    # close() only stops accepting; wait_closed() is what
+                    # releases the port before the next test tries to bind.
                     second.close()
                     await second.wait_closed()
             finally:

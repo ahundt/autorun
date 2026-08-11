@@ -446,13 +446,110 @@ def unique_session_id():
 # PYTEST SESSION HOOKS (daemon + session lifecycle)
 # =============================================================================
 
+# --- live-install canary -----------------------------------------------------
+#
+# AUTORUN_HOME and AUTORUN_TEST_STATE_DIR redirect state, but nothing redirects
+# the *installed copy* of autorun: the plugin cache Claude Code loads, the
+# harness settings that point at it, and the shared marketplace registry. A
+# test that shells out to an installer, or resolves a path from the real home
+# instead of its fixture, edits the user's working install -- and the suite
+# still passes, because no assertion looks there.
+#
+# On 2026-08-11 a plugin cache venv lost its packages during a session of heavy
+# install- and daemon-path testing. The cause was never identified, which is
+# precisely the problem: nothing was watching, so there was no evidence either
+# way. These paths are installed artifacts. Under the default selection no test
+# has any business writing to them, so a change is a defect regardless of which
+# test did it.
+#
+# Only code and configuration are fingerprinted. Sockets, PID files, logs, and
+# databases under ~/.autorun are excluded: the user's own daemon writes those
+# while the suite runs, and a canary with false positives gets deleted.
+_LIVE_INSTALL_GLOBS = (
+    "~/.claude/plugins/cache/autorun/*/*/hooks/hook_entry.py",
+    "~/.claude/plugins/cache/autorun/*/*/pyproject.toml",
+    "~/.claude/plugins/cache/autorun/*/*/.venv/pyvenv.cfg",
+    "~/.claude/settings.json",
+    "~/.codex/hooks.json",
+    "~/.agents/plugins/marketplace.json",
+)
+
+
+def _live_install_fingerprint() -> dict:
+    """Map each installed artifact to (size, mtime); missing files map to None."""
+    import glob as _glob
+
+    fingerprint = {}
+    for pattern in _LIVE_INSTALL_GLOBS:
+        expanded = os.path.expanduser(pattern)
+        matches = _glob.glob(expanded)
+        # Record the pattern itself when nothing matches, so an artifact that
+        # is *deleted* during the run is caught, not just one that is edited.
+        if not matches:
+            fingerprint[expanded] = None
+            continue
+        for path in matches:
+            try:
+                stat = os.stat(path)
+                fingerprint[path] = (stat.st_size, stat.st_mtime_ns)
+            except OSError:
+                fingerprint[path] = None
+    return fingerprint
+
+
+def _live_install_canary_enabled(config) -> bool:
+    """Off when a selection that legitimately installs was requested."""
+    if os.environ.get("AUTORUN_ALLOW_LIVE_INSTALL_WRITES") == "1":
+        return False
+    # The e2e and release suites install on purpose. The default CI selection
+    # deselects both, and that is the selection this canary guards.
+    markers = config.getoption("-m", default="") or ""
+    return "not e2e" in markers and "not release" in markers
+
+
 def pytest_sessionstart(session):
-    """Record production daemon PIDs before any tests run."""
+    """Record production daemon PIDs and the live install before any tests run."""
     DaemonManager.snapshot_production_pids()
+    if _live_install_canary_enabled(session.config):
+        session.config._autorun_live_install = _live_install_fingerprint()
+
+
+def _check_live_install_unchanged(session) -> None:
+    """Report installed artifacts the suite modified, created, or deleted."""
+    before = getattr(session.config, "_autorun_live_install", None)
+    if before is None:
+        return
+    after = _live_install_fingerprint()
+    changed = sorted(
+        path for path in set(before) | set(after) if before.get(path) != after.get(path)
+    )
+    if not changed:
+        return
+    detail = "\n".join(
+        f"  {path}: {before.get(path)!r} -> {after.get(path)!r}" for path in changed
+    )
+    # Written to the terminal rather than raised: pytest_sessionfinish runs
+    # after reporting, so an exception here would be swallowed. The non-zero
+    # exit status is what makes CI notice.
+    print(
+        "\n"
+        "=========================== LIVE INSTALL MODIFIED ===========================\n"
+        "The test suite changed autorun's installed copy. State isolation covers\n"
+        "AUTORUN_HOME and AUTORUN_TEST_STATE_DIR; it does not cover the installed\n"
+        "plugin, so a test that shells out to an installer or resolves a path from\n"
+        "the real home edits the user's working install and still passes.\n\n"
+        f"{detail}\n\n"
+        "Find the test that writes here and give it a sandbox. If a test must\n"
+        "install for real, mark it e2e so the default selection skips it, or set\n"
+        "AUTORUN_ALLOW_LIVE_INSTALL_WRITES=1 for a deliberate run.\n"
+        "============================================================================="
+    )
+    session.exitstatus = 1
 
 
 def pytest_sessionfinish(session, exitstatus):
     """Clean up test sessions and test-spawned daemons after pytest finishes."""
+    _check_live_install_unchanged(session)
     cleanup_test_sessions()
     DaemonManager.cleanup()
 

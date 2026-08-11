@@ -1206,6 +1206,8 @@ def run_fallback() -> None:
                 "Run manually: `uv pip install autorun`, then `autorun --install`"
             )
         elif is_bootstrap_running():
+            # A worker is already installing, so the next event finds it done.
+            # This is the only failure here that waiting actually fixes.
             fail_after_fallback_error(
                 "autorun bootstrapping in background, will be ready shortly",
                 recoverable=True,
@@ -1213,12 +1215,17 @@ def run_fallback() -> None:
         else:
             can_run, reason = can_bootstrap()
             if can_run:
+                # Same as above: we just started the worker, so a later event
+                # finds a working runtime. Advising a retry here is honest.
                 spawn_background_bootstrap()
                 fail_after_fallback_error(
                     "autorun bootstrapping in background, will be ready shortly",
                     recoverable=True,
                 )
             else:
+                # can_bootstrap() already refused, usually because a previous
+                # bootstrap failed within the retry window. Nothing changes
+                # until a human acts, so this keeps the unrecoverable default.
                 fail_after_fallback_error(
                     f"Import error: {e}. Cannot bootstrap: {reason}. "
                     "Run manually: `uv pip install autorun`, then `autorun --install`"
