@@ -606,6 +606,7 @@ def prepared(
         shims = stage_opencode_shim(
             Path(tmp) / "_opencode", plugins,
             socket=str(ctx.settings.get("_daemon_socket", "") or ""),
+            port_file=str(ctx.settings.get("_daemon_port_file", "") or ""),
             command=ctx.settings.get("_hook_command", ()),
         )
         yield _with(
@@ -622,6 +623,7 @@ def stage_opencode_shim(
     plugins: Mapping[str, Path],
     *,
     socket: str,
+    port_file: str = "",
     command: object,
 ) -> Mapping[str, Path]:
     """Write the substituted JavaScript bridge, ready to publish.
@@ -649,6 +651,7 @@ def stage_opencode_shim(
         text = (
             source.read_text(encoding="utf-8")
             .replace("__AUTORUN_SOCKET__", socket)
+            .replace("__AUTORUN_PORT_FILE__", port_file)
             # JSON-encoded: the command is embedded in a JS literal, and a path
             # containing a quote or backslash would otherwise break the module.
             .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(argv))

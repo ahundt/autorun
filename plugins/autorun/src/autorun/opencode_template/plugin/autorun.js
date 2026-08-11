@@ -23,7 +23,40 @@
 // guard the moment the daemon is down. Lifecycle frames that gate nothing
 // (attach, detach) stay silent when the daemon is unreachable.
 
+import { existsSync, readFileSync } from "node:fs"
+
 const SOCKET = "__AUTORUN_SOCKET__"
+const PORT_FILE = "__AUTORUN_PORT_FILE__"
+
+/**
+ * Where the daemon is listening, in the form Bun.connect wants.
+ *
+ * CPython does not expose AF_UNIX on Windows, so the daemon listens on
+ * loopback there and writes its port beside where the socket would be --
+ * the same split ipc.py and hook_entry.py make. Bun speaks both, so this
+ * returns a target object rather than forcing a second connect path, and
+ * needs no dependency: Bun.file covers both reads.
+ *
+ * Returns null when neither exists, which is the same "no daemon" answer a
+ * failed connect gave before, reached without opening a socket.
+ */
+function daemonTarget() {
+  // existsSync, not Bun.file().exists(): the latter answers false for a
+  // socket, because it asks whether the path is a regular file. node:fs is
+  // built into Bun, so this stays dependency-free.
+  try {
+    if (existsSync(SOCKET)) return { unix: SOCKET }
+  } catch {
+    // An unreadable socket path is simply not a usable daemon.
+  }
+  try {
+    const port = Number.parseInt(readFileSync(PORT_FILE, "utf8").trim(), 10)
+    if (Number.isInteger(port) && port > 0) return { hostname: "127.0.0.1", port }
+  } catch {
+    // No port file: nothing is listening that way either.
+  }
+  return null
+}
 // Absolute argv for hooks/hook_entry.py, substituted at install time; empty
 // when the installer could not resolve one.
 const HOOK_ENTRY_COMMAND = __AUTORUN_HOOK_ENTRY_COMMAND__
@@ -52,6 +85,9 @@ async function askDaemon(payload) {
   // invariant hold by construction — an earlier version called sock.end()
   // inside the data handler, close() fired synchronously and resolved null
   // first, and every deny read as an allow.
+  const target = daemonTarget()
+  if (target === null) return null
+
   let sock = null
   let timer = null
   let done = false
@@ -60,7 +96,7 @@ async function askDaemon(payload) {
       timer = setTimeout(() => resolve(null), TIMEOUT_MS)
       const chunks = []
       Bun.connect({
-        unix: SOCKET,
+        ...target,
         socket: {
           open(s) {
             sock = s

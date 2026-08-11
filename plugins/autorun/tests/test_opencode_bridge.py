@@ -104,10 +104,16 @@ class TestInstallerPlacesTheShim:
         text = (base / "plugin" / "autorun.js").read_text(encoding="utf-8")
         assert "__AUTORUN_SOCKET__" not in text, "placeholder was not substituted"
         assert "daemon.sock" in text
+        # The loopback endpoint is substituted the same way. An unsubstituted
+        # placeholder is not a crash: the shim would read a file literally
+        # named __AUTORUN_PORT_FILE__, find nothing, and report the daemon
+        # unreachable on exactly the platform that needs this path.
+        assert "__AUTORUN_PORT_FILE__" not in text, "port placeholder was not substituted"
+        assert "daemon.port" in text
         assert not any(
-            line.strip().startswith("const SOCKET") and '"~' in line
+            line.strip().startswith(("const SOCKET", "const PORT_FILE")) and '"~' in line
             for line in text.splitlines()
-        ), "socket path must be absolute, not tilde-relative"
+        ), "daemon paths must be absolute, not tilde-relative"
 
     def test_uninstall_removes_the_shim_it_owns(self, tmp_path, monkeypatch):
         from autorun.installer import entrypoint
@@ -174,6 +180,78 @@ class TestDaemonSocketFrames:
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         return frames, thread
+
+    def _serve_tcp(self, replies, connections=2):
+        """The same stub daemon on loopback, which is how Windows listens."""
+        frames = []
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        port = server.getsockname()[1]
+        server.listen(connections)
+        server.settimeout(20)
+
+        def run():
+            for _ in range(connections):
+                try:
+                    conn, _addr = server.accept()
+                except OSError:
+                    break
+                with conn:
+                    data = b""
+                    while not data.endswith(b"\n"):
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                    if not data:
+                        continue
+                    frame = json.loads(data.decode("utf-8"))
+                    frames.append(frame)
+                    reply = replies.get(frame.get("hook_event_name"), {})
+                    conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
+            server.close()
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return frames, thread, port
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    def test_shim_reaches_a_loopback_daemon_when_there_is_no_socket(self, tmp_path):
+        """The Windows transport, exercised anywhere.
+
+        CPython has no AF_UNIX on Windows, so the daemon listens on loopback
+        and publishes its port in a file. Pointing the shim at a socket path
+        that does not exist makes it take that route on any platform, so the
+        transport is covered without a Windows runner.
+        """
+        frames, thread, port = self._serve_tcp(
+            {
+                "OpenCodeAttach": {},
+                "PreToolUse": {
+                    "hookSpecificOutput": {
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": "blocked over tcp",
+                    }
+                },
+            }
+        )
+        port_file = tmp_path / "daemon.port"
+        port_file.write_text(str(port), encoding="utf-8")
+
+        result = _run_shim(
+            tmp_path,
+            tmp_path / "absent" / "daemon.sock",
+            "deny",
+            port_file=port_file,
+        )
+        thread.join(timeout=20)
+
+        assert "blocked over tcp" in result.stdout, result.stdout
+        assert [f.get("hook_event_name") for f in frames] == [
+            "OpenCodeAttach",
+            "PreToolUse",
+        ], frames
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     def test_shim_denies_by_throwing_when_the_daemon_says_deny(self, tmp_path, short_socket_dir):
@@ -349,7 +427,9 @@ class TestDaemonRecordsTheAttachment:
         assert not after.state_get("opencode_attachment")
 
 
-def _run_shim(tmp_path, socket_path, mode, hook_entry_command="[]"):
+def _run_shim(
+    tmp_path, socket_path, mode, hook_entry_command="[]", port_file="__missing__"
+):
     """Load the installed shim under real Bun and exercise one hook."""
     shim = tmp_path / "autorun.js"
     # Same substitutions the installer performs; the default empty hook-entry
@@ -357,6 +437,7 @@ def _run_shim(tmp_path, socket_path, mode, hook_entry_command="[]"):
     shim.write_text(
         SHIM_SOURCE.read_text(encoding="utf-8")
         .replace("__AUTORUN_SOCKET__", str(socket_path))
+        .replace("__AUTORUN_PORT_FILE__", str(port_file))
         .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", hook_entry_command),
         encoding="utf-8",
     )

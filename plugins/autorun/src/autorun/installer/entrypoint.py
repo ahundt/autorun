@@ -302,6 +302,9 @@ def _runtime_settings(
             )
         },
         _daemon_socket=str(_get_autorun_config_dir() / "daemon.sock"),
+        # Where AF_UNIX does not exist the daemon publishes a port here
+        # instead; the shim picks whichever one is present.
+        _daemon_port_file=str(_get_autorun_config_dir() / "daemon.port"),
         _guidance=_guidance(root, harnesses, custom, required=require_guidance),
     )
     return plugin
