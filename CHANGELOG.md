@@ -62,6 +62,40 @@ marketplace itself carries a separate `version` field.
   print an exact out-of-band command that installs this source into the hook's
   own interpreter. `AUTORUN_DISABLE=1`, read before any autorun import, remains
   the explicit human kill switch when work must continue before repair.
+- **A cold start plus a response could overrun the hook wrapper on four of
+  seven harnesses.** The two waits were separate constants, each checked
+  against the wrapper budget and never checked as a sum: gemini, antigravity
+  and qwen spent 0.8s starting the daemon plus 3.5s awaiting a reply against a
+  4.0s wrapper, and opencode 0.8 + 4.0 against 4.5. The wrapper fires first, so
+  the client's own bound is unreachable and the failure response explaining the
+  timeout is never written. The room for a cold start is the wrapper minus the
+  response — 0.5s on gemini, 1.0s on Claude — so no single constant can serve
+  every harness. `client_total_budget()` derives one deadline per harness and
+  the client spends it across both phases, which makes the sum correct by
+  construction. The retry cap becomes a recursion guard rather than the bound;
+  at 8 attempts of 0.1s it ended every cold start at 0.8s with the remaining
+  budget unspent, invisible where a daemon becomes reachable in a measured
+  0.143s and not where interpreter startup is slower.
+- **`can_prompt()` refused to prompt on a real terminal.** The Windows console
+  probe treated any stream without a usable `fileno()` as non-interactive.
+  `NUL`, which `subprocess.DEVNULL` supplies, always yields a real handle, so
+  `GetConsoleMode` refusing it is authoritative; failing to obtain a handle at
+  all is missing evidence and now leaves the `isatty()` answer standing. The
+  probe moved to `windows_tty_is_a_console()` so it can be exercised off
+  Windows — inside `can_prompt` it sits behind a `sys.platform` guard, so every
+  test of it passed vacuously everywhere except the one platform that ran it.
+- **The CLI launcher crashed instead of printing repair instructions.**
+  `autorun.py` prints its guidance when the package may not be importable, so
+  it cannot reach `logging_utils.use_utf8_output()`. On a cp1252 console the
+  emoji raised `UnicodeEncodeError` and the user received a traceback in place
+  of the steps that would fix the install. Stdout and stderr are reconfigured
+  with `errors="replace"` using only the standard library, so every glyph is
+  kept and at worst one degrades.
+- **A daemon that died during startup left no evidence.** Its stderr went to
+  `DEVNULL`, so an import failure, a failed bind and a merely slow start all
+  produced the same "failed to start after N attempts". Startup output now
+  appends to the daemon log, and the connection error from the last attempt is
+  carried into the failure.
 - **Plan export did nothing on Windows.** `is_plan_file` tested the raw path
   for the literal `/.claude/plans/`, which a Windows path
   (`C:\Users\<user>\.claude\plans\<name>.md`) never contains, so no plan was
