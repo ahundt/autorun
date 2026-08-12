@@ -71,13 +71,13 @@ events.
 
 ### Lock contention is a normal condition, not a defect
 
-`HOOK_STATE_LOCK_TIMEOUT` is 0.5s per attempt. Measured on Linux pinned to two
-CPUs, 8 and 16 concurrent hook processes exceed that budget regularly, raising
-`SessionTimeoutError`. The lock itself is sound under the same load: 8
-processes x 200 increments committed 1600 of 1600 with no lost update once
-timeouts were retried.
+`HOOK_STATE_LOCK_TIMEOUT` bounds one acquisition attempt. Enough concurrent hook
+processes on a CPU-starved machine will exceed it and raise
+`SessionTimeoutError`. That is contention, not a broken lock: the lock still
+serializes every transaction it does grant, and an operation that retries after
+a timeout commits normally.
 
-Two consequences worth knowing before changing any of this:
+Two rules follow, and both are easy to get wrong:
 
 - **A timeout is not data loss.** `state_update()` reports both through
   `SessionPersistenceError` so every caller keeps failing open, so the exception
@@ -85,14 +85,14 @@ Two consequences worth knowing before changing any of this:
   inspects the error and its `__cause__` for `SessionTimeoutError`. A timeout
   means the read-modify-write never began, so nothing was read, written, or
   accepted; only a genuine persistence failure means a value was accepted in
-  memory and never stored.
+  memory and never stored. Do not report contention to a user as a discarded
+  value, and do not treat it as evidence that a counter lost an update.
 - **Do not count notifications to test a "happens once" property.**
   `report_state_persistence_failure()` attaches a warning to
   `ctx._chain_notifications`, so under contention a test asserting
   `len(ctx._chain_notifications) == 1` counts that warning as the thing it is
-  measuring. Assert on a marker in the message instead. This produced an
-  intermittent failure whose own diagnosis blamed an unserialised counter that
-  had in fact been serialised correctly.
+  measuring, and fails intermittently while blaming the wrong mechanism. Assert
+  on a marker in the message instead.
 
 ### Reproducing a contention failure
 
@@ -115,11 +115,13 @@ pip install -e . && pip install pytest pytest-asyncio pytest-timeout
 for i in $(seq 1 25); do python -m pytest <target> -q -p no:randomly; done'
 ```
 
-Raising the process count matters more than the iteration count: a case that
-never failed at 8 concurrent processes failed 18 times in 25 at 16.
+Raise the concurrent process count before raising the iteration count. A
+contention window that never opens at one process count can open readily at
+twice that, while more iterations of an insufficiently contended run only cost
+time.
 
-The image has no `uv` and no `claude` binary, so `test_demo.py`,
-`test_plan_export_hook_e2e.py` and `test_gemini_e2e_improved.py` fail there for
+The image has no `uv` and no `claude` binary, so tests that drive a real CLI —
+the demo, plan-export hook, and Gemini end-to-end modules — fail there for
 environmental reasons rather than code ones. Read the failure names before
 concluding anything from a full-suite run in this container.
 
