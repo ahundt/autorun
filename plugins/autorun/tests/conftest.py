@@ -477,8 +477,30 @@ _LIVE_INSTALL_GLOBS = (
 )
 
 
+def _live_install_digest(path: str) -> str:
+    """Hash a file's bytes, chunked so a large artifact cannot exhaust memory."""
+    import hashlib
+
+    # digest_size=16 keeps the "before -> after" report readable. Collisions are
+    # not an adversarial concern here; the writer is our own test suite.
+    digest = hashlib.blake2b(digest_size=16)
+    with open(path, "rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _live_install_fingerprint() -> dict:
-    """Map each installed artifact to (size, mtime); missing files map to None."""
+    """Map each installed artifact to (size, digest); missing files map to None.
+
+    Content, not mtime. Windows refreshes a file's last-write time on the system
+    timer tick (~15.6 ms by default), so an edit landing in the same tick as the
+    previous stat carries an identical ``st_mtime_ns``. A same-size in-place
+    rewrite was therefore invisible to this canary on Windows -- the precise
+    blind spot it exists to close, since an installer overwriting a file in
+    place is the incident shape in the comment above. Hashing costs 6 ms across
+    the 34 files these globs match, against 162 ms for the glob itself.
+    """
     import glob as _glob
 
     fingerprint = {}
@@ -499,8 +521,7 @@ def _live_install_fingerprint() -> dict:
         for path in matches:
             key = os.path.normpath(path)
             try:
-                stat = os.stat(path)
-                fingerprint[key] = (stat.st_size, stat.st_mtime_ns)
+                fingerprint[key] = (os.stat(path).st_size, _live_install_digest(path))
             except OSError:
                 fingerprint[key] = None
     return fingerprint

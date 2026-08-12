@@ -136,15 +136,30 @@ def test_a_created_artifact_is_detected(tmp_path, monkeypatch):
 
 
 def test_a_same_size_rewrite_is_detected(fake_home):
-    """Size alone is not enough; the mtime carries an in-place edit."""
+    """Size and mtime are both insufficient; only the content decides.
+
+    The mtime is restored after the write so the file is byte-different but
+    stat-identical. Windows produces that state on its own -- it refreshes the
+    last-write time on the system timer tick (~15.6 ms), so an edit in the same
+    tick as the previous stat keeps ``st_mtime_ns`` -- and this is what failed
+    there while POSIX nanosecond mtimes hid it. Pinning the timestamp makes
+    every platform exercise the blind spot instead of one.
+    """
     _, settings = fake_home
     canary = _load_canary()
     original = settings.read_text(encoding="utf-8")
+    original_stat = os.stat(settings)
 
     before = canary._live_install_fingerprint()
     replacement = original.replace("hooks", "hookz")
     assert len(replacement) == len(original), "test needs a same-length rewrite"
     settings.write_text(replacement, encoding="utf-8")
+    os.utime(settings, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    rewritten_stat = os.stat(settings)
+    assert (rewritten_stat.st_size, rewritten_stat.st_mtime_ns) == (
+        original_stat.st_size,
+        original_stat.st_mtime_ns,
+    ), "test needs the edit to be invisible to (size, mtime)"
     after = canary._live_install_fingerprint()
 
     assert before != after, "a same-size in-place edit went unnoticed"
@@ -262,8 +277,12 @@ def _canary_source() -> str:
         start = source.index(start_marker)
         return source[start : source.index(end_marker, start)]
 
+    # The first slice starts at the digest helper, not the fingerprint, because
+    # the fingerprint calls it. A slice that starts lower still imports and
+    # collects; it fails at session start with NameError inside pytest's own
+    # hook, which surfaces as INTERNALERROR rather than as this test's message.
     body = (
-        between("def _live_install_fingerprint(", "def pytest_sessionstart(")
+        between("def _live_install_digest(", "def pytest_sessionstart(")
         + between("def _check_live_install_unchanged(", "def pytest_sessionfinish(")
     )
     return body + textwrap.dedent(
