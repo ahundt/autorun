@@ -329,31 +329,36 @@ class TestAcquireDaemonLock:
 class TestPsutilProcessLifecycle:
     """Test that restart_daemon uses psutil for cross-platform process management."""
 
-    def test_get_daemon_pid_uses_psutil(self):
-        """get_daemon_pid() uses psutil.pid_exists, not os.kill."""
+    def test_get_daemon_pid_validates_the_recorded_process_birth(self):
+        """get_daemon_pid() rejects a PID reused by another process."""
         from autorun.restart_daemon import get_daemon_pid
+        from autorun.core import _process_start_units
 
         with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_path:
             mock_path.exists.return_value = True
-            mock_path.read_text.return_value = str(os.getpid())
+            mock_path.read_text.return_value = (
+                f"{os.getpid()} {_process_start_units(os.getpid()) - 1}"
+            )
+            mock_path.with_suffix.return_value = mock.MagicMock(
+                exists=mock.MagicMock(return_value=False)
+            )
 
-            with mock.patch('psutil.pid_exists', return_value=True) as mock_pid:
-                result = get_daemon_pid()
-                mock_pid.assert_called_once_with(os.getpid())
-                assert result == os.getpid()
+            assert get_daemon_pid() is None
 
     def test_get_daemon_pid_returns_none_for_dead_process(self):
         """get_daemon_pid() returns None when psutil says PID doesn't exist."""
+        import psutil
+
         from autorun.restart_daemon import get_daemon_pid
 
         with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_path:
             mock_path.exists.return_value = True
-            mock_path.read_text.return_value = "99999"
+            mock_path.read_text.return_value = "99999 123000000"
             # Also mock flock fallback path so it doesn't find the real daemon
             mock_flock = mock.MagicMock(exists=mock.MagicMock(return_value=False))
             mock_path.with_suffix.return_value = mock_flock
 
-            with mock.patch('psutil.pid_exists', return_value=False):
+            with mock.patch('psutil.Process', side_effect=psutil.NoSuchProcess(99999)):
                 assert get_daemon_pid() is None
 
     def test_stop_daemon_uses_psutil_terminate(self):
@@ -534,15 +539,17 @@ class TestPsutilProcessLifecycle:
     def test_get_daemon_pid_prefers_lock_file_over_process_scan(self):
         """get_daemon_pid() uses daemon.lock PID when file exists (no process scan)."""
         from autorun.restart_daemon import get_daemon_pid
+        from autorun.core import _process_start_units
 
         with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
             mock_lock.exists.return_value = True
-            mock_lock.read_text.return_value = str(os.getpid())
-            with mock.patch('psutil.pid_exists', return_value=True):
-                with mock.patch('psutil.process_iter') as mock_iter:
-                    result = get_daemon_pid()
-                    assert result == os.getpid()
-                    mock_iter.assert_not_called()
+            mock_lock.read_text.return_value = (
+                f"{os.getpid()} {_process_start_units(os.getpid())}"
+            )
+            with mock.patch('psutil.process_iter') as mock_iter:
+                result = get_daemon_pid()
+                assert result == os.getpid()
+                mock_iter.assert_not_called()
 
     def test_get_daemon_pid_filters_lock_file_by_source_tree(self, tmp_path):
         """Scoped PID discovery must not claim another source tree's lock PID."""
@@ -555,17 +562,41 @@ class TestPsutilProcessLifecycle:
 
         with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
             mock_lock.exists.return_value = True
-            mock_lock.read_text.return_value = "222"
+            mock_lock.read_text.return_value = "222 123000000"
             mock_lock.with_suffix.return_value = mock.MagicMock(exists=mock.MagicMock(return_value=False))
-            with mock.patch('psutil.pid_exists', return_value=True):
-                with mock.patch('psutil.Process') as process_cls:
-                    process_cls.return_value.cmdline.return_value = [
-                        sys.executable,
-                        "-c",
-                        f"sys.path.insert(0, r'{other_src}'); from autorun.daemon import main; main()",
-                    ]
+            with mock.patch('psutil.Process') as process_cls:
+                process_cls.return_value.create_time.return_value = 123.0
+                process_cls.return_value.cmdline.return_value = [
+                    sys.executable,
+                    "-c",
+                    f"sys.path.insert(0, r'{other_src}'); from autorun.daemon import main; main()",
+                ]
 
-                    assert get_daemon_pid(src_dir=current_src) is None
+                assert get_daemon_pid(src_dir=current_src) is None
+                process_cls.return_value.cmdline.assert_called_once_with()
+
+    def test_get_daemon_pid_filters_install_handoff_by_runtime(self, tmp_path):
+        """Install handoff must not trust an autorun PID from another home."""
+        import autorun.restart_daemon as restart_mod
+
+        current_runtime = tmp_path / "current-home"
+        other_runtime = tmp_path / "other-home"
+
+        with mock.patch.object(restart_mod, "LOCK_PATH") as lock:
+            lock.exists.return_value = True
+            lock.read_text.return_value = "222 123000000"
+            lock.with_suffix.return_value = mock.MagicMock(
+                exists=mock.MagicMock(return_value=False)
+            )
+            with mock.patch.object(restart_mod.ipc, "AUTORUN_CONFIG_DIR", current_runtime):
+                with mock.patch.object(restart_mod.psutil, "Process") as process_cls:
+                    process_cls.return_value.create_time.return_value = 123.0
+                    process_cls.return_value.environ.return_value = {
+                        "AUTORUN_HOME": str(other_runtime)
+                    }
+
+                    assert restart_mod.get_daemon_pid(runtime_only=True) is None
+                    process_cls.return_value.environ.assert_called_once_with()
 
     def test_no_os_kill_in_restart_daemon(self):
         """Verify restart_daemon.py contains no os.kill calls (all replaced by psutil)."""
@@ -649,8 +680,16 @@ class TestPsutilProcessLifecycle:
             proc.environ.return_value = runtime_env
             return proc
 
-        test_proc = daemon({"AUTORUN_HOME": str(test_runtime), "HOME": str(live_home)})
-        live_proc = daemon({"HOME": str(live_home)})
+        test_proc = daemon(
+            {
+                "AUTORUN_HOME": str(test_runtime),
+                "HOME": str(live_home),
+                "USERPROFILE": str(live_home),
+            }
+        )
+        live_proc = daemon(
+            {"HOME": str(live_home), "USERPROFILE": str(live_home)}
+        )
 
         with mock.patch.object(restart_mod.ipc, "AUTORUN_CONFIG_DIR", test_runtime):
             with mock.patch.object(
@@ -679,6 +718,54 @@ class TestPsutilProcessLifecycle:
 
         start.assert_not_called()
         cleanup.assert_not_called()
+
+    def test_install_restart_replaces_only_the_current_runtime_owner(self, tmp_path):
+        """A completed install may hand off its own home from another source."""
+        import autorun.restart_daemon as restart_mod
+        from unittest.mock import call
+
+        src_dir = tmp_path / "current" / "plugins" / "autorun" / "src"
+        src_dir.mkdir(parents=True)
+
+        @contextmanager
+        def acquired_restart_lock():
+            yield True
+
+        with mock.patch.object(restart_mod, "restart_lock", acquired_restart_lock):
+            with mock.patch.object(restart_mod, "_resolve_src_dir", return_value=src_dir):
+                with mock.patch.object(
+                    restart_mod, "get_daemon_pid", side_effect=[222, 333]
+                ) as get_pid:
+                    with mock.patch.object(restart_mod, "_stop_daemon") as stop:
+                        with mock.patch.object(
+                            restart_mod, "_daemon_processes_for_src", return_value=[]
+                        ):
+                            with mock.patch.object(restart_mod, "_clear_pycache"):
+                                with mock.patch.object(restart_mod, "_check_conflicting_packages"):
+                                    with mock.patch.object(restart_mod, "_start_daemon"):
+                                        with mock.patch.object(
+                                            restart_mod, "is_daemon_responding", return_value=True
+                                        ):
+                                            with mock.patch.object(
+                                                restart_mod,
+                                                "_display_daemon_diagnostics",
+                                                return_value=True,
+                                            ):
+                                                with mock.patch.object(
+                                                    restart_mod, "verify_bashlex", return_value=True
+                                                ):
+                                                    assert (
+                                                        restart_mod.restart_daemon(
+                                                            replace_runtime_daemon=True
+                                                        )
+                                                        == 0
+                                                    )
+
+        assert get_pid.call_args_list == [
+            call(runtime_only=True),
+            call(src_dir=src_dir),
+        ]
+        stop.assert_called_once_with(222, src_dir=None)
 
     def test_restart_discovers_pid_after_resolving_source_tree(self, tmp_path):
         """Normal restart must source-filter fallback daemon discovery."""
@@ -781,6 +868,10 @@ class TestPsutilProcessLifecycle:
         assert "--restart-all-daemons" in help_text
         assert "Risky maintenance mode" in normalized_help
         assert "interrupt active sessions in other installs" in normalized_help
+
+        install_args = create_parser().parse_args(["--restart-daemon-after-install"])
+        assert install_args.restart_daemon_after_install is True
+        assert "--restart-daemon-after-install" not in help_text
 
 
 class TestDaemonMainLifecycleCleanup:

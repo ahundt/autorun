@@ -60,7 +60,7 @@ from . import ipc
 DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _STABLE_PID_PARENT_SCAN_DEPTH = 12
-_PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
+_PROCESS_BIRTH_UNITS_PER_SECOND = ipc.PROCESS_BIRTH_UNITS_PER_SECOND
 DAEMON_START_RETRY_SECONDS = 0.1
 #: Recursion guard only. The real bound is the deadline from
 #: client_total_budget(); forward() recurses, so a runaway needs a hard stop.
@@ -138,6 +138,7 @@ def client_total_budget(cli_type: str) -> float:
 #: Named once in config.py so a second in-package reader cannot drift from this
 #: one; hook_entry.py keeps its own copy because it must stay stdlib-only.
 from .config import HOOK_DEADLINE_ENV_VAR as DEADLINE_ENV_VAR  # noqa: E402
+from .config import HOOK_DEADLINE_PAYLOAD_KEY as DEADLINE_PAYLOAD_KEY  # noqa: E402
 
 #: How many attempts to allow a pid that is alive but holds no daemon flock.
 #: The gap between a daemon starting and taking its flock is short; anything
@@ -161,23 +162,7 @@ def daemon_record_is_live(lock_path) -> bool:
     when no daemon holds the flock, and spawning a second daemon is recoverable
     while refusing to spawn any is not.
     """
-    try:
-        parts = lock_path.read_text(encoding="utf-8").split()
-        pid = int(parts[0])
-        recorded = int(parts[1]) if len(parts) > 1 else 0
-    except (IndexError, OSError, ValueError):
-        return False
-    if recorded <= 0:
-        return False
-    try:
-        import psutil
-
-        actual = round(
-            psutil.Process(pid).create_time() * _PROCESS_BIRTH_UNITS_PER_SECOND
-        )
-    except Exception:
-        return False
-    return actual == recorded
+    return ipc.daemon_record_pid(lock_path) is not None
 
 
 def client_deadline(cli_type: str) -> float:
@@ -464,6 +449,7 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
 
     cli_type = detect_cli_type(payload)
     payload["cli_type"] = cli_type
+    payload[DEADLINE_PAYLOAD_KEY] = client_deadline(cli_type)
 
     return payload, cli_type
 
@@ -504,7 +490,7 @@ def run_client() -> int:
     # reported that no daemon answered, never that the daemon it started was
     # already dead or why.
     spawned: list = []
-    deadline = client_deadline(cli_type)
+    deadline = payload[DEADLINE_PAYLOAD_KEY]
 
     def _spawn_outcome() -> str:
         if not spawned:

@@ -849,3 +849,23 @@ class TestDurableCheckpointDoesNotClobberTheCounter:
 
         assert ("tool_calls_since_task_update", 5) in writes, writes
 
+    def test_direct_mode_store_does_not_repeat_its_already_durable_update(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "state"))
+        session_manager._reset_for_testing()
+        writes = []
+        monkeypatch.setattr(
+            plugins,
+            "_task_progress_state_set",
+            lambda ctx, name, value: writes.append((name, value)),
+        )
+
+        ctx = self._ctx(
+            "checkpoint-direct-store",
+            ThreadSafeDB(persist_volatile_state=True),
+        )
+        for _ in range(min(5, PAUSE_REMINDER_THRESHOLD) + 1):
+            plugins.check_task_staleness(ctx)
+
+        assert ("tool_calls_since_task_update", 5) not in writes, writes

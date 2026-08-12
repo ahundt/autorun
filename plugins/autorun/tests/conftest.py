@@ -20,6 +20,7 @@ Environment Variables:
                                    for debugging instead of cleaning them up.
 """
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -94,16 +95,34 @@ def pytest_configure(config):
     # cleanup cannot touch the user's active windows. AUTORUN_TEST_USE_LIVE_TMUX=1
     # opts out for manual diagnostics.
     if os.environ.get("TMUX") and os.environ.get("AUTORUN_TEST_USE_LIVE_TMUX") != "1":
+        from autorun.tmux_utils import resolve_tmux_binary
+
         original_tmux = os.environ["TMUX"]
+        real_tmux = resolve_tmux_binary()
         socket_path = os.environ.get(
             "AUTORUN_TEST_TMUX_SOCKET",
             str(Path(tempfile.gettempdir()) / f"autorun-pytest-tmux-{uuid.uuid4().hex}"),
         )
+        wrapper_dir = test_runtime_dir / "tmux-bin"
+        wrapper_dir.mkdir(parents=True, exist_ok=True)
+        wrapper = wrapper_dir / "tmux"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            "unset TMUX\n"
+            "export SHELL=/bin/sh\n"
+            f"exec {shlex.quote(real_tmux)} -f /dev/null -S "
+            f"{shlex.quote(socket_path)} \"$@\"\n",
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o755)
         config._autorun_original_tmux = original_tmux
+        config._autorun_real_tmux_bin = real_tmux
         config._autorun_test_tmux_socket = socket_path
         os.environ["AUTORUN_ORIGINAL_TMUX"] = original_tmux
         os.environ["AUTORUN_TEST_TMUX_SOCKET"] = socket_path
-        os.environ["TMUX"] = f"{socket_path},0,0"
+        os.environ["AUTORUN_TMUX_BIN"] = str(wrapper)
+        os.environ.pop("TMUX", None)
+        resolve_tmux_binary.cache_clear()
 
     # Resolve the compatible tmux client once and put its directory first for
     # this pytest process only. On Apple Silicon this prefers /opt/homebrew over
@@ -580,13 +599,14 @@ def pytest_sessionfinish(session, exitstatus):
 
     test_tmux_socket = getattr(session.config, "_autorun_test_tmux_socket", None)
     if test_tmux_socket and not should_keep_test_artifacts():
-        tmux_bin = os.environ.get("AUTORUN_TMUX_BIN", "tmux")
+        tmux_bin = getattr(session.config, "_autorun_real_tmux_bin", "tmux")
         try:
             subprocess.run(
                 [tmux_bin, "-S", test_tmux_socket, "kill-server"],
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env={key: value for key, value in os.environ.items() if key != "TMUX"},
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass

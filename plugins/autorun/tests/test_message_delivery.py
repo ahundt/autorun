@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from autorun.config import CONFIG, HOOK_DEADLINE_ENV_VAR, MAX_PLAUSIBLE_WRAPPER_SECONDS
+from autorun.config import CONFIG
 from autorun.core import EventContext
 from autorun.message_delivery import MessageDelivery, claim_message_delivery
 from autorun.session_manager import SessionPersistenceError, SessionTimeoutError
@@ -251,10 +251,11 @@ class _ContendedContext:
     cli_type = "codex"
     session_id = "message-delivery-contended"
 
-    def __init__(self, timeouts, shared_state=None):
+    def __init__(self, timeouts, shared_state=None, deadline_monotonic=None):
         self.remaining_timeouts = timeouts
         self.state = {} if shared_state is None else shared_state
         self.attempts = 0
+        self.deadline_monotonic = deadline_monotonic
 
     def state_update(self, name, updater, default=None):
         self.attempts += 1
@@ -272,15 +273,10 @@ class _ContendedContext:
 
 
 @pytest.fixture
-def hook_deadline(monkeypatch):
-    """Present the deadline a hook wrapper would supply, with room to retry."""
+def hook_deadline():
+    """Return the effective deadline carried by one hook request."""
 
-    def _set(seconds_ahead):
-        monkeypatch.setenv(
-            HOOK_DEADLINE_ENV_VAR, str(time.monotonic() + seconds_ahead)
-        )
-
-    return _set
+    return lambda seconds_ahead: time.monotonic() + seconds_ahead
 
 
 class TestContentionDoesNotDuplicateDelivery:
@@ -295,14 +291,17 @@ class TestContentionDoesNotDuplicateDelivery:
     def test_a_contended_claim_is_retried_and_can_still_lose(
         self, delivery_config, hook_deadline
     ):
-        hook_deadline(30.0)
         shared = {}
         winner = _ContendedContext(timeouts=0, shared_state=shared)
         assert claim_message_delivery(
             winner, _warning(), "Git commit rules", now=100.0
         ) is True
 
-        loser = _ContendedContext(timeouts=2, shared_state=shared)
+        loser = _ContendedContext(
+            timeouts=2,
+            shared_state=shared,
+            deadline_monotonic=hook_deadline(30.0),
+        )
         delivered = claim_message_delivery(
             loser, _warning(), "Git commit rules", now=100.0
         )
@@ -318,10 +317,9 @@ class TestContentionDoesNotDuplicateDelivery:
         )
 
     def test_without_a_hook_deadline_the_historic_fail_open_is_unchanged(
-        self, delivery_config, monkeypatch
+        self, delivery_config
     ):
         """Outside a hook there is no budget to spend, so never guess one."""
-        monkeypatch.delenv(HOOK_DEADLINE_ENV_VAR, raising=False)
         ctx = _ContendedContext(timeouts=1)
 
         delivered = claim_message_delivery(
@@ -332,10 +330,11 @@ class TestContentionDoesNotDuplicateDelivery:
         assert delivered is True, "fail-open must remain the fallback"
 
     def test_an_expired_deadline_does_not_buy_another_attempt(
-        self, delivery_config, monkeypatch
+        self, delivery_config
     ):
-        monkeypatch.setenv(HOOK_DEADLINE_ENV_VAR, str(time.monotonic() - 1.0))
-        ctx = _ContendedContext(timeouts=1)
+        ctx = _ContendedContext(
+            timeouts=1, deadline_monotonic=time.monotonic() - 1.0
+        )
 
         assert claim_message_delivery(
             ctx, _warning(), "Git commit rules", now=100.0
@@ -344,24 +343,10 @@ class TestContentionDoesNotDuplicateDelivery:
             "a hook past its wrapper deadline must answer, not keep waiting"
         )
 
-    def test_a_stale_foreign_deadline_is_ignored(self, delivery_config, monkeypatch):
-        """An inherited variable must not license an unbounded wait."""
-        monkeypatch.setenv(
-            HOOK_DEADLINE_ENV_VAR,
-            str(time.monotonic() + MAX_PLAUSIBLE_WRAPPER_SECONDS + 60.0),
-        )
-        ctx = _ContendedContext(timeouts=1)
-
-        assert claim_message_delivery(
-            ctx, _warning(), "Git commit rules", now=100.0
-        ) is True
-        assert ctx.attempts == 1
-
     def test_a_genuine_persistence_failure_still_delivers_without_retrying(
         self, delivery_config, hook_deadline
     ):
         """Real data loss is not contention: retrying it would only stall."""
-        hook_deadline(30.0)
 
         class _Dropped(_ContendedContext):
             def state_update(self, name, updater, default=None):
@@ -370,7 +355,7 @@ class TestContentionDoesNotDuplicateDelivery:
                     "State was not saved and has been dropped from memory"
                 )
 
-        ctx = _Dropped(timeouts=0)
+        ctx = _Dropped(timeouts=0, deadline_monotonic=hook_deadline(30.0))
         assert claim_message_delivery(
             ctx, _warning(), "Git commit rules", now=100.0
         ) is True

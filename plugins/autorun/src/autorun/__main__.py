@@ -524,6 +524,11 @@ For more information: https://github.com/ahundt/autorun
         help="Risky maintenance mode: restart current daemon and stop all matching autorun daemons, which can interrupt active sessions in other installs",
     )
     info_group.add_argument(
+        "--restart-daemon-after-install",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    info_group.add_argument(
         "--cache-snapshot",
         action="store_true",
         help="Read Claude Code statusline JSON from stdin and persist "
@@ -876,6 +881,7 @@ def run_direct(payload: dict | None = None) -> int:
         resolve_session_identity,
     )
     from .client import output_hook_response, prepare_payload_for_daemon
+    from .config import HOOK_DEADLINE_PAYLOAD_KEY
 
     # Import plugins to register all handlers on the shared `app` object
     from . import plugins as _plugins  # noqa: F401 (side-effect: registers handlers)
@@ -917,6 +923,7 @@ def run_direct(payload: dict | None = None) -> int:
         # process's cwd, which can point at a different project entirely and
         # would send plan_export.py's archive to the wrong notes/ directory.
         cwd=normalized.get("cwd") or os.getcwd(),
+        deadline_monotonic=payload.get(HOOK_DEADLINE_PAYLOAD_KEY),
         permission_mode=normalized["permission_mode"],
         source=normalized["source"],
         agent_id=normalized["agent_id"],
@@ -1025,10 +1032,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.state_status or args.state_migrate or args.state_rollback or args.state_maintenance:
         return _run_state_command(args)
 
-    if args.restart_daemon or args.restart_all_daemons:
+    if (
+        args.restart_daemon
+        or args.restart_all_daemons
+        or args.restart_daemon_after_install
+    ):
         from autorun.restart_daemon import restart_daemon
 
-        return restart_daemon(all_daemons=args.restart_all_daemons)
+        return restart_daemon(
+            all_daemons=args.restart_all_daemons,
+            replace_runtime_daemon=args.restart_daemon_after_install,
+        )
 
     # Cache snapshot tap (opt-in; user's statusline pipes JSON here)
     if getattr(args, "cache_snapshot", False):

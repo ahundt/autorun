@@ -281,6 +281,36 @@ class TestPersistenceFailureIsLoud:
             assert observed == ["durable"]
             assert db.get("shared:field") == "staged"
 
+    def test_atomic_update_commits_immediately_inside_a_batch(
+        self, isolated_state
+    ):
+        """A read-modify-write cannot be deferred without losing atomicity.
+
+        Plain sets remain batched, but an update is an explicit transaction
+        boundary: a competing process must see its claim before it can run the
+        same updater and decide that it also won.
+        """
+        db = ThreadSafeDB()
+        db.set("shared:counter", 0)
+
+        with db.batch_writes():
+            db.set("shared:counter", 1)
+            assert db.update("shared:counter", lambda value: value + 1, 0) == 2
+
+            observed = []
+            reader = threading.Thread(
+                target=lambda: observed.append(db.get("shared:counter"))
+            )
+            reader.start()
+            reader.join(5)
+
+            assert not reader.is_alive()
+            assert observed == [2], "the atomic update was still only staged"
+            assert db.get("shared:counter") == 2
+
+        assert db.get("shared:counter") == 2
+        assert ThreadSafeDB().get("shared:counter") == 2
+
 
 class TestPersistenceFailureReachesTheCaller:
     def _context(self, db, session_id="session-a"):
@@ -514,6 +544,31 @@ class TestContentionIsNotReportedAsDataLoss:
             "state_update wraps the timeout before reporting, so the cause is "
             "the only place the original type survives"
         )
+
+    def test_a_contended_batch_flush_does_not_claim_values_were_discarded(self):
+        class ContendedStore:
+            @contextlib.contextmanager
+            def batch_writes(self):
+                yield
+                wrapped = SessionPersistenceError("State batch never ran")
+                wrapped.__cause__ = SessionTimeoutError(
+                    "Could not acquire state lock after 0.5s"
+                )
+                raise wrapped
+
+        app = core.AutorunApp()
+        app.on("PostToolUse")(lambda _ctx: None)
+        ctx = EventContext(
+            session_id="contended-batch",
+            event="PostToolUse",
+            store=ContendedStore(),
+            cli_type="claude",
+        )
+
+        response = str(app.dispatch(ctx))
+
+        assert "state lock" in response
+        assert "discarded" not in response
         assert not core.state_failure_is_contention(
             SessionPersistenceError("State was not saved and has been dropped")
         )

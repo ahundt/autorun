@@ -9,6 +9,7 @@ from conftest import skip_if_windows_service_provider_error
 def _run_isolated_probe(code: str, tmp_path: Path) -> subprocess.CompletedProcess:
     env = {
         "HOME": str(tmp_path / "home"),
+        "USERPROFILE": str(tmp_path / "home"),
         "AUTORUN_HOME": str(tmp_path / "autorun-home"),
         "AUTORUN_TEST_STATE_DIR": str(tmp_path / "state"),
         "AUTORUN_USE_DAEMON": "0",

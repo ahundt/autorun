@@ -266,7 +266,9 @@ def test_the_detach_checker_accepts_both_fixed_forms():
 
 # --- 4. home redirects that move only one variable ---------------------------
 
-_HOME_WRITE = re.compile(r"""environ\[\s*['"]HOME['"]\s*\]\s*=|setenv\(\s*['"]HOME['"]""")
+_HOME_WRITE = re.compile(
+    r"""environ\[\s*['"]HOME['"]\s*\]\s*=|setenv\(\s*['"]HOME['"]|['"]HOME['"]\s*:"""
+)
 
 
 def home_writes_without_userprofile(source: str, filename: str = "<test>") -> list[int]:

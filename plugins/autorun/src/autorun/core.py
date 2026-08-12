@@ -38,6 +38,7 @@ import copy
 import threading
 import contextlib
 import hashlib
+import math
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -53,8 +54,11 @@ from .session_manager import (
     SessionStateError,
     SessionTimeoutError,
     session_state,
+    # Re-exported: callers reach this as core.state_failure_is_contention, and
+    # tests patch it there, but the rule belongs beside the exceptions it reads.
+    state_failure_is_contention,
 )
-from .config import CONFIG
+from .config import CONFIG, HOOK_DEADLINE_PAYLOAD_KEY
 from .platforms import (
     PLATFORMS as _PLATFORMS,
     hook_platforms,
@@ -69,22 +73,10 @@ from .logging_utils import get_logger
 ipc.ensure_config_dir()
 LOCK_PATH = ipc.AUTORUN_LOCK_PATH
 
-#: Same units client.py uses for the harness pid, so the two agree.
-PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
-
-
-def _process_start_units(pid: int) -> int:
-    """Process creation time, or 0 when it cannot be read.
-
-    Zero means "unverifiable", never "matches": a reader must not accept a
-    stale record because the writer could not describe itself.
-    """
-    try:
-        import psutil
-
-        return round(psutil.Process(pid).create_time() * PROCESS_BIRTH_UNITS_PER_SECOND)
-    except Exception:
-        return 0
+# Backward-compatible private aliases for callers/tests from the original
+# record-format change. IPC owns the daemon record contract.
+PROCESS_BIRTH_UNITS_PER_SECOND = ipc.PROCESS_BIRTH_UNITS_PER_SECOND
+_process_start_units = ipc.process_start_units
 
 
 IDLE_TIMEOUT = 1800  # 30 minutes
@@ -629,23 +621,6 @@ def _attach_state_failure_notice(response, ctx, message: str) -> dict:
     return validate_hook_response(ctx.event, result, ctx.cli_type)
 
 
-def state_failure_is_contention(error: Exception) -> bool:
-    """Did the transaction lose a race for the lock, or lose data?
-
-    A timeout means the read-modify-write never began: no bytes were read, none
-    were written, and no value was accepted anywhere. That is a different event
-    from ``SessionPersistenceError``'s own contract -- "a value was accepted in
-    memory but never reached storage" -- even though ``state_update`` reports
-    both through the same type so every caller keeps failing open.
-
-    The cause is inspected as well as the error, because the wrap in
-    ``state_update`` chains the original.
-    """
-    return isinstance(error, SessionTimeoutError) or isinstance(
-        getattr(error, "__cause__", None), SessionTimeoutError
-    )
-
-
 def report_state_persistence_failure(ctx, fields, session_id: str, error: Exception) -> None:
     """Say out loud that state a handler set was never stored.
 
@@ -788,12 +763,20 @@ class ThreadSafeDB:
             return StateWriteStatus.DURABLE
 
     def update(self, key: str, updater: Callable[[Any], Any], default=None) -> Any:
-        """Atomically update one field and synchronize the daemon cache."""
+        """Atomically update one field and synchronize the daemon cache.
+
+        Unlike plain ``set`` calls, read-modify-write operations are immediate
+        transaction boundaries even inside ``batch_writes``. Deferring the
+        updater lets concurrent hook processes all read the same old value and
+        claim the same one-shot operation before their later flushes serialize.
+        """
         session_id, field = self._split_key(key)
         with self._lock:
+            dirty = getattr(self._batch, "dirty", {})
+            has_staged_value = self._batch_depth() > 0 and key in dirty
             try:
                 with session_state(session_id, timeout=self._state_timeout) as state:
-                    current = state.get(field, default)
+                    current = dirty[key] if has_staged_value else state.get(field, default)
                     if isinstance(current, (list, dict, set)):
                         current = copy.deepcopy(current)
                     value = updater(current)
@@ -805,6 +788,8 @@ class ThreadSafeDB:
                 if isinstance(exc, SessionPersistenceError):
                     raise
                 raise SessionPersistenceError(f"State update was not saved for {session_id} ({field}): {exc}") from exc
+            if has_staged_value:
+                dirty.pop(key, None)
             self._cache[key] = persisted
             self._loaded_sessions.add(session_id)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
@@ -1624,6 +1609,7 @@ class EventContext:
         "_cli_type",
         "_cli_type_explicit",
         "_cwd",
+        "_deadline_monotonic",
         "_permission_mode",
         "_source",
         "_agent_id",
@@ -1693,6 +1679,7 @@ class EventContext:
         store: "ThreadSafeDB" = None,
         cli_type: str = None,
         cwd: str = None,
+        deadline_monotonic: float | None = None,
         permission_mode: str = "default",
         source: str = "startup",
         agent_id: str | None = None,
@@ -1728,6 +1715,13 @@ class EventContext:
         object.__setattr__(self, "_cli_type_explicit", cli_type is not None)
         # Working directory injected by client.py (_cwd field) for plan tracking
         object.__setattr__(self, "_cwd", cwd)
+        try:
+            deadline = float(deadline_monotonic)
+        except (TypeError, ValueError):
+            deadline = None
+        if deadline is not None and (not math.isfinite(deadline) or deadline <= 0):
+            deadline = None
+        object.__setattr__(self, "_deadline_monotonic", deadline)
         # Permission mode from hook payload (plan/bypassPermissions/acceptEdits/default)
         object.__setattr__(self, "_permission_mode", permission_mode)
         # Path to the session's JSONL transcript (propagated from hook stdin).
@@ -1767,6 +1761,11 @@ class EventContext:
             detected = detect_cli_type()
             object.__setattr__(self, "_cli_type", detected)
         return self._cli_type
+
+    @property
+    def deadline_monotonic(self) -> float | None:
+        """Absolute deadline shared by every stage of this hook request."""
+        return self._deadline_monotonic
 
     @property
     def transcript_path(self) -> "str | None":
@@ -1994,7 +1993,8 @@ class EventContext:
         advisory write is already durable, and repeating it is not free -- a
         blind set of a field other processes are incrementing loses their work.
         """
-        return object.__getattribute__(self, "_store") is not None
+        store = object.__getattribute__(self, "_store")
+        return store is not None and not getattr(store, "_persist_volatile_state", False)
 
     def state_update_volatile(
         self,
@@ -2613,12 +2613,20 @@ class AutorunApp:
             # a bookkeeping failure into a broken hook, so the response is
             # returned with the failure attached to it.
             logger.error("State batch was not saved: %s", exc)
+            if state_failure_is_contention(exc):
+                detail = (
+                    "The state lock was not acquired, so the batch never ran "
+                    "and no staged value was accepted."
+                )
+            else:
+                detail = (
+                    "The affected values were discarded rather than kept in memory."
+                )
             response = _attach_state_failure_notice(
                 response,
                 ctx,
                 f"⚠️ autorun could not save session state at the end of this "
-                f"{ctx.event} hook: {exc}. The affected values were discarded "
-                "rather than kept in memory.",
+                f"{ctx.event} hook: {exc}. {detail}",
             )
         return response
 
@@ -2708,6 +2716,9 @@ class AutorunDaemon:
         cooldown = float(CONFIG.get("daemon_dispatch_timeout_cooldown_seconds", 5.0))
         max_concurrent = max(1, int(CONFIG.get("daemon_dispatch_max_concurrent_per_event", 4)))
         deadline = time.monotonic() + timeout
+        if ctx.deadline_monotonic is not None:
+            deadline = min(deadline, ctx.deadline_monotonic)
+        object.__setattr__(ctx, "_deadline_monotonic", deadline)
 
         def circuit_response():
             return build_daemon_failure_response(
@@ -2863,6 +2874,7 @@ class AutorunDaemon:
                 # such as the OpenCode plugin sends plain "cwd". Accept both so
                 # a frame that took the short path is not left without a cwd.
                 cwd=normalized.get("cwd"),
+                deadline_monotonic=payload.get(HOOK_DEADLINE_PAYLOAD_KEY),
                 permission_mode=normalized["permission_mode"],
                 source=normalized["source"],
                 agent_id=normalized["agent_id"],

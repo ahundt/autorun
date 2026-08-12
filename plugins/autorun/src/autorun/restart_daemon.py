@@ -52,7 +52,24 @@ def _pid_matches_src(pid: int, src_dir: Path) -> bool:
     return 'from autorun.daemon import main' in cmdline_str and str(src_dir) in cmdline_str
 
 
-def get_daemon_pid(*, src_dir: Path | None = None) -> int | None:
+def _process_matches_runtime(proc) -> bool:
+    """Return whether a process belongs to the current AUTORUN_HOME."""
+    try:
+        env = proc.environ()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, NotImplementedError):
+        return False
+    runtime = env.get("AUTORUN_HOME")
+    if not runtime:
+        home = env.get("HOME") or env.get("USERPROFILE")
+        if not home:
+            return False
+        runtime = str(Path(home) / ".autorun")
+    return Path(runtime).resolve() == ipc.AUTORUN_CONFIG_DIR.resolve()
+
+
+def get_daemon_pid(
+    *, src_dir: Path | None = None, runtime_only: bool = False
+) -> int | None:
     """Get daemon PID from lock file, with process discovery fallback.
 
     Primary: Read PID from daemon.lock (written by _acquire_daemon_lock).
@@ -65,16 +82,17 @@ def get_daemon_pid(*, src_dir: Path | None = None) -> int | None:
         src_dir: Optional source-tree filter for fallback discovery. Normal
                  restarts pass this so an unrelated worktree/live daemon is
                  reported as unowned instead of stopped.
+        runtime_only: Accept a different source tree only when its process
+                      owns the current AUTORUN_HOME (installer handoff).
     """
     if LOCK_PATH.exists():
-        try:
-            pid = int(LOCK_PATH.read_text().strip())
-            if psutil.pid_exists(pid):
-                if src_dir is not None and not _pid_matches_src(pid, src_dir):
-                    return None
-                return pid
-        except (ValueError, OSError):
-            pass
+        pid = ipc.daemon_record_pid(LOCK_PATH)
+        if pid is not None:
+            if src_dir is not None and not _pid_matches_src(pid, src_dir):
+                return None
+            if runtime_only and not _process_matches_runtime(psutil.Process(pid)):
+                return None
+            return pid
 
     # Fallback: daemon.flock exists but daemon.lock missing — find by cmdline
     flock_path = LOCK_PATH.with_suffix('.flock')
@@ -85,6 +103,8 @@ def get_daemon_pid(*, src_dir: Path | None = None) -> int | None:
                 if 'from autorun.daemon import main' not in cmdline_str:
                     continue
                 if src_dir is not None and str(src_dir) not in cmdline_str:
+                    continue
+                if runtime_only and not _process_matches_runtime(proc):
                     continue
                 return proc.info['pid']
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -419,17 +439,7 @@ def _is_daemon_process_for_src(proc, src_dir: Path) -> bool:
     cmdline_str = _daemon_cmdline(proc)
     if 'from autorun.daemon import main' not in cmdline_str or str(src_dir) not in cmdline_str:
         return False
-    try:
-        env = proc.environ()
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, NotImplementedError):
-        return False
-    runtime = env.get("AUTORUN_HOME")
-    if not runtime:
-        home = env.get("HOME") or env.get("USERPROFILE")
-        if not home:
-            return False
-        runtime = str(Path(home) / ".autorun")
-    return Path(runtime).resolve() == ipc.AUTORUN_CONFIG_DIR.resolve()
+    return _process_matches_runtime(proc)
 
 
 def _daemon_processes_for_src(src_dir: Path) -> list:
@@ -488,7 +498,9 @@ def _stop_daemon(pid: int, *, src_dir: Path | None = None) -> None:
             cleanup_stale_files()
 
 
-def restart_daemon(*, all_daemons: bool = False) -> int:
+def restart_daemon(
+    *, all_daemons: bool = False, replace_runtime_daemon: bool = False
+) -> int:
     """Restart the autorun daemon.
 
     Performs a full stop-cleanup-start cycle with locking, verification,
@@ -497,6 +509,8 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
     all-daemons restarts are explicit maintenance operations that stop every
     matching autorun daemon process and may interrupt active sessions in other
     installs.
+    Install handoffs may replace only the validated daemon that owns the
+    current AUTORUN_HOME, even when another source tree launched it.
 
     Steps:
     0. Acquire restart lock (prevent concurrent restarts)
@@ -512,6 +526,10 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
     """
     print("=== Daemon Restart ===")
 
+    if all_daemons and replace_runtime_daemon:
+        print("  ✗ ERROR: all-daemons and install handoff modes are mutually exclusive")
+        return 1
+
     # Step 0: Acquire restart lock (prevent concurrent restarts)
     with restart_lock() as acquired:
         if not acquired:
@@ -525,12 +543,16 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
         # Step 1: Current state. Fallback process discovery is source-scoped so
         # missing daemon.lock files cannot make a normal restart stop another
         # install's daemon.
-        pid = get_daemon_pid(src_dir=src_dir)
+        pid = (
+            get_daemon_pid(runtime_only=True)
+            if replace_runtime_daemon
+            else get_daemon_pid(src_dir=src_dir)
+        )
 
         # Steps 2-3: Stop the daemon owned by this source tree, if any.
         if pid:
             print(f"Daemon running (PID {pid})")
-            _stop_daemon(pid, src_dir=src_dir)
+            _stop_daemon(pid, src_dir=None if replace_runtime_daemon else src_dir)
         else:
             print("Daemon not running")
 
@@ -546,7 +568,12 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
             time.sleep(0.5)
-        elif not pid and not all_daemons and is_daemon_responding():
+        elif (
+            not pid
+            and not all_daemons
+            and not replace_runtime_daemon
+            and is_daemon_responding()
+        ):
             print("  ✗ Refusing scoped restart: daemon socket responds, but no")
             print("    daemon from this source tree owns the current lock.")
             print("    Use --restart-all-daemons only for explicit recovery, or")

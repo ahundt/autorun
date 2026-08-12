@@ -32,7 +32,7 @@ import asyncio
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
 # Import the core module components
 from autorun.core import (
@@ -61,6 +61,30 @@ from autorun.core import (
 
 
 class TestDispatchTimeoutContainment:
+    @pytest.mark.asyncio
+    async def test_dispatch_tightens_the_request_deadline_before_running_handlers(
+        self, monkeypatch
+    ):
+        import autorun.core as core
+
+        observed = []
+        dispatch_app = Mock()
+        dispatch_app.dispatch.side_effect = lambda ctx: observed.append(
+            ctx.deadline_monotonic
+        )
+        daemon = AutorunDaemon(dispatch_app)
+        monkeypatch.setattr(core, "dispatch_timeout_for_event", lambda _event: 0.5)
+        ctx = EventContext(
+            session_id="deadline",
+            event="PreToolUse",
+            deadline_monotonic=time.monotonic() + 30.0,
+        )
+
+        started = time.monotonic()
+        await daemon._dispatch_with_timeout(ctx, "codex")
+
+        assert observed and started < observed[0] <= started + 0.51
+
     @pytest.mark.asyncio
     async def test_fast_concurrent_dispatches_queue_without_spurious_containment(self, monkeypatch):
         """Healthy bursts wait for bounded slots instead of failing closed."""
@@ -1260,6 +1284,39 @@ class TestAutorunDaemon:
         assert writer.closed is True
         assert writer.writes == []
         error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_client_passes_the_request_deadline_to_event_context(self):
+        daemon = AutorunDaemon(AutorunApp())
+        deadline = time.monotonic() + 10.0
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "deadline-propagation",
+            "cli_type": "codex",
+            "_autorun_hook_deadline_monotonic": deadline,
+        }
+        reader = Mock()
+        reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+
+        class FakeWriter:
+            def write(self, _data):
+                pass
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+            async def wait_closed(self):
+                pass
+
+        daemon._dispatch_with_timeout = AsyncMock(return_value=None)
+
+        await daemon.handle_client(reader, FakeWriter())
+
+        ctx = daemon._dispatch_with_timeout.await_args.args[0]
+        assert ctx.deadline_monotonic == deadline
 
     def test_pid_exists_true(self):
         """_pid_exists should return True for running process."""

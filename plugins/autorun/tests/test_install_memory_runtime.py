@@ -546,16 +546,20 @@ def test_the_disable_switch_for_the_context_guidance_block_has_a_reader(monkeypa
         assert context_guidance_enabled() is True, token
 
 
-def test_the_daemon_restart_goes_through_the_cli():
+def test_the_daemon_restart_goes_through_the_installing_interpreter(monkeypatch):
     """The daemon's socket and PID live under AUTORUN_HOME. Signalling a PID
     directly would reach the developer's live daemon from a test that
     redirected that variable; going through the CLI honours it for free."""
     from autorun.installer.runtime import restart_daemon
+    from autorun.installer import runtime
 
     run, calls = _recorder()
+    monkeypatch.setattr(runtime.sys, "executable", "/current/python")
 
     assert restart_daemon(run=run).ok
-    assert calls == [("autorun", "--restart-daemon")]
+    assert calls == [
+        ("/current/python", "-m", "autorun", "--restart-daemon-after-install")
+    ]
 
 
 def test_a_failed_daemon_restart_keeps_the_cli_diagnostic():

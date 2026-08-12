@@ -54,10 +54,37 @@ AUTORUN_SOCKET_PATH = AUTORUN_CONFIG_DIR / "daemon.sock"
 AUTORUN_PORT_FILE = AUTORUN_CONFIG_DIR / "daemon.port"
 AUTORUN_LOCK_PATH = AUTORUN_CONFIG_DIR / "daemon.lock"
 AUTORUN_LOG_FILE = AUTORUN_CONFIG_DIR / "daemon.log"
+PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
 
 # Backward-compatible aliases (used internally by ipc functions below)
 SOCKET_PATH = AUTORUN_SOCKET_PATH
 PORT_FILE = AUTORUN_PORT_FILE
+
+
+def process_start_units(pid: int) -> int:
+    """Return a process birth time in stable integer units, or zero."""
+    try:
+        import psutil
+
+        return round(
+            psutil.Process(pid).create_time() * PROCESS_BIRTH_UNITS_PER_SECOND
+        )
+    except Exception:
+        return 0
+
+
+def daemon_record_pid(path: Path) -> int | None:
+    """Return the live PID named by a ``<pid> <birth>`` daemon record."""
+    try:
+        pid_token, birth_token, *_ = path.read_text(encoding="utf-8").split()
+        pid = int(pid_token)
+        recorded_birth = int(birth_token)
+    except (OSError, ValueError):
+        return None
+    actual_birth = process_start_units(pid)
+    if recorded_birth <= 0 or actual_birth != recorded_birth:
+        return None
+    return pid
 
 # Whether the platform supports Unix domain sockets in Python's asyncio.
 # Windows has kernel AF_UNIX support since Windows 10 1803, but CPython

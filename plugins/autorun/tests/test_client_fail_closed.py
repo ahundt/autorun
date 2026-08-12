@@ -54,6 +54,21 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     assert "_cwd" in payload
 
 
+def test_client_forwards_its_effective_deadline_to_the_daemon(monkeypatch):
+    wrapper_deadline = __import__("time").monotonic() + 10.0
+    monkeypatch.setenv("AUTORUN_HOOK_DEADLINE_MONOTONIC", str(wrapper_deadline))
+    monkeypatch.setattr(
+        "autorun.client.get_stable_process_identity",
+        lambda: StableProcessIdentity(12345, 67890),
+    )
+
+    payload, _ = prepare_payload_for_daemon({"hook_event_name": "PreToolUse"})
+
+    assert payload["_autorun_hook_deadline_monotonic"] == pytest.approx(
+        wrapper_deadline - 0.2
+    )
+
+
 def test_client_preserves_identity_already_supplied_by_the_hook_wrapper(monkeypatch):
     monkeypatch.setattr(
         "autorun.client.get_stable_process_identity",
@@ -105,13 +120,10 @@ def test_a_cold_start_and_a_response_together_fit_inside_the_wrapper():
     """
     from autorun.client import (
         CLIENT_BUDGET_MARGIN_SECONDS,
-        DAEMON_START_ATTEMPTS,
-        DAEMON_START_RETRY_SECONDS,
         client_total_budget,
     )
 
     wrapper_timeouts = CONFIG["hook_wrapper_timeouts_seconds"]
-    cold_start = DAEMON_START_ATTEMPTS * DAEMON_START_RETRY_SECONDS
 
     for platform in hook_platforms():
         wrapper = wrapper_timeouts[platform.name]

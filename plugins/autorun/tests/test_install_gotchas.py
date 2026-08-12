@@ -889,14 +889,14 @@ def test_a_moved_harness_config_dir_moves_the_native_skill_route(monkeypatch, tm
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     ctx = _home_context(tmp_path, monkeypatch, tmp_path)
 
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    assert skills._native_roots(PLATFORMS["claude"], ctx) == (
-        tmp_path / "home" / ".claude" / "skills",
+    monkeypatch.delenv("QWEN_HOME", raising=False)
+    assert skills._native_roots(PLATFORMS["qwen"], ctx) == (
+        tmp_path / "home" / ".qwen" / "extensions",
     )
 
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "moved"))
-    assert skills._native_roots(PLATFORMS["claude"], ctx) == (
-        tmp_path / "moved" / "skills",
+    monkeypatch.setenv("QWEN_HOME", str(tmp_path / "moved"))
+    assert skills._native_roots(PLATFORMS["qwen"], ctx) == (
+        tmp_path / "moved" / "extensions",
     )
 
 

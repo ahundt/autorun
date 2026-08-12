@@ -194,6 +194,10 @@ MESSAGE_DEDUP_DEFAULT_ENTRY_CAP = 128
 #: can bootstrap from, which means it cannot import this module.
 HOOK_DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
 
+#: JSON field carrying the client's effective deadline into the long-lived
+#: daemon, whose process environment cannot change per hook request.
+HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_monotonic"
+
 #: Beyond this, a deadline is a stale value inherited from an unrelated process
 #: rather than ours. The largest configured wrapper timeout is 5s.
 MAX_PLAUSIBLE_WRAPPER_SECONDS = 60.0

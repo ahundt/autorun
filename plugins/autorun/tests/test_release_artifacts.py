@@ -176,6 +176,7 @@ def _venv(root: Path, wheel: Path, env: dict[str, str]) -> tuple[Path, dict[str,
     isolated.update(
         {
             "HOME": str(home),
+            "USERPROFILE": str(home),
             "AUTORUN_HOME": str(root / f"autorun-home-{wheel.stem}"),
             "AUTORUN_TEST_STATE_DIR": str(root / f"state-{wheel.stem}"),
             "AUTORUN_TEST_RUNTIME_DIR": str(root / f"runtime-{wheel.stem}"),
@@ -209,6 +210,7 @@ def test_autorun_wheel_install_status_bootstrap_and_uninstall(release_bundle):
     empty_home = root / "empty-uninstall-home"
     empty_env = isolated | {
         "HOME": str(empty_home),
+        "USERPROFILE": str(empty_home),
         "AUTORUN_HOME": str(root / "empty-uninstall-state"),
     }
     _run([autorun, "--uninstall", "ar", "--claude"], cwd=root, env=empty_env)

@@ -354,15 +354,18 @@ def bootstrap(
 
 
 def restart_daemon(*, run: Runner = _spawn) -> Outcome:
-    """Ask the installed CLI to restart its own daemon.
+    """Ask this installer runtime to restart its own daemon.
 
     Delegated to the CLI rather than signalling a PID directly: the daemon's
     socket and PID file live under ``AUTORUN_HOME``, so a test with that
     redirected must not have its restart reach the developer's live daemon.
-    Going through the CLI means the redirection is honoured for free.
+    Going through this interpreter's CLI means the redirection is honoured
+    without selecting a stale global ``autorun`` executable from ``PATH``.
     """
     try:
-        result = run(("autorun", "--restart-daemon"))
+        result = run(
+            (sys.executable, "-m", "autorun", "--restart-daemon-after-install")
+        )
     except (OSError, subprocess.SubprocessError) as error:
         return Outcome("daemon restart", False, f"{type(error).__name__}: {error}")
     return Outcome(
@@ -658,10 +661,13 @@ def demo() -> None:
     crashed = bootstrap(plugin, run=explodes)
     assert len(crashed) == 1 and not crashed[0].ok and "FileNotFoundError" in crashed[0].detail
 
-    # The daemon restart goes through the CLI so AUTORUN_HOME is honoured.
+    # The daemon restart goes through this interpreter's CLI so AUTORUN_HOME
+    # and the just-installed package version are both honoured.
     calls.clear()
     assert restart_daemon(run=ok).ok
-    assert calls == [("autorun", "--restart-daemon")], calls
+    assert calls == [
+        (sys.executable, "-m", "autorun", "--restart-daemon-after-install")
+    ], calls
 
     # --- self-update -------------------------------------------------------
     assert Version("1.0.0", "1.0.1").update_available

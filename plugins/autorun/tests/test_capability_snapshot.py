@@ -122,6 +122,7 @@ def test_capability_snapshot_cli_writes_json_without_touching_home(tmp_path):
     fake_home = tmp_path / "home"
     env = {
         "HOME": str(fake_home),
+        "USERPROFILE": str(fake_home),
         "AUTORUN_HOME": str(tmp_path / "autorun-home"),
         "AUTORUN_TEST_STATE_DIR": str(tmp_path / "state"),
         "AUTORUN_USE_DAEMON": "0",

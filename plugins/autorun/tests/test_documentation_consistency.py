@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 
@@ -26,11 +27,12 @@ def _long_cli_options(parser: argparse.ArgumentParser) -> set[str]:
     """Collect public long options recursively from the argparse tree."""
     options: set[str] = set()
     for action in parser._actions:
-        options.update(
-            option
-            for option in action.option_strings
-            if option.startswith("--") and option != "--help"
-        )
+        if action.help is not argparse.SUPPRESS:
+            options.update(
+                option
+                for option in action.option_strings
+                if option.startswith("--") and option != "--help"
+            )
         if isinstance(action, argparse._SubParsersAction):
             for subparser in action.choices.values():
                 options.update(_long_cli_options(subparser))
@@ -336,6 +338,23 @@ def test_release_checklist_covers_every_file_carrying_the_version():
         f"these files contain the current version {version!r} but are absent from "
         "docs/version_update_checklist.md, so the next release will leave them "
         "stale:\n  " + "\n  ".join(sorted(uncovered))
+    )
+
+
+def test_root_marketplace_catalog_tracks_the_plugin_base_release():
+    marketplace = json.loads(
+        (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    plugin_versions = {plugin["version"] for plugin in marketplace["plugins"]}
+
+    assert len(plugin_versions) == 1, "marketplace plugins must release together"
+    plugin_version = plugin_versions.pop()
+    base_version = re.sub(r"(?:a|b|rc)\d+$", "", plugin_version)
+    assert marketplace["version"] == base_version, (
+        "the catalog version names the stable release line while plugin entries "
+        "carry the full prerelease version"
     )
 
 

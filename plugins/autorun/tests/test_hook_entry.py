@@ -1879,22 +1879,27 @@ class TestAllLocationsSync:
 
     @pytest.mark.e2e
     def test_gemini_extension_hooks_match_source(self):
-        """Gemini extension hooks.json must match the Gemini TEMPLATE source
-        (not the Claude plugin's hooks.json). Post-split-layout, Claude's
-        hooks live at plugins/autorun/hooks/hooks.json and Gemini's live at
-        plugins/autorun/src/autorun/gemini_template/hooks/hooks.json.
-        """
+        """Installed Gemini hooks must match the generated registered source."""
         gemini_ext = Path.home() / ".gemini/extensions/ar"
 
         if not gemini_ext.exists():
             pytest.skip("Gemini extension not installed")
 
-        source_hooks = PLUGIN_ROOT / "src" / "autorun" / "gemini_template" / "hooks" / "hooks.json"
+        source_hooks = (
+            Path.home()
+            / ".autorun/installer/extension-sources/gemini/ar/hooks/hooks.json"
+        )
         ext_hooks = gemini_ext / "hooks" / "hooks.json"
 
+        assert source_hooks.exists(), (
+            f"Generated Gemini extension source is missing at {source_hooks}. "
+            "Run: uv run --project plugins/autorun python -m autorun "
+            "--install ar --gemini --force"
+        )
         assert ext_hooks.exists(), (
             f"Gemini extension missing hooks.json at {ext_hooks}. "
-            f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+            "Run: uv run --project plugins/autorun python -m autorun "
+            "--install ar --gemini --force"
         )
 
         source_content = source_hooks.read_text(encoding="utf-8")

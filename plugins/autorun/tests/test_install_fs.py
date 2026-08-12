@@ -18,12 +18,14 @@ import os
 import shutil
 import stat
 import sys
+import threading
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from autorun.installer import fs as installer_fs  # noqa: E402
 from autorun.installer.fs import (  # noqa: E402
     Decision,
     INSTALL_LOCK_NAME,
@@ -576,14 +578,65 @@ def test_a_default_nobody_changed_is_never_materialized(tmp_path):
     assert not doc.exists()
 
 
-def test_an_unchanged_registry_is_not_rewritten(tmp_path):
-    """A no-op install must not churn an mtime the harness watches."""
+def test_an_unchanged_registry_is_not_rewritten(tmp_path, monkeypatch):
+    """A no-op install must not call the writer the harness watches."""
     doc = tmp_path / "registry.json"
     with json_document(doc, lambda: {"plugins": {}}) as document:
         document["plugins"]["ar"] = {"enabled": True}
-    stamp = doc.stat().st_mtime_ns
+    before = doc.read_bytes()
+    writes = []
+    monkeypatch.setattr(
+        installer_fs,
+        "atomic_write",
+        lambda *args, **kwargs: writes.append((args, kwargs)),
+    )
 
     with json_document(doc) as document:
         document["plugins"]["ar"] = {"enabled": True}  # same value
 
-    assert doc.stat().st_mtime_ns == stamp
+    assert writes == []
+    assert doc.read_bytes() == before
+
+
+def test_registry_transactions_serialize_the_complete_read_modify_write(tmp_path):
+    doc = tmp_path / "registry.json"
+    first_inside = threading.Event()
+    release_first = threading.Event()
+    second_inside = threading.Event()
+
+    def write_first():
+        with json_document(doc, lambda: {"plugins": {}}) as document:
+            document["plugins"]["first"] = {"enabled": True}
+            first_inside.set()
+            assert release_first.wait(5)
+
+    def write_second():
+        assert first_inside.wait(5)
+        with json_document(doc, lambda: {"plugins": {}}) as document:
+            second_inside.set()
+            document["plugins"]["second"] = {"enabled": True}
+
+    first = threading.Thread(target=write_first)
+    second = threading.Thread(target=write_second)
+    first.start()
+    second.start()
+
+    try:
+        assert first_inside.wait(5)
+        overlapped = second_inside.wait(0.1)
+    finally:
+        release_first.set()
+        first.join(5)
+        second.join(5)
+
+    assert not overlapped, (
+        "a second transaction read the registry before the first one committed"
+    )
+
+    assert not first.is_alive() and not second.is_alive()
+    assert json.loads(doc.read_text(encoding="utf-8")) == {
+        "plugins": {
+            "first": {"enabled": True},
+            "second": {"enabled": True},
+        }
+    }

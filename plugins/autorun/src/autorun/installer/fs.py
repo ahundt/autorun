@@ -1105,16 +1105,17 @@ def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[di
     entries disappear. An unchanged document is not rewritten, so a no-op
     install does not churn mtimes the harness watches.
     """
-    if path.is_file():
-        document = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(document, dict):
-            raise ValueError(f"{path} must contain a JSON object")
-    else:
-        document = default()
-    before = json.dumps(document, sort_keys=True)
-    yield document
-    if json.dumps(document, sort_keys=True) != before:
-        atomic_write(path, json.dumps(document, indent=2) + "\n")
+    with FileLock(str(path.parent / INSTALL_LOCK_NAME)):
+        if path.is_file():
+            document = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(document, dict):
+                raise ValueError(f"{path} must contain a JSON object")
+        else:
+            document = default()
+        before = json.dumps(document, sort_keys=True)
+        yield document
+        if json.dumps(document, sort_keys=True) != before:
+            atomic_write(path, json.dumps(document, indent=2) + "\n")
 
 
 #: The copy side of ``IGNORED_GLOBS``. Never widen this list alone: copying a
@@ -1297,15 +1298,12 @@ def demo() -> None:
         assert (keep / "SKILL.md").is_file(), "previous copy restored"
         assert not (keep / "partial").exists(), "no partial contents"
 
-        # json_document: default, mutate, atomic write, and no-op on no change.
+        # json_document: default, mutate, and atomic write. The no-op write
+        # contract is pinned with an atomic_write spy in test_install_fs.py.
         doc = root / "registry.json"
         with json_document(doc, lambda: {"plugins": {}}) as d:
             d["plugins"]["ar"] = {"enabled": True}
         assert json.loads(doc.read_text())["plugins"]["ar"]["enabled"] is True
-        stamp = doc.stat().st_mtime_ns
-        with json_document(doc) as d:
-            d["plugins"]["ar"]["enabled"] = True  # same value
-        assert doc.stat().st_mtime_ns == stamp, "unchanged document is not rewritten"
 
     print("installer.fs: all self-checks passed")
 

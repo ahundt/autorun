@@ -147,12 +147,12 @@ class HomeDirSkills(SkillRoute):
 
 @dataclass(frozen=True, slots=True)
 class PluginPackageSkills(SkillRoute):
-    """Skills carried inside a staged plugin package outside ``config_dir``.
+    """Skills carried inside an installed or staged plugin package.
 
-    Codex's package lives at a configurable path (``codex_plugin_source_dir``,
-    default ``~/plugins``), so no ``config_dir``-relative fragment can express
-    it. ``resolver`` holds the function itself rather than its name, so
-    construction proves the target is callable.
+    Claude's installed marketplace package needs no resolver. Codex's staged
+    package lives at a configurable path (``codex_plugin_source_dir``, default
+    ``~/plugins``), so its ``resolver`` holds the function itself rather than
+    its name and construction proves the target is callable.
     """
 
     resolver: Callable[[Path | None], Path] | None = None
@@ -1178,7 +1178,10 @@ CLAUDE = register(
             "WORKAROUND_ENABLED"
         ),
         memory_sentinel_slug="claude-memory-md",
-        native_skills=ConfigDirSkills("skills"),
+        # The installed plugin already exposes its skills. A second global copy
+        # under ~/.claude/skills is also scanned by OpenCode, which then races
+        # it against the canonical ~/.agents/skills copy by name.
+        native_skills=PluginPackageSkills(),
         list_cmd=("claude", "plugin", "list"),
         app_bundle_ids=("com.anthropic.claudefordesktop",),
         app_paths=("/Applications/Claude.app",),

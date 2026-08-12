@@ -58,7 +58,7 @@ def walk(sandbox):
         marketplace_root=REPO,
         plugin_dirs=dirs,
         home=sandbox,
-        settings={"skill_placement": {"": "auto"}, "shared_skills_bridge": "link"},
+        settings={"skill_placement": {"": "auto"}, "shared_skills_bridge": "none"},
     )
     named = {discovery.plugin_name(d): d for d in dirs}
     with steps.prepared(ctx, plugins=named) as staged:
@@ -453,6 +453,62 @@ def test_duplicate_skill_names_are_broken_before_any_write(sandbox, tmp_path):
     assert result.decisions == ()
     assert any("one:same" in finding.detail and "two:same" in finding.detail for finding in result.findings)
     assert list(sandbox.iterdir()) == []
+
+
+def test_default_claude_forge_opencode_install_has_one_visible_copy_per_skill(sandbox):
+    """Claude's plugin package already carries its skills. Publishing them a
+    second time under ~/.claude/skills makes OpenCode race that copy against
+    the shared ~/.agents/skills copy while building its name-keyed catalog."""
+    from autorun.installer.orchestrate import install
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=tuple(
+            PLATFORMS[name] for name in ("claude", "forgecode", "opencode")
+        ),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    visible = (
+        sandbox / ".claude" / "skills" / "commit" / "SKILL.md",
+        sandbox / ".agents" / "skills" / "commit" / "SKILL.md",
+    )
+    assert result.ok is True
+    assert sum(path.is_file() for path in visible) == 1, visible
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_upgrade_retires_only_unchanged_legacy_claude_skill_copy(sandbox, edited):
+    from autorun.installer.fs import publish_tree
+    from autorun.installer.orchestrate import install
+
+    legacy = sandbox / ".claude" / "skills" / "commit"
+    publish_tree(
+        REPO / "plugins" / "autorun" / "skills" / "commit",
+        legacy,
+        plugin="ar",
+    )
+    if edited:
+        (legacy / "SKILL.md").write_text("user edit\n", encoding="utf-8")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["claude"], PLATFORMS["opencode"]),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is True
+    assert legacy.exists() is edited
+    if edited:
+        assert (legacy / "SKILL.md").read_text(encoding="utf-8") == "user edit\n"
 
 
 def test_blocked_shared_skill_falls_back_inside_only_the_extension(sandbox):

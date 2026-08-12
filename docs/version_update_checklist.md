@@ -6,6 +6,12 @@ When updating versions in the autorun marketplace, use this checklist to ensure 
 
 All plugins in this marketplace use the **same version number** for consistency. When releasing a new version, update ALL plugins to the same version.
 
+The root `.claude-plugin/marketplace.json` catalog version is intentionally the
+stable release line, not a third plugin version. Its plugin entries carry the
+full package version, including an RC suffix; the catalog's top-level field
+omits that suffix. For example, `1.0.0rc1` plugin entries belong to catalog
+`1.0.0`. Change the catalog field only when the base release line changes.
+
 The source of truth is `plugins/autorun/pyproject.toml`. The checklist coverage
 test verifies that every maintained file carrying the current version is listed;
 release and package tests separately validate artifact and runtime identities.
@@ -49,7 +55,7 @@ provenance is written by the release builder and is not hand-edited.
 |------|---------------|-------|
 | `pyproject.toml` | `version = "X.Y.Z"` | Only the `version` field. Do NOT change `>=X.Y.Z` minimum deps unless breaking change. |
 | `src/autorun_workspace/__init__.py` | `__version__ = "X.Y.Z"` | |
-| `.claude-plugin/marketplace.json` | plugin entries use `"version": "X.Y.Z"` | The top-level marketplace catalog has its own version; do not silently treat it as a plugin version. |
+| `.claude-plugin/marketplace.json` | plugin entries use `"version": "X.Y.Z"` | The top-level catalog uses the stable base version with any RC suffix removed. |
 
 ### autorun Plugin
 
@@ -225,17 +231,18 @@ for the tag. Keep the scratch directory until its files have been inspected.
 scratch_root=$(mktemp -d "${TMPDIR:-/tmp}/autorun-rc1.XXXXXX")
 mkdir -p "$scratch_root/home"
 git worktree add --detach "$scratch_root/checkout" "$release_sha"
-env HOME="$scratch_root/home" \
+env HOME="$scratch_root/home" USERPROFILE="$scratch_root/home" \
   CLAUDE_CONFIG_DIR="$scratch_root/home/.claude" \
   AUTORUN_HOME="$scratch_root/autorun-home" \
   AUTORUN_TEST_STATE_DIR="$scratch_root/state" \
   claude plugin marketplace add "$scratch_root/checkout" --scope user
-env HOME="$scratch_root/home" \
+env HOME="$scratch_root/home" USERPROFILE="$scratch_root/home" \
   CLAUDE_CONFIG_DIR="$scratch_root/home/.claude" \
   AUTORUN_HOME="$scratch_root/autorun-home" \
   AUTORUN_TEST_STATE_DIR="$scratch_root/state" \
   claude plugin install ar@autorun --scope user
-env HOME="$scratch_root/home" CLAUDE_CONFIG_DIR="$scratch_root/home/.claude" \
+env HOME="$scratch_root/home" USERPROFILE="$scratch_root/home" \
+  CLAUDE_CONFIG_DIR="$scratch_root/home/.claude" \
   claude plugin list
 find "$scratch_root" -type f -print | sort
 ```

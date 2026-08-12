@@ -496,8 +496,6 @@ def demo() -> None:
         # $HOME is the seam, so redirecting it is how a check relocates every
         # route at once — including the home-anchored ones a Context field
         # could never reach.
-        import os
-
         linked_home = root / "home_linked"
         (linked_home / ".fake").mkdir(parents=True)
         # The READ route is what the bridge targets, so that is what must be a

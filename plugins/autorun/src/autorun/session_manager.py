@@ -97,6 +97,27 @@ class SessionPersistenceError(SessionStateError):
     """
 
 
+def state_failure_is_contention(error: Exception) -> bool:
+    """Did the transaction lose a race for the lock, or lose data?
+
+    A timeout means the read-modify-write never began: no bytes were read, none
+    were written, and no value was accepted anywhere. That is a different event
+    from ``SessionPersistenceError``'s own contract above, even though
+    ``EventContext.state_update`` reports both through that type so every caller
+    keeps failing open.
+
+    Lives here, beside the two exceptions it distinguishes, because both
+    ``core`` and ``message_delivery`` need the answer and neither should own a
+    private copy of the rule.
+
+    The cause is inspected as well as the error, because the wrap in
+    ``state_update`` chains the original.
+    """
+    return isinstance(error, SessionTimeoutError) or isinstance(
+        getattr(error, "__cause__", None), SessionTimeoutError
+    )
+
+
 class _StateProxy:
     """Dict-like view of one session within the supported JSON backend.
 

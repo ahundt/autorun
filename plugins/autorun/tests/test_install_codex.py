@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from autorun.installer import fs as installer_fs  # noqa: E402
 from autorun.installer.codex import (  # noqa: E402
     ALLOWED_TOP_LEVEL,
     HOOK_TIMEOUT_SECONDS,
@@ -272,16 +273,23 @@ def test_a_same_name_with_a_different_source_is_not_ours_to_replace(tmp_path):
     assert plugins == [theirs]
 
 
-def test_republishing_an_unchanged_entry_writes_nothing(tmp_path):
+def test_republishing_an_unchanged_entry_writes_nothing(tmp_path, monkeypatch):
     from autorun.installer.codex import marketplace_entry, publish_marketplace
 
     market = tmp_path / "marketplace.json"
     entry = marketplace_entry("autorun", "./plugins/autorun")
     publish_marketplace(market, "personal", entry)
-    stamp = market.stat().st_mtime_ns
+    before = market.read_bytes()
+    writes = []
+    monkeypatch.setattr(
+        installer_fs,
+        "atomic_write",
+        lambda *args, **kwargs: writes.append((args, kwargs)),
+    )
 
     assert publish_marketplace(market, "personal", entry) is False
-    assert market.stat().st_mtime_ns == stamp
+    assert writes == []
+    assert market.read_bytes() == before
 
 
 def test_withdrawing_leaves_every_other_plugin(tmp_path):
