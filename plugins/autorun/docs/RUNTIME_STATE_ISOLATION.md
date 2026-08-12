@@ -69,6 +69,69 @@ cannot affect safety or correctness. Stop events are normally serial within one
 session, but this is not a substitute for atomic APIs in code shared with other
 events.
 
+### Lock contention is a normal condition, not a defect
+
+`HOOK_STATE_LOCK_TIMEOUT` is 0.5s per attempt. Measured on Linux pinned to two
+CPUs, 8 and 16 concurrent hook processes exceed that budget regularly, raising
+`SessionTimeoutError`. The lock itself is sound under the same load: 8
+processes x 200 increments committed 1600 of 1600 with no lost update once
+timeouts were retried.
+
+Two consequences worth knowing before changing any of this:
+
+- **A timeout is not data loss.** `state_update()` reports both through
+  `SessionPersistenceError` so every caller keeps failing open, so the exception
+  type cannot tell them apart. `core.state_failure_is_contention()` can: it
+  inspects the error and its `__cause__` for `SessionTimeoutError`. A timeout
+  means the read-modify-write never began, so nothing was read, written, or
+  accepted; only a genuine persistence failure means a value was accepted in
+  memory and never stored.
+- **Do not count notifications to test a "happens once" property.**
+  `report_state_persistence_failure()` attaches a warning to
+  `ctx._chain_notifications`, so under contention a test asserting
+  `len(ctx._chain_notifications) == 1` counts that warning as the thing it is
+  measuring. Assert on a marker in the message instead. This produced an
+  intermittent failure whose own diagnosis blamed an unserialised counter that
+  had in fact been serialised correctly.
+
+### Reproducing a contention failure
+
+These failures do not appear on a developer machine with free cores: the
+processes run in parallel and nobody waits on the lock long enough to time out.
+Reproduction needs Linux and genuine CPU scarcity.
+
+`--cpus=2` does not work, because it throttles CFS quota while `nproc` still
+reports every host core. Use `--cpuset-cpus`, which pins the run to two real
+cores so the processes time-slice the way a two-core CI runner does:
+
+```bash
+docker run --rm --cpuset-cpus=0,1 --memory=4g \
+  -v "$(git rev-parse --show-toplevel)":/repo:ro python:3.13-slim bash -lc '
+apt-get update -qq && apt-get install -y -qq git
+mkdir -p /tmp/src && cp -a /repo/. /tmp/src/
+git config --global --add safe.directory /tmp/src
+cd /tmp/src/plugins/autorun
+pip install -e . && pip install pytest pytest-asyncio pytest-timeout
+for i in $(seq 1 25); do python -m pytest <target> -q -p no:randomly; done'
+```
+
+Raising the process count matters more than the iteration count: a case that
+never failed at 8 concurrent processes failed 18 times in 25 at 16.
+
+The image has no `uv` and no `claude` binary, so `test_demo.py`,
+`test_plan_export_hook_e2e.py` and `test_gemini_e2e_improved.py` fail there for
+environmental reasons rather than code ones. Read the failure names before
+concluding anything from a full-suite run in this container.
+
+Two traps specific to probing this area:
+
+- A `spawn` child re-imports `__main__`, so a `tempfile.mkdtemp()` at module
+  scope gives every process its own state directory and the probe measures
+  nothing. Pass the root through the environment.
+- A probe that abandons its work on `SessionTimeoutError` reports the shortfall
+  as lost updates. Retry the operation instead, or contention and data loss are
+  indistinguishable in the result.
+
 ## Pytest Isolation
 
 `plugins/autorun/conftest.py` creates one temporary runtime root before any
