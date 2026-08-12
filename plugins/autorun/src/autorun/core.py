@@ -51,6 +51,7 @@ from .session_manager import (
     SessionBackendError,
     SessionPersistenceError,
     SessionStateError,
+    SessionTimeoutError,
     session_state,
 )
 from .config import CONFIG
@@ -628,6 +629,23 @@ def _attach_state_failure_notice(response, ctx, message: str) -> dict:
     return validate_hook_response(ctx.event, result, ctx.cli_type)
 
 
+def state_failure_is_contention(error: Exception) -> bool:
+    """Did the transaction lose a race for the lock, or lose data?
+
+    A timeout means the read-modify-write never began: no bytes were read, none
+    were written, and no value was accepted anywhere. That is a different event
+    from ``SessionPersistenceError``'s own contract -- "a value was accepted in
+    memory but never reached storage" -- even though ``state_update`` reports
+    both through the same type so every caller keeps failing open.
+
+    The cause is inspected as well as the error, because the wrap in
+    ``state_update`` chains the original.
+    """
+    return isinstance(error, SessionTimeoutError) or isinstance(
+        getattr(error, "__cause__", None), SessionTimeoutError
+    )
+
+
 def report_state_persistence_failure(ctx, fields, session_id: str, error: Exception) -> None:
     """Say out loud that state a handler set was never stored.
 
@@ -635,16 +653,30 @@ def report_state_persistence_failure(ctx, fields, session_id: str, error: Except
     still knows what it was trying to record and can repeat it; the user is
     the one who will otherwise meet the consequences later, with nothing
     connecting them to this moment.
+
+    Contention is reported too, never hidden, but it is not described as data
+    loss. Concurrent hooks exceed the lock budget routinely -- measured at 8 and
+    16 concurrent processes on two CPUs -- and telling a user their value "has
+    been discarded" when the write never started sends them looking for damage
+    that does not exist.
     """
     named = ", ".join(str(field) for field in fields) or "state"
-    try:
-        ctx.add_chain_notification(
+    if state_failure_is_contention(error):
+        message = (
+            f"⚠️ autorun could not take the state lock for {named} in session "
+            f"{session_id}: {error}. Nothing was read or written, so no value "
+            "was lost or half-applied; the update simply did not happen. "
+            "Re-issue the change if it still matters."
+        )
+    else:
+        message = (
             f"⚠️ autorun could not save {named} for session {session_id}: "
             f"{error}. The value has been discarded rather than kept in "
             "memory, so nothing is pretending it was saved. Re-issue the "
-            "change if it still matters.",
-            channel="both",
+            "change if it still matters."
         )
+    try:
+        ctx.add_chain_notification(message, channel="both")
     except Exception as notify_error:  # noqa: BLE001 - reporting must not block
         logger.warning("Could not report a state persistence failure: %s", notify_error)
 
@@ -1919,8 +1951,16 @@ class EventContext:
         except SessionStateError as exc:
             if isinstance(exc, SessionPersistenceError):
                 error = exc
+            elif isinstance(exc, SessionTimeoutError):
+                error = SessionPersistenceError(
+                    f"State update never ran for {target_session} ({name}): {exc}"
+                )
             else:
                 error = SessionPersistenceError(f"State update was not saved for {target_session} ({name}): {exc}")
+            # Chain before reporting, not only at the raise below: the reporter
+            # reads __cause__ to tell a lock timeout apart from lost data, and
+            # `raise ... from exc` would set it too late to be seen.
+            error.__cause__ = exc
             report_state_persistence_failure(self, [name], target_session, error)
             if error is exc:
                 raise

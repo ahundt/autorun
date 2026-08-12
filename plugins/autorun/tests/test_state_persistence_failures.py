@@ -449,3 +449,71 @@ class TestVolatileMemoryIsBounded:
             db.set_volatile(f"filler-{i}:counter", i)
 
         assert db.get("session-a:field") == "durable"
+
+
+class TestContentionIsNotReportedAsDataLoss:
+    """A lock timeout and a dropped value are different events for a user.
+
+    ``SessionPersistenceError`` means "accepted in memory but never stored",
+    which is a data-integrity incident worth investigating. A lock timeout means
+    the read-modify-write never began: nothing read, nothing written, nothing
+    accepted. Both arrive as ``SessionPersistenceError`` so callers keep failing
+    open, so only the notice can tell a user which one happened -- and the
+    notice reached them saying their value "has been discarded" every time
+    concurrent hooks merely queued for the lock.
+    """
+
+    def _notice(self, ctx):
+        return "\n".join(message for message, _channel in ctx._chain_notifications)
+
+    def test_a_lock_timeout_does_not_claim_a_value_was_discarded(
+        self, isolated_state
+    ):
+        ctx = EventContext(session_id="contended", event="PostToolUse", store=None)
+
+        with failing_persistence():
+            with pytest.raises(SessionPersistenceError):
+                ctx.state_update("counter", lambda current: (current or 0) + 1, 0)
+
+        notice = self._notice(ctx)
+        assert "state lock" in notice, (
+            "the notice must say the lock was the problem, or a user cannot "
+            f"tell contention from data loss. Notice was: {notice!r}"
+        )
+        assert "discarded" not in notice, (
+            "a timeout discards nothing -- the update never started -- so this "
+            f"sends the user looking for damage that does not exist: {notice!r}"
+        )
+
+    def test_a_genuine_persistence_failure_still_says_the_value_was_discarded(
+        self, isolated_state
+    ):
+        """The loud path must survive: this is the case worth alarming about."""
+        ctx = EventContext(session_id="dropped", event="PostToolUse", store=None)
+        dropped = SessionPersistenceError(
+            "State was not saved and has been dropped from memory"
+        )
+
+        with failing_persistence(error=dropped):
+            with pytest.raises(SessionPersistenceError):
+                ctx.state_update("counter", lambda current: (current or 0) + 1, 0)
+
+        notice = self._notice(ctx)
+        assert "discarded" in notice, (
+            f"real data loss must still be reported as data loss: {notice!r}"
+        )
+
+    def test_the_contention_test_would_fail_against_the_previous_wording(self):
+        """Guard the distinction itself, not only today's phrasing."""
+        timeout = SessionTimeoutError("Could not acquire state lock after 0.5s")
+        wrapped = SessionPersistenceError("State update never ran")
+        wrapped.__cause__ = timeout
+
+        assert core.state_failure_is_contention(timeout)
+        assert core.state_failure_is_contention(wrapped), (
+            "state_update wraps the timeout before reporting, so the cause is "
+            "the only place the original type survives"
+        )
+        assert not core.state_failure_is_contention(
+            SessionPersistenceError("State was not saved and has been dropped")
+        )

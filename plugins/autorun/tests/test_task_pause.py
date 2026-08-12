@@ -28,6 +28,9 @@ PROCESS_JOIN_TIMEOUT_SECONDS = 30.0
 QUEUE_READ_TIMEOUT_SECONDS = 5.0
 PAUSE_REMINDER_THRESHOLD = 25
 CONCURRENT_REMINDER_PROCESSES = 8
+# Identifies the pause recovery reminder among everything a hook may attach.
+# task_pause.task_pause_guidance builds this marker into the message it returns.
+PAUSE_RECOVERY_MARKER = "AUTORUN_TASK_RECOVERY("
 
 
 def _process_task_pause_claim(
@@ -70,13 +73,21 @@ def _process_pause_guidance_check(
         ctx.task_staleness_threshold = PAUSE_REMINDER_THRESHOLD
         barrier.wait()
         plugins.check_task_staleness(ctx)
+        # Count the pause recovery reminder, not every notification. Under lock
+        # contention `report_state_persistence_failure` attaches its own warning
+        # here, and counting that as a reminder made this test report a
+        # serialisation failure that had not happened: the processes carrying
+        # the warning never reached the counter at all.
+        messages = [message for message, _channel in ctx._chain_notifications]
         # The counter and the state directory travel back with the count so a
         # failure says why. A bare total cannot distinguish an increment that
-        # was not serialised from processes that never shared state at all.
+        # was not serialised from processes that never shared state at all, and
+        # the warnings distinguish both from a process that lost the lock.
         results.put((
-            len(ctx._chain_notifications),
+            sum(PAUSE_RECOVERY_MARKER in message for message in messages),
             ctx.state_get("tool_calls_since_task_update", None),
             os.environ.get("AUTORUN_TEST_STATE_DIR", ""),
+            [message for message in messages if PAUSE_RECOVERY_MARKER not in message],
         ))
     finally:
         session_manager._reset_for_testing()
@@ -432,14 +443,22 @@ def test_spawned_processes_emit_one_pause_recovery_reminder(
         observations = [
             results.get(timeout=QUEUE_READ_TIMEOUT_SECONDS) for _process in processes
         ]
-        emitted = sum(count for count, _counter, _state_dir in observations)
+        emitted = sum(count for count, _counter, _state_dir, _other in observations)
+        other = [
+            message
+            for _count, _counter, _state_dir, messages in observations
+            for message in messages
+        ]
         assert emitted == 1, (
             f"exactly one of {CONCURRENT_REMINDER_PROCESSES} processes may emit "
             f"the pause recovery reminder, but {emitted} did. Observed "
-            f"(notifications, tool_calls_since_task_update, state dir): "
-            f"{observations}. Identical counters mean the increment was not "
-            f"serialised across processes; differing state directories mean "
-            f"the processes never shared state to begin with."
+            f"(reminders, tool_calls_since_task_update, state dir, other "
+            f"notifications): {observations}. Identical counters mean the "
+            f"increment was not serialised across processes; differing state "
+            f"directories mean the processes never shared state to begin with; "
+            f"other notifications carry any state-lock warning, which is "
+            f"contention rather than a duplicated reminder. Other notifications "
+            f"seen: {other}"
         )
     finally:
         session_manager._CONFIG["state_backend"] = previous_backend
