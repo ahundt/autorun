@@ -25,6 +25,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from autorun.installer.fs import (  # noqa: E402
+    Decision,
     INSTALL_LOCK_NAME,
     OWNED_MARKER_NAME,
     Verdict,
@@ -54,6 +55,19 @@ def source(tmp_path: Path) -> Path:
 
 
 # ─── Ownership and user data (edge cases 1-8) ────────────────────────────────
+
+
+def test_a_large_edit_report_stays_readable(tmp_path):
+    edits = tuple(f"changed-{index}.txt" for index in range(12))
+    decision = Decision(Verdict.KEEP, tmp_path / "owned", "user-edited", edits)
+
+    report = decision.describe()
+
+    assert "changed-0.txt" in report
+    assert "changed-9.txt" in report
+    assert "changed-10.txt" not in report
+    assert "+2 more" in report
+    assert decision.edited == edits
 
 
 def test_an_unmarked_directory_is_the_users_whatever_its_name(tmp_path, source):
@@ -493,6 +507,13 @@ def test_build_junk_is_never_published_and_never_unrecorded(tmp_path, source):
     (source / "__pycache__" / "x.cpython-312.pyc").write_bytes(b"\x00")
     (source / "stale.pyc").write_bytes(b"\x00")
     (source / "editor.md~").write_text("backup\n", encoding="utf-8")
+    (source / ".coverage").write_text("coverage data\n", encoding="utf-8")
+    (source / ".coverage.worker").write_text("parallel data\n", encoding="utf-8")
+    (source / "coverage.xml").write_text("<coverage/>\n", encoding="utf-8")
+    (source / "htmlcov").mkdir()
+    (source / "htmlcov" / "index.html").write_text("report\n", encoding="utf-8")
+    (source / ".ruff_cache").mkdir()
+    (source / ".ruff_cache" / "CACHEDIR.TAG").write_text("cache\n", encoding="utf-8")
 
     target = tmp_path / "dest" / "demo"
     publish_tree(source, target, plugin="ar")
@@ -500,6 +521,11 @@ def test_build_junk_is_never_published_and_never_unrecorded(tmp_path, source):
     assert not (target / "__pycache__").exists()
     assert not (target / "stale.pyc").exists()
     assert not (target / "editor.md~").exists()
+    assert not (target / ".coverage").exists()
+    assert not (target / ".coverage.worker").exists()
+    assert not (target / "coverage.xml").exists()
+    assert not (target / "htmlcov").exists()
+    assert not (target / ".ruff_cache").exists()
 
     published_files = {
         str(p.relative_to(target))

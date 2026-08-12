@@ -297,7 +297,7 @@ def show_policy(policy: str, desc: str, new_files: str = "✓ Allowed") -> None:
 # ─── Hook infrastructure ──────────────────────────────────────────────────────
 
 def find_plugin_root() -> Path:
-    """Find plugin root. Reuses pattern from test_claude_e2e_real_money.py:141-154."""
+    """Find plugin root. Reuses the pattern from test_claude_e2e.py."""
     candidates = [
         Path(__file__).parent.parent,          # tests/ → plugins/autorun/
         Path.home() / ".claude" / "autorun" / "plugins" / "autorun",
@@ -323,7 +323,7 @@ def run_hook(event: str, payload: dict, plugin_root: Path = None,
     """Call hook_entry.py via uv. Returns (returncode, parsed_json, stderr).
 
     No Claude API call — purely local Python hook logic. Cost: $0.000.
-    Reuses pattern from test_claude_e2e_real_money.py:157-200.
+    Reuses the pattern from test_claude_e2e.py.
     """
     root = plugin_root or find_plugin_root()
     hook_script = root / "hooks" / "hook_entry.py"

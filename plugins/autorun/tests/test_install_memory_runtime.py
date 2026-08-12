@@ -556,3 +556,15 @@ def test_the_daemon_restart_goes_through_the_cli():
 
     assert restart_daemon(run=run).ok
     assert calls == [("autorun", "--restart-daemon")]
+
+
+def test_a_failed_daemon_restart_keeps_the_cli_diagnostic():
+    from autorun.installer.runtime import restart_daemon
+
+    run, _calls = _recorder(returncode=1, stderr="missing filelock dependency\ntrace")
+
+    result = restart_daemon(run=run)
+
+    assert not result.ok
+    assert result.detail == "missing filelock dependency"
+    assert result.describe() == "FAIL daemon restart — missing filelock dependency"

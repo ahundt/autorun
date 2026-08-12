@@ -8,7 +8,7 @@ marketplace itself carries a separate `version` field.
 
 ## [Unreleased]
 
-## [1.0.0rc1] - 2026-08-09
+## [1.0.0rc1] - 2026-08-11
 
 ### Added
 
@@ -46,6 +46,16 @@ marketplace itself carries a separate `version` field.
   parser, the status text, the config dataclass and the defaults.
 
 ### Fixed
+
+- **Direct JSON hook processes retain their lock-acquisition budget under
+  contention.** They poll the shared state lock every 5 ms instead of the
+  `filelock` default of 50 ms. The 500 ms hook deadline is unchanged, but
+  four/eight-writer reminder and message-delivery bursts no longer discard most
+  of their budget between attempts under coverage load.
+- **Source-checkout installs no longer publish test artifacts.** `.coverage*`,
+  `coverage.xml`, `htmlcov`, and `.ruff_cache` are excluded from plugin trees,
+  and `--install --force` bounds modified-file detail to ten names plus the
+  omitted count.
 
 - **A failed Claude registration no longer deletes the cached hook runtime.**
   The cache fallback introduced at `c09c3b2` ran whenever native registration
@@ -193,6 +203,14 @@ marketplace itself carries a separate `version` field.
   `BOOTSTRAP_MSG`, and the unread `plan_acceptance_notify` CONFIG entry.
 
 ### Internal
+
+- The Claude E2E module no longer labels regular network-free hook tests as
+  real-money tests; paid `claude -p` cases remain explicitly opt-in inside the
+  shared harness.
+- CI's external actions are pinned to immutable commit SHAs. The release
+  checklist gates one exact commit through all eleven jobs, a scratch-home
+  marketplace install, immutable remote-tag recovery, and prerelease metadata
+  verification.
 
 - `staged_replacement`, an RAII context manager, replaced three copy-pasted
   lock/stage/rollback blocks and gained a `precondition` that runs inside the

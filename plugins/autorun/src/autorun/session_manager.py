@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SESSION_TIMEOUT = 30.0
 SHARED_ACCESS_TIMEOUT = 5.0
+STATE_LOCK_POLL_INTERVAL = 0.005
 
 
 class _StableFileLock(FileLock):
@@ -289,7 +290,8 @@ class _JSONStore:
     @contextlib.contextmanager
     def _persistent_filelock(self, timeout: float):
         """Acquire the stable lock path for one state transaction."""
-        with _StableFileLock(self._lock_file, timeout=timeout):
+        lock = _StableFileLock(self._lock_file, timeout=timeout)
+        with lock.acquire(poll_interval=STATE_LOCK_POLL_INTERVAL):
             yield
 
     @contextlib.contextmanager

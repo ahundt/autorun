@@ -117,7 +117,10 @@ __all__ = [
 
 OWNED_MARKER_NAME = ".autorun-owned"
 INSTALL_LOCK_NAME = ".autorun-install.lock"
-SKIP_NAMES = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv", ".mypy_cache"})
+SKIP_NAMES = frozenset({
+    "__pycache__", ".pytest_cache", ".git", ".venv", ".mypy_cache",
+    ".ruff_cache", "htmlcov",
+})
 
 #: Build junk that neither reaches a user's config directory nor appears in a
 #: manifest. One declaration with two consumers, ``_ignored`` for the scan and
@@ -128,6 +131,7 @@ SKIP_NAMES = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv", ".mypy_
 IGNORED_GLOBS: tuple[str, ...] = (
     *sorted(SKIP_NAMES),
     "*.pyc", "*.pyo", "*.tmp", "*~", "*.bak",
+    ".coverage", ".coverage.*", "coverage.xml",
     ".*-extension-install.json", "qwen-extension.json",
 )
 _LINK = "link:"
@@ -400,7 +404,12 @@ class Decision:
         That is the whole difference, which is why there is no second code path
         for previewing.
         """
-        detail = f" ({', '.join(self.edited)})" if self.edited else ""
+        shown = self.edited[:10]
+        overflow = len(self.edited) - len(shown)
+        items = ", ".join(shown)
+        if overflow:
+            items += f", +{overflow} more"
+        detail = f" ({items})" if items else ""
         return f"{self.verdict.value:<7} {self.target}  — {self.reason}{detail}"
 
 

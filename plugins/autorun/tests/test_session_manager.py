@@ -12,6 +12,7 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import autorun.session_manager as session_manager
 from autorun.session_manager import (
     SessionStateError,
     SessionTimeoutError,
@@ -77,6 +78,38 @@ class TestSessionLock:
 
 class TestFilelockJSONBackend:
     """Tests for the filelock+JSON storage backend."""
+
+    def test_lock_polling_leaves_budget_for_eight_direct_hook_writers(
+        self, tmp_path, monkeypatch
+    ):
+        """One poll must not consume ten percent of the 500 ms hook budget."""
+        calls = []
+
+        class RecordingLock:
+            def __init__(self, lock_file, **options):
+                calls.append(("init", lock_file, options))
+
+            def acquire(self, **options):
+                calls.append(("acquire", options))
+                return self
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        monkeypatch.setattr(session_manager, "_StableFileLock", RecordingLock)
+        store = session_manager._JSONStore(
+            tmp_path / "daemon_state.json",
+            tmp_path / "daemon_state.json.lock",
+        )
+
+        with store._persistent_filelock(0.5):
+            pass
+
+        assert calls[0][2]["timeout"] == 0.5
+        assert 0 < calls[1][1]["poll_interval"] <= 0.01
 
     def test_session_state_basic_get_set(self, tmp_path):
         """Basic get/set via session_state() persists across context opens."""

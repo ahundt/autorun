@@ -337,3 +337,16 @@ def test_release_checklist_covers_every_file_carrying_the_version():
         "docs/version_update_checklist.md, so the next release will leave them "
         "stale:\n  " + "\n  ".join(sorted(uncovered))
     )
+
+
+def test_ci_actions_are_pinned_to_full_commits():
+    mutable = []
+    workflows = REPO_ROOT / ".github" / "workflows"
+    for path in workflows.glob("*.yml"):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "uses:" not in line or "@" not in line:
+                continue
+            ref = line.split("@", 1)[1].split("#", 1)[0].strip()
+            if not re.fullmatch(r"[0-9a-f]{40}", ref):
+                mutable.append(f"{path.relative_to(REPO_ROOT)}:{number}: {ref}")
+    assert not mutable, "CI actions use mutable refs:\n  " + "\n  ".join(mutable)

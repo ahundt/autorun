@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-REAL MONEY TESTS - Claude Code E2E Integration Tests
+Claude Code E2E integration tests: free hook contracts and opt-in paid model calls
 
 Two test categories in this module:
 
@@ -20,10 +20,10 @@ free and remain enabled during regular test runs.
 
 To run ALL tests (including real money):
     export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py -v
+    uv run pytest plugins/autorun/tests/test_claude_e2e.py -v
 
 To run only FREE hook-level tests (the default for this module):
-    uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py::TestClaudeHookEntryPoint -v
+    uv run pytest plugins/autorun/tests/test_claude_e2e.py::TestClaudeHookEntryPoint -v
 
 The paid subprocess class is skipped unless the explicit money-test flag is
 set; free hook-level coverage remains part of the regular suite.
@@ -37,7 +37,7 @@ Full output logging (no truncation):
 
     For full terminal capture (no pytest truncation of diffs):
         export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-        uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py -v \\
+        uv run pytest plugins/autorun/tests/test_claude_e2e.py -v \\
             --tb=long --log-file=/tmp/autorun-pytest.log --log-file-level=DEBUG \\
             2>&1 | tee /tmp/autorun-pytest-terminal.log
 
@@ -2690,16 +2690,15 @@ Spawn actual `claude -p` sessions. 5 tests.
 
 ## Running Tests
 
-Skip all (default):
+Run free tests and skip paid model calls (default):
     uv run pytest plugins/autorun/tests/ -v
 
 Run all tests in this file (free + real money):
     export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py -v
+    uv run pytest plugins/autorun/tests/test_claude_e2e.py -v
 
 Run only free hook tests:
-    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py::TestClaudeHookEntryPoint -v
+    uv run pytest plugins/autorun/tests/test_claude_e2e.py::TestClaudeHookEntryPoint -v
 
 ## Cost Estimates
 

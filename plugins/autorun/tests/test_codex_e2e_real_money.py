@@ -6,7 +6,7 @@ They are skipped unless AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1.
 Prefer a Spark model via AUTORUN_CODEX_E2E_MODEL; otherwise skip unless the
 local Codex model catalog exposes a slug containing "spark".
 
-The structure intentionally mirrors test_claude_e2e_real_money.py:
+The structure intentionally mirrors test_claude_e2e.py:
 hook_entry.py tests and real CLI tests live together, and the whole module is
 behind the same opt-in flag so normal test runs cannot mutate daemon/session
 state or spend money by accident.
