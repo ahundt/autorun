@@ -135,7 +135,9 @@ def client_total_budget(cli_type: str) -> float:
 
 
 #: Set by hooks/hook_entry.py to the monotonic instant its wrapper gives up.
-DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
+#: Named once in config.py so a second in-package reader cannot drift from this
+#: one; hook_entry.py keeps its own copy because it must stay stdlib-only.
+from .config import HOOK_DEADLINE_ENV_VAR as DEADLINE_ENV_VAR  # noqa: E402
 
 #: How many attempts to allow a pid that is alive but holds no daemon flock.
 #: The gap between a daemon starting and taking its flock is short; anything
@@ -211,10 +213,9 @@ def client_deadline(cli_type: str) -> float:
     return supplied - CLIENT_BUDGET_MARGIN_SECONDS
 
 
-#: Any wrapper budget beyond this is a stale or foreign value, not ours. The
-#: largest configured wrapper timeout is 5s; 60s leaves room for a future one
-#: while still rejecting a deadline inherited from an unrelated process.
-_MAX_PLAUSIBLE_WRAPPER_SECONDS = 60.0
+#: Any wrapper budget beyond this is a stale or foreign value, not ours. Owned
+#: by config.py so every reader of the deadline applies the same sanity bound.
+from .config import MAX_PLAUSIBLE_WRAPPER_SECONDS as _MAX_PLAUSIBLE_WRAPPER_SECONDS  # noqa: E402
 
 
 def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:

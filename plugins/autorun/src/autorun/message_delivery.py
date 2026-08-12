@@ -6,20 +6,61 @@ from dataclasses import dataclass
 import hashlib
 import logging
 import math
+import os
 import time
 
 from .config import (
     CONFIG,
+    HOOK_DEADLINE_ENV_VAR,
+    MAX_PLAUSIBLE_WRAPPER_SECONDS,
     MESSAGE_DEDUP_DEFAULT_ENTRY_CAP,
     MESSAGE_DEDUP_DEFAULT_WINDOW_SECONDS,
 )
-from .session_manager import SessionPersistenceError
+from .session_manager import SessionPersistenceError, SessionTimeoutError
 
 logger = logging.getLogger(__name__)
 
 _STATE_FIELD = "message_delivery_claims"
 _CLAIM_FIELD_COUNT = 2
 _DIGEST_SIZE_BYTES = 16
+
+
+def _claim_is_contended(error: Exception) -> bool:
+    """Did the claim lose a race for the state lock, or fail to persist?
+
+    ``state_update`` reports both as ``SessionPersistenceError`` so every caller
+    keeps failing open, so the type alone cannot separate them; the original
+    survives on ``__cause__``.
+    """
+    return isinstance(error, SessionTimeoutError) or isinstance(
+        getattr(error, "__cause__", None), SessionTimeoutError
+    )
+
+
+def _lock_attempt_seconds() -> float:
+    return float(CONFIG.get("hook_state_lock_timeout_seconds", 0.5))
+
+
+def _retry_budget_allows_another_attempt() -> bool:
+    """Is there room in the hook's own deadline for one more lock attempt?
+
+    Retrying is only safe inside a hook that told us when its wrapper gives up.
+    Without that instant this returns False and the caller keeps the historic
+    fail-open behaviour, because guessing a budget is how a hook overruns its
+    wrapper and gets killed before it can answer at all.
+    """
+    raw = os.environ.get(HOOK_DEADLINE_ENV_VAR)
+    if not raw:
+        return False
+    try:
+        deadline = float(raw)
+    except (TypeError, ValueError):
+        return False
+    remaining = deadline - time.monotonic()
+    if remaining > MAX_PLAUSIBLE_WRAPPER_SECONDS:
+        return False  # inherited from an unrelated process
+    # One full attempt plus the margin that keeps the response writable.
+    return remaining > _lock_attempt_seconds() * 2
 
 
 @dataclass(frozen=True)
@@ -157,14 +198,27 @@ def claim_message_delivery(
         outcome["deliver"] = True
         return active
 
-    try:
-        ctx.state_update(_STATE_FIELD, claim, {})
-    except SessionPersistenceError as exc:
-        logger.warning(
-            "Temporal message claim was not persisted; delivering fail-open: %s",
-            exc,
-        )
-        return True
+    while True:
+        try:
+            ctx.state_update(_STATE_FIELD, claim, {})
+            break
+        except SessionPersistenceError as exc:
+            # Contention is not a failed claim, it is a claim that never ran:
+            # nothing was read and nothing written, so no other process learned
+            # anything from this one either. Failing open here means every
+            # process that merely queued for the lock delivers, which turns one
+            # warning into as many copies as there are concurrent hooks. Retry
+            # while this hook's own deadline leaves room for another attempt.
+            if _claim_is_contended(exc) and _retry_budget_allows_another_attempt():
+                continue
+            # Out of budget, or a genuine persistence failure. Deliver: a
+            # duplicated informational message is preferable to a lost one,
+            # which is the long-standing contract of this helper.
+            logger.warning(
+                "Temporal message claim was not persisted; delivering fail-open: %s",
+                exc,
+            )
+            return True
     return outcome["deliver"]
 
 

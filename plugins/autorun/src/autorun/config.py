@@ -185,6 +185,18 @@ _PUBLISH_ALLOW_HINT = (
 
 MESSAGE_DEDUP_DEFAULT_WINDOW_SECONDS = 3.0
 MESSAGE_DEDUP_DEFAULT_ENTRY_CAP = 128
+
+#: Absolute ``time.monotonic()`` instant the hook wrapper will stop waiting.
+#: The wrapper starts counting before spawning the CLI, so a process cannot
+#: derive this locally without overrunning by its own startup cost.
+#: ``hooks/hook_entry.py`` declares the same name separately and deliberately:
+#: it is stdlib-only so that a missing dependency surfaces as an ImportError it
+#: can bootstrap from, which means it cannot import this module.
+HOOK_DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
+
+#: Beyond this, a deadline is a stale value inherited from an unrelated process
+#: rather than ours. The largest configured wrapper timeout is 5s.
+MAX_PLAUSIBLE_WRAPPER_SECONDS = 60.0
 SCOPED_ALLOW_DEFAULT_GRACE_SECONDS = 1.0
 CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS = 5.0
 TASK_PAUSE_DEFAULT_TTL_SECONDS = 5 * 60
