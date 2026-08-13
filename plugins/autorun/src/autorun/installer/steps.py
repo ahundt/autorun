@@ -50,7 +50,8 @@ __all__ = [
     "STEPS",
     "skills_step", "bridge_step", "commands_step", "extension_step",
     "extension_materialization_intents", "extension_materialization_targets",
-    "opencode_shim_step", "stage_opencode_shim", "stage_toml_commands",
+    "opencode_shim_step", "pi_extension_step", "stage_opencode_shim",
+    "stage_pi_extension", "stage_toml_commands",
     "Region", "Hooks", "Marketplace", "regions_for", "hooks_for",
     "marketplaces_for", "apply_regions", "apply_hooks", "apply_marketplaces",
     "prepared",
@@ -234,6 +235,22 @@ def _extension_materializations(harnesses: Iterable[object], ctx: Context):
 #: opencode 1.18.13) as plain ES modules with no build step.
 OPENCODE_TEMPLATE_SUBDIR = Path("opencode_template") / "plugin"
 OPENCODE_PLUGIN_SUBDIR = "plugin"
+PI_TEMPLATE_SUBDIR = Path("pi_template") / "extensions" / "autorun"
+BRIDGE_TEMPLATE_SUBDIR = Path("bridge_template")
+
+
+def pi_extension_step(harness: object, ctx: Context) -> Iterable[Intent]:
+    """Publish Pi's TypeScript adapter as one dedicated owned extension tree."""
+    staged = ctx.settings.get("_staged_pi")
+    base = discovery.config_dir(getattr(harness, "platform", harness), home=ctx.home)
+    if not isinstance(staged, Mapping) or base is None:
+        return
+    for plugin, source in staged.items():
+        yield Intent(
+            target=base / "extensions" / plugin,
+            source=source,
+            plugin=plugin,
+        )
 
 
 def opencode_shim_step(harness: object, ctx: Context) -> Iterable[Intent]:
@@ -241,10 +258,9 @@ def opencode_shim_step(harness: object, ctx: Context) -> Iterable[Intent]:
 
     ``Kind.FILES``, because users keep their own plugins in that directory.
 
-    This is the only install route that writes JavaScript, and deliberately so:
     OpenCode runs on Bun and loads the plugin in-process, so its users already
-    have that runtime. Claude, Codex, Qwen, Gemini and ForgeCode users need
-    Python alone and must not be handed a second runtime requirement.
+    have that runtime. Pi has its own in-process TypeScript route. External-hook
+    harnesses remain Python-only and receive neither adapter.
 
     The staged copy already has the daemon socket path substituted absolutely,
     so nothing resolves through the host PATH while a session is running.
@@ -274,6 +290,7 @@ STEPS: Mapping[str, tuple[Step, ...]] = {
     "antigravity": (skills_step, bridge_step, extension_step),
     "forgecode": (skills_step, commands_step),
     "opencode": (skills_step, commands_step, opencode_shim_step),
+    "pi": (skills_step, pi_extension_step),
 }
 
 
@@ -609,13 +626,75 @@ def prepared(
             port_file=str(ctx.settings.get("_daemon_port_file", "") or ""),
             command=ctx.settings.get("_hook_command", ()),
         )
+        pi_extensions = stage_pi_extension(
+            Path(tmp) / "_pi", plugins,
+            socket=str(ctx.settings.get("_daemon_socket", "") or ""),
+            port_file=str(ctx.settings.get("_daemon_port_file", "") or ""),
+            command=ctx.settings.get("_pi_hook_command", ()),
+        )
         yield _with(
             ctx,
             _staged_extensions=staged,
             _staged_codex=staged_codex,
             _staged_opencode=shims,
+            _staged_pi=pi_extensions,
             _staging_failures=tuple(failures),
         )
+
+
+def _stage_inprocess_adapter(
+    source: Path,
+    bridge: Path,
+    directory: Path,
+    *,
+    entry_name: str,
+    socket: str,
+    port_file: str,
+    command: object,
+) -> bool:
+    """Stage one adapter through the shared placeholder and transport path."""
+    import json
+    import shutil
+
+    if not source.is_file() or not bridge.is_file():
+        return False
+    argv = list(command) if isinstance(command, (list, tuple)) else []
+    directory.mkdir(parents=True, exist_ok=True)
+    text = (
+        source.read_text(encoding="utf-8")
+        .replace("__AUTORUN_SOCKET__", json.dumps(socket))
+        .replace("__AUTORUN_PORT_FILE__", json.dumps(port_file))
+        .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(argv))
+    )
+    (directory / entry_name).write_text(text, encoding="utf-8")
+    shutil.copy2(bridge, directory / "daemon-client.mjs")
+    return True
+
+
+def stage_pi_extension(
+    staging: Path,
+    plugins: Mapping[str, Path],
+    *,
+    socket: str,
+    port_file: str,
+    command: object,
+) -> Mapping[str, Path]:
+    """Stage Pi's adapter and the shared daemon transport it imports."""
+    staged: dict[str, Path] = {}
+    for plugin, plugin_dir in plugins.items():
+        runtime_root = discovery.plugin_runtime_root(plugin_dir)
+        directory = staging / plugin
+        if _stage_inprocess_adapter(
+            runtime_root / PI_TEMPLATE_SUBDIR / "index.ts",
+            runtime_root / BRIDGE_TEMPLATE_SUBDIR / "daemon-client.mjs",
+            directory,
+            entry_name="index.ts",
+            socket=socket,
+            port_file=port_file,
+            command=command,
+        ):
+            staged[plugin] = directory
+    return staged
 
 
 def stage_opencode_shim(
@@ -634,34 +713,20 @@ def stage_opencode_shim(
     happens to have, which is how one machine's session reached a different
     autorun than the one installed.
     """
-    import json
-
     shims: dict[str, Path] = {}
-    argv = list(command) if isinstance(command, (list, tuple)) else []
     for plugin, plugin_dir in plugins.items():
-        source = (
-            discovery.plugin_runtime_root(plugin_dir)
-            / OPENCODE_TEMPLATE_SUBDIR
-            / "autorun.js"
-        )
-        if not source.is_file():
-            continue
+        runtime_root = discovery.plugin_runtime_root(plugin_dir)
         directory = staging / plugin
-        directory.mkdir(parents=True, exist_ok=True)
-        text = (
-            source.read_text(encoding="utf-8")
-            # Every one of these is JSON-encoded, and the placeholders in the
-            # template carry no surrounding quotes. A path is embedded in a JS
-            # literal, and on Windows it is C:\Users\..., where \U and \t are
-            # escape sequences: substituting raw produced a shim whose socket
-            # and port paths were silently mangled, so it reported the daemon
-            # unreachable on the platform the port file exists for.
-            .replace("__AUTORUN_SOCKET__", json.dumps(socket))
-            .replace("__AUTORUN_PORT_FILE__", json.dumps(port_file))
-            .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(argv))
-        )
-        (directory / "autorun.js").write_text(text, encoding="utf-8")
-        shims[plugin] = directory
+        if _stage_inprocess_adapter(
+            runtime_root / OPENCODE_TEMPLATE_SUBDIR / "autorun.js",
+            runtime_root / BRIDGE_TEMPLATE_SUBDIR / "daemon-client.mjs",
+            directory,
+            entry_name="autorun.js",
+            socket=socket,
+            port_file=port_file,
+            command=command,
+        ):
+            shims[plugin] = directory
     return shims
 
 

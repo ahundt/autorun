@@ -2,7 +2,7 @@
 
 This document is the maintainer specification for autorun daemon state,
 concurrency, and test isolation. It applies to every harness because Claude,
-Codex, Gemini, Qwen, Antigravity, and compatible custom flavors can share one
+Codex, Gemini, Qwen, Antigravity, Pi, and compatible custom flavors can share one
 daemon while running multiple sessions and working directories concurrently.
 
 ## Required Invariants
@@ -205,6 +205,8 @@ runtime variables:
 SB=/tmp/arsb                      # short: see the socket headroom section
 mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"
 env HOME="$SB/home" \
+    USERPROFILE="$SB/home" \
+    PI_CODING_AGENT_DIR="$SB/home/.pi/agent" \
     AUTORUN_HOME="$SB/ar-home" \
     AUTORUN_TEST_STATE_DIR="$SB/state" \
     UV_CACHE_DIR="$(uv cache dir)" \
@@ -228,7 +230,7 @@ a digest, so a difference can be *diffed* rather than merely detected:
 ```bash
 snapshot() {
   for p in ~/.agents/skills ~/.claude/plugins ~/.qwen/extensions \
-           ~/.codex ~/forge ~/.config/opencode; do
+           ~/.codex ~/.pi/agent ~/forge ~/.config/opencode; do
     [ -e "$p" ] && find "$p" -print0 | sort -z | xargs -0 stat -f "%N %m %z"
   done > "$1"
 }

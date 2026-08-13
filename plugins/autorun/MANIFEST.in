@@ -19,11 +19,13 @@ recursive-include scripts *.py
 
 # Workspace configuration
 include pyproject.toml
+recursive-include src/autorun/bridge_template *
 recursive-include src/autorun/claude_template *
 recursive-include src/autorun/codex_template *
 recursive-include src/autorun/forgecode_template *
 recursive-include src/autorun/gemini_template *
 recursive-include src/autorun/opencode_template *
+recursive-include src/autorun/pi_template *
 
 # Exclude build artifacts
 global-exclude __pycache__

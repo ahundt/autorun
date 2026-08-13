@@ -241,7 +241,10 @@ class TestGetPluginRoot:
 
         source = tmp_path / "plugin"
         tracked = set()
-        for name in ("claude", "codex", "forgecode", "gemini", "opencode"):
+        template_names = (
+            "bridge", "claude", "codex", "forgecode", "gemini", "opencode", "pi"
+        )
+        for name in template_names:
             relative = Path(f"src/autorun/{name}_template/marker.txt")
             path = source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -254,7 +257,7 @@ class TestGetPluginRoot:
         destination = tmp_path / "wheel" / "autorun"
         build_support.copy_plugin_assets(source, destination)
 
-        for name in ("claude", "codex", "forgecode", "gemini", "opencode"):
+        for name in template_names:
             assert (destination / f"{name}_template" / "marker.txt").read_text() == name
             assert not (destination / "src" / "autorun" / f"{name}_template").exists()
 

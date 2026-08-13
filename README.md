@@ -14,7 +14,7 @@
 4. **Room to Discuss**: `/ar:tasks pause <reason>` pauses reminders and Stop enforcement without changing tasks
 5. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
 6. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-7. **Works across maintained AI coding harnesses**: Native hooks protect Claude Code, Antigravity, Qwen Code, and Codex; OpenCode has an in-process tool veto; ForgeCode receives advisory guidance
+7. **Works across maintained AI coding harnesses**: Native hooks protect Claude Code, Antigravity, Qwen Code, and Codex; Pi and OpenCode use in-process tool vetoes; ForgeCode receives advisory guidance
 8. **Portable Command Suite**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
 9. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
 
@@ -62,7 +62,7 @@ hooks in the background, run a task directly, or add planning for larger work.
 /ar:sos                  # Emergency stop
 ```
 
-> Works with **Claude Code**, **Google Antigravity**, **Qwen Code**, **Codex CLI**, **ForgeCode**, and **OpenCode**. Legacy **Gemini CLI** support remains explicit opt-in — see [Multi-CLI Support](#multi-cli-support).
+> Works with **Claude Code**, **Google Antigravity**, **Qwen Code**, **Codex CLI**, **Pi**, **ForgeCode**, and **OpenCode**. Legacy **Gemini CLI** support remains explicit opt-in — see [Multi-CLI Support](#multi-cli-support).
 
 > Examples use Claude/Gemini slash commands. In Codex, use the same command without the leading slash, such as `ar:st` or `ar:ok git push`. Every harness that receives your prompt also accepts the other spellings: [Command Spellings by Harness](#command-spellings-by-harness).
 
@@ -209,7 +209,7 @@ claude plugin marketplace list
 
 ### Multi-CLI Support
 
-**autorun defaults to Claude Code, Google Antigravity, Qwen Code, Codex CLI, ForgeCode, and OpenCode**, providing shared safety features, command handlers, and autonomous execution capabilities across maintained harnesses. Legacy Gemini CLI support remains available only through explicit `--gemini` selection.
+**autorun defaults to Claude Code, Google Antigravity, Qwen Code, Codex CLI, Pi, ForgeCode, and OpenCode**, providing shared safety features, command handlers, and autonomous execution capabilities across maintained harnesses. Legacy Gemini CLI support remains available only through explicit `--gemini` selection.
 
 #### Codex CLI Support
 
@@ -246,13 +246,13 @@ autorun --install --skill-placement native --skill-placement codex=both
 
 | Mode | Effect |
 |---|---|
-| `auto` | One route per harness: the shared `~/.agents/skills` root for harnesses whose docs describe reading it (Codex, legacy Gemini, Qwen Code, ForgeCode, and OpenCode), otherwise that harness's native plugin/extension skills directory. |
+| `auto` | One route per harness: the shared `~/.agents/skills` root for harnesses whose docs describe reading it (Codex, legacy Gemini, Qwen Code, Pi, ForgeCode, and OpenCode), otherwise that harness's native plugin/extension skills directory. |
 | `native` | Native route only. Nothing is written to the shared root. |
 | `both` | Shared **and** native where the harness reads both. The only mode that can list one skill twice, after which the two copies can drift apart. |
 
 A bare mode applies to every selected harness; `HARNESS=MODE` overrides one, and
 the flag repeats. Valid harness names are `claude`, `codex`, `gemini`, `qwen`,
-`antigravity`, `forgecode`, and `opencode`. An unknown harness or mode is rejected at parse
+`antigravity`, `forgecode`, `opencode`, and `pi`. An unknown harness or mode is rejected at parse
 time with the list of valid names.
 
 `AUTORUN_SKILL_PLACEMENT` accepts the same grammar, space- or comma-separated
@@ -267,7 +267,7 @@ and the exact directories each harness would receive, before anything is written
 
 #### Sharing skills with Claude Code
 
-Codex, OpenCode, ForgeCode, Qwen Code, and legacy Gemini CLI all scan `~/.agents/skills/`, the cross-tool shared location. Claude Code does not — it reads `~/.claude/skills/` only. A skill authored in the shared directory is therefore invisible to Claude Code until it is bridged:
+Codex, OpenCode, Pi, ForgeCode, Qwen Code, and legacy Gemini CLI all scan `~/.agents/skills/`, the cross-tool shared location. Claude Code does not — it reads `~/.claude/skills/` only. A skill authored in the shared directory is therefore invisible to Claude Code until it is bridged:
 
 ```bash
 autorun --install --claude --claude-agents-skills link  # symlink shared skills into ~/.claude/skills
@@ -305,10 +305,11 @@ assume a skill is an `/ar:*` command. The read-only
 Claude, Gemini, Qwen, and Antigravity discover the skill through their native
 per-plugin installation. Codex receives the union of selected plugin skills in
 `~/.agents/skills/`, so `$pdf-extractor` works independently of the autorun
-plugin cache. ForgeCode and OpenCode consume the shared installation through
-their model-facing skill tools. They do not expose an autorun-writable native
-skill directory, so `native` deliberately installs no skills for those two
-harnesses while `auto` and `both` use the shared route.
+plugin cache. Pi consumes the shared installation through `/skill:<name>` and
+can also use `~/.pi/agent/skills/` when `--skill-placement native` is selected.
+ForgeCode and OpenCode use their model-facing skill tools; neither exposes an
+autorun-writable native skill directory, so `native` installs no skills for
+those two harnesses while `auto` and `both` use the shared route.
 
 For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-api.md).
 
@@ -367,6 +368,25 @@ gemini
 /ar:st
 # Expected: "AutoFile policy: allow-all"
 ```
+
+#### Pi support
+
+Pi loads autorun from `~/.pi/agent/extensions/ar/`. The TypeScript adapter sends
+`tool_call`, prompt, result, session, and `agent_settled` events to the same
+Python daemon used by the other harnesses. A denied tool returns Pi's native
+`{ block: true, reason }` result. When autorun rejects the settle boundary, the
+adapter sends the continuation reason as the next user message.
+
+```bash
+autorun --install --pi --force
+pi
+/ar st
+```
+
+Pi also accepts `ar:st`, `ar-st`, and `/ar:st`. Skills use Pi's native
+`/skill:<name>` command and the shared `~/.agents/skills/` installation.
+Development tests must redirect `HOME`, `PI_CODING_AGENT_DIR`, `AUTORUN_HOME`,
+and `AUTORUN_TEST_STATE_DIR` before importing or installing autorun.
 
 #### Qwen Code Support
 
@@ -643,12 +663,12 @@ python -m autorun --install --force
 The grammar is `ar:<command> [arguments]` everywhere. Harnesses differ only in
 which spellings they hand to autorun.
 
-| You type | Claude Code, Antigravity, Qwen Code | Codex CLI | ForgeCode, OpenCode |
-|---|---|---|---|
-| `/ar:st` | runs, and appears in the slash menu | never arrives | never arrives |
-| `ar:st`, `ar st`, `ar-st` | runs | runs | never arrives |
-| `/ar-st` | never arrives — the harness answers with its own unknown-command message | never arrives | runs, for the installed files named below |
-| `ar:task-status`, `ar:task-ignore`, under any prefix above | runs as `ar:task status` and `ar:task ignore` | same | never arrives |
+| You type | Claude Code, Antigravity, Qwen Code | Pi | Codex CLI | ForgeCode, OpenCode |
+|---|---|---|---|---|
+| `/ar:st` | runs, and appears in the slash menu | runs | never arrives | never arrives |
+| `ar:st`, `ar st`, `ar-st` | runs | runs | runs | never arrives |
+| `/ar-st` | never arrives — the harness answers with its own unknown-command message | runs | never arrives | runs, for the installed files named below |
+| `ar:task-status`, `ar:task-ignore`, under any prefix above | runs as `ar:task status` and `ar:task ignore` | same | same | never arrives |
 
 "Never arrives" means the harness itself keeps the text: Codex holds its own
 slash menu closed, Claude Code and Qwen Code consume an unknown slash command
@@ -662,7 +682,7 @@ commands. On both harnesses the installed files `ar-go`, `ar-st`, `ar-allow`,
 `ar-find`, `ar-commit`, and `ar-ph` are the command surface.
 
 Autorun prints the local spelling everywhere: `/ar:` on Claude Code and the
-Gemini family, `ar:` on Codex, `/ar-` on ForgeCode and OpenCode. `/ar:help`
+Gemini family, `/ar ` on Pi, `ar:` on Codex, and `/ar-` on ForgeCode and OpenCode. `/ar:help`
 opens with the rule for the harness you are on.
 
 | Short | Long | Legacy | Description |
@@ -1083,6 +1103,7 @@ autorun --install autorun            # Register only autorun plugin
 autorun --install --claude           # Register for Claude Code only
 autorun --install --gemini           # Explicitly register the legacy Gemini CLI
 autorun --install --qwen             # Register for Qwen Code only
+autorun --install --pi               # Register for Pi only
 autorun --install --codex            # Register for Codex CLI only
 autorun --install --codex --codex-hook-source plugin
                                       # Package Codex hooks in ar@personal instead of ~/.codex/hooks.json
@@ -1198,7 +1219,7 @@ autorun --cli claude                 # Hook identity: claude|gemini|antigravity|
 ```
 
 Accepted values: `--exit2-mode: auto|always|never`;
-`--cli: claude|gemini|antigravity|qwen|codex|opencode`;
+`--cli: claude|gemini|antigravity|qwen|codex|pi|opencode`;
 `--update-method: auto|claude|gemini|plugin|uv|pip`.
 
 > `--exit2-mode` works around a Claude Code bug ([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669)). Controls whether hook deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI).

@@ -46,14 +46,15 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 MARKETPLACE_ROOT = Path(__file__).resolve().parents[3]
 SHIM_SOURCE = PLUGIN_ROOT / "src" / "autorun" / "opencode_template" / "plugin" / "autorun.js"
+DAEMON_CLIENT_SOURCE = PLUGIN_ROOT / "src" / "autorun" / "bridge_template" / "daemon-client.mjs"
 
 
 class TestShimSourceIsSelfContained:
-    """The shim ships as one plain ES module: OpenCode loads it with no build
-    step, so anything it needs must be substituted in at install time."""
+    """The adapter and shared transport are plain modules with no build step."""
 
     def test_shim_ships_with_the_plugin(self):
         assert SHIM_SOURCE.is_file(), f"{SHIM_SOURCE} missing"
+        assert DAEMON_CLIENT_SOURCE.is_file(), f"{DAEMON_CLIENT_SOURCE} missing"
 
     def test_shim_resolves_nothing_through_the_host_path(self):
         text = SHIM_SOURCE.read_text(encoding="utf-8")
@@ -103,6 +104,7 @@ class TestInstallerPlacesTheShim:
     def test_shim_lands_in_the_singular_plugin_directory(self, tmp_path, monkeypatch):
         base = self._install(tmp_path, monkeypatch)
         assert (base / "plugin" / "autorun.js").is_file()
+        assert (base / "plugin" / "daemon-client.mjs").is_file()
 
     def test_installed_shim_carries_an_absolute_socket_path(self, tmp_path, monkeypatch):
         base = self._install(tmp_path, monkeypatch)
@@ -121,9 +123,9 @@ class TestInstallerPlacesTheShim:
         ), "daemon paths must be absolute, not tilde-relative"
         # The substituted values must be complete JS literals. A raw Windows
         # path would leave backslash escapes that change or break the string.
-        for name in ("const SOCKET = ", "const PORT_FILE = "):
-            line = next(row for row in text.splitlines() if row.startswith(name))
-            assert json.loads(line[len(name):].strip()), line
+        for name in ("socketPath: ", "portFile: "):
+            line = next(row.strip() for row in text.splitlines() if row.strip().startswith(name))
+            assert json.loads(line[len(name):].rstrip(",")), line
 
     def test_uninstall_removes_the_shim_it_owns(self, tmp_path, monkeypatch):
         from autorun.installer import entrypoint
@@ -165,7 +167,7 @@ class TestDaemonSocketFrames:
     )
 
     def test_port_file_requires_one_complete_valid_port(self):
-        source = SHIM_SOURCE.read_text(encoding="utf-8")
+        source = DAEMON_CLIENT_SOURCE.read_text(encoding="utf-8")
         assert "Number.parseInt" not in source
         assert "port <= 65535" in source
 
@@ -460,6 +462,7 @@ def _run_shim(
 ):
     """Load the installed shim under real Bun and exercise one hook."""
     shim = tmp_path / "autorun.js"
+    shutil.copy2(DAEMON_CLIENT_SOURCE, tmp_path / "daemon-client.mjs")
     # Same substitutions the installer performs; the default empty hook-entry
     # command makes the unreachable-daemon path exercise the last-resort block.
     shim.write_text(

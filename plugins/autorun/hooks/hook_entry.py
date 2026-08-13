@@ -60,6 +60,7 @@ HOOK_TIMEOUT_BY_CLI = {
     "codex": 5.0,
     "forgecode": 5.0,
     "opencode": 4.5,
+    "pi": 4.5,
 }
 HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
 # Tests may override this legacy seam. Production derives both files from the
@@ -128,7 +129,7 @@ def _append_debug_log(message: str) -> None:
 # =============================================================================
 
 
-_VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode")
+_VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode", "pi")
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _VALID_EXPLICIT_EVENTS = {
     "PreToolUse",
@@ -225,7 +226,7 @@ def detect_cli_type(payload: dict | None = None) -> str:
         ~/.codex/hooks.json  : hook_entry.py --cli codex
 
     Returns:
-        str: one of "claude", "gemini", "qwen", "codex", "forgecode"
+        str: one of "claude", "gemini", "qwen", "codex", "forgecode", "opencode", "pi"
     """
     try:
         # Priority 1: Explicit --cli argument (most reliable - set by hooks.json)
@@ -253,6 +254,8 @@ def detect_cli_type(payload: dict | None = None) -> str:
             transcript_path = str(payload.get("transcript_path", ""))
             if ".opencode" in transcript_path or ".config/opencode" in transcript_path:
                 return "opencode"
+            if ".pi/agent" in transcript_path:
+                return "pi"
             # Antigravity roots live under ~/.gemini, so its hints must be
             # checked before the plain .gemini hint or they can never match.
             if (
@@ -295,6 +298,8 @@ def detect_cli_type(payload: dict | None = None) -> str:
             return "forgecode"
         if os.environ.get("OPENCODE_CONFIG") or os.environ.get("OPENCODE_CONFIG_DIR"):
             return "opencode"
+        if os.environ.get("PI_CODING_AGENT") or os.environ.get("PI_SESSION_ID"):
+            return "pi"
         if os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
             return "gemini"
         if os.environ.get("QWEN_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):

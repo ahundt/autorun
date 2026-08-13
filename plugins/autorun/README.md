@@ -37,12 +37,13 @@ assets; session state, task history, and logs are retained intentionally.
 | Qwen Code | Native hooks | Yes | Native extension |
 | Antigravity | Native hooks | Installed native event subset | Native extension |
 | OpenCode | In-process tool veto | No | Command files and skills |
+| Pi | In-process tool veto | `agent_settled` continuation | Native extension and shared skills |
 | ForgeCode | Advisory guidance only | No | Command files and skills |
 | Legacy Gemini CLI | Native hooks | Yes | Native extension |
 
 The CLI accepts the shared command grammar internally and renders the spelling
 native to each harness: `ar:` for Codex, `/ar-` for ForgeCode and OpenCode,
-and `/ar:` for Claude and the Gemini-family harnesses.
+`/ar ` for Pi, and `/ar:` for Claude and the Gemini-family harnesses.
 
 ## Development
 
@@ -53,8 +54,9 @@ uv sync --project plugins/autorun
 uv run --project plugins/autorun pytest plugins/autorun/tests
 ```
 
-Tests must redirect `AUTORUN_HOME`, `AUTORUN_TEST_STATE_DIR`, and
-`AUTORUN_TEST_RUNTIME_DIR` before importing `autorun`.
+Tests must redirect `HOME`, `AUTORUN_HOME`, `AUTORUN_TEST_STATE_DIR`, and
+`AUTORUN_TEST_RUNTIME_DIR` before importing `autorun`. Pi integration tests
+must also set `PI_CODING_AGENT_DIR` beneath the redirected `HOME`.
 
 The project is licensed under the Apache License 2.0. See `LICENSE` in this
 distribution. Full project documentation is available at

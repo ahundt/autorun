@@ -956,6 +956,9 @@ def test_the_opencode_shim_substitutes_both_values_absolutely(tmp_path):
         "const socket = '__AUTORUN_SOCKET__';\nconst cmd = __AUTORUN_HOOK_ENTRY_COMMAND__;\n",
         encoding="utf-8",
     )
+    bridge = plugin / steps.BRIDGE_TEMPLATE_SUBDIR
+    bridge.mkdir(parents=True)
+    (bridge / "daemon-client.mjs").write_text("export const bridge = true;\n")
 
     shims = steps.stage_opencode_shim(
         tmp_path / "staged", {"ar": plugin},

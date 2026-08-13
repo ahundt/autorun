@@ -388,6 +388,11 @@ For more information: https://github.com/ahundt/autorun
         help="Install for Qwen Code only (Gemini-compatible extension surface)",
     )
     install_group.add_argument(
+        "--pi",
+        action="store_true",
+        help="Install for Pi only (native TypeScript extension surface)",
+    )
+    install_group.add_argument(
         "--custom-harness",
         action="append",
         default=[],
@@ -1008,6 +1013,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "codex_only": args.codex,
             "antigravity_only": args.antigravity,
             "qwen_only": args.qwen,
+            "pi_only": args.pi,
             "conductor": args.conductor,
             "codex_hook_source": args.codex_hook_source,
             "codex_plugin_marketplace": args.codex_plugin_marketplace,

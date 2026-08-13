@@ -41,7 +41,9 @@ from autorun.platforms import (
 
 
 def test_registry_contains_supported_platforms():
-    for name in ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode"):
+    for name in (
+        "claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "pi"
+    ):
         assert name in PLATFORMS, f"PLATFORMS missing {name!r}"
 
 
@@ -55,14 +57,14 @@ def test_detection_platforms_excludes_claude():
     """Claude is the fallback default — not part of positive detection iteration."""
     names = [p.name for p in detection_platforms()]
     assert "claude" not in names
-    assert {"gemini", "antigravity", "qwen", "codex", "forgecode"}.issubset(set(names))
+    assert {"gemini", "antigravity", "qwen", "codex", "forgecode", "pi"}.issubset(set(names))
 
 
 def test_hook_platforms_excludes_forgecode():
     """ForgeCode has no external hooks — should not appear in hook-capable list."""
     names = [p.name for p in hook_platforms()]
     assert "forgecode" not in names
-    assert {"claude", "gemini", "antigravity", "qwen", "codex"}.issubset(set(names))
+    assert {"claude", "gemini", "antigravity", "qwen", "codex", "pi"}.issubset(set(names))
 
 
 @pytest.mark.parametrize(
@@ -72,6 +74,7 @@ def test_hook_platforms_excludes_forgecode():
         ("codex", {"CODEX_THREAD_ID": "codex-thread"}, "codex-thread"),
         ("codex", {"CODEX_SESSION_ID": "codex-compat"}, "codex-compat"),
         ("qwen", {"QWEN_SESSION_ID": "qwen-session"}, "qwen-session"),
+        ("pi", {"PI_SESSION_ID": "pi-session"}, "pi-session"),
         (
             "antigravity",
             {"ANTIGRAVITY_SESSION_ID": "agy-session"},
@@ -187,6 +190,7 @@ def test_missing_session_error_and_help_are_harness_neutral():
         "QWEN_SESSION_ID",
         "ANTIGRAVITY_SESSION_ID",
         "GEMINI_SESSION_ID",
+        "PI_SESSION_ID",
     ):
         assert key in help_text
     assert "--session" in error_text
@@ -513,7 +517,8 @@ def test_concurrent_get_platform_is_safe():
 
     def worker(i: int):
         try:
-            p = get_platform(("claude", "gemini", "antigravity", "qwen", "codex", "forgecode")[i % 6])
+            names = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "pi")
+            p = get_platform(names[i % len(names)])
             results[i] = p.name
         except Exception as exc:  # pragma: no cover — defensive
             errors.append(exc)
@@ -667,7 +672,7 @@ def test_shared_agents_skills_capability_is_declared_per_platform():
     # ("{workspace}/.agents/skills/{skill_name}/SKILL.md" in the shipped agy
     # binary), never ~/.agents/skills. Claude Code is absent because
     # anthropics/claude-code#31005 is still open; it reads ~/.claude/skills.
-    assert claiming == {"codex", "forgecode", "gemini", "opencode", "qwen"}
+    assert claiming == {"codex", "forgecode", "gemini", "opencode", "pi", "qwen"}
 
 
 def test_declaring_both_a_shared_read_and_a_native_route_is_allowed():
@@ -698,7 +703,7 @@ def test_declaring_both_a_shared_read_and_a_native_route_is_allowed():
 
     # Recorded so a change here is deliberate. Each of these reads the shared
     # root and can also place a native copy when asked or when blocked.
-    assert both == {"codex", "gemini", "qwen"}, both
+    assert both == {"codex", "gemini", "pi", "qwen"}, both
 
 
 def test_skill_placement_routes_cover_every_platform_and_mode():
@@ -775,6 +780,7 @@ _EXPECTED_OWN_SKILL_ROOTS = {
     "codex": {".codex/skills"},
     "gemini": {".gemini/skills"},
     "qwen": {".qwen/skills"},
+    "pi": {".pi/agent/skills"},
     "opencode": {".config/opencode/skills", ".claude/skills"},
     "forgecode": {"forge/skills"},
     "antigravity": {".gemini/config/skills"},

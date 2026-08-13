@@ -145,6 +145,7 @@ def _harnesses(
     codex_only: bool = False,
     antigravity: bool = False,
     qwen: bool = False,
+    pi: bool = False,
     uninstalling: bool = False,
 ) -> tuple[tuple[object, ...], Mapping[str, tuple], tuple[str, ...], tuple[str, ...]]:
     available = tuple(
@@ -165,6 +166,7 @@ def _harnesses(
             ("codex", codex_only),
             ("antigravity", antigravity),
             ("qwen", qwen),
+            ("pi", pi),
         )
         if chosen
     )
@@ -278,6 +280,12 @@ def _runtime_settings(
             python=python,
             no_sync=no_sync,
         ).argv(),
+        _pi_hook_command=runtime.hook_command(
+            plugin,
+            cli="pi",
+            python=python,
+            no_sync=no_sync,
+        ).argv(),
         _codex_hook_command=command.shell(),
         _codex_plugin_hook_command=plugin_command,
         _extension_hook_commands={
@@ -381,6 +389,7 @@ def install_plugins(
     codex_only: bool = False,
     antigravity_only: bool = False,
     qwen_only: bool = False,
+    pi_only: bool = False,
     conductor: bool | None = None,
     codex_hook_source: str | None = None,
     codex_plugin_marketplace: str | None = None,
@@ -414,6 +423,7 @@ def install_plugins(
             codex_only=codex_only,
             antigravity=antigravity_only,
             qwen=qwen_only,
+            pi=pi_only,
         )
     except ValueError as error:
         print(f"Error: {error}")

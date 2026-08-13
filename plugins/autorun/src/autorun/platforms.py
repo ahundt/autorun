@@ -808,6 +808,11 @@ NO_HOOKS = HookProtocol("none", stop_response_uses_only_decision_and_reason=True
 # duplication, which a socket does not have.
 OPENCODE_HOOKS = HookProtocol("opencode")
 
+# Pi's TypeScript extension consumes the shared dual-shape response in-process.
+# Tool denial becomes `{ block: true, reason }`; Stop rejection is translated
+# into a follow-up user message after `agent_settled`.
+PI_HOOKS = HookProtocol("pi")
+
 
 @dataclass(frozen=True, slots=True)
 class Platform:
@@ -1127,6 +1132,23 @@ _OPENCODE_TOOLS = {
     "task_progress": "todowrite",
     "task_title": "content",
     "task_id_param": "id",
+}
+
+# Pi's built-ins are lowercase and include first-class grep/find/ls tools.
+_PI_TOOLS = {
+    "grep": "grep",
+    "glob": "find",
+    "read": "read",
+    "write": "write",
+    "edit": "edit",
+    "bash": "bash",
+    "ls": "ls",
+    "task_create": "autorun task markers",
+    "task_update": "autorun task markers",
+    "task_list": "autorun task status",
+    "task_progress": "autorun task markers",
+    "task_title": "task title",
+    "task_id_param": "task id",
 }
 
 # Codex hook events use Claude-like shell/edit matcher names, but the current
@@ -1513,6 +1535,45 @@ CODEX = register(
             "PostToolUse": frozenset({"suppressOutput"}),
         },
         # event_map: identity (Codex shares Claude's event names)
+        autorun_to_harness_cli_events={
+            "PreToolUse": "PreToolUse",
+            "PostToolUse": "PostToolUse",
+            "UserPromptSubmit": "UserPromptSubmit",
+            "Stop": "Stop",
+            "SessionStart": "SessionStart",
+            "SessionEnd": "SessionEnd",
+        },
+    )
+)
+
+
+PI = register(
+    Platform(
+        name="pi",
+        display_name="Pi",
+        binary="pi",
+        detect_env_vars=("PI_CODING_AGENT", "PI_SESSION_ID"),
+        detect_session_keys=("PI_SESSION_ID",),
+        standalone_session_env_vars=("PI_SESSION_ID",),
+        detect_path_hints=(".pi/agent",),
+        has_hooks=True,
+        schema_type="strict",
+        hook_protocol=PI_HOOKS,
+        tool_names=_PI_TOOLS,
+        config_dir="~/.pi/agent/",
+        config_dir_env_vars=("PI_CODING_AGENT_DIR",),
+        skill_search_routes=(ConfigDirSkills("skills"),),
+        memory_filename="AGENTS.md",
+        memory_template="pi_template/AGENTS.md",
+        memory_sentinel_slug="pi-agents-md",
+        loads_shared_agents_skills=True,
+        native_skills=ConfigDirSkills("skills"),
+        command_display_prefix="/ar ",
+        command_invocation_hint="Type /ar <command>; the installed extension dispatches it directly.",
+        skill_invocation_format="/skill:{name}",
+        supports_additional_context_events=frozenset(
+            {"SessionStart", "UserPromptSubmit", "PostToolUse"}
+        ),
         autorun_to_harness_cli_events={
             "PreToolUse": "PreToolUse",
             "PostToolUse": "PostToolUse",

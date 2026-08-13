@@ -33,12 +33,11 @@ dependencies = [
     # single reader now, and it imports this lazily so no hook pays for it.
     "pyyaml>=6.0",
 ]
-# Runtime policy: Python is the only runtime autorun requires. Bun appears in
-# exactly one place — the OpenCode plugin, which OpenCode itself loads in-process
-# and which its users therefore already have. Its tests skip when bun is absent,
-# so the suite stays green without it. Do not add a second runtime for the hook
-# path: a Bun hook client measured 28.2 ms against nc's 9.7 ms and would cost
-# every Claude and Codex user a dependency they do not need.
+# Runtime policy: Python is the only runtime autorun installs. JavaScript runs
+# only inside OpenCode and Pi, whose own in-process extension loaders provide
+# Bun or Node. Their adapters share one transport module. Do not add a second
+# runtime to external hook paths: it would cost Claude and Codex users a
+# dependency they do not need.
 
 [project.optional-dependencies]
 dev = [
