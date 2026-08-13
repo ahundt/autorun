@@ -25,13 +25,24 @@ dependencies = [
     # extractor already treats unavailable backends as optional fallbacks.
     "markitdown>=0.1.0; python_version < '3.14'",
     "pdfplumber>=0.10.0",
+    # pdfplumber pulls pillow in transitively. Floor it on 3.14 so uv forks the
+    # universal lock; see the marker-pdf note under the gpu extra.
+    "pillow>=11; python_version >= '3.14'",
     "pdfminer.six>=20221105",
     "PyPDF2>=3.0.0",
     "tqdm>=4.60.0",
 ]
 
 [project.optional-dependencies]
-gpu = ["docling>=2.0.0", "marker-pdf>=0.3.0"]
+gpu = [
+    "docling>=2.0.0",
+    # marker-pdf requires pillow>=10.1.0,<11.0.0, and the newest pillow under 11
+    # is 10.4.0, which ships no cp314 wheel. uv resolves one pillow for the whole
+    # universal lock, so without this marker the base install on 3.14 inherits
+    # the cap, falls back to pillow's sdist, and the source build fails on any
+    # machine without system jpeg headers. docling has no such cap.
+    "marker-pdf>=0.3.0; python_version < '3.14'",
+]
 llm = ["pymupdf4llm>=0.0.1"]
 dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "ruff>=0.8.0"]
 
