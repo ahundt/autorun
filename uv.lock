@@ -1543,8 +1543,8 @@ version = "0.6.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or python_full_version >= '3.14'" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.14'" },
     { name = "onnxruntime" },
     { name = "python-dotenv" },
 ]
@@ -2225,8 +2225,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "coloredlogs" },
     { name = "flatbuffers" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or python_full_version >= '3.14'" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.14'" },
     { name = "packaging" },
     { name = "protobuf" },
     { name = "sympy" },
@@ -2408,7 +2408,7 @@ name = "pdf-extractor"
 version = "1.0.0rc1"
 source = { editable = "plugins/pdf-extractor" }
 dependencies = [
-    { name = "markitdown" },
+    { name = "markitdown", marker = "python_full_version < '3.14'" },
     { name = "pdfminer-six" },
     { name = "pdfplumber" },
     { name = "pypdf2" },
@@ -2433,7 +2433,7 @@ llm = [
 requires-dist = [
     { name = "docling", marker = "extra == 'gpu'", specifier = ">=2.0.0" },
     { name = "marker-pdf", marker = "extra == 'gpu'", specifier = ">=0.3.0" },
-    { name = "markitdown", specifier = ">=0.1.0" },
+    { name = "markitdown", marker = "python_full_version < '3.14'", specifier = ">=0.1.0" },
     { name = "pdfminer-six", specifier = ">=20221105" },
     { name = "pdfplumber", specifier = ">=0.10.0" },
     { name = "pymupdf4llm", marker = "extra == 'llm'", specifier = ">=0.0.1" },

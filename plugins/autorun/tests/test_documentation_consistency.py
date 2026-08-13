@@ -358,6 +358,19 @@ def test_root_marketplace_catalog_tracks_the_plugin_base_release():
     )
 
 
+def test_pdf_extractor_omits_only_markitdown_on_python_314():
+    pyproject = (
+        REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml"
+    ).read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"markitdown>=0.1.0; python_version < \'3.14\'"' in pyproject
+    assert '"Programming Language :: Python :: 3.14"' in pyproject
+    assert "matrix.python-version != '3.14'" not in workflow
+
+
 def test_ci_actions_are_pinned_to_full_commits():
     mutable = []
     workflows = REPO_ROOT / ".github" / "workflows"
