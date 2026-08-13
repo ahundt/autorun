@@ -18,7 +18,10 @@ def detect_gpu_availability(*, probe_runtime: bool = True) -> dict:
         'available': False,
         'device_count': 0,
         'device_name': 'CPU',
-        'recommended_backends': ['markitdown', 'pdfbox', 'pdfplumber', 'pdfminer', 'pypdf2']
+        # pdftotext goes last everywhere: it is the only backend with no Python
+        # dependency, so it is what remains when the package is installed
+        # without extras and poppler happens to be on the system.
+        'recommended_backends': ['markitdown', 'pdfbox', 'pdfplumber', 'pdfminer', 'pypdf2', 'pdftotext']
     }
 
     try:
@@ -31,7 +34,7 @@ def detect_gpu_availability(*, probe_runtime: bool = True) -> dict:
             gpu_info['device_name'] = torch.cuda.get_device_name(0)
             gpu_info['recommended_backends'] = [
                 'docling', 'marker', 'markitdown',
-                'pdfbox', 'pdfplumber', 'pdfminer'
+                'pdfbox', 'pdfplumber', 'pdfminer', 'pypdf2', 'pdftotext'
             ]
     except ImportError:
         pass  # PyTorch not installed, use CPU backends

@@ -57,6 +57,18 @@ def extract_single_pdf(input_file: str, output_file: str, backends: list = None)
     if metadata['encrypted']:
         print(f"Warning: PDF is encrypted: {input_file}")
 
+    # Every backend is an extra, so "none installed" is a normal state rather
+    # than a broken one. Without this the loop below never runs and the caller
+    # gets success=False with error=None, which says nothing actionable.
+    if not backends:
+        metadata['error'] = (
+            "No extraction backend installed. Install one with: "
+            "pip install 'pdf-extractor[cpu]' (or [gpu] for scanned PDFs). "
+            "Run extract-pdfs --list-backends to see what is available."
+        )
+        print(f"X {metadata['error']}")
+        return metadata
+
     # Try each backend in order
     for backend in backends:
         if backend not in BACKEND_REGISTRY:

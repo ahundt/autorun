@@ -32,14 +32,30 @@ does not currently expose a skill API.
 
 ### Python CLI
 
+Every extraction backend is an extra, so pick the ones you want. `cpu` covers
+the CPU backends (markitdown, pdfplumber, pdfminer, pypdf2) and is the ordinary
+choice:
+
 ```bash
-uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
+uv tool install 'pdf-extractor[cpu] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
 ```
 
 For GPU-accelerated backends (docling, marker):
 ```bash
-uv tool install --force 'pdf-extractor[gpu] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
+uv tool install --force 'pdf-extractor[cpu,gpu] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
 ```
+
+| Extra | Adds |
+|-------|------|
+| `cpu` | markitdown, pdfplumber, pdfminer.six, PyPDF2 |
+| `gpu` | docling, marker-pdf (needs PyTorch; downloads models on first use) |
+| `llm` | pymupdf4llm |
+| `progress` | tqdm progress bars (falls back to no output when absent) |
+| `all` | every extra above |
+
+Installing with no extra still works: the CLI runs, `--list-backends` reports
+what is missing, and an extraction attempt names the extra to install. The only
+backend available without any extra is `pdftotext`, if poppler is on the system.
 
 ## Usage
 

@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # publish.yml reruns this suite against the tagged commit before it uploads
+  # anything, which a `uses:` reference cannot do without this trigger.
+  workflow_call:
 
 permissions:
   contents: read
@@ -105,7 +108,10 @@ jobs:
 
       - name: Run PDF extractor tests
         working-directory: plugins/pdf-extractor
-        run: uv run --project . --locked --extra dev pytest tests/ --tb=short -v
+        # Every backend is an extra now, so `cpu` is what makes the CPU backends
+        # importable here. Without it the suite would pass against a package
+        # that has no extraction library installed at all.
+        run: uv run --project . --locked --extra dev --extra cpu pytest tests/ --tb=short -v
 
   coverage:
     runs-on: ubuntu-latest

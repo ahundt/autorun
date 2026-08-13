@@ -2424,16 +2424,26 @@ wheels = [
 name = "pdf-extractor"
 version = "1.0.0rc1"
 source = { editable = "plugins/pdf-extractor" }
-dependencies = [
+
+[package.optional-dependencies]
+all = [
+    { name = "docling" },
+    { name = "marker-pdf", marker = "python_full_version < '3.14'" },
+    { name = "markitdown", marker = "python_full_version < '3.14'" },
+    { name = "pdfminer-six" },
+    { name = "pdfplumber" },
+    { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+    { name = "pymupdf4llm" },
+    { name = "pypdf2" },
+    { name = "tqdm" },
+]
+cpu = [
     { name = "markitdown", marker = "python_full_version < '3.14'" },
     { name = "pdfminer-six" },
     { name = "pdfplumber" },
     { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "pypdf2" },
-    { name = "tqdm" },
 ]
-
-[package.optional-dependencies]
 dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -2446,23 +2456,27 @@ gpu = [
 llm = [
     { name = "pymupdf4llm" },
 ]
+progress = [
+    { name = "tqdm" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "docling", marker = "extra == 'gpu'", specifier = ">=2.0.0" },
     { name = "marker-pdf", marker = "python_full_version < '3.14' and extra == 'gpu'", specifier = ">=0.3.0" },
-    { name = "markitdown", marker = "python_full_version < '3.14'", specifier = ">=0.1.0" },
-    { name = "pdfminer-six", specifier = ">=20221105" },
-    { name = "pdfplumber", specifier = ">=0.10.0" },
-    { name = "pillow", marker = "python_full_version >= '3.14'", specifier = ">=11" },
+    { name = "markitdown", marker = "python_full_version < '3.14' and extra == 'cpu'", specifier = ">=0.1.0" },
+    { name = "pdf-extractor", extras = ["cpu", "gpu", "llm", "progress"], marker = "extra == 'all'", editable = "plugins/pdf-extractor" },
+    { name = "pdfminer-six", marker = "extra == 'cpu'", specifier = ">=20221105" },
+    { name = "pdfplumber", marker = "extra == 'cpu'", specifier = ">=0.10.0" },
+    { name = "pillow", marker = "python_full_version >= '3.14' and extra == 'cpu'", specifier = ">=11" },
     { name = "pymupdf4llm", marker = "extra == 'llm'", specifier = ">=0.0.1" },
-    { name = "pypdf2", specifier = ">=3.0.0" },
+    { name = "pypdf2", marker = "extra == 'cpu'", specifier = ">=3.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
-    { name = "tqdm", specifier = ">=4.60.0" },
+    { name = "tqdm", marker = "extra == 'progress'", specifier = ">=4.60.0" },
 ]
-provides-extras = ["gpu", "llm", "dev"]
+provides-extras = ["cpu", "gpu", "llm", "progress", "all", "dev"]
 
 [[package]]
 name = "pdfminer-six"

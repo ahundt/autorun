@@ -391,18 +391,70 @@ its contents have been inspected.
 | GitHub prerelease exists but content or artifacts are wrong | Do not replace immutable code under the tag. Correct prose in place only when code is unchanged; otherwise issue the next RC version. |
 | Any public step partially succeeds | Inventory remote tag and release state before retrying. Never assume a failed command made no public write. |
 
-## PyPI Publishing (future — not yet configured)
+## PyPI Publishing
 
-autorun is currently distributed from GitHub through the package subdirectory
-and the Claude marketplace flow, not PyPI. If PyPI publishing is added in the
-future, follow the pattern from the [AI Session Search release guide](https://github.com/ahundt/ai-session-search/blob/main/docs/development/releasing.md):
+`.github/workflows/publish.yml` uploads two distributions with Trusted
+Publishing (OIDC). No API token is stored anywhere.
 
-1. **Trusted Publishers** — configure on PyPI/TestPyPI with exact owner/repo/workflow/environment match
-2. **GitHub Environments** — `testpypi` (auto-publish) + `pypi` (manual approval gate)
-3. **SHA-pinned actions** — already enforced for `.github/workflows/ci.yml`
-4. **Tag-version check** — build job verifies git tag matches pyproject.toml version
-5. **TestPyPI first** — publish to TestPyPI, verify install, then approve PyPI
-6. **Version conflicts** — TestPyPI doesn't allow overwrites; use `.post1` suffix if needed
+| Distribution | Source directory | Installs as |
+|--------------|------------------|-------------|
+| `autorun` | `plugins/autorun` | `uv tool install autorun` |
+| `pdf-extractor` | `plugins/pdf-extractor` | `uv tool install 'pdf-extractor[cpu]'` |
+
+`pdf-extractor` on PyPI is an unrelated project, which is why the second one
+carries the prefix. The Claude plugin id stays `pdf-extractor`;
+`test_documentation_consistency.py::test_published_distribution_names_stay_under_the_autorun_namespace`
+holds both halves in place.
+
+### One-time setup — **RELEASER, account access required**
+
+Four registrations, two projects on each of two indexes. Neither project exists
+yet, so each is a *pending* publisher until its first upload
+([docs](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
+
+At <https://test.pypi.org/manage/account/publishing/> and
+<https://pypi.org/manage/account/publishing/>, add a pending publisher for
+`autorun` and again for `pdf-extractor`, each with:
+
+| Field | Value |
+|-------|-------|
+| Owner | `ahundt` |
+| Repository | `autorun` |
+| Workflow | `publish.yml` |
+| Environment | `testpypi` on TestPyPI, `pypi` on PyPI |
+
+Then create both GitHub environments under Settings → Environments. Give `pypi`
+a required reviewer so a tag push cannot reach the real index unattended;
+`testpypi` needs no protection.
+
+### Rehearse on TestPyPI before any tag
+
+`workflow_dispatch` builds and publishes to TestPyPI only, and its
+`testpypi_only` input defaults to true, so the run cannot reach PyPI:
+
+```bash
+gh workflow run publish.yml --ref main
+```
+
+Verify what landed, in a throwaway tool directory so the rehearsal cannot
+disturb the installed CLI:
+
+```bash
+UV_TOOL_DIR=$(mktemp -d) UV_TOOL_BIN_DIR=$(mktemp -d) \
+  uv tool install --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ autorun
+```
+
+TestPyPI refuses a re-upload of an existing file, so a second rehearsal at the
+same version needs a bumped version. The workflow passes `skip-existing: true`
+for TestPyPI so a rerun reports the conflict instead of failing the job; PyPI
+stays strict.
+
+### Publish
+
+A `v*` tag push runs full CI against the tagged commit, then TestPyPI, then
+PyPI. Both later stages verify the tag matches the version each package
+declares, so Stage 1 has to be committed first.
 
 ## Build Artifacts
 

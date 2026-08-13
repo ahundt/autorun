@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import tomllib
 from pathlib import Path
 
 
@@ -421,6 +422,69 @@ def test_root_marketplace_catalog_tracks_the_plugin_base_release():
     assert marketplace["version"] == base_version, (
         "the catalog version names the stable release line while plugin entries "
         "carry the full prerelease version"
+    )
+
+
+def test_workspace_sources_match_the_declared_distribution_names():
+    """A `[tool.uv.sources]` key that does not name a member is silently wrong.
+
+    uv matches these keys against distribution names, not directory names. A
+    mismatch does not error — uv just resolves the member from PyPI instead of
+    the local tree, so a developer edits one copy and tests another.
+    """
+    names = {
+        "plugins/autorun/pyproject.toml": "autorun",
+        "plugins/pdf-extractor/pyproject.toml": "pdf-extractor",
+    }
+    for relative_path, expected in names.items():
+        declared = tomllib.loads(
+            (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+        )["project"]["name"]
+        assert declared == expected, f"{relative_path} declares '{declared}'"
+
+    plugin = json.loads(
+        (
+            REPO_ROOT / "plugins" / "pdf-extractor" / ".claude-plugin" / "plugin.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert plugin["name"] == "pdf-extractor", (
+        "the harness plugin id is a different namespace from the PyPI name and "
+        "renaming it would break `claude plugin install pdf-extractor@autorun`"
+    )
+
+    workspace = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert set(workspace["tool"]["uv"]["sources"]) == set(names.values()), (
+        "[tool.uv.sources] keys must match the member distribution names or uv "
+        "resolves the workspace member from PyPI instead of the local tree"
+    )
+
+
+def test_pdf_extractor_requires_no_extraction_backend():
+    """Installing the package must not force any extraction library on anyone.
+
+    Every backend imports inside its own ``extract()`` call, so a required
+    dependency here would buy nothing and cost every user the download. The CI
+    job that runs this plugin's tests therefore has to name ``--extra cpu``, or
+    it would exercise a package with no backend installed and still pass.
+    """
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert pyproject["project"]["dependencies"] == [], (
+        "pdf-extractor declares a required dependency; every backend belongs in "
+        "[project.optional-dependencies]"
+    )
+    extras = pyproject["project"]["optional-dependencies"]
+    assert {"cpu", "gpu", "llm", "progress", "all"} <= set(extras)
+    assert "--extra cpu" in workflow, (
+        "CI runs the pdf-extractor suite without the cpu extra, so the backend "
+        "tests would pass against a package that has no backend installed"
     )
 
 

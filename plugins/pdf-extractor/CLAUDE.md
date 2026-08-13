@@ -32,20 +32,36 @@ does not provide a native skill surface.
 
 ### Using uv tool install (Recommended — makes extract-pdfs globally available)
 
+Every extraction backend lives in an extra, so name the ones you want. `cpu`
+gets the CPU backends and is the ordinary choice:
+
 ```bash
 # From repository root:
-cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
 
 # Verify:
 extract-pdfs --list-backends
 ```
+
+| Extra | Adds |
+|-------|------|
+| `cpu` | markitdown, pdfplumber, pdfminer.six, PyPDF2 |
+| `gpu` | docling, marker-pdf |
+| `llm` | pymupdf4llm |
+| `progress` | tqdm progress bars |
+| `all` | every extra above |
+
+Installing bare (`--editable .`) is supported and leaves `pdftotext` as the only
+usable backend, if poppler is on the system. An extraction attempt with no
+backend installed names the extra to install rather than failing silently
+(`src/pdf_extraction/extractors.py:extract_single_pdf`).
 
 ### Optional GPU Backends
 
 For GPU-accelerated extraction (recommended for scanned/image-only PDFs):
 
 ```bash
-cd plugins/pdf-extractor && uv tool install --force --editable ".[gpu]" && cd ../..
+cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu,gpu]" && cd ../..
 # Requires PyTorch + CUDA or MPS (Apple Silicon)
 # Note: docling downloads ~500MB models on first use; marker downloads ~1GB
 extract-pdfs --list-backends  # Verify gpu backends appear
@@ -54,7 +70,7 @@ extract-pdfs --list-backends  # Verify gpu backends appear
 ### Venv Install (alternative — installs into current venv only)
 
 ```bash
-cd plugins/pdf-extractor && uv pip install -e . && cd ../..
+cd plugins/pdf-extractor && uv pip install -e ".[cpu]" && cd ../..
 ```
 
 ### Development Setup
@@ -158,15 +174,22 @@ The plugin skill activates when you ask to:
 ### `extract-pdfs: command not found`
 ```bash
 # Install as global UV tool from repo root:
-cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
 # Verify:
 extract-pdfs --list-backends
 ```
 
+### "No extraction backend installed"
+The backends are extras and none is installed. Add one:
+```bash
+cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
+extract-pdfs --list-backends  # confirm they moved out of "Supported but not installed"
+```
+
 ### `ModuleNotFoundError: No module named 'pdf_extraction'` (or 'markitdown', 'pdfplumber')
 ```bash
-# Re-install with all base dependencies:
-cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+# Re-install with the cpu backends:
+cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
 # If that fails, install explicitly:
 uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "PyPDF2>=3.0.0" tqdm
 ```
@@ -174,7 +197,7 @@ uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105"
 ### GPU backends (docling, marker) not available
 ```bash
 # These require PyTorch; install optional GPU extras:
-cd plugins/pdf-extractor && uv tool install --force --editable ".[gpu]" && cd ../..
+cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu,gpu]" && cd ../..
 # Verify GPU backends appear:
 extract-pdfs --list-backends
 # Note: docling downloads ~500MB models on first use; marker downloads ~1GB

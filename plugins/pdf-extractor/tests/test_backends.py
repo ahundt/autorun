@@ -148,7 +148,7 @@ class TestMarkItDownExtractor:
     """Tests for MarkItDownExtractor."""
 
     def test_instantiation(self):
-        """Should instantiate without error (markitdown is a core dependency)."""
+        """Should instantiate without error (markitdown ships in the cpu extra)."""
         extractor = MarkItDownExtractor()
         assert extractor.name == 'markitdown'
 

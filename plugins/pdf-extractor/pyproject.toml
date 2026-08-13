@@ -20,9 +20,17 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 
-dependencies = [
-    # markitdown's magika/onnxruntime chain has no cp314 artifact yet. The
-    # extractor already treats unavailable backends as optional fallbacks.
+# Every backend imports inside its own extract() call, backend_availability()
+# reports a missing one as unavailable, and extract_single_pdf names the extra to
+# install when none is present. So the package installs and imports with no
+# extraction library at all, and each user pays only for the backends they pick.
+# `pip install pdf-extractor[cpu]` is the ordinary choice.
+dependencies = []
+
+[project.optional-dependencies]
+# Pure-Python and small-wheel backends. No GPU, no model downloads.
+cpu = [
+    # markitdown's magika/onnxruntime chain has no cp314 artifact yet.
     "markitdown>=0.1.0; python_version < '3.14'",
     "pdfplumber>=0.10.0",
     # pdfplumber pulls pillow in transitively. Floor it on 3.14 so uv forks the
@@ -30,10 +38,7 @@ dependencies = [
     "pillow>=11; python_version >= '3.14'",
     "pdfminer.six>=20221105",
     "PyPDF2>=3.0.0",
-    "tqdm>=4.60.0",
 ]
-
-[project.optional-dependencies]
 gpu = [
     "docling>=2.0.0",
     # marker-pdf requires pillow>=10.1.0,<11.0.0, and the newest pillow under 11
@@ -44,6 +49,9 @@ gpu = [
     "marker-pdf>=0.3.0; python_version < '3.14'",
 ]
 llm = ["pymupdf4llm>=0.0.1"]
+# extractors.py falls back to a no-op progress bar when tqdm is absent.
+progress = ["tqdm>=4.60.0"]
+all = ["pdf-extractor[cpu,gpu,llm,progress]"]
 dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "ruff>=0.8.0"]
 
 [project.scripts]
