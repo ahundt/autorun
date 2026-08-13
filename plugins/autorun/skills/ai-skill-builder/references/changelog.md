@@ -6,10 +6,11 @@ you are building. Release history first, then the detail behind each release, ne
 ## Release history
 
 ### v1.2.1 - 2026-08-13
-- Added "Growth Needs Evidence" to `references/refining-skills.md`: keep the smallest
-  known-good core, add a guard only for a reproduced failure, and record the version to
-  return to before a rewrite. Written after a deep-superset skill grew 167 → 715 lines
-  while `audit-skill.sh` stayed clean and the repair was a rollback.
+- Added Antipattern 6, The Unmeasured Rewrite, to `references/best-practices.md`: run the same
+  tasks against the version being replaced and keep the revision only if it does them better.
+  A passing audit had been read as a quality verdict, which the audit itself denies.
+- Stated the numbering rule in the same file: numbered items where order matters or a reader
+  must cite one, bullets only for unordered sets. Only "3-5 numbered steps" had been written.
 
 ### v1.2.0 - 2026-08-03
 - Audited every file against every other file and against `scripts/audit-skill.sh`; fixed the

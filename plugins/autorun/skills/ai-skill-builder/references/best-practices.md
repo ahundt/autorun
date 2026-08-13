@@ -119,6 +119,7 @@ description: Uses OpenAPI parser with Jinja2 templates to generate Jest tests
 
 **Include**:
 - 3-5 numbered steps
+- Numbered items wherever order matters or a reader must cite one; bullets only for unordered sets
 - Input → Output per step
 - A Definition of Done per step: the checkable condition that must hold before the next one
   starts. Not a wall-clock estimate — how long a step takes depends on who or what runs it.
@@ -333,6 +334,15 @@ Result: [Outcome achieved]
 2. Functional tests
 3. Performance tests
 4. User feedback
+```
+
+### Antipattern 6: The Unmeasured Rewrite
+**Problem**: A revision adds material and no task outcome improves
+
+**Solution**: Run the same tasks against the version being replaced; keep the revision only if it does them better
+```
+❌ "The audit passes and it reads better now"
+✅ "Same 5 tasks, 4 correct before, 5 correct after"
 ```
 
 ## Success Criteria Patterns

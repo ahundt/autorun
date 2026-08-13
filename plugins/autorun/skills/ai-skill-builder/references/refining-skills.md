@@ -31,19 +31,6 @@ This guide covers improving and modernizing existing Claude skills to match curr
 - 💡 Could benefit from templates/assets
 - 💡 Performance not measured
 
-### Growth Needs Evidence
-
-Refinement can make a skill worse while every structural check still passes. One
-deep-superset skill grew from 167 lines / 1,129 words to 715 lines / 4,991 words;
-`audit-skill.sh` stayed clean the whole way, cold reads then found executable and
-sequencing defects, and the repair was a rollback to the pre-growth behavior.
-
-Keep the smallest known-good core, add a guard only for a reproduced failure, and
-accept added ceremony only when a direct check shows it helped the outcome. A clean
-audit is a structural verdict, never a behavioral one — see the decided/proxy/review
-split in `../scripts/audit-skill.sh`. Before a rewrite, record the version you can
-return to, and treat returning to it as an ordinary outcome rather than a failure.
-
 ---
 
 ## Refinement Workflow
