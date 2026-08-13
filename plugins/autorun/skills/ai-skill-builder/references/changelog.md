@@ -5,6 +5,12 @@ you are building. Release history first, then the detail behind each release, ne
 
 ## Release history
 
+### v1.2.1 - 2026-08-13
+- Added "Growth Needs Evidence" to `references/refining-skills.md`: keep the smallest
+  known-good core, add a guard only for a reproduced failure, and record the version to
+  return to before a rewrite. Written after a deep-superset skill grew 167 → 715 lines
+  while `audit-skill.sh` stayed clean and the repair was a rollback.
+
 ### v1.2.0 - 2026-08-03
 - Audited every file against every other file and against `scripts/audit-skill.sh`; fixed the
   contradictions found. Detail below.

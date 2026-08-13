@@ -8,7 +8,7 @@ description: Guides creation and improvement of portable Agent Skills using the 
   cross-harness compatibility, or distribution.
 allowed-tools: Read Write Edit Bash WebSearch WebFetch
 metadata:
-  version: 1.2.0
+  version: 1.2.1
 ---
 
 # AI Skill Builder
