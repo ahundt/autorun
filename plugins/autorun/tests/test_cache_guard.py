@@ -241,6 +241,31 @@ class TestReadJsonlTail:
         assert r.total_input_tokens == 200 + 50000 + 100
         assert 0.0 < r.cache_hit_ratio <= 1.0
 
+    def test_reads_pi_assistant_usage_shape(self, tmp_path):
+        from autorun.cache_guard import _read_jsonl_tail
+        p = tmp_path / "pi-session.jsonl"
+        _write_jsonl(p, [{
+            "type": "message",
+            "timestamp": "2026-01-01T00:00:03Z",
+            "message": {
+                "role": "assistant",
+                "usage": {
+                    "input": 200,
+                    "cacheRead": 50000,
+                    "cacheWrite": 100,
+                    "output": 20,
+                    "totalTokens": 50320,
+                },
+            },
+        }])
+
+        r = _read_jsonl_tail(str(p), max_bytes=64 * 1024, cli="pi")
+
+        assert r is not None
+        assert r.cache_read_tokens == 50000
+        assert r.cache_creation_tokens == 100
+        assert r.total_input_tokens == 50300
+
     def test_bounded_reverse_read_on_large_file(self, tmp_path):
         from autorun.cache_guard import _read_jsonl_tail
         p = tmp_path / "big.jsonl"

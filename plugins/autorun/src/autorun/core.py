@@ -151,11 +151,20 @@ class StateWriteOutcome:
 CANONICAL_COMMAND_PREFIX = "/ar:"
 
 
+_COMMAND_STARTS_AGENT_TURN_ATTRIBUTE = "__autorun_starts_agent_turn__"
+
+
+def command_starts_agent_turn(handler: Callable) -> bool:
+    """Return the turn behavior declared by ``AutorunApp.command``."""
+    return getattr(handler, _COMMAND_STARTS_AGENT_TURN_ATTRIBUTE, False) is True
+
+
 @dataclass(frozen=True)
 class CommandMatch:
     handler: Callable
     alias: str
     activation_prompt: str
+    starts_agent_turn: bool = False
 
 
 # === LEGACY GEMINI CLI PAYLOAD NORMALIZATION ===
@@ -2506,10 +2515,18 @@ class AutorunApp:
             "OpenCodeDetach": [],
         }
 
-    def command(self, *aliases: str):
-        """Register command handler with multiple aliases (DRY: single decorator)."""
+    def command(self, *aliases: str, starts_agent_turn: bool = False):
+        """Register callable aliases and whether their output starts model work."""
 
         def decorator(func: Callable):
+            declared = command_starts_agent_turn(func)
+            if declared != starts_agent_turn and hasattr(
+                func, _COMMAND_STARTS_AGENT_TURN_ATTRIBUTE
+            ):
+                raise ValueError(
+                    f"{func.__name__} cannot mix starts_agent_turn declarations"
+                )
+            setattr(func, _COMMAND_STARTS_AGENT_TURN_ATTRIBUTE, starts_agent_turn)
             for alias in aliases:
                 self.command_handlers[alias] = func
             return func
@@ -2584,12 +2601,23 @@ class AutorunApp:
         # Check CONFIG command_mappings
         command = CONFIG["command_mappings"].get(canonical_prompt)
         if command and command in self.command_handlers:
-            return CommandMatch(self.command_handlers[command], command, canonical_prompt)
+            handler = self.command_handlers[command]
+            return CommandMatch(
+                handler,
+                command,
+                canonical_prompt,
+                command_starts_agent_turn(handler),
+            )
 
         # Check direct aliases
         for alias, handler in self.command_handlers.items():
             if canonical_prompt == alias or canonical_prompt.startswith(f"{alias} "):
-                return CommandMatch(handler, alias, canonical_prompt)
+                return CommandMatch(
+                    handler,
+                    alias,
+                    canonical_prompt,
+                    command_starts_agent_turn(handler),
+                )
 
         return None
 
@@ -2786,6 +2814,45 @@ class AutorunDaemon:
             self._dispatch_circuit_open_until.pop(event, None)
             return response
 
+    def _run_pi_task_operation(self, ctx: EventContext, operation: str, payload: dict) -> dict:
+        """Run one negotiated Pi task query/reprojection in an executor thread."""
+        from .task_lifecycle import TaskLifecycle
+
+        manager = TaskLifecycle(ctx=ctx)
+        if operation == "task_reproject_v1":
+            records = payload.get("task_records")
+            if not isinstance(records, list):
+                raise TypeError("task_reproject_v1 requires task_records list")
+            source = platform_for(ctx.cli_type).task_record_source
+            manager.replace_task_projection(records, source=source)
+            return {
+                "_autorun_bridge": {
+                    "operation": "task_reproject_v1",
+                    "count": len(records),
+                }
+            }
+
+        rows = sorted(
+            manager.tasks.values(),
+            key=lambda task: str(task.get("id", "")),
+        )
+        limit = 100
+        return {
+            "_autorun_bridge": {
+                "operation": "task_list_v1",
+                "tasks": rows[:limit],
+                "total": len(rows),
+                "truncated": len(rows) > limit,
+            }
+        }
+
+    @staticmethod
+    def _pi_task_snapshot(ctx: EventContext, task_id: str) -> dict | None:
+        """Read one Pi task projection outside the asyncio event loop."""
+        from .task_lifecycle import TaskLifecycle
+
+        return TaskLifecycle(ctx=ctx).tasks.get(task_id)
+
     def _pid_exists(self, pid: int) -> bool:
         """Check if process with given PID exists.
 
@@ -2890,7 +2957,63 @@ class AutorunDaemon:
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.
             # Synchronous/blocking work in handlers (file I/O, locks) runs in a thread.
-            response = await self._dispatch_with_timeout(ctx, cli_type)
+            capabilities = payload.get("inprocess_capabilities")
+            operation = payload.get("inprocess_operation")
+            if (
+                cli_type == "pi"
+                and isinstance(capabilities, list)
+                and "task_operations_v1" in capabilities
+                and operation in {"task_list_v1", "task_reproject_v1"}
+            ):
+                loop = asyncio.get_running_loop()
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        self._run_pi_task_operation,
+                        ctx,
+                        operation,
+                        payload,
+                    ),
+                    timeout=dispatch_timeout_for_event(event),
+                )
+            else:
+                response = await self._dispatch_with_timeout(ctx, cli_type)
+            if (
+                cli_type == "pi"
+                and event == "PostToolUse"
+                and ctx.tool_name in {"TaskCreate", "TaskUpdate"}
+                and isinstance(capabilities, list)
+                and "task_operations_v1" in capabilities
+            ):
+                task_id = ctx.tool_input.get("taskId") or ctx.tool_input.get("id")
+                if not task_id and isinstance(ctx.tool_result, dict):
+                    task = ctx.tool_result.get("task")
+                    if isinstance(task, dict):
+                        task_id = task.get("id")
+                snapshot = await asyncio.wait_for(
+                    asyncio.get_running_loop().run_in_executor(
+                        None,
+                        self._pi_task_snapshot,
+                        ctx,
+                        str(task_id or ""),
+                    ),
+                    timeout=dispatch_timeout_for_event(event),
+                )
+                if snapshot is not None:
+                    response = dict(response or {})
+                    response["_autorun_bridge"] = {"task_snapshot": snapshot}
+            if (
+                response is not None
+                and event == "UserPromptSubmit"
+                and isinstance(capabilities, list)
+                and "response_projection_v2" in capabilities
+            ):
+                match = self.app._find_command(ctx.prompt.strip(), cli_type)
+                if match is not None:
+                    response = dict(response)
+                    response["_autorun_bridge"] = {
+                        "starts_agent_turn": match.starts_agent_turn
+                    }
 
         except asyncio.LimitOverrunError as e:
             # Buffer size exceeded - provide actionable guidance

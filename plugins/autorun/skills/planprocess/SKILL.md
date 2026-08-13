@@ -9,13 +9,19 @@ argument-hint: "[task description]"
 
 The user's request is the task description for everything below.
 
+## Harness-specific plan lifecycle
+
+- **Claude Code:** Use `EnterPlanMode` and `ExitPlanMode` where this skill instructs; `ExitPlanMode` is the approval boundary.
+- **Pi:** Do not call `EnterPlanMode` or `ExitPlanMode` on Pi because Pi exposes neither tool. Write or refine the durable plan note directly, report its exact path for approval, and after approval start execution with `/ar pp <path>`. Pi's native autorun `TaskCreate`, `TaskUpdate`, and `TaskList` tools still enforce the task DAG.
+- **Other harnesses:** Use a native plan-mode boundary only when that tool actually exists; otherwise use the same durable-note approval workflow as Pi with that harness's documented autorun command spelling.
+
 ---
 
 ## CRITICAL RULES — SURVIVE COMPACTION
 
 If this session was compacted, these rules STILL apply without exception:
 
-1. **Call ExitPlanMode when ALL planning tasks are complete** — this IS how you request user approval. Do NOT call ExitPlanMode before the plan is ready.
+1. **On Claude Code, call ExitPlanMode when ALL planning tasks are complete** — this is Claude Code’s approval boundary. On Pi, report the durable plan note path and wait for explicit user approval.
 2. **ALL plan steps require TaskCreate.** If you haven't called TaskCreate for each step yet, do that NOW.
 3. **ALL user instructions must be directly quoted as a numbered list** at the top of the plan file. Every distinct message, with sub-items for context if needed.
 4. **NEVER delete content from plan files.** Only add or make micro-edits. Read before editing. Verify after.
@@ -64,13 +70,13 @@ All outputs should include where applicable:
 
 ### 2.1 Plan Mode Check
 
-**IMPORTANT:** If not already in plan mode, use `EnterPlanMode` tool NOW.
+**Claude Code only:** If not already in plan mode, use `EnterPlanMode` now. **Pi:** remain in the current mode and write the durable plan note directly.
 
 ### 2.2 Planning Task Setup — STOP: MUST DO BEFORE ANY PLANNING
 
 > **STOP. Before writing one word of plan content, complete ALL steps below. Do not skip. Do not defer.**
 
-**Step A — Enter Plan Mode:** Call `EnterPlanMode` tool NOW if not already in plan mode.
+**Step A — Establish the planning boundary:** On Claude Code, call `EnterPlanMode` if needed. On Pi, do not call a plan-mode tool; use the durable plan note.
 
 **Step B — Record ALL user instructions** as a numbered list at the top of the plan file.
 Every distinct message must appear with sub-items for context if necessary:
@@ -244,7 +250,7 @@ After outputting "Wait," execute these 8 steps:
 
 ## 9. Plan Acceptance and Execution Protocol
 
-When the plan is ready for user approval, call the **ExitPlanMode** tool. The PostToolUse hook will detect approval and automatically activate the execution protocol.
+When the plan is ready for approval, use the harness-specific boundary above: Claude Code calls **ExitPlanMode**; Pi reports the durable note path and waits for explicit approval before `/ar pp <path>`.
 
 Then transition to execution:
 

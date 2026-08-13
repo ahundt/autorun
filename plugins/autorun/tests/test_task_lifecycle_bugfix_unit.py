@@ -447,6 +447,45 @@ class TestHandleTaskCreateStringResult:
         assert "42" in manager.tasks, "Task ID should be extracted from string result"
         assert manager.tasks["42"]["subject"] == "Test task"
 
+    def test_pi_create_task_is_tagged_with_internal_source(self, isolated_config, isolated_session_manager):
+        session_id = f"test-pi-source-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+        manager._cli_type = "pi"
+
+        ctx = MagicMock()
+        ctx.tool_result = {"task": {"id": "pi-1"}}
+        ctx.tool_result_str = '{"task":{"id":"pi-1"}}'
+        ctx.tool_input = {
+            "subject": "Pi task",
+            "description": "desc",
+            "metadata": {"caller": "model"},
+        }
+        ctx.plan_active = False
+
+        manager.handle_task_create(ctx)
+
+        assert manager.tasks["pi-1"]["metadata"] == {
+            "caller": "model",
+            "source": "pi_task_tool",
+        }
+
+    def test_pi_branch_projection_replaces_only_pi_sourced_rows(self, isolated_config, isolated_session_manager):
+        manager = TaskLifecycle(session_id=f"test-pi-reproject-{time.time()}", config=isolated_config)
+        manager.create_task("pi-old", {"subject": "Old", "metadata": {"source": "pi_task_tool"}}, "old")
+        manager.create_task("shared", {"subject": "Keep", "metadata": {"source": "manual"}}, "keep")
+
+        manager.replace_task_projection([
+            {
+                "id": "pi-new", "subject": "New", "description": "", "activeForm": "Doing",
+                "status": "in_progress", "owner": None, "blockedBy": [], "blocks": [],
+                "metadata": {"source": "pi_task_tool"}, "tool_outputs": [],
+            }
+        ], source="pi_task_tool")
+
+        assert set(manager.tasks) == {"shared", "pi-new"}
+        assert manager.tasks["shared"]["subject"] == "Keep"
+        assert manager.tasks["pi-new"]["status"] == "in_progress"
+
     def test_create_task_stores_string_in_tool_outputs(self, isolated_config, isolated_session_manager):
         """create_task stores the string result in tool_outputs (not MagicMock)."""
         session_id = f"test-str-outputs-{time.time()}"

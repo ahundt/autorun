@@ -63,6 +63,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "task_review_tools": sorted(platform.task_review_tools),
         "task_bulk_tools": sorted(platform.task_bulk_tools),
         "task_plan_tools": sorted(platform.task_plan_tools),
+        "task_record_source": platform.task_record_source,
         "agent_spawn_tools": sorted(platform.agent_spawn_tools),
         "aggregates_conductor_tasks": platform.aggregates_conductor_tasks,
         "policy_commands_arrive_in_transcript": platform.policy_commands_arrive_in_transcript,
@@ -132,15 +133,23 @@ def _handler_name(handler: Any) -> str:
     return f"{module}.{qualname}" if module else qualname
 
 
-def _command_inventory() -> tuple[dict[str, str], dict[str, list[str]]]:
+def _command_inventory() -> tuple[dict[str, str], dict[str, list[str]], dict[str, bool]]:
     from . import plugins as _plugins  # noqa: F401 - registers handlers on import
-    from .core import app
+    from .core import app, command_starts_agent_turn
 
     commands = {alias: _handler_name(handler) for alias, handler in sorted(app.command_handlers.items())}
     aliases_by_handler: dict[str, list[str]] = {}
     for alias, handler_name in commands.items():
         aliases_by_handler.setdefault(handler_name, []).append(alias)
-    return commands, {name: sorted(aliases) for name, aliases in sorted(aliases_by_handler.items())}
+    turn_behavior = {
+        alias: command_starts_agent_turn(handler)
+        for alias, handler in sorted(app.command_handlers.items())
+    }
+    return (
+        commands,
+        {name: sorted(aliases) for name, aliases in sorted(aliases_by_handler.items())},
+        turn_behavior,
+    )
 
 
 def _hook_inventory() -> dict[str, list[str]]:
@@ -150,22 +159,73 @@ def _hook_inventory() -> dict[str, list[str]]:
     return {event: [_handler_name(handler) for handler in handlers] for event, handlers in sorted(app.chains.items())}
 
 
+def _pi_disposition(
+    *,
+    commands: dict[str, str],
+    hooks: dict[str, list[str]],
+    skills: dict[str, Any],
+    command_docs: dict[str, Any],
+) -> dict[str, dict[str, str]]:
+    """Review disposition derived from runtime inventories, never a second registry."""
+    adapted_events = {
+        "PreToolUse",
+        "PostToolUse",
+        "UserPromptSubmit",
+        "Stop",
+        "SessionStart",
+        "SessionEnd",
+        "PreCompact",
+        "PostCompact",
+    }
+    runtime_doc_names = {
+        alias.removeprefix("/ar:")
+        for alias in commands
+        if alias.startswith("/ar:")
+    }
+    return {
+        "commands": {alias: "adapted" for alias in commands},
+        "hook_events": {
+            event: "adapted" if event in adapted_events else "intentionally_unsupported"
+            for event in hooks
+        },
+        "skills": {name: "native" for name in skills},
+        "command_docs": {
+            name: (
+                "adapted"
+                if name in runtime_doc_names
+                else "native"
+                if name in skills
+                else "intentionally_unsupported"
+            )
+            for name in command_docs
+        },
+    }
+
+
 def build_capability_snapshot() -> dict[str, Any]:
     """Return a stable, JSON-serializable autorun capability inventory."""
-    commands, command_aliases = _command_inventory()
+    commands, command_aliases, command_turn_behavior = _command_inventory()
     hooks = _hook_inventory()
     plugin_root = Path(__file__).resolve().parents[2]
     skills, plugin_skills = marketplace_skill_docs_inventory(plugin_root.parent)
+    command_docs = command_docs_inventory(plugin_root / "commands")
     return {
         "version": __version__,
         "commit": _git_commit(),
         "platforms": {name: _jsonable_platform(platform) for name, platform in sorted(PLATFORMS.items())},
         "commands": commands,
         "command_aliases": command_aliases,
-        "command_docs": command_docs_inventory(plugin_root / "commands"),
+        "command_starts_agent_turn": command_turn_behavior,
+        "command_docs": command_docs,
         "skills": skills,
         "plugin_skills": plugin_skills,
         "hook_events": hooks,
+        "pi_disposition": _pi_disposition(
+            commands=commands,
+            hooks=hooks,
+            skills=skills,
+            command_docs=command_docs,
+        ),
     }
 
 

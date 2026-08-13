@@ -375,7 +375,10 @@ Pi loads autorun from `~/.pi/agent/extensions/ar/`. The TypeScript adapter sends
 `tool_call`, prompt, result, session, and `agent_settled` events to the same
 Python daemon used by the other harnesses. A denied tool returns Pi's native
 `{ block: true, reason }` result. When autorun rejects the settle boundary, the
-adapter sends the continuation reason as the next user message.
+adapter sends a hidden `autorun-continuation` custom message that starts the
+next turn without attributing extension text to the user. Pi also receives
+sequential `TaskCreate`, `TaskUpdate`, and `TaskList` tools backed by the same
+Python task lifecycle and session state as other harnesses.
 
 ```bash
 autorun --install --pi --force

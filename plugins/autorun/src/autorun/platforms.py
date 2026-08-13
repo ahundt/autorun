@@ -810,7 +810,7 @@ OPENCODE_HOOKS = HookProtocol("opencode")
 
 # Pi's TypeScript extension consumes the shared dual-shape response in-process.
 # Tool denial becomes `{ block: true, reason }`; Stop rejection is translated
-# into a follow-up user message after `agent_settled`.
+# into a hidden custom continuation message after `agent_settled`.
 PI_HOOKS = HookProtocol("pi")
 
 
@@ -868,6 +868,9 @@ class Platform:
     task_review_tools: frozenset[str] = field(default_factory=frozenset)
     task_bulk_tools: frozenset[str] = field(default_factory=frozenset)
     task_plan_tools: frozenset[str] = field(default_factory=frozenset)
+    # Optional provenance applied by the shared task lifecycle to records from
+    # this harness's native task tools. Empty preserves caller metadata.
+    task_record_source: str = ""
     # Tools whose result announces a newly spawned subagent, feeding the
     # delegation spawn ledger. The name here is the one serialized into hook
     # stdin, which is not always the one hook config matches on: Codex writes
@@ -1560,6 +1563,15 @@ PI = register(
         schema_type="strict",
         hook_protocol=PI_HOOKS,
         tool_names=_PI_TOOLS,
+        task_management_style="task_tools",
+        task_create_tools=frozenset({"TaskCreate"}),
+        task_update_tools=frozenset({"TaskUpdate"}),
+        task_review_tools=frozenset({"TaskList"}),
+        task_record_source="pi_task_tool",
+        task_dependency_syntax="{task_update}({task_id_param}=N, addBlockedBy=[M])",
+        native_task_statuses=frozenset(
+            {"pending", "in_progress", "completed", "deleted"}
+        ),
         config_dir="~/.pi/agent/",
         config_dir_env_vars=("PI_CODING_AGENT_DIR",),
         skill_search_routes=(ConfigDirSkills("skills"),),
@@ -1581,7 +1593,35 @@ PI = register(
             "Stop": "Stop",
             "SessionStart": "SessionStart",
             "SessionEnd": "SessionEnd",
+            "PreCompact": "PreCompact",
+            "PostCompact": "PostCompact",
         },
+        native_hook_events=frozenset(
+            {
+                "session_start",
+                "before_agent_start",
+                "tool_call",
+                "tool_result",
+                "session_before_compact",
+                "session_compact",
+                "session_tree",
+                "agent_start",
+                "agent_settled",
+                "session_shutdown",
+            }
+        ),
+        installed_hook_events=frozenset(
+            {
+                "SessionStart",
+                "UserPromptSubmit",
+                "PreToolUse",
+                "PostToolUse",
+                "PreCompact",
+                "PostCompact",
+                "Stop",
+                "SessionEnd",
+            }
+        ),
     )
 )
 

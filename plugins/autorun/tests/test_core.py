@@ -1051,16 +1051,30 @@ class TestAutorunApp:
     """Tests for AutorunApp decorator-based registration."""
 
     def test_command_decorator_registers_handler(self):
-        """@app.command should register handler with aliases."""
+        """@app.command should preserve callable aliases and declare turn behavior once."""
         test_app = AutorunApp()
 
-        @test_app.command("/ar:test", "/test", "TEST")
+        @test_app.command("/ar:test", "/test", "TEST", starts_agent_turn=True)
         def test_handler(ctx):
             return "test result"
 
-        assert "/ar:test" in test_app.command_handlers
-        assert "/test" in test_app.command_handlers
-        assert "TEST" in test_app.command_handlers
+        assert test_app.command_handlers["/ar:test"] is test_handler
+        assert test_app.command_handlers["/test"] is test_handler
+        assert test_app.command_handlers["TEST"] is test_handler
+        match = test_app._find_command("/ar:test example")
+        assert match is not None
+        assert match.starts_agent_turn is True
+
+    def test_command_decorator_defaults_to_display_only(self):
+        test_app = AutorunApp()
+
+        @test_app.command("/ar:status")
+        def status(ctx):
+            return "status"
+
+        match = test_app._find_command("/ar:status")
+        assert match is not None
+        assert match.starts_agent_turn is False
 
     def test_on_decorator_registers_chain_handler(self):
         """@app.on should register handler in chain."""
@@ -1317,6 +1331,326 @@ class TestAutorunDaemon:
 
         ctx = daemon._dispatch_with_timeout.await_args.args[0]
         assert ctx.deadline_monotonic == deadline
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "activation_prompt",
+        ["ar:go build the feature", "ar:pp notes/approved-plan.md"],
+    )
+    async def test_pi_go_and_planprocess_progress_through_all_three_stages(
+        self, activation_prompt
+    ):
+        from autorun import plugins as _plugins  # noqa: F401
+        from autorun.config import CONFIG
+
+        daemon = AutorunDaemon(app)
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def invoke(event, transcript=None, prompt=""):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps({
+                "hook_event_name": event,
+                "session_id": "pi-three-stage-" + activation_prompt.split()[0],
+                "cli_type": "pi",
+                "prompt": prompt,
+                "session_transcript": transcript or [],
+                "inprocess_capabilities": ["response_projection_v2", "task_operations_v1"],
+            }).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        activation = await invoke("UserPromptSubmit", prompt=activation_prompt)
+        if ":pp" in activation_prompt:
+            await invoke(
+                "PostToolUse",
+                [{"role": "assistant", "content": "created execution task"}],
+                prompt="",
+            )
+        stage1 = await invoke("Stop", [{"role": "assistant", "content": CONFIG["stage1_message"]}])
+        stage2 = await invoke("Stop", [{"role": "assistant", "content": CONFIG["stage2_message"]}])
+        countdown = [
+            await invoke("Stop", [{"role": "assistant", "content": "continuing evaluation"}])
+            for _ in range(CONFIG["stage3_countdown_calls"] + 1)
+        ]
+        completed = await invoke("Stop", [{"role": "assistant", "content": CONFIG["stage3_message"]}])
+
+        assert activation["_autorun_bridge"] == {"starts_agent_turn": True}
+        assert stage1["decision"] == "block" and "STAGE 2" in stage1["reason"]
+        assert stage2["decision"] == "block" and "Stage 2 complete" in stage2["reason"]
+        assert all(response["decision"] == "block" for response in countdown)
+        assert completed.get("decision") != "block"
+
+    @pytest.mark.asyncio
+    async def test_pi_task_receipts_create_list_update_and_release_stop(self):
+        from autorun import plugins as _plugins  # noqa: F401
+
+        daemon = AutorunDaemon(app)
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def invoke(payload):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps({
+                "session_id": "pi-task-sequence",
+                "cli_type": "pi",
+                "inprocess_capabilities": ["task_operations_v1"],
+                **payload,
+            }).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        created = await invoke({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "TaskCreate",
+            "tool_input": {"subject": "Build", "description": "Do it", "activeForm": "Building"},
+            "tool_result": {"task": {"id": "pi-sequence-1"}},
+        })
+        # A fresh daemon must project the persisted task; no warm cache from
+        # the mutating request is allowed to make this assertion pass.
+        daemon = AutorunDaemon(app)
+        listed = await invoke({
+            "hook_event_name": "AutorunOperation",
+            "inprocess_operation": "task_list_v1",
+        })
+        blocked = await invoke({"hook_event_name": "Stop"})
+        updated = await invoke({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "pi-sequence-1", "status": "completed"},
+            "tool_result": {"taskId": "pi-sequence-1"},
+        })
+        settled = await invoke({"hook_event_name": "Stop"})
+
+        assert created["_autorun_bridge"]["task_snapshot"]["status"] == "pending"
+        assert listed["_autorun_bridge"]["tasks"][0]["id"] == "pi-sequence-1"
+        assert blocked["decision"] == "block"
+        assert updated["_autorun_bridge"]["task_snapshot"]["status"] == "completed"
+        assert settled.get("decision") != "block"
+
+    @pytest.mark.asyncio
+    async def test_pi_task_operation_does_not_block_daemon_event_loop(self, monkeypatch):
+        import threading
+        from autorun import task_lifecycle
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        class SlowLifecycle:
+            def __init__(self, ctx): pass
+            @property
+            def tasks(self):
+                entered.set()
+                release.wait(timeout=2)
+                return {}
+
+        monkeypatch.setattr(task_lifecycle, "TaskLifecycle", SlowLifecycle)
+        daemon = AutorunDaemon(AutorunApp())
+        payload = {
+            "hook_event_name": "AutorunOperation",
+            "session_id": "nonblocking-operation",
+            "cli_type": "pi",
+            "inprocess_capabilities": ["task_operations_v1"],
+            "inprocess_operation": "task_list_v1",
+        }
+        reader = Mock()
+        reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+
+        class FakeWriter:
+            def write(self, _data): pass
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        operation = asyncio.create_task(daemon.handle_client(reader, FakeWriter()))
+        await asyncio.wait_for(asyncio.to_thread(entered.wait, 1), timeout=1)
+        ticked = False
+        async def tick():
+            nonlocal ticked
+            await asyncio.sleep(0)
+            ticked = True
+        await asyncio.wait_for(tick(), timeout=0.1)
+        release.set()
+        await operation
+
+        assert ticked is True
+
+    @pytest.mark.asyncio
+    async def test_handle_client_returns_bounded_task_projection_for_pi_operation(self, monkeypatch):
+        from autorun import task_lifecycle
+
+        tasks = {
+            str(index): {"id": str(index), "subject": f"Task {index}", "status": "pending"}
+            for index in range(105)
+        }
+
+        class FakeLifecycle:
+            def __init__(self, ctx):
+                assert ctx.cli_type == "pi"
+            @property
+            def tasks(self):
+                return tasks
+
+        monkeypatch.setattr(task_lifecycle, "TaskLifecycle", FakeLifecycle)
+        daemon = AutorunDaemon(AutorunApp())
+        payload = {
+            "hook_event_name": "AutorunOperation",
+            "session_id": "projection",
+            "cli_type": "pi",
+            "inprocess_capabilities": ["task_operations_v1"],
+            "inprocess_operation": "task_list_v1",
+        }
+        reader = Mock()
+        reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        writer = FakeWriter()
+        await daemon.handle_client(reader, writer)
+        operation = json.loads(writer.writes[0])["_autorun_bridge"]
+
+        assert operation["operation"] == "task_list_v1"
+        assert operation["total"] == 105
+        assert operation["truncated"] is True
+        assert len(operation["tasks"]) == 100
+
+    @pytest.mark.asyncio
+    async def test_handle_client_projects_python_task_snapshot_after_pi_update(self, monkeypatch):
+        from autorun import task_lifecycle
+
+        task = {"id": "pi-1", "subject": "Build", "status": "completed", "metadata": {"source": "pi_task_tool"}}
+        class FakeLifecycle:
+            def __init__(self, ctx):
+                assert ctx.cli_type == "pi"
+            @property
+            def tasks(self):
+                return {"pi-1": task}
+
+        monkeypatch.setattr(task_lifecycle, "TaskLifecycle", FakeLifecycle)
+        test_app = AutorunApp()
+        daemon = AutorunDaemon(test_app)
+        daemon._dispatch_with_timeout = AsyncMock(return_value=None)
+        payload = {
+            "hook_event_name": "PostToolUse",
+            "session_id": "projection",
+            "cli_type": "pi",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "pi-1", "status": "completed"},
+            "inprocess_capabilities": ["task_operations_v1"],
+        }
+        reader = Mock()
+        reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        writer = FakeWriter()
+        await daemon.handle_client(reader, writer)
+
+        assert json.loads(writer.writes[0])["_autorun_bridge"]["task_snapshot"] == task
+
+    @pytest.mark.asyncio
+    async def test_handle_client_reprojects_pi_branch_receipts(self, monkeypatch):
+        from autorun import task_lifecycle
+
+        received = []
+        class FakeLifecycle:
+            def __init__(self, ctx):
+                assert ctx.cli_type == "pi"
+            def replace_task_projection(self, records, *, source):
+                assert source == "pi_task_tool"
+                received.extend(records)
+
+        monkeypatch.setattr(task_lifecycle, "TaskLifecycle", FakeLifecycle)
+        daemon = AutorunDaemon(AutorunApp())
+        payload = {
+            "hook_event_name": "AutorunOperation",
+            "session_id": "projection",
+            "cli_type": "pi",
+            "inprocess_capabilities": ["task_operations_v1"],
+            "inprocess_operation": "task_reproject_v1",
+            "task_records": [{"id": "pi-1", "subject": "Restored", "status": "pending"}],
+        }
+        reader = Mock()
+        reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        writer = FakeWriter()
+        await daemon.handle_client(reader, writer)
+
+        assert received == payload["task_records"]
+        assert json.loads(writer.writes[0])["_autorun_bridge"] == {
+            "operation": "task_reproject_v1", "count": 1
+        }
+
+    @pytest.mark.asyncio
+    async def test_handle_client_projects_turn_metadata_only_for_opted_in_commands(self):
+        test_app = AutorunApp()
+
+        @test_app.command("/ar:work", starts_agent_turn=True)
+        def work(_ctx):
+            return "work"
+
+        daemon = AutorunDaemon(test_app)
+
+        class FakeWriter:
+            def __init__(self):
+                self.writes = []
+            def write(self, data):
+                self.writes.append(data)
+            async def drain(self):
+                pass
+            def close(self):
+                pass
+            async def wait_closed(self):
+                pass
+
+        async def invoke(capabilities):
+            payload = {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "projection",
+                "cli_type": "pi",
+                "prompt": "ar:work now",
+                "inprocess_capabilities": capabilities,
+            }
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        projected = await invoke(["response_projection_v2"])
+        external = await invoke([])
+
+        assert projected["_autorun_bridge"] == {"starts_agent_turn": True}
+        assert "_autorun_bridge" not in external
 
     def test_pid_exists_true(self):
         """_pid_exists should return True for running process."""

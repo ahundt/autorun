@@ -1105,6 +1105,46 @@ class TaskLifecycle:
                         record,
                     )
 
+    def replace_task_projection(self, records: List[Dict], *, source: str) -> None:
+        """Atomically replace only rows owned by one native task source."""
+        if not source:
+            raise ValueError("Task projection source must be non-empty")
+        normalized: Dict[str, Dict] = {}
+        now = time.time()
+        for raw in records:
+            if not isinstance(raw, dict):
+                raise TypeError("Pi task projection entries must be mappings")
+            task_id = str(raw.get("id") or "").strip()
+            if not task_id:
+                raise ValueError("Pi task projection entry is missing id")
+            status = str(raw.get("status") or "pending")
+            task_status_policy(status)
+            metadata = dict(raw.get("metadata") or {})
+            metadata["source"] = source
+            normalized[task_id] = {
+                "id": task_id,
+                "subject": str(raw.get("subject") or ""),
+                "description": str(raw.get("description") or ""),
+                "activeForm": str(raw.get("activeForm") or ""),
+                "status": status,
+                "created_at": float(raw.get("created_at") or now),
+                "updated_at": float(raw.get("updated_at") or now),
+                "session_id": self.session_id,
+                "owner": raw.get("owner"),
+                "blockedBy": [str(value) for value in raw.get("blockedBy") or []],
+                "blocks": [str(value) for value in raw.get("blocks") or []],
+                "metadata": metadata,
+                "tool_outputs": list(raw.get("tool_outputs") or []),
+            }
+
+        def replace(tasks):
+            for task_id in list(tasks):
+                if tasks[task_id].get("metadata", {}).get("source") == source:
+                    tasks.pop(task_id)
+            tasks.update(normalized)
+
+        self.atomic_update_tasks(replace)
+
     @property
     def plan_tasks_map(self) -> Dict[str, List[str]]:
         """Get plan->tasks mapping."""
@@ -1557,10 +1597,18 @@ class TaskLifecycle:
             self.log_event("ERROR", "unknown", "Failed to extract task ID", "error")
             return  # Fail-open
 
-        # Create task with full metadata
+        # Create task with full metadata. Pi task receipts are tagged at the
+        # Python authority boundary so the adapter cannot impersonate another
+        # source or grow its own transition policy.
+        input_data = dict(ctx.tool_input)
+        task_source = platform_for(self._cli_type).task_record_source
+        if task_source:
+            metadata = dict(input_data.get("metadata") or {})
+            metadata["source"] = task_source
+            input_data["metadata"] = metadata
         # Use raw_result directly if string (Gemini/test mocks), else tool_result_str
         result_str = raw_result if isinstance(raw_result, str) else ctx.tool_result_str
-        self.create_task(task_id, ctx.tool_input, result_str)
+        self.create_task(task_id, input_data, result_str)
 
         # If active plan, link this task to the plan for context injection
         if hasattr(ctx, "plan_active") and ctx.plan_active:

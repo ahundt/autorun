@@ -91,6 +91,21 @@ def _seed(mgr: TaskLifecycle, task_id: str, subject: str) -> str:
     return task_id
 
 
+PLAN_SKILLS = ("plannew", "planrefine", "planupdate", "planprocess")
+
+
+def test_every_plan_skill_explains_pi_durable_note_workflow():
+    for name in PLAN_SKILLS:
+        text = (plugin_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+        assert "## Harness-specific plan lifecycle" in text, name
+        assert "Pi" in text and "durable plan note" in text, name
+        assert "/ar pp <path>" in text, name
+        assert "Do not call `EnterPlanMode` or `ExitPlanMode` on Pi" in text, name
+        assert "**IMPORTANT:** If not already in plan mode, use `EnterPlanMode` tool NOW." not in text, name
+        assert "**Call ExitPlanMode when ALL planning tasks are complete**" not in text, name
+        assert "call the **ExitPlanMode** tool" not in text, name
+
+
 # ── 1. Delegation guidance must be performable on the running harness ─────────
 
 class TestDelegateGuidanceIsPerformable:

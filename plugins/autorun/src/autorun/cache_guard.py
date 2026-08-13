@@ -285,6 +285,8 @@ def _scan_once(path: str, *, start_from_end: int, cli: str) -> "UsageReading | N
         if not isinstance(obj, dict):
             continue
         entry_type = (obj.get("type") or obj.get("role") or "").lower()
+        if entry_type == "message" and isinstance(obj.get("message"), dict):
+            entry_type = str(obj["message"].get("role") or "").lower()
         if entry_type not in _ASSISTANT_TYPES:
             continue
         usage = _extract_usage_dict(obj)
@@ -337,11 +339,11 @@ def _usage_from_assistant(entry: dict, usage: dict, *, cli: str) -> UsageReading
                     continue
         return 0
 
-    input_tokens   = _first_int("input_tokens", "promptTokenCount", "prompt_tokens")
+    input_tokens   = _first_int("input_tokens", "promptTokenCount", "prompt_tokens", "input")
     cache_read     = _first_int("cache_read_input_tokens", "cachedContentTokenCount",
-                                "cached_content_token_count", "cache_read")
+                                "cached_content_token_count", "cache_read", "cacheRead")
     cache_creation = _first_int("cache_creation_input_tokens", "cache_creation",
-                                "cache_creation_tokens")
+                                "cache_creation_tokens", "cacheWrite")
 
     denom = input_tokens + cache_read + cache_creation
     ratio: float | None = (cache_read / denom) if denom > 0 else None

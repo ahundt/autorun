@@ -1312,7 +1312,16 @@ def _is_procedural_mode(prompt: str) -> bool:
     return any(x in prompt for x in ["/ar:gp", "/ar:proc", "/autoproc"])
 
 
-@app.command("/ar:go", "/ar:run", "/ar:gp", "/ar:proc", "/autorun", "/autoproc", "activate")
+@app.command(
+    "/ar:go",
+    "/ar:run",
+    "/ar:gp",
+    "/ar:proc",
+    "/autorun",
+    "/autoproc",
+    "activate",
+    starts_agent_turn=True,
+)
 def handle_activate(ctx: EventContext) -> str:
     """Activate autorun with task description."""
     # Bug #10 Fix: Ensure prompt is string to avoid TypeError on None
@@ -2965,8 +2974,19 @@ def _make_plan_handler(skill_name: str):
 
         md_path = get_skills_dir() / skill_name / "SKILL.md"
 
-        # Set plan_active and task creation nag for all plan commands
+        # Set plan_active and task creation nag for all plan commands.
         ctx.plan_active = True
+        if skill_name == "planprocess":
+            prompt = ctx.activation_prompt or ctx.prompt or ""
+            plan_path = prompt.split(maxsplit=1)[1].strip() if " " in prompt else ""
+            ctx.plan_arguments = plan_path
+            ctx.autorun_active = True
+            ctx.autorun_stage = EventContext.STAGE_1
+            ctx.autorun_task = f"Execute plan {plan_path}" if plan_path else "Execute the approved plan"
+            ctx.autorun_mode = "standard"
+            ctx.recheck_count = 0
+            ctx.hook_call_count = 0
+            ctx.plan_awaiting_execution_tasks = True
         # Only nag for planning tasks if none exist yet (prevents false positives
         # when /ar:planrefine runs after tasks were already created)
         has_tasks = False
@@ -2975,7 +2995,9 @@ def _make_plan_handler(skill_name: str):
                 has_tasks = len(task_lifecycle.TaskLifecycle(ctx=ctx).tasks) > 0
             except Exception:
                 pass
-        ctx.plan_awaiting_planning_tasks = not has_tasks
+        ctx.plan_awaiting_planning_tasks = (
+            skill_name != "planprocess" and not has_tasks
+        )
 
         if not md_path.exists():
             return f"❌ Error: plan skill not found: {skill_name}"
@@ -3005,7 +3027,9 @@ _PLAN_ALIASES = {
 }
 
 for plan_type, (short_cmd, long_cmd, skill) in _PLAN_ALIASES.items():
-    app.command(short_cmd, long_cmd, plan_type)(_make_plan_handler(skill))
+    app.command(short_cmd, long_cmd, plan_type, starts_agent_turn=True)(
+        _make_plan_handler(skill)
+    )
 
 
 # ============================================================================

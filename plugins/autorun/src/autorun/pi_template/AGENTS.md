@@ -10,7 +10,8 @@ the same command dispatcher.
 - `/ar go <task>` — start autonomous execution with three-stage verification.
 - `/ar st` — show the current AutoFile policy.
 - `/ar allow`, `/ar justify`, `/ar find` — select file-creation policy.
-- `/ar task` — show or control task lifecycle enforcement.
+- `/ar task` — show tracked tasks or control task lifecycle enforcement.
+- `TaskCreate`, `TaskUpdate`, `TaskList` — model-callable tools backed by autorun's Python task state.
 - `/ar sos` — emergency stop.
 - `/ar help` — list the complete command surface.
 
@@ -25,5 +26,7 @@ the same command dispatcher.
 ## Lifecycle
 
 Pi's `agent_settled` event is autorun's Stop boundary. If required work remains,
-autorun sends the concrete continuation reason as the next user message. Do not
-claim completion until that gate allows the session to settle.
+autorun sends the concrete continuation reason as a hidden custom extension
+message and starts the next turn. It never presents that control text as a
+user-authored message. Do not claim completion until that gate allows the
+session to settle.

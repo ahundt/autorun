@@ -61,6 +61,7 @@ export function createDaemonBridge({
   portFile,
   hookEntryCommand = [],
   timeoutMs = 5000,
+  inprocessCapabilities = [],
 }) {
   async function askDaemon(payload) {
     const target = daemonTarget(socketPath, portFile);
@@ -70,6 +71,9 @@ export function createDaemonBridge({
         ...payload,
         cli_type: cliType,
         protocol_version: PROTOCOL_VERSION,
+        ...(inprocessCapabilities.length > 0
+          ? { inprocess_capabilities: [...inprocessCapabilities] }
+          : {}),
         _pid: process.pid,
       }) + "\n";
 
@@ -151,7 +155,7 @@ export function createDaemonBridge({
     return (await askDaemon(payload)) ?? askHookEntry(payload);
   }
 
-  async function runCommand(command, cwd, sessionId) {
+  async function runCommandResponse(command, cwd, sessionId) {
     const name = String(command ?? "").trim().replace(/^\/?ar[:\- ]\s*/i, "");
     const response = await askDaemon({
       hook_event_name: "UserPromptSubmit",
@@ -159,12 +163,17 @@ export function createDaemonBridge({
       prompt: "ar:" + name,
       cwd: String(cwd ?? ""),
     });
-    return (
-      responseMessage(response) ||
-      "autorun daemon unreachable; command dispatch is fail-open. " +
-        "Run `autorun --restart-daemon`, then retry."
-    );
+    if (response) return response;
+    return {
+      systemMessage:
+        "autorun daemon unreachable; command dispatch is fail-open. " +
+        "Run `autorun --restart-daemon`, then retry.",
+    };
   }
 
-  return { askDaemon, askToolGate, runCommand };
+  async function runCommand(command, cwd, sessionId) {
+    return responseMessage(await runCommandResponse(command, cwd, sessionId));
+  }
+
+  return { askDaemon, askToolGate, runCommand, runCommandResponse };
 }

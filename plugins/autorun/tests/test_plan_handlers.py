@@ -100,6 +100,31 @@ class TestPlanCommandHandlers:
             "Content should be from plannew.md"
 
     @pytest.mark.unit
+    def test_planprocess_handler_activates_three_stage_execution_and_keeps_path(self):
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun.plugins import _make_plan_handler
+
+        ctx = EventContext(
+            session_id="planprocess-activation",
+            event="UserPromptSubmit",
+            prompt="ar:pp notes/approved-plan.md",
+            store=ThreadSafeDB(),
+            cli_type="pi",
+        )
+        ctx.activation_prompt = ctx.prompt
+
+        result = _make_plan_handler("planprocess")(ctx)
+
+        assert ctx.plan_active is True
+        assert ctx.plan_arguments == "notes/approved-plan.md"
+        assert ctx.autorun_active is True
+        assert ctx.autorun_stage == EventContext.STAGE_1
+        assert ctx.autorun_task == "Execute plan notes/approved-plan.md"
+        assert ctx.plan_awaiting_execution_tasks is True
+        assert ctx.plan_awaiting_planning_tasks is False
+        assert "Development Planning" in result
+
+    @pytest.mark.unit
     def test_plan_handlers_registered(self):
         """Test plan handlers are registered with app.command()"""
         # Import the app to check registrations

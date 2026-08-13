@@ -69,6 +69,36 @@ def test_capability_snapshot_exposes_each_harness_hook_contract():
     assert platforms["codex"]["context_events_with_block_decision"] == ["PostToolUse", "UserPromptSubmit"]
 
 
+def test_capability_snapshot_records_command_turn_behavior_without_replacing_handlers():
+    from autorun.capability_snapshot import build_capability_snapshot
+
+    snapshot = build_capability_snapshot()
+    turn_behavior = snapshot["command_starts_agent_turn"]
+
+    for alias in ("/ar:go", "/ar:run", "/ar:gp", "/ar:proc"):
+        assert turn_behavior[alias] is True
+    for alias in ("/ar:pn", "/ar:pr", "/ar:pu", "/ar:pp"):
+        assert turn_behavior[alias] is True
+    for alias in ("/ar:st", "/ar:stop", "/ar:sos", "/ar:reload"):
+        assert turn_behavior[alias] is False
+
+
+def test_pi_disposition_covers_every_derived_identity():
+    from autorun.capability_snapshot import build_capability_snapshot
+
+    snapshot = build_capability_snapshot()
+    disposition = snapshot["pi_disposition"]
+    allowed = {"native", "adapted", "intentionally_unsupported", "not_applicable"}
+
+    assert set(disposition["commands"]) == set(snapshot["commands"])
+    assert set(disposition["hook_events"]) == set(snapshot["hook_events"])
+    assert set(disposition["skills"]) == set(snapshot["skills"])
+    assert set(disposition["command_docs"]) == set(snapshot["command_docs"])
+    assert all(value in allowed for group in disposition.values() for value in group.values())
+    assert disposition["hook_events"]["PreCompact"] == "adapted"
+    assert disposition["hook_events"]["PreToolUse"] == "adapted"
+
+
 def test_capability_snapshot_aliases_have_one_owner():
     from autorun.capability_snapshot import build_capability_snapshot
 

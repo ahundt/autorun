@@ -165,6 +165,18 @@ def test_explicit_duration_with_reason_remains_bounded(monkeypatch):
     assert not task_enforcement_is_paused(ctx, now=400.0)
 
 
+def test_task_status_includes_bounded_tracked_task_state():
+    ctx = _context("task-status-rows", event="UserPromptSubmit", prompt="ar:task status")
+    ctx.activation_prompt = ctx.prompt
+    manager = TaskLifecycle(ctx=ctx)
+    manager.create_task("pi-1", {"subject": "Build Pi support"}, "created")
+
+    rendered = plugins.handle_task_command(ctx)
+
+    assert "Tasks: 1 total (1 pending)" in rendered
+    assert "#pi-1: Build Pi support (pending)" in rendered
+
+
 def test_task_and_tasks_roots_share_status_and_space_subcommands():
     singular = _context("task-singular", event="UserPromptSubmit", prompt="ar:task")
     plural = _context("task-plural", event="UserPromptSubmit", prompt="ar:tasks")

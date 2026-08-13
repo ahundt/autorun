@@ -37,7 +37,7 @@ assets; session state, task history, and logs are retained intentionally.
 | Qwen Code | Native hooks | Yes | Native extension |
 | Antigravity | Native hooks | Installed native event subset | Native extension |
 | OpenCode | In-process tool veto | No | Command files and skills |
-| Pi | In-process tool veto | `agent_settled` continuation | Native extension and shared skills |
+| Pi | In-process tool veto | `agent_settled` continuation plus daemon-backed task tools | Native extension and shared skills |
 | ForgeCode | Advisory guidance only | No | Command files and skills |
 | Legacy Gemini CLI | Native hooks | Yes | Native extension |
 
