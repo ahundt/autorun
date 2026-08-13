@@ -341,6 +341,72 @@ def test_release_checklist_covers_every_file_carrying_the_version():
     )
 
 
+def _declared_version(relative_path: str, field: str) -> str:
+    """Read one release-identity field, by its own file format."""
+    path = REPO_ROOT / relative_path
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".toml":
+        # Regex, not tomllib: tomllib is 3.11+ and autorun supports 3.10. Same
+        # approach as build_support.build_metadata.
+        match = re.search(rf'^{field}\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+    elif path.suffix == ".py":
+        match = re.search(rf'{field}\s*=\s*["\']([^"\']+)["\']', text)
+    else:
+        document = json.loads(text)
+        if "plugins" in document and field == "plugins":
+            versions = {plugin["version"] for plugin in document["plugins"]}
+            assert len(versions) == 1, f"{relative_path} releases its plugins apart"
+            return versions.pop()
+        return document[field]
+    assert match, f"no {field} field in {relative_path}"
+    return match.group(1)
+
+
+# Every field that declares the release version, and must therefore move
+# together. Files that merely *contain* the version as test data are excluded on
+# purpose -- see Gotcha 5 in docs/version_update_checklist.md. The root
+# marketplace catalog is excluded too: it carries the stable base line, which
+# test_root_marketplace_catalog_tracks_the_plugin_base_release checks separately.
+RELEASE_IDENTITY_FIELDS = (
+    ("pyproject.toml", "version"),
+    ("src/autorun_workspace/__init__.py", "__version__"),
+    (".claude-plugin/marketplace.json", "plugins"),
+    ("plugins/autorun/pyproject.toml", "version"),
+    ("plugins/autorun/.claude-plugin/plugin.json", "version"),
+    ("plugins/autorun/.claude-plugin/marketplace.json", "plugins"),
+    ("plugins/autorun/.codex-plugin/plugin.json", "version"),
+    ("plugins/autorun/src/autorun/__init__.py", "__version__"),
+    ("plugins/autorun/src/autorun/metadata.json", "version"),
+    ("plugins/autorun/src/autorun/gemini_template/gemini-extension.json", "version"),
+    ("plugins/pdf-extractor/pyproject.toml", "version"),
+    ("plugins/pdf-extractor/.claude-plugin/plugin.json", "version"),
+    ("plugins/pdf-extractor/src/pdf_extraction/__init__.py", "__version__"),
+    ("plugins/pdf-extractor/gemini-extension.json", "version"),
+)
+
+
+def test_every_release_identity_field_declares_the_same_version():
+    """A file left at the previous version must fail the release, not ship.
+
+    test_release_checklist_covers_every_file_carrying_the_version answers a
+    different question: it skips any file that does not contain the *current*
+    version, which is exactly the shape a stale file has. This one names each
+    declaration site and requires them to agree.
+    """
+    source = _declared_version("plugins/autorun/pyproject.toml", "version")
+    stale = {
+        path: found
+        for path, field in RELEASE_IDENTITY_FIELDS
+        if (found := _declared_version(path, field)) != source
+    }
+
+    assert not stale, (
+        f"plugins/autorun/pyproject.toml declares {source!r}; these disagree and "
+        "would ship the wrong version:\n  "
+        + "\n  ".join(f"{path}: {found!r}" for path, found in sorted(stale.items()))
+    )
+
+
 def test_root_marketplace_catalog_tracks_the_plugin_base_release():
     marketplace = json.loads(
         (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(
@@ -358,17 +424,39 @@ def test_root_marketplace_catalog_tracks_the_plugin_base_release():
     )
 
 
-def test_pdf_extractor_omits_only_markitdown_on_python_314():
+def test_pdf_extractor_installs_from_wheels_on_python_314():
+    """Two dependency chains have no cp314 artifact, and both must stay gated.
+
+    markitdown pins magika <0.7, which caps onnxruntime at 1.20.1; marker-pdf
+    pins pillow >=10.1,<11, whose last release 10.4.0 predates 3.14. uv resolves
+    one version per package across the whole universal lock, so an ungated cap
+    reaches the base install too: 3.14 falls back to the sdist and the source
+    build fails on any machine without system jpeg headers, GitHub runners
+    included. The pillow floor is what makes uv fork the lock rather than pick
+    one version that only builds from source.
+    """
     pyproject = (
         REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml"
     ).read_text(encoding="utf-8")
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
+    lock = (REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
 
     assert '"markitdown>=0.1.0; python_version < \'3.14\'"' in pyproject
+    assert '"marker-pdf>=0.3.0; python_version < \'3.14\'"' in pyproject
+    assert '"pillow>=11; python_version >= \'3.14\'"' in pyproject
     assert '"Programming Language :: Python :: 3.14"' in pyproject
     assert "matrix.python-version != '3.14'" not in workflow
+
+    # The declarations above state the intent; this is the effect. uv keeps an
+    # existing pin when it still resolves, so a lock that never forked would
+    # satisfy every assertion above and still build pillow from source.
+    assert "pillow-10.4.0-cp314" not in lock, "pillow 10.4.0 has no cp314 wheel"
+    assert re.search(r"pillow-\d+\.\d+\.\d+-cp314-", lock), (
+        "uv.lock resolves no pillow wheel for cp314, so a 3.14 install builds "
+        "the sdist and fails without system jpeg headers"
+    )
 
 
 def test_ci_actions_are_pinned_to_full_commits():

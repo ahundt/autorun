@@ -303,35 +303,83 @@ The workflow file is part of the release trust boundary. Every external
 trailing version comment is for humans.
 
 ### Stage 4: Tag and push — **RELEASER public write**
+
+Derive the tag from the declared version instead of typing it. `v1.0.0-rc1` for
+`1.0.0rc1` is a plausible slip, and a wrong tag on a public repository is one of
+the writes the recovery table below says to stop on rather than correct in
+place. `test_every_release_identity_field_declares_the_same_version` separately
+guarantees that every manifest agrees with the field read here, so one substitution
+covers them all.
+
 ```bash
 test "$(git rev-parse HEAD)" = "$release_sha"
-git tag -a vX.Y.Z "$release_sha" -m "autorun vX.Y.Z"
-git push origin vX.Y.Z
+release_version=$(rg -N -o -r '$1' '^version = "(.+)"' plugins/autorun/pyproject.toml)
+test -n "$release_version"
+release_tag="v$release_version"
+
+git tag -a "$release_tag" "$release_sha" -m "autorun $release_tag"
+git push origin "$release_tag"
 ```
 
 ### Stage 5: Verify tag is on the right commit
 ```bash
-test "$(git rev-list -n 1 vX.Y.Z)" = "$release_sha"
-test "$(git ls-remote origin 'refs/tags/vX.Y.Z^{}' | cut -f1)" = "$release_sha"
+test "$(git rev-list -n 1 "$release_tag")" = "$release_sha"
+test "$(git ls-remote origin "refs/tags/$release_tag^{}" | cut -f1)" = "$release_sha"
 ```
 
 ### Stage 6: Create GitHub prerelease — **RELEASER public write**
 
-The `--prerelease` flag is part of updater correctness. RC installs opt into
-prereleases; stable installs filter them out. Use the reviewed release draft,
-not generated notes, and make retries idempotent by inspecting first.
+The `--prerelease` flag is part of updater correctness. It governs **self-update
+only**: `installer/entrypoint.py` sets `allow_prerelease` from whether the
+*installed* version contains a letter, then filters candidates on the release's
+`prerelease` field, so an RC published without the flag is offered to stable
+installs as an ordinary upgrade.
+
+It does not govern fresh installs, and that is expected rather than a marking
+failure. `claude plugin marketplace add` follows the default branch, so a fresh
+install takes whatever `main` holds regardless of any release flag. Both halves
+are true at once: a stable user is not pulled onto an RC by the updater, while
+anyone installing from scratch during an RC window gets the RC.
+
+Use the reviewed release draft, not generated notes, and make retries idempotent
+by inspecting first.
 
 ```bash
-if gh release view vX.Y.Z >/dev/null 2>&1; then
-  gh release view vX.Y.Z --json tagName,isDraft,isPrerelease,url
+if gh release view "$release_tag" >/dev/null 2>&1; then
+  gh release view "$release_tag" --json tagName,isDraft,isPrerelease,url
 else
-  gh release create vX.Y.Z --verify-tag --prerelease \
-    --title "autorun vX.Y.Z" \
+  gh release create "$release_tag" --verify-tag --prerelease \
+    --title "autorun $release_tag" \
     --notes-file notes/YYYY-MM-DD-rc-release-draft.md
 fi
-test "$(gh release view vX.Y.Z --json isPrerelease --jq .isPrerelease)" = true
-test "$(gh release view vX.Y.Z --json isDraft --jq .isDraft)" = false
+test "$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)" = true
+test "$(gh release view "$release_tag" --json isDraft --jq .isDraft)" = false
 ```
+
+### Stage 7: Verify the published release from the public install path
+
+Stage 2's rehearsal installs from a local worktree, which is the right pre-tag
+check but is not the command the release notes give users. Run that command
+against the published state, in a scratch `HOME`, never `~/.claude`:
+
+```bash
+verify_root=$(mktemp -d "${TMPDIR:-/tmp}/autorun-verify.XXXXXX")
+mkdir -p "$verify_root/home"
+env HOME="$verify_root/home" USERPROFILE="$verify_root/home" \
+  CLAUDE_CONFIG_DIR="$verify_root/home/.claude" \
+  AUTORUN_HOME="$verify_root/autorun-home" \
+  AUTORUN_TEST_STATE_DIR="$verify_root/state" \
+  claude plugin marketplace add https://github.com/ahundt/autorun.git --scope user
+env HOME="$verify_root/home" USERPROFILE="$verify_root/home" \
+  CLAUDE_CONFIG_DIR="$verify_root/home/.claude" \
+  AUTORUN_HOME="$verify_root/autorun-home" \
+  AUTORUN_TEST_STATE_DIR="$verify_root/state" \
+  claude plugin install ar@autorun --scope user
+```
+
+The installed plugin's version must equal `$release_version`, and the plugin
+must register as `ar` in marketplace `autorun`. Remove the scratch directory once
+its contents have been inspected.
 
 ### Recovery table
 
