@@ -6,8 +6,8 @@ Extract text and structured data from PDF documents using a multi-backend approa
 
 ### AI Harnesses
 
-From an autorun source checkout, install the plugin and skill for every detected
-supported harness:
+From an autorun source checkout, install the plugin and skill for the detected
+supported harnesses:
 
 ```bash
 autorun --install pdf-extractor --force
@@ -32,9 +32,8 @@ rules as autorun's other global skills.
 
 ### Python CLI
 
-Every extraction backend is an extra, so pick the ones you want. `cpu` covers
-the CPU backends (markitdown, pdfplumber, pdfminer, pypdf) and is the ordinary
-choice:
+Python extraction libraries are optional extras. `cpu` installs markitdown,
+pdfplumber, pdfminer, and pypdf:
 
 ```bash
 uv tool install 'pdf-extractor[cpu]'
@@ -45,7 +44,7 @@ For the Linux/Windows GPU backend (docling):
 uv tool install --force 'pdf-extractor[cpu,gpu]'
 ```
 
-To install the current source instead of a published release:
+Source checkout installation:
 
 ```bash
 uv tool install 'pdf-extractor[cpu] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
@@ -57,7 +56,7 @@ uv tool install 'pdf-extractor[cpu] @ git+https://github.com/ahundt/autorun.git#
 | `gpu` | docling on Linux/Windows (needs PyTorch; downloads models on first use) |
 | `llm` | pymupdf4llm |
 | `progress` | tqdm progress bars (falls back to no output when absent) |
-| `all` | every extra above |
+| `all` | cpu, gpu, llm, and progress |
 
 The `marker` backend id remains available for users who manage that dependency
 separately. It is not in a published extra because marker-pdf's supported
@@ -67,7 +66,7 @@ advisory-affected transformers 4.x release.
 
 Installing with no extra still works: the CLI runs, `--list-backends` reports
 what is missing, and an extraction attempt names the extra to install. The only
-backend available without any extra is `pdftotext`, if poppler is on the system.
+backend available in a bare install is `pdftotext`, if poppler is on the system.
 
 ## Usage
 
@@ -107,7 +106,7 @@ files, metadata = pdf_to_txt("./pdfs/", "./output/", return_metadata=True)
 | markitdown | MIT | General text, forms |
 | pdfplumber | MIT | Tables, structured data |
 | pdfminer | MIT | Simple text documents |
-| pypdf2 | BSD-3 | Basic extraction through maintained `pypdf`; CLI id retained for compatibility |
+| pypdf2 | BSD-3 | Basic extraction through `pypdf`; CLI id retained for compatibility |
 | docling | MIT | Layout analysis (GPU) |
 | marker | GPL-3.0 | Scanned documents (GPU) |
 | pymupdf4llm | AGPL-3.0 | LLM-optimized output |
@@ -129,4 +128,4 @@ not the Codex skill invocation.
 
 ## License
 
-Apache License 2.0 — see the repository's `LICENSE` file.
+Apache License 2.0. See the repository's `LICENSE` file.

@@ -293,6 +293,34 @@ def test_release_runbook_rehearses_testpypi_before_tagging():
     )
 
 
+def test_release_notes_name_upgrade_actions_date_and_diff():
+    """The tracked GitHub release body must answer upgrade questions directly."""
+    version = _declared_version("plugins/autorun/pyproject.toml", "version")
+    notes = (REPO_ROOT / "docs" / "releases" / f"{version}.md").read_text(
+        encoding="utf-8"
+    )
+    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    release_heading = re.search(
+        rf"^## \[{re.escape(version)}\] - (\d{{4}}-\d{{2}}-\d{{2}})$",
+        changelog,
+        re.MULTILINE,
+    )
+
+    assert release_heading
+    assert f"Date: {release_heading.group(1)}" in notes
+    assert "## Upgrade notes" in notes
+    assert f"compare/v0.12.0...v{version}" in notes
+
+
+def test_root_readme_starts_with_published_install_and_no_generated_banner():
+    """The first-run path must use the release artifact without generated artwork."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    quick_start = readme.split("## Quick Start", 1)[1].split("\n## ", 1)[0]
+
+    assert "uv tool install autorun" in quick_start
+    assert "Gemini_Generated_Image" not in readme
+
+
 def test_current_changelog_covers_pi_and_published_distributions():
     """The current release entry must describe capability and distribution surfaces."""
     version = _declared_version("plugins/autorun/pyproject.toml", "version")

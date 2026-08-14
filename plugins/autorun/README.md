@@ -17,7 +17,7 @@ autorun --install
 autorun --status
 ```
 
-To install the current source instead of a published release:
+Source checkout installation:
 
 ```bash
 uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'

@@ -3,28 +3,28 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-<img width="2816" height="1536" alt="Gemini_Generated_Image_x0gcohx0gcohx0gc" src="https://github.com/user-attachments/assets/85788232-fef5-48fc-9d7b-59b41b12f590" />
-
-
 ## Key Features
 
-1. **Fewer Interruptions**: Claude, Gemini-family CLIs, Qwen, or Codex keeps working without "continue" prompts so you can step away
-2. **Planning When It Helps**: Optionally critique and refine a plan before code is written
-3. **Verification When It Helps**: Optionally run implement, evaluate, and verify stages for work that benefits from extra checks
-4. **Room to Discuss**: `/ar:tasks pause <reason>` pauses reminders and Stop enforcement without changing tasks
-5. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
-6. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-7. **Works across maintained AI coding harnesses**: Native hooks protect Claude Code, Antigravity, Qwen Code, and Codex; Pi and OpenCode use in-process tool vetoes; ForgeCode receives advisory guidance
-8. **Portable Command Suite**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
-9. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
+- Tool calls pass through native safety hooks on Claude Code, Antigravity, Qwen
+  Code, and Codex. Pi and OpenCode use in-process vetoes; ForgeCode receives
+  advisory guidance.
+- File policies control whether an agent may create files. Command guards turn
+  `rm` into `trash` guidance and `git reset --hard` into `git stash` guidance.
+- Stop hooks resume incomplete tasks on supported harnesses. Use
+  `/ar:tasks pause <reason>` to suspend reminders and Stop enforcement without
+  changing task state.
+- Planning is optional. For work that needs it, autorun can critique a plan and
+  run separate implementation, evaluation, and verification stages.
+- The command and skill bundle includes plan export, task tracking, commit
+  guidance, design principles, and session-history analysis.
 
 ![autorun Architecture](autorun-architecture.svg)
 
 ## Quick Start
 
 ```bash
-# Install (requires UV - see UV Installation below)
-uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'
+# Install the published package with UV
+uv tool install autorun
 autorun --install
 
 # Verify installation
@@ -174,7 +174,7 @@ For contributors and developers:
 git clone https://github.com/ahundt/autorun.git
 cd autorun
 
-# Option 1: UV (recommended - faster, better dependency management)
+# Option 1: UV (recommended; faster dependency management)
 uv run --project plugins/autorun python -m autorun --install --force
 
 # Option 2: pip fallback (if UV is unavailable)
@@ -294,10 +294,10 @@ Individual skill directories are linked rather than the whole `skills/` folder: 
 
 The shared location is configurable through `shared_agents_dir` and `shared_agents_skills_subdir` in `CONFIG`, which install and uninstall both read.
 
-#### Selected bundled skills
+#### Bundled skill examples
 
-The table below is a selection. Skills are installed from each selected `plugins/*/skills/` tree and use each harness's native
-skill picker or mention syntax. In Codex, use `/skills` or `$skill-name`; do not
+An install selects skills from the chosen `plugins/*/skills/` trees and uses the
+harness's native skill picker or mention syntax. The table lists common examples. In Codex, use `/skills` or `$skill-name`; do not
 assume a skill is an `/ar:*` command. The read-only
 `autorun --capability-snapshot` output is the machine-readable inventory.
 
@@ -563,14 +563,14 @@ graph TD
     H --> I{AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY?}
     I -->|No| J[Continue verification]
     J --> H
-    I -->|Yes| K[Task Complete - Session Ends]
+    I -->|Yes| K[Task Complete: Session Ends]
 ```
 
-**Stage 1 - Initial Implementation**: Claude works on the task, outputs `AUTORUN_INITIAL_TASKS_COMPLETED` when done.
+**Stage 1: Initial implementation.** Claude works on the task and outputs `AUTORUN_INITIAL_TASKS_COMPLETED` when done.
 
-**Stage 2 - Critical Evaluation**: Claude critically evaluates work, identifies gaps, outputs `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED` when satisfied.
+**Stage 2: Critical evaluation.** Claude evaluates the work, identifies gaps, and outputs `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED` when satisfied.
 
-**Stage 3 - Final Verification**: Claude verifies all requirements met, outputs `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` to finish.
+**Stage 3: Final verification.** Claude checks the requirements and outputs `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` to finish.
 
 **Emergency Stop**: At any point, `/ar:sos` outputs `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` and immediately halts.
 
@@ -587,7 +587,7 @@ graph TD
 **Before autorun**: Claude stops after implementing basic login form
 **With autorun (implement, evaluate, verify)**:
 1. Stage 1: "Login form implemented!" → `AUTORUN_INITIAL_TASKS_COMPLETED`
-2. Stage 2: "Critically evaluated - added error handling, tests missing" → continues working → `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED`
+2. Stage 2: "Critically evaluated; added error handling; tests missing" → continues working → `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED`
 3. Stage 3: "Verified: Form works, tests pass, error handling complete" → `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` → Session ends
 
 ## Tmux Integration
@@ -702,7 +702,7 @@ opens with the rule for the harness you are on.
 | - | `/ar:help` | - | List every command and what it does, in this harness's spelling |
 | `/ar:a` | `/ar:allow` | `/afa` | Allow all file creation (Level 3) |
 | `/ar:j` | `/ar:justify` | `/afj` | Require justification for new files (Level 2) |
-| `/ar:f` | `/ar:find` | `/afs` | Find existing files only - no creation (Level 1) |
+| `/ar:f` | `/ar:find` | `/afs` | Find existing files only; no creation (Level 1) |
 | `/ar:st` | `/ar:status` | `/afst` | Show current policy status |
 | `/ar:go` | `/ar:run` | `/autorun` | Start autonomous task execution |
 | `/ar:gp` | `/ar:proc` | `/autoproc` | Procedural autonomous workflow |
@@ -798,16 +798,16 @@ Three-tier policy system enforced via PreToolUse hooks:
 /ar:no rm
 
 # Custom description for specific guidance
-/ar:no "exec(" unsafe exec function - use alternatives
+/ar:no "exec(" unsafe exec function: use alternatives
 
 # Regex pattern matching for flexible patterns
-/ar:no regex:eval\( dangerous eval usage - blocked for security
+/ar:no regex:eval\( dangerous eval usage: blocked for security
 
 # Glob pattern matching for wildcards
 /ar:no glob:*.tmp temporary files are not allowed in this session
 
 # Global blocking with custom description
-/ar:globalno "git reset --hard" PERMANENTLY DESTRUCTIVE - use git restore instead
+/ar:globalno "git reset --hard" PERMANENTLY DESTRUCTIVE: use git restore instead
 
 # Auto-detect regex when pattern contains metacharacters
 /ar:no /eval\(.*assert/ matches eval( or assert(
@@ -1026,7 +1026,7 @@ too, not only Claude Code. The commands below are unchanged.
 ### Tmux Automation Commands
 
 - **/ar:tm** or **/ar:tmux** - Session lifecycle management (create, list, cleanup)
-- **/ar:tt** or **/ar:ttest** - Comprehensive CLI and plugin testing in isolated sessions
+- **/ar:tt** or **/ar:ttest**: CLI and plugin testing in isolated sessions
 - **/ar:tabs** - Discover and manage Claude sessions running across tmux windows
 - **/ar:tabw** - Execute actions on Claude sessions across tmux windows (DANGEROUS: sends keystrokes to other sessions)
   - Scans all tmux panes for Claude Code sessions using pattern matching
@@ -1050,7 +1050,7 @@ When `/ar:tabs` discovers sessions, it displays these status indicators:
 **See also**:
 - `/ar:tmux` or `/ar:tm` - Create and manage isolated tmux sessions
 - `/ar:ttest` or `/ar:tt` - Automated CLI testing in isolated sessions
-- `tmux-session-automation.md` agent - Advanced session lifecycle automation
+- `tmux-session-automation.md` agent: advanced session lifecycle automation
 
 ### Usage Examples
 
@@ -1592,7 +1592,7 @@ git push origin feature/your-improvement
 - [pytest](https://docs.pytest.org/) — Testing framework
 
 **Hooks API Documentation:**
-- [Hooks API Reference](docs/hooks_api_reference.md) — Comprehensive hooks specification, event types, and response formats
+- [Hooks API Reference](docs/hooks_api_reference.md) — Hook events, response formats, and schemas
 - [Claude Code Hooks API](docs/claude-code-hooks-api.md) — Claude Code-specific hooks behavior and bug workarounds
 - [Gemini CLI Hooks API](docs/gemini-cli-hooks-api.md) — Gemini CLI hooks compatibility and differences
 - [Codex CLI Hooks API](docs/codex-cli-hooks-api.md) — Codex hook schema, trust, and tool-surface differences
@@ -1603,4 +1603,4 @@ git push origin feature/your-improvement
 
 ## License
 
-Apache License 2.0 - see [LICENSE](LICENSE) file for details.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
