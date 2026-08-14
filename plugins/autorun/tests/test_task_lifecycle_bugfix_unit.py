@@ -37,16 +37,21 @@ def _task_projection_process_worker(
     session_id: str,
     action: str,
     results,
+    start_gate=None,
+    task_id: str = "shared",
+    work_dir: str | None = None,
 ) -> None:
     """Write or read one task projection in a fresh spawned interpreter."""
-    from autorun import session_manager
-    from autorun.session_manager import SessionStateManager, _reset_for_testing
+    import os
+
+    from autorun.core import EventContext
+    from autorun.session_manager import _reset_for_testing
     from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 
+    os.environ["AUTORUN_TEST_STATE_DIR"] = state_dir
+    if work_dir is not None:
+        os.chdir(work_dir)
     _reset_for_testing()
-    manager = SessionStateManager(state_dir=Path(state_dir))
-    session_manager._manager = manager
-    session_manager._store = manager._store
     lifecycle = TaskLifecycle(
         session_id=session_id,
         config=TaskLifecycleConfig(
@@ -56,10 +61,28 @@ def _task_projection_process_worker(
             max_resume_tasks=10,
         ),
     )
+    if start_gate is not None:
+        if not start_gate.wait(timeout=10):
+            results.put({"error": "start gate timed out"})
+            _reset_for_testing()
+            return
     if action == "write":
-        lifecycle.create_task("shared", {"subject": "Shared task"}, "created")
-        lifecycle.update_task("shared", {"status": "in_progress"}, "started")
-        results.put({"written": True})
+        lifecycle.create_task(task_id, {"subject": f"Task {task_id}"}, "created")
+        lifecycle.update_task(task_id, {"status": "in_progress"}, "started")
+        results.put({"written": task_id})
+    elif action == "complete":
+        lifecycle.update_task(task_id, {"status": "completed"}, "completed")
+        results.put({"completed": task_id})
+    elif action == "inspect":
+        stop = lifecycle.handle_stop(
+            EventContext(session_id=session_id, event="Stop", cli_type="pi")
+        )
+        results.put(
+            {
+                "projection": lifecycle.task_projection(limit=10),
+                "stop_blocked": "block" in str(stop).lower(),
+            }
+        )
     else:
         results.put(lifecycle.task_projection(limit=10))
     _reset_for_testing()
@@ -550,7 +573,7 @@ class TestTaskProjection:
         writer.start()
         writer.join(timeout=30)
         assert writer.exitcode == 0
-        assert results.get(timeout=5) == {"written": True}
+        assert results.get(timeout=5) == {"written": "shared"}
 
         reader = spawn.Process(
             target=_task_projection_process_worker,
@@ -565,6 +588,212 @@ class TestTaskProjection:
         assert projection["truncated"] is False
         assert projection["tasks"][0]["id"] == "shared"
         assert projection["tasks"][0]["status"] == "in_progress"
+
+    @pytest.mark.parametrize(
+        ("same_session", "expected"),
+        [(True, {"left", "right"}), (False, {"left"})],
+    )
+    def test_simultaneous_spawned_processes_preserve_session_boundaries(
+        self, tmp_path, isolated_session_manager, same_session, expected
+    ):
+        """Concurrent processes lose no writes and do not cross session IDs."""
+        spawn = multiprocessing.get_context("spawn")
+        results = spawn.Queue()
+        start_gate = spawn.Event()
+        state_dir = str(isolated_session_manager.state_dir)
+        config_dir = str(tmp_path / "process-config")
+        first_session = f"process-a-{time.time_ns()}"
+        second_session = first_session if same_session else f"process-b-{time.time_ns()}"
+        common_work_dir = tmp_path / "common-work"
+        left_work_dir = common_work_dir if not same_session else tmp_path / "left-work"
+        right_work_dir = common_work_dir if not same_session else tmp_path / "right-work"
+        for work_dir in {left_work_dir, right_work_dir}:
+            work_dir.mkdir()
+        workers = [
+            spawn.Process(
+                target=_task_projection_process_worker,
+                args=(
+                    state_dir,
+                    config_dir,
+                    session_id,
+                    "write",
+                    results,
+                    start_gate,
+                    task_id,
+                    str(work_dir),
+                ),
+            )
+            for session_id, task_id, work_dir in (
+                (first_session, "left", left_work_dir),
+                (second_session, "right", right_work_dir),
+            )
+        ]
+        for worker in workers:
+            worker.start()
+        start_gate.set()
+        for worker in workers:
+            worker.join(timeout=30)
+
+        assert all(worker.exitcode == 0 for worker in workers)
+        receipts = {results.get(timeout=5)["written"] for _ in workers}
+        assert receipts == {"left", "right"}
+
+        def read_in_fresh_process(session_id):
+            reader = spawn.Process(
+                target=_task_projection_process_worker,
+                args=(state_dir, config_dir, session_id, "read", results),
+            )
+            reader.start()
+            reader.join(timeout=30)
+            assert reader.exitcode == 0
+            return results.get(timeout=5)
+
+        assert {task["id"] for task in read_in_fresh_process(first_session)["tasks"]} == expected
+        if not same_session:
+            assert {
+                task["id"] for task in read_in_fresh_process(second_session)["tasks"]
+            } == {"right"}
+
+    def test_spawned_process_lifecycle_blocks_until_concurrent_work_completes(
+        self, tmp_path, isolated_session_manager
+    ):
+        """Fresh processes share create/update/Stop lifecycle without lost writes."""
+        spawn = multiprocessing.get_context("spawn")
+        results = spawn.Queue()
+        state_dir = str(isolated_session_manager.state_dir)
+        config_dir = str(tmp_path / "lifecycle-process-config")
+        session_id = f"process-lifecycle-{time.time_ns()}"
+
+        def run_pair(action, receipt_key):
+            gate = spawn.Event()
+            workers = [
+                spawn.Process(
+                    target=_task_projection_process_worker,
+                    args=(
+                        state_dir,
+                        config_dir,
+                        session_id,
+                        action,
+                        results,
+                        gate,
+                        task_id,
+                    ),
+                )
+                for task_id in ("left", "right")
+            ]
+            for worker in workers:
+                worker.start()
+            gate.set()
+            for worker in workers:
+                worker.join(timeout=30)
+            assert all(worker.exitcode == 0 for worker in workers)
+            assert {results.get(timeout=5)[receipt_key] for _ in workers} == {
+                "left",
+                "right",
+            }
+
+        def inspect():
+            reader = spawn.Process(
+                target=_task_projection_process_worker,
+                args=(state_dir, config_dir, session_id, "inspect", results),
+            )
+            reader.start()
+            reader.join(timeout=30)
+            assert reader.exitcode == 0
+            return results.get(timeout=5)
+
+        run_pair("write", "written")
+        pending = inspect()
+        assert pending["stop_blocked"] is True
+        assert {task["id"] for task in pending["projection"]["tasks"]} == {
+            "left",
+            "right",
+        }
+
+        run_pair("complete", "completed")
+        completed = inspect()
+        assert completed["stop_blocked"] is False
+        assert {task["status"] for task in completed["projection"]["tasks"]} == {
+            "completed"
+        }
+
+    def test_lifecycle_resumes_across_working_directories_and_harness_surfaces(
+        self, isolated_config, isolated_session_manager, tmp_path
+    ):
+        """cwd is not identity; supported harness tools share lifecycle state."""
+        session_id = f"cross-cwd-{time.time_ns()}"
+        create_ctx = EventContext(
+            session_id=session_id,
+            event="PostToolUse",
+            cwd=str(tmp_path / "project-a"),
+            tool_name="TaskCreate",
+            tool_input={"subject": "Cross-directory task"},
+            tool_result={"task": {"id": "cross-dir"}},
+            cli_type="claude",
+        )
+        TaskLifecycle(ctx=create_ctx, config=isolated_config).handle_task_create(create_ctx)
+
+        resumed = TaskLifecycle(
+            ctx=EventContext(
+                session_id=session_id,
+                event="SessionStart",
+                cwd=str(tmp_path / "project-b"),
+                cli_type="pi",
+            ),
+            config=isolated_config,
+        )
+        resume_response = resumed.handle_session_start(resumed.ctx)
+        assert "outstanding incomplete tasks" in str(resume_response)
+        stop_response = resumed.handle_stop(
+            EventContext(
+                session_id=session_id,
+                event="Stop",
+                cwd=str(tmp_path / "project-b"),
+                cli_type="pi",
+            )
+        )
+        assert "block" in str(stop_response).lower()
+
+        update_ctx = EventContext(
+            session_id=session_id,
+            event="PostToolUse",
+            cwd=str(tmp_path / "project-c"),
+            tool_name="TaskUpdate",
+            tool_input={"taskId": "cross-dir", "status": "completed"},
+            tool_result={"taskId": "cross-dir"},
+            cli_type="pi",
+        )
+        TaskLifecycle(ctx=update_ctx, config=isolated_config).handle_task_update(update_ctx)
+        assert TaskLifecycle(ctx=update_ctx, config=isolated_config).tasks["cross-dir"][
+            "status"
+        ] == "completed"
+        assert TaskLifecycle(ctx=update_ctx, config=isolated_config).handle_stop(
+            EventContext(
+                session_id=session_id,
+                event="Stop",
+                cwd=str(tmp_path / "project-c"),
+                cli_type="claude",
+            )
+        ) is None
+
+    def test_same_session_id_is_isolated_by_state_directory(self, tmp_path, monkeypatch):
+        """Two redirected runtime roots cannot see each other's same-named session."""
+        from autorun.session_manager import _reset_for_testing
+
+        session_id = f"same-name-{time.time_ns()}"
+        observed = []
+        try:
+            for root, task_id in ((tmp_path / "one", "one"), (tmp_path / "two", "two")):
+                monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(root / "state"))
+                _reset_for_testing()
+                config = TaskLifecycleConfig(enabled=True, storage_dir=root / "tasks")
+                lifecycle = TaskLifecycle(session_id=session_id, config=config)
+                lifecycle.create_task(task_id, {"subject": task_id}, "created")
+                observed.append(set(lifecycle.tasks))
+        finally:
+            _reset_for_testing()
+
+        assert observed == [{"one"}, {"two"}]
 
     def test_projection_rejects_invalid_limit(
         self, isolated_config, isolated_session_manager

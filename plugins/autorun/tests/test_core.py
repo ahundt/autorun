@@ -1499,6 +1499,66 @@ class TestAutorunDaemon:
         assert final["_autorun_bridge"]["tasks"][0]["status"] == "completed"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("same_session", [True, False])
+    async def test_simultaneous_pi_daemon_clients_preserve_session_boundaries(
+        self, same_session
+    ):
+        """Independent socket clients serialize same-session writes and isolate others."""
+        from autorun import plugins as _plugins  # noqa: F401
+
+        daemon = AutorunDaemon(app)
+        first_session = f"pi-clients-a-{time.time_ns()}"
+        second_session = first_session if same_session else f"pi-clients-b-{time.time_ns()}"
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def invoke(session_id, task_id):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps({
+                "hook_event_name": "PostToolUse",
+                "session_id": session_id,
+                "cli_type": "pi",
+                "inprocess_capabilities": ["task_operations_v1"],
+                "tool_name": "TaskCreate",
+                "tool_input": {"subject": task_id, "description": task_id},
+                "tool_result": {"task": {"id": task_id}},
+            }).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        receipts = await asyncio.gather(
+            invoke(first_session, "left"),
+            invoke(second_session, "right"),
+        )
+        assert {
+            receipt["_autorun_bridge"]["task_snapshot"]["id"] for receipt in receipts
+        } == {"left", "right"}
+
+        async def list_tasks(session_id):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps({
+                "hook_event_name": "AutorunOperation",
+                "session_id": session_id,
+                "cli_type": "pi",
+                "inprocess_capabilities": ["task_operations_v1"],
+                "inprocess_operation": "task_list_v1",
+            }).encode() + b"\n")
+            writer = FakeWriter()
+            await AutorunDaemon(app).handle_client(reader, writer)
+            return json.loads(writer.writes[0])["_autorun_bridge"]["tasks"]
+
+        expected = {"left", "right"} if same_session else {"left"}
+        assert {task["id"] for task in await list_tasks(first_session)} == expected
+        if not same_session:
+            assert {task["id"] for task in await list_tasks(second_session)} == {"right"}
+
+    @pytest.mark.asyncio
     async def test_pi_task_operation_does_not_block_daemon_event_loop(self, monkeypatch):
         import threading
         from autorun import task_lifecycle

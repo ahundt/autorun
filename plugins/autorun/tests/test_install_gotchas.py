@@ -932,9 +932,10 @@ def test_every_skill_destination_honours_a_redirected_home(monkeypatch, tmp_path
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    # An explicit XDG_CONFIG_HOME is a supported relocation, not part of this
-    # HOME-only isolation assertion.  CI commonly exports it globally.
+    # Explicit harness relocation variables are supported overrides, not part
+    # of this HOME-only isolation assertion. CI commonly exports them globally.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
 
     escaped = [
         (platform.name, str(destination))

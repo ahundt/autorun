@@ -6,9 +6,9 @@ registered harness, and check the three properties that make an installer
 trustworthy — a preview writes nothing, a second install changes nothing, and an
 uninstall leaves nothing behind.
 
-`HOME` is redirected with monkeypatch.setenv, which is the single isolation
-seam: `Path.home()` reads it, so every route moves together. Nothing here may
-touch the developer's own configuration.
+`HOME` is redirected with monkeypatch.setenv, and harness-specific relocation
+environment variables are cleared so these tests exercise default-home routes.
+Nothing here may touch the developer's own configuration.
 """
 from __future__ import annotations
 
@@ -46,6 +46,7 @@ def sandbox(tmp_path, monkeypatch):
     # runner may export it globally, so clear it here or the OpenCode command
     # and plugin intents intentionally land outside this sandbox.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
     return home
 
 

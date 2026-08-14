@@ -802,6 +802,7 @@ def test_skill_search_paths_include_every_documented_read_tier(tmp_path, monkeyp
     # Keep this registry-shape check on the default HOME route.  XDG_CONFIG_HOME
     # is tested separately as an explicit OpenCode relocation override.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
 
     for name, platform in PLATFORMS.items():
         found = {
