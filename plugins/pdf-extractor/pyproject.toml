@@ -33,26 +33,31 @@ cpu = [
     # markitdown's magika/onnxruntime chain has no cp314 artifact yet.
     "markitdown>=0.1.0; python_version < '3.14'",
     "pdfplumber>=0.10.0",
-    # pdfplumber pulls pillow in transitively. Floor it on 3.14 so uv forks the
-    # universal lock; see the marker-pdf note under the gpu extra.
-    "pillow>=11; python_version >= '3.14'",
+    # pdfplumber pulls Pillow transitively; keep the optional CPU graph above
+    # the first release that fixes all advisories known at this release gate.
+    "pillow>=12.3.0",
     "pdfminer.six>=20221105",
-    "PyPDF2>=3.0.0",
+    # The CLI backend id remains `pypdf2` for compatibility, but PyPDF2 is
+    # retired and has no patched release for its known advisory.
+    "pypdf>=6.0.0",
 ]
 gpu = [
-    "docling>=2.0.0",
-    # marker-pdf requires pillow>=10.1.0,<11.0.0, and the newest pillow under 11
-    # is 10.4.0, which ships no cp314 wheel. uv resolves one pillow for the whole
-    # universal lock, so without this marker the base install on 3.14 inherits
-    # the cap, falls back to pillow's sdist, and the source build fails on any
-    # machine without system jpeg headers. docling has no such cap.
-    "marker-pdf>=0.3.0; python_version < '3.14'",
+    # docling's macOS standard model stack still pins an advisory-affected
+    # transformers 4.x. Keep the published extra safe until upstream lifts it.
+    "docling>=2.94.0; sys_platform != 'darwin'",
+    # marker-pdf is intentionally not selected: its supported-platform
+    # dependency graph pins Pillow below the first fully patched release.
 ]
 llm = ["pymupdf4llm>=0.0.1"]
 # extractors.py falls back to a no-op progress bar when tqdm is absent.
 progress = ["tqdm>=4.60.0"]
 all = ["pdf-extractor[cpu,gpu,llm,progress]"]
 dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "ruff>=0.8.0"]
+
+[project.urls]
+Homepage = "https://github.com/ahundt/autorun"
+Repository = "https://github.com/ahundt/autorun.git"
+Issues = "https://github.com/ahundt/autorun/issues"
 
 [project.scripts]
 extract-pdfs = "pdf_extraction.cli:main"

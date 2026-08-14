@@ -86,13 +86,13 @@ def is_pdf_encrypted(pdf_path: str) -> bool:
         pdf_path: Path to PDF file
 
     Returns:
-        True if encrypted, False otherwise (also False if PyPDF2 not available)
+        True if encrypted, False otherwise (also False if pypdf is unavailable)
     """
     try:
-        import PyPDF2
+        import pypdf
 
         with open(pdf_path, 'rb') as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = pypdf.PdfReader(f)
             return reader.is_encrypted
     except Exception:
         # Availability probes deliberately collapse parser/import failures into

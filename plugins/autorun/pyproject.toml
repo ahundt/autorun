@@ -27,7 +27,9 @@ classifiers = [
 dependencies = [
     "bashlex>=0.18",
     "psutil",
-    "filelock>=3.12.0",
+    # filelock 3.29.5+ leaves a lock inode after failed installer preflight;
+    # that violates the no-durable-write contract. Do not unlink live locks.
+    "filelock>=3.12.0,<3.29.5",
     # Frontmatter is YAML. Three hand-written subset parsers used to read it and
     # each understood a different subset; command_docs.split_frontmatter is the
     # single reader now, and it imports this lazily so no hook pays for it.

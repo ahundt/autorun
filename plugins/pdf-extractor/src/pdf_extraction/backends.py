@@ -218,13 +218,13 @@ class PdfminerExtractor(BackendExtractor):
 
 
 class Pypdf2Extractor(BackendExtractor):
-    """PyPDF2 backend - Basic extraction (BSD-3)."""
+    """pypdf backend under the legacy ``pypdf2`` CLI id (BSD-3)."""
 
     def __init__(self):
         def create_pypdf2():
-            import PyPDF2
+            import pypdf
 
-            return PyPDF2
+            return pypdf
 
         super().__init__('pypdf2', create_pypdf2)
 
@@ -300,7 +300,7 @@ _BACKEND_MODULES = {
     'pymupdf4llm': 'pymupdf4llm',
     'pdfbox': 'pdfbox',
     'pdfminer': 'pdfminer',
-    'pypdf2': 'PyPDF2',
+    'pypdf2': 'pypdf',
     'pdfplumber': 'pdfplumber',
 }
 

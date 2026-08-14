@@ -60,8 +60,11 @@ markdown = result.document.export_to_markdown()
 ### Marker (datalab-to)
 
 **License:** GPL-3.0 (copyleft)
-**Dependencies:** `marker-pdf>=0.3.0`
-**Models:** ~1GB (vision models)
+**Dependencies:** separately managed `marker-pdf` installation
+**Models:** vision models downloaded by marker
+
+Marker is not selected by a published extra because its supported-platform
+dependency graph pins Pillow below the first fully patched release.
 
 **Strengths:**
 - Best for scanned documents
@@ -137,14 +140,14 @@ from pdfminer.high_level import extract_text
 text = extract_text('/path/to/document.pdf')
 ```
 
-### PyPDF2
+### pypdf (`pypdf2` CLI backend id)
 
 **License:** BSD-3
-**Dependencies:** `PyPDF2>=3.0.0`
+**Dependencies:** `pypdf>=6.0.0`
 **Models:** None
 
 **Strengths:**
-- Always available
+- Included in the `cpu` extra
 - Fast
 - BSD license (permissive)
 - Good for encryption detection
@@ -158,9 +161,9 @@ text = extract_text('/path/to/document.pdf')
 
 **Usage:**
 ```python
-import PyPDF2
+import pypdf
 with open('/path/to/document.pdf', 'rb') as f:
-    reader = PyPDF2.PdfReader(f)
+    reader = pypdf.PdfReader(f)
     text = ''.join([page.extract_text() for page in reader.pages])
 ```
 
@@ -307,11 +310,8 @@ java -version  # Check Java installed
 pip install pdfbox
 ```
 
-**marker:** Requires torch with CUDA
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu118
-pip install marker-pdf
-```
+**marker:** Separately managed only. It is intentionally excluded from the
+published extras while its dependency graph requires an unpatched Pillow.
 
 **docling:** Large download
 ```bash

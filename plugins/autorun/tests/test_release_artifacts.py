@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = [
     pytest.mark.release,
     pytest.mark.slow,
@@ -40,6 +39,7 @@ def _run(argv, *, cwd: Path, env: dict[str, str] | None = None, timeout=180):
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
     )
     assert result.returncode == 0, (
         f"command failed ({result.returncode}): {' '.join(map(str, argv))}\n"
@@ -241,6 +241,21 @@ def test_documented_vcs_subdirectory_installs_autorun_entrypoint(release_bundle)
 def test_pdf_wheel_help_and_backend_inventory_are_lightweight(release_bundle):
     root, _checkout, _commit, env, builds = release_bundle
     wheel = next(builds[0].glob("pdf_extractor-*.whl"))
+    with zipfile.ZipFile(wheel) as archive:
+        metadata_name = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = archive.read(metadata_name).decode("utf-8")
+    requirements = [
+        line for line in metadata.splitlines() if line.startswith("Requires-Dist:")
+    ]
+    assert requirements
+    assert all("extra ==" in requirement for requirement in requirements), (
+        "the bare PDF wheel requires an extraction dependency outside an optional extra"
+    )
+    for label in ("Homepage", "Repository", "Issues"):
+        assert f"Project-URL: {label}, " in metadata
+
     scripts, isolated = _venv(root, wheel, env)
     cli = scripts / ("extract-pdfs.exe" if os.name == "nt" else "extract-pdfs")
     help_result = _run([cli, "--help"], cwd=root, env=isolated, timeout=10)

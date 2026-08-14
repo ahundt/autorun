@@ -27,13 +27,20 @@ autorun --install pdf-extractor --force
 ```
 
 Use `--claude`, `--gemini`, `--qwen`, `--antigravity`, or `--codex` to target
-one harness. Codex exposes the installed skill as `$pdf-extractor`; ForgeCode
-does not provide a native skill surface.
+one harness. Codex and ForgeCode load `$pdf-extractor` through the shared
+`~/.agents/skills/pdf-extractor/` route.
 
 ### Using uv tool install (Recommended — makes extract-pdfs globally available)
 
-Every extraction backend lives in an extra, so name the ones you want. `cpu`
-gets the CPU backends and is the ordinary choice:
+Install a published release:
+
+```bash
+uv tool install 'pdf-extractor[cpu]'
+extract-pdfs --list-backends
+```
+
+For an editable source checkout, every extraction backend lives in an extra, so
+name the ones you want. `cpu` gets the CPU backends and is the ordinary choice:
 
 ```bash
 # From repository root:
@@ -45,26 +52,31 @@ extract-pdfs --list-backends
 
 | Extra | Adds |
 |-------|------|
-| `cpu` | markitdown, pdfplumber, pdfminer.six, PyPDF2 |
-| `gpu` | docling, marker-pdf |
+| `cpu` | markitdown, pdfplumber, pdfminer.six, pypdf |
+| `gpu` | docling on Linux/Windows |
 | `llm` | pymupdf4llm |
 | `progress` | tqdm progress bars |
 | `all` | every extra above |
+
+The `marker` backend id remains discoverable when users install marker-pdf
+separately. It is excluded from published extras because its supported-platform
+dependency graph pins Pillow below the first fully patched release. The `gpu`
+extra is empty on macOS because docling's macOS model stack still selects an
+advisory-affected transformers 4.x release.
 
 Installing bare (`--editable .`) is supported and leaves `pdftotext` as the only
 usable backend, if poppler is on the system. An extraction attempt with no
 backend installed names the extra to install rather than failing silently
 (`src/pdf_extraction/extractors.py:extract_single_pdf`).
 
-### Optional GPU Backends
+### Optional GPU backend
 
-For GPU-accelerated extraction (recommended for scanned/image-only PDFs):
+For GPU-accelerated extraction on Linux or Windows:
 
 ```bash
 cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu,gpu]" && cd ../..
-# Requires PyTorch + CUDA or MPS (Apple Silicon)
-# Note: docling downloads ~500MB models on first use; marker downloads ~1GB
-extract-pdfs --list-backends  # Verify gpu backends appear
+# Requires PyTorch; docling downloads models on first use.
+extract-pdfs --list-backends  # Verify docling appears
 ```
 
 ### Venv Install (alternative — installs into current venv only)
@@ -133,7 +145,7 @@ python src/pdf_extraction/cli.py document.pdf
 | markitdown | MIT | General text, forms | No |
 | pdfplumber | MIT | Tables, structured data | No |
 | pdfminer | MIT | Simple text documents | No |
-| pypdf2 | BSD-3 | Basic extraction | No |
+| pypdf2 | BSD-3 | Basic extraction through maintained `pypdf` | No |
 | docling | MIT | Layout analysis | Yes |
 | marker | GPL-3.0 | Scanned documents, OCR | Yes |
 | pymupdf4llm | AGPL-3.0 | LLM-optimized output | No |
@@ -191,22 +203,21 @@ extract-pdfs --list-backends  # confirm they moved out of "Supported but not ins
 # Re-install with the cpu backends:
 cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
 # If that fails, install explicitly:
-uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "PyPDF2>=3.0.0" tqdm
+uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "pypdf>=6.0.0" tqdm
 ```
 
-### GPU backends (docling, marker) not available
+### GPU backend (docling) not available
 ```bash
-# These require PyTorch; install optional GPU extras:
+# This requires PyTorch; install the optional GPU extra:
 cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu,gpu]" && cd ../..
-# Verify GPU backends appear:
-extract-pdfs --list-backends
-# Note: docling downloads ~500MB models on first use; marker downloads ~1GB
+extract-pdfs --list-backends  # verify docling appears
+# Note: docling downloads models on first use.
 ```
 
 ### Empty output from scanned PDF (image-only document)
 ```bash
-# Scanned PDFs require OCR (GPU backends):
-extract-pdfs scanned.pdf --backends marker docling
+# Scanned PDFs require OCR; docling is in the supported GPU extra:
+extract-pdfs scanned.pdf --backends docling
 # If GPU unavailable, try pdftotext (system tool):
 brew install poppler        # macOS
 # apt install poppler-utils  # Ubuntu/Debian
@@ -233,6 +244,6 @@ The extractor will warn about encrypted PDFs. Some backends can handle password-
 ```bash
 # Check which backends are available:
 extract-pdfs --list-backends
-# Install missing optional backends:
-uv pip install docling marker-pdf pymupdf4llm
+# Install supported optional backends:
+uv pip install "docling>=2.94.0" pymupdf4llm
 ```

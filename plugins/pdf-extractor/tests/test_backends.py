@@ -1,5 +1,9 @@
 """Tests for pdf_extraction.backends module."""
 
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
 
 from pdf_extraction.backends import (
@@ -125,6 +129,12 @@ class TestPypdf2Extractor:
 
         assert result['success'] is False
         assert result['error'] is not None
+
+    def test_legacy_backend_name_uses_maintained_pypdf_distribution(self):
+        """Keep the CLI id stable without importing the retired PyPDF2 package."""
+        maintained_module = SimpleNamespace(PdfReader=object)
+        with patch.dict(sys.modules, {"pypdf": maintained_module}):
+            assert Pypdf2Extractor().converter_factory() is maintained_module
 
 
 class TestPdfplumberExtractor:

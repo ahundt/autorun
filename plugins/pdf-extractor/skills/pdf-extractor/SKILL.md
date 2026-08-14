@@ -76,7 +76,7 @@ Specify backends in any order with `--backends`. The system tries each in order,
 extract-pdfs document.pdf --backends pdfplumber markitdown pdfminer
 
 # Scanned documents: vision-based first
-extract-pdfs scanned.pdf --backends marker docling markitdown
+extract-pdfs scanned.pdf --backends docling markitdown
 
 # Most permissive fallback order (handles problematic PDFs)
 extract-pdfs document.pdf --backends pdfminer pypdf2 markitdown
@@ -91,14 +91,17 @@ For systems without GPU, the recommended backend order:
 - `markitdown` - Microsoft's lightweight converter (MIT, fast, no models)
 - `pdfplumber` - Excellent for tables (MIT)
 - `pdfminer` - Pure Python, reliable (MIT)
-- `pypdf2` - Basic extraction, always available (BSD-3)
+- `pypdf2` - Basic extraction through maintained `pypdf` (BSD-3; `cpu` extra)
 
 ### GPU Systems
 
 For systems with CUDA-enabled GPU:
-- `docling` - IBM layout analysis (MIT, ~500MB models)
-- `marker` - Vision-based, best for scanned docs (GPL-3.0, ~1GB models)
+- `docling` - IBM layout analysis (MIT, downloads models on first use)
 - Plus all CPU backends as fallback
+
+The `marker` backend is recognized only for separately managed installations;
+it is not selected by a published extra because its dependency graph pins an
+unpatched Pillow release.
 
 ### Backend Comparison
 
@@ -252,7 +255,7 @@ The output will contain markdown tables when detected:
 | `MarkItDownExtractor` | backends.py:161-173 | Microsoft MarkItDown (MIT, CPU) |
 | `PdfplumberExtractor` | backends.py:244-253 | Table-focused extraction (MIT) |
 | `PdfminerExtractor` | backends.py:219-226 | Pure Python fallback (MIT) |
-| `Pypdf2Extractor` | backends.py:229-241 | Basic extraction, always available (BSD-3) |
+| `Pypdf2Extractor` | backends.py:229-241 | Basic extraction through optional `pypdf` (BSD-3) |
 | `BACKEND_REGISTRY` | backends.py:279-292 | Dict mapping backend names to factories |
 | `detect_gpu_availability()` | utils.py:9-40 | Auto-detect GPU and recommend backends |
 | `extract_single_pdf()` | extractors.py:13-80 | Extract one PDF with backend fallback |
@@ -290,28 +293,29 @@ All errors are captured in metadata rather than raising exceptions.
 
 ## Dependencies
 
-Core dependencies (always available):
-- `pdfminer.six` - Pure Python PDF parser
-- `pdfplumber` - Table-aware extraction
-- `PyPDF2` - Basic PDF operations
-- `tqdm` - Progress bars
+The base package has no required Python dependencies. Select extras for the
+backends you need:
 
-Optional dependencies:
-- `markitdown` - Microsoft multi-format converter
-- `docling` - IBM document processor (GPU-accelerated)
-- `marker-pdf` - Vision-based extraction (GPU-accelerated)
-- `pymupdf4llm` - LLM-optimized output
-- `pdfbox` - Java-based extraction
+- `cpu`: markitdown, pdfplumber, pdfminer.six, and maintained `pypdf` (the CLI
+  backend id stays `pypdf2`)
+- `gpu`: docling on Linux/Windows; empty on macOS while docling's model stack
+  selects an advisory-affected transformers 4.x release
+- `llm`: pymupdf4llm
+- `progress`: tqdm
 
-Install all dependencies:
+Install CPU dependencies:
 ```bash
-uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "PyPDF2>=3.0.0" tqdm
+uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "pypdf>=6.0.0" tqdm
 ```
 
-For GPU backends:
+For the supported GPU extra on Linux or Windows:
 ```bash
-uv pip install docling marker-pdf
+uv pip install "docling>=2.94.0"
 ```
+
+The `marker` backend remains discoverable for separately managed installs, but
+marker-pdf is excluded from published extras because its supported-platform
+dependency graph pins Pillow below the first fully patched release.
 
 ## Troubleshooting
 
@@ -327,21 +331,21 @@ extract-pdfs --list-backends  # verify
 # Re-install with all base dependencies:
 cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
 # Or install explicitly:
-uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "PyPDF2>=3.0.0" tqdm
+uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "pypdf>=6.0.0" tqdm
 ```
 
-### GPU backends (docling, marker) not available
+### GPU backend (docling) not available
 ```bash
-# Requires PyTorch; install GPU extras:
+# Requires PyTorch; install the GPU extra:
 cd plugins/pdf-extractor && uv tool install --force --editable ".[gpu]" && cd ../..
-extract-pdfs --list-backends  # verify gpu backends appear
-# Note: docling downloads ~500MB models on first use; marker downloads ~1GB
+extract-pdfs --list-backends  # verify docling appears
+# Note: docling downloads models on first use.
 ```
 
 ### Empty output from scanned PDF (image-only document)
 ```bash
-# Scanned PDFs require OCR (GPU backends):
-extract-pdfs scanned.pdf --backends marker docling
+# Scanned PDFs require OCR; docling is in the supported GPU extra:
+extract-pdfs scanned.pdf --backends docling
 # If GPU unavailable, try pdftotext (system tool):
 brew install poppler        # macOS
 # apt install poppler-utils  # Ubuntu/Debian

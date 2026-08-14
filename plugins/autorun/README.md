@@ -8,13 +8,19 @@ installed separately; a source checkout can manage both repository plugins.
 
 ## Install
 
-Install the Python tool from the repository's package subdirectory, then
-publish the native assets for the harnesses detected on the machine:
+Install the published Python tool, then publish native assets for the harnesses
+detected on the machine:
+
+```bash
+uv tool install autorun
+autorun --install
+autorun --status
+```
+
+To install the current source instead of a published release:
 
 ```bash
 uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'
-autorun --install
-autorun --status
 ```
 
 Claude Code can instead install the plugin through its marketplace flow:

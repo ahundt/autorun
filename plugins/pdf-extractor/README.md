@@ -26,32 +26,44 @@ running from a source marketplace checkout that contains both plugin trees.
 
 Target one harness with `--claude`, `--gemini`, `--qwen`, `--antigravity`, or
 `--codex`. Claude, Gemini, Qwen, and Antigravity use native per-plugin skills.
-Codex installs `$pdf-extractor` into `~/.agents/skills/pdf-extractor/` using the
-same ownership and upgrade rules as autorun's other global skills. ForgeCode
-does not currently expose a skill API.
+Codex and ForgeCode load `$pdf-extractor` from the shared
+`~/.agents/skills/pdf-extractor/` route using the same ownership and upgrade
+rules as autorun's other global skills.
 
 ### Python CLI
 
 Every extraction backend is an extra, so pick the ones you want. `cpu` covers
-the CPU backends (markitdown, pdfplumber, pdfminer, pypdf2) and is the ordinary
+the CPU backends (markitdown, pdfplumber, pdfminer, pypdf) and is the ordinary
 choice:
+
+```bash
+uv tool install 'pdf-extractor[cpu]'
+```
+
+For the Linux/Windows GPU backend (docling):
+```bash
+uv tool install --force 'pdf-extractor[cpu,gpu]'
+```
+
+To install the current source instead of a published release:
 
 ```bash
 uv tool install 'pdf-extractor[cpu] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
 ```
 
-For GPU-accelerated backends (docling, marker):
-```bash
-uv tool install --force 'pdf-extractor[cpu,gpu] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
-```
-
 | Extra | Adds |
 |-------|------|
-| `cpu` | markitdown, pdfplumber, pdfminer.six, PyPDF2 |
-| `gpu` | docling, marker-pdf (needs PyTorch; downloads models on first use) |
+| `cpu` | markitdown, pdfplumber, pdfminer.six, pypdf |
+| `gpu` | docling on Linux/Windows (needs PyTorch; downloads models on first use) |
 | `llm` | pymupdf4llm |
 | `progress` | tqdm progress bars (falls back to no output when absent) |
 | `all` | every extra above |
+
+The `marker` backend id remains available for users who manage that dependency
+separately. It is not in a published extra because marker-pdf's supported
+platform graph pins Pillow below the first fully patched release. The `gpu`
+extra is empty on macOS because docling's macOS model stack still selects an
+advisory-affected transformers 4.x release.
 
 Installing with no extra still works: the CLI runs, `--list-backends` reports
 what is missing, and an extraction attempt names the extra to install. The only
@@ -95,7 +107,7 @@ files, metadata = pdf_to_txt("./pdfs/", "./output/", return_metadata=True)
 | markitdown | MIT | General text, forms |
 | pdfplumber | MIT | Tables, structured data |
 | pdfminer | MIT | Simple text documents |
-| pypdf2 | BSD-3 | Basic extraction |
+| pypdf2 | BSD-3 | Basic extraction through maintained `pypdf`; CLI id retained for compatibility |
 | docling | MIT | Layout analysis (GPU) |
 | marker | GPL-3.0 | Scanned documents (GPU) |
 | pymupdf4llm | AGPL-3.0 | LLM-optimized output |

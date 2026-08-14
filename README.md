@@ -69,9 +69,9 @@ hooks in the background, run a task directly, or add planning for larger work.
 **Self-Improvement** (learn from past sessions):
 
 ```bash
-aise corrections --since 30d   # Find recurring AI mistakes
-aise analyze --when 30d --limit 50 --output /absolute/new/analysis
-# Install AI Session Search separately with `aise install`, then add supported findings to guidance or hooks
+aise skills run corrections --when 30d --limit 50  # Find recurring AI mistakes
+aise analyze --when 30d --output /absolute/new/analysis
+# Install AI Session Search separately; see https://github.com/ahundt/ai-session-search
 ```
 
 ## Table of Contents
@@ -117,9 +117,18 @@ from its own plugin subdirectory or from the Claude marketplace.
 
 > **Note:** plan-export functionality is now built into the autorun plugin. Use `/ar:planexport` commands for plan management.
 
-### GitHub Installation
+### Python package installation
 
-Install the autorun Python distribution directly from its repository
+Install a published release from PyPI:
+
+```bash
+uv tool install autorun
+autorun --install
+```
+
+### GitHub installation
+
+Install the current autorun Python distribution directly from its repository
 subdirectory:
 
 ```bash
@@ -285,9 +294,9 @@ Individual skill directories are linked rather than the whole `skills/` folder: 
 
 The shared location is configurable through `shared_agents_dir` and `shared_agents_skills_subdir` in `CONFIG`, which install and uninstall both read.
 
-#### Bundled Skills
+#### Selected bundled skills
 
-Skills are installed from each selected `plugins/*/skills/` tree and use each harness's native
+The table below is a selection. Skills are installed from each selected `plugins/*/skills/` tree and use each harness's native
 skill picker or mention syntax. In Codex, use `/skills` or `$skill-name`; do not
 assume a skill is an `/ar:*` command. The read-only
 `autorun --capability-snapshot` output is the machine-readable inventory.
@@ -678,7 +687,7 @@ slash menu closed, Claude Code and Qwen Code consume an unknown slash command
 in their own slash processors and print their own feedback ("Unknown skill"
 on Claude, "Unknown command" on Qwen — verified in both harnesses' source, so
 you always see an immediate error rather than a silent drop), and ForgeCode
-and ForgeCode sends autorun no hook events. ForgeCode's installed guards are
+sends autorun no hook events. ForgeCode's installed guards are
 advice to the agent. OpenCode does not expose prompt or Stop hooks, but its
 in-process JavaScript bridge sends tool calls to autorun and vetoes denied
 commands. On both harnesses the installed files `ar-go`, `ar-st`, `ar-allow`,
@@ -813,7 +822,7 @@ Three-tier policy system enforced via PreToolUse hooks:
 | Glob | `glob:` | Glob pattern matching | `glob:*.tmp` | `file.tmp` |
 | Auto | `/.../` | Auto-detects regex | `/eval\(./` | `eval(...` |
 
-**Default Integrations (43 entries):**
+**Default integrations (48 entries):**
 - `rm` → Suggests 'trash' CLI (safe file deletion with recovery)
 - `rm -rf` → Dangerous, suggests trash CLI alternatives
 - `git reset --hard` → CRITICAL: Permanently discards uncommitted changes, suggests safer git alternatives
@@ -1055,7 +1064,7 @@ When `/ar:tabs` discovers sessions, it displays these status indicators:
 
 # Check current file creation policy
 /ar:st
-# Output: "Current policy: justify-create"
+# Output includes: "AutoFile policy: justify-create"
 
 # Protect existing codebase during refactoring (find existing files, don't create new ones)
 /ar:f

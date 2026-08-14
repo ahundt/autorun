@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Gemini CLI harness capability and retired-backend E2E tests.
 
@@ -11,14 +10,13 @@ Run capability tests normally:
 
 Use Antigravity's Flash Low E2E for the live Google model successor.
 """
-import os
 import json
-import subprocess
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
-
 from e2e_support import (
     RETIRED_GEMINI_BACKEND_REASON,
     autorun_extension_listed,
@@ -46,14 +44,24 @@ def gemini_cli_check():
             ["gemini", "--version"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            check=False,
         )
         if result.returncode != 0:
-            pytest.fail(f"Installed Gemini CLI is not runnable: {result.stderr}")
+            message = f"Installed Gemini CLI is not runnable: {result.stderr}"
+            if ENABLE_REAL_MONEY_TESTS:
+                pytest.fail(message)
+            pytest.skip(message)
     except subprocess.TimeoutExpired:
-        pytest.fail("Installed Gemini CLI --version timed out (>5s)")
+        message = "Installed Gemini CLI --version timed out (>5s)"
+        if ENABLE_REAL_MONEY_TESTS:
+            pytest.fail(message)
+        pytest.skip(message)
     except OSError as error:
-        pytest.fail(f"Installed Gemini CLI check failed: {error}")
+        message = f"Installed Gemini CLI check failed: {error}"
+        if ENABLE_REAL_MONEY_TESTS:
+            pytest.fail(message)
+        pytest.skip(message)
 
 
 @pytest.fixture(scope="module")
@@ -68,19 +76,29 @@ def gemini_extension_check():
             ["gemini", "extensions", "list"],
             capture_output=True,
             text=True,
-            timeout=30  # Extensions list loads credentials + experiments
+            timeout=30,  # Extensions list loads credentials + experiments
+            check=False,
         )
         if result.returncode != 0:
-            pytest.fail(f"Installed Gemini extension list failed: {result.stderr}")
+            message = f"Installed Gemini extension list failed: {result.stderr}"
+            if ENABLE_REAL_MONEY_TESTS:
+                pytest.fail(message)
+            pytest.skip(message)
 
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
         if not autorun_extension_listed(combined_output):
             pytest.skip("ar (autorun) extension not installed in Gemini CLI")
     except subprocess.TimeoutExpired:
-        pytest.fail("Installed Gemini extension list timed out (>30s)")
+        message = "Installed Gemini extension list timed out (>30s)"
+        if ENABLE_REAL_MONEY_TESTS:
+            pytest.fail(message)
+        pytest.skip(message)
     except OSError as error:
-        pytest.fail(f"Installed Gemini extension check failed: {error}")
+        message = f"Installed Gemini extension check failed: {error}"
+        if ENABLE_REAL_MONEY_TESTS:
+            pytest.fail(message)
+        pytest.skip(message)
 
 
 @paid_gemini_e2e
@@ -107,7 +125,8 @@ class TestGeminiE2ERealMoney:
                 input="What is 2+2? Answer in one word.\n",
                 capture_output=True,
                 text=True,
-                timeout=45
+                timeout=45,
+                check=False,
             )
         except subprocess.TimeoutExpired:
             pytest.fail(
@@ -137,7 +156,8 @@ class TestGeminiE2ERealMoney:
             input="/ar:st\n",
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
+            check=False,
         )
 
         # May fail in piped mode - that's expected
@@ -156,6 +176,7 @@ class TestGeminiExtensionRegistration:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
 
         assert result.returncode == 0, f"Extension list failed: {result.stderr}"
@@ -199,6 +220,7 @@ class TestGeminiHookEntryPoint:
             text=True,
             timeout=15,
             env=env,
+            check=False,
         )
 
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
@@ -248,6 +270,7 @@ class TestGeminiHookEntryPoint:
             text=True,
             timeout=15,
             env=env,
+            check=False,
         )
 
         assert result.returncode == 0, f"Hook failed: {result.stderr}"

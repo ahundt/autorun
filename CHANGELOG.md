@@ -8,10 +8,28 @@ marketplace itself carries a separate `version` field.
 
 ## [Unreleased]
 
-## [1.0.0rc1] - 2026-08-11
+## [1.0.0rc1] - 2026-08-14
 
 ### Added
 
+- **Native Pi integration.** Pi installs an owned extension under
+  `~/.pi/agent/extensions/ar/` with in-process tool vetoes, display-only
+  commands, attributed continuation messages, bounded transcript projection,
+  session lifecycle hooks, compaction events, and daemon-backed `TaskCreate`,
+  `TaskUpdate`, and `TaskList` tools. Python remains the policy, task,
+  persistence, ordering, and Stop-enforcement owner.
+- **PyPI distributions and trusted publishing.** `autorun` and
+  `pdf-extractor` build as separate wheel/sdist pairs. The PDF package
+  has no required extraction backend; users select `cpu`, `gpu`, `llm`, or
+  `progress` extras. The CPU extra uses maintained `pypdf` under the compatible
+  `pypdf2` backend id. marker-pdf is omitted because it pins Pillow below the
+  patched release; docling is constrained off macOS while its model stack pins
+  transformers 4.x. A tag workflow runs the complete CI gate, publishes to
+  TestPyPI, then enters the protected PyPI environment
+  through OIDC.
+- **Shared Pi/OpenCode daemon transport.** Both in-process adapters use the
+  packaged bounded JSON client while retaining their native event and response
+  shapes.
 - **Agent memory install.** `autorun --install` writes a sentinel-delimited
   guidance block into each harness's memory file — `~/.claude/CLAUDE.md`,
   `~/.codex/AGENTS.md`, `<forge>/AGENTS.md`. Content is per-harness: the Claude
@@ -47,6 +65,22 @@ marketplace itself carries a separate `version` field.
 
 ### Fixed
 
+- **Failed installer preflight remains write-free.** The supported `filelock`
+  range stops below 3.29.5, whose changed macOS lock-file lifecycle leaves an
+  empty `.autorun-install.lock` after malformed shared-file preflight. The
+  installer does not unlink potentially live locks.
+- **Retired Gemini CLI checks are optional in deterministic runs.** An
+  unresponsive externally installed Gemini CLI now skips the free registration
+  probe unless legacy paid tests were explicitly enabled; direct hook tests
+  remain active.
+- **Pi task receipts report authoritative state.** Mutation results now show
+  the Python-confirmed status and subject, including normalized and
+  ghost-protected transitions. Task lists use one bounded, dependency-aware
+  snapshot, and active-branch replay removes only Pi-sourced records.
+- **Concurrent Pi task operations preserve lifecycle state.** Threaded,
+  overlapping daemon-client, and spawned-process tests cover same-session and
+  different-session writes, working-directory changes, state-root isolation,
+  persistence, Stop blocking, and Stop release.
 - **Direct JSON hook processes retain their lock-acquisition budget under
   contention.** They poll the shared state lock every 5 ms instead of the
   `filelock` default of 50 ms. The 500 ms hook deadline is unchanged, but

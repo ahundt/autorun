@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 CI only
+    import tomli as tomllib
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -275,6 +279,45 @@ def test_release_checklist_names_only_files_that_exist():
     )
 
 
+def test_release_runbook_rehearses_testpypi_before_tagging():
+    """A linear release run must prove OIDC publication before creating the tag."""
+    runbook = _CHECKLIST.read_text(encoding="utf-8")
+
+    setup = runbook.index("### One-time setup")
+    rehearsal = runbook.index("### Rehearse on TestPyPI before any tag")
+    tag = runbook.index("### Stage 4: Tag and push")
+    assert setup < rehearsal < tag, (
+        "docs/version_update_checklist.md places TestPyPI setup or rehearsal "
+        "after tag creation, so a releaser following the document in order can "
+        "create the public tag before proving trusted publishing"
+    )
+
+
+def test_current_changelog_covers_pi_and_published_distributions():
+    """The current release entry must describe capability and distribution surfaces."""
+    version = _declared_version("plugins/autorun/pyproject.toml", "version")
+    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    section = changelog.split(f"## [{version}]", 1)[1].split("\n## [", 1)[0]
+
+    for required in ("Pi", "PyPI", "`autorun`", "`pdf-extractor`"):
+        assert required in section, f"CHANGELOG.md [{version}] omits {required}"
+
+
+def test_published_distributions_have_project_urls():
+    """Package-index users need source, issue, and homepage links in metadata."""
+    for relative_path in (
+        "plugins/autorun/pyproject.toml",
+        "plugins/pdf-extractor/pyproject.toml",
+    ):
+        project = tomllib.loads((REPO_ROOT / relative_path).read_text(encoding="utf-8"))[
+            "project"
+        ]
+        urls = project.get("urls", {})
+        assert {"Homepage", "Repository", "Issues"} <= set(urls), (
+            f"{relative_path} omits project URLs from its package-index metadata"
+        )
+
+
 def test_public_install_guides_use_release_artifact_identities():
     """The workspace root is not the installable autorun distribution, and
     Claude registers the plugin as ``ar`` inside marketplace ``autorun``."""
@@ -296,6 +339,12 @@ def test_public_install_guides_use_release_artifact_identities():
     for text in (root_readme, artifact_readme):
         assert "#subdirectory=plugins/autorun" in text
         assert "claude plugin install ar@autorun" in text
+        assert "uv tool install autorun" in text
+
+    pdf_readme = (
+        REPO_ROOT / "plugins" / "pdf-extractor" / "README.md"
+    ).read_text(encoding="utf-8")
+    assert "uv tool install 'pdf-extractor[cpu]'" in pdf_readme
 
 
 def test_release_checklist_covers_every_file_carrying_the_version():
@@ -459,6 +508,24 @@ def test_workspace_sources_match_the_declared_distribution_names():
     )
 
 
+def test_pdf_extractor_extras_avoid_retired_or_known_vulnerable_backends():
+    """Published extras must not select abandoned or unpatched dependencies."""
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    extras = pyproject["project"]["optional-dependencies"]
+    cpu = "\n".join(extras["cpu"]).lower()
+    gpu = "\n".join(extras["gpu"]).lower()
+
+    assert "pypdf>=" in cpu
+    assert "pypdf2" not in cpu
+    assert "docling>=" in gpu
+    assert "sys_platform != 'darwin'" in gpu
+    assert "marker-pdf" not in gpu
+
+
 def test_pdf_extractor_requires_no_extraction_backend():
     """Installing the package must not force any extraction library on anyone.
 
@@ -489,15 +556,12 @@ def test_pdf_extractor_requires_no_extraction_backend():
 
 
 def test_pdf_extractor_installs_from_wheels_on_python_314():
-    """Two dependency chains have no cp314 artifact, and both must stay gated.
+    """The optional CPU graph must retain Python 3.14 wheel coverage.
 
-    markitdown pins magika <0.7, which caps onnxruntime at 1.20.1; marker-pdf
-    pins pillow >=10.1,<11, whose last release 10.4.0 predates 3.14. uv resolves
-    one version per package across the whole universal lock, so an ungated cap
-    reaches the base install too: 3.14 falls back to the sdist and the source
-    build fails on any machine without system jpeg headers, GitHub runners
-    included. The pillow floor is what makes uv fork the lock rather than pick
-    one version that only builds from source.
+    markitdown pins magika below a release whose onnxruntime dependency has a
+    cp314 artifact, so that backend remains gated below 3.14. Pillow is an
+    explicit optional CPU constraint at the first release that both fixes the
+    known advisories and publishes cp314 wheels.
     """
     pyproject = (
         REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml"
@@ -508,15 +572,13 @@ def test_pdf_extractor_installs_from_wheels_on_python_314():
     lock = (REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
 
     assert '"markitdown>=0.1.0; python_version < \'3.14\'"' in pyproject
-    assert '"marker-pdf>=0.3.0; python_version < \'3.14\'"' in pyproject
-    assert '"pillow>=11; python_version >= \'3.14\'"' in pyproject
+    assert '"pillow>=12.3.0"' in pyproject
+    assert '"marker-pdf' not in pyproject
     assert '"Programming Language :: Python :: 3.14"' in pyproject
     assert "matrix.python-version != '3.14'" not in workflow
 
-    # The declarations above state the intent; this is the effect. uv keeps an
-    # existing pin when it still resolves, so a lock that never forked would
-    # satisfy every assertion above and still build pillow from source.
-    assert "pillow-10.4.0-cp314" not in lock, "pillow 10.4.0 has no cp314 wheel"
+    # The declarations above state the intent; this is the lockfile effect.
+    assert "pillow-10.4.0" not in lock, "the advisory-affected Pillow remains locked"
     assert re.search(r"pillow-\d+\.\d+\.\d+-cp314-", lock), (
         "uv.lock resolves no pillow wheel for cp314, so a 3.14 install builds "
         "the sdist and fails without system jpeg headers"
