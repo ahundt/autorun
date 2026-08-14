@@ -12,7 +12,11 @@ Covers 10 task lifecycle bugs (see notes/2026_03_11_task_system_architecture_and
 TDD approach: tests written BEFORE implementation to verify failures, then fixes applied.
 """
 
+import multiprocessing
+import threading
 import time
+from pathlib import Path
+
 import pytest
 from contextlib import contextmanager
 from unittest.mock import MagicMock
@@ -25,6 +29,40 @@ from autorun.task_lifecycle import (
     _reset_ghost_counter,
 )
 from autorun.session_manager import SessionStateManager
+
+
+def _task_projection_process_worker(
+    state_dir: str,
+    config_dir: str,
+    session_id: str,
+    action: str,
+    results,
+) -> None:
+    """Write or read one task projection in a fresh spawned interpreter."""
+    from autorun import session_manager
+    from autorun.session_manager import SessionStateManager, _reset_for_testing
+    from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+
+    _reset_for_testing()
+    manager = SessionStateManager(state_dir=Path(state_dir))
+    session_manager._manager = manager
+    session_manager._store = manager._store
+    lifecycle = TaskLifecycle(
+        session_id=session_id,
+        config=TaskLifecycleConfig(
+            enabled=True,
+            storage_dir=Path(config_dir),
+            task_ttl_days=30,
+            max_resume_tasks=10,
+        ),
+    )
+    if action == "write":
+        lifecycle.create_task("shared", {"subject": "Shared task"}, "created")
+        lifecycle.update_task("shared", {"status": "in_progress"}, "started")
+        results.put({"written": True})
+    else:
+        results.put(lifecycle.task_projection(limit=10))
+    _reset_for_testing()
 
 
 @pytest.fixture
@@ -421,6 +459,125 @@ class TestFix6PlanApprovalInjection:
 # --- Regression: handle_task_create/update with string tool_result (MagicMock fix) ---
 
 
+class TestTaskProjection:
+    def test_projection_prioritizes_incomplete_work_and_bounds_history(
+        self, isolated_config, isolated_session_manager
+    ):
+        manager = TaskLifecycle(
+            session_id=f"test-task-projection-{time.time()}",
+            config=isolated_config,
+        )
+        manager.create_task("ready", {"subject": "Ready"}, "created")
+        manager.update_task("ready", {"status": "in_progress"}, "started")
+        manager.create_task("blocked", {"subject": "Blocked"}, "created")
+        manager.update_task(
+            "blocked", {"addBlockedBy": ["ready"]}, "blocked"
+        )
+        manager.create_task("done", {"subject": "Done"}, "created")
+        manager.update_task("done", {"status": "completed"}, "done")
+
+        projection = manager.task_projection(limit=2)
+
+        assert projection == {
+            "tasks": [manager.tasks["ready"], manager.tasks["blocked"]],
+            "total": 3,
+            "truncated": True,
+        }
+
+    def test_projection_remains_valid_during_concurrent_updates(
+        self, isolated_config, isolated_session_manager
+    ):
+        manager = TaskLifecycle(
+            session_id=f"test-task-projection-concurrent-{time.time()}",
+            config=isolated_config,
+        )
+        for index in range(8):
+            manager.create_task(str(index), {"subject": f"Task {index}"}, "created")
+
+        errors = []
+        barrier = threading.Barrier(3)
+
+        def mutate():
+            try:
+                barrier.wait(timeout=10)
+                for index in range(8):
+                    manager.update_task(
+                        str(index), {"status": "in_progress"}, "started"
+                    )
+                    manager.update_task(
+                        str(index), {"status": "completed"}, "done"
+                    )
+            except Exception as error:  # noqa: BLE001 - asserted below
+                errors.append(error)
+
+        def project():
+            try:
+                barrier.wait(timeout=10)
+                for _ in range(20):
+                    result = manager.task_projection(limit=5)
+                    assert len(result["tasks"]) <= 5
+                    assert result["total"] == 8
+                    assert len({task["id"] for task in result["tasks"]}) == len(
+                        result["tasks"]
+                    )
+            except Exception as error:  # noqa: BLE001 - asserted below
+                errors.append(error)
+
+        threads = [threading.Thread(target=mutate), threading.Thread(target=project)]
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=10)
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert errors == []
+        assert manager.task_projection(limit=8)["total"] == 8
+
+    def test_projection_persists_across_spawned_processes(
+        self, tmp_path, isolated_session_manager
+    ):
+        spawn = multiprocessing.get_context("spawn")
+        results = spawn.Queue()
+        state_dir = str(isolated_session_manager.state_dir)
+        config_dir = str(tmp_path / "task-config")
+        session_id = f"test-task-projection-process-{time.time()}"
+
+        writer = spawn.Process(
+            target=_task_projection_process_worker,
+            args=(state_dir, config_dir, session_id, "write", results),
+        )
+        writer.start()
+        writer.join(timeout=30)
+        assert writer.exitcode == 0
+        assert results.get(timeout=5) == {"written": True}
+
+        reader = spawn.Process(
+            target=_task_projection_process_worker,
+            args=(state_dir, config_dir, session_id, "read", results),
+        )
+        reader.start()
+        reader.join(timeout=30)
+        assert reader.exitcode == 0
+        projection = results.get(timeout=5)
+
+        assert projection["total"] == 1
+        assert projection["truncated"] is False
+        assert projection["tasks"][0]["id"] == "shared"
+        assert projection["tasks"][0]["status"] == "in_progress"
+
+    def test_projection_rejects_invalid_limit(
+        self, isolated_config, isolated_session_manager
+    ):
+        manager = TaskLifecycle(
+            session_id=f"test-task-projection-limit-{time.time()}",
+            config=isolated_config,
+        )
+
+        with pytest.raises(ValueError, match="positive integer"):
+            manager.task_projection(limit=0)
+
+
 class TestHandleTaskCreateStringResult:
     """Regression: handle_task_create and handle_task_update must work when
     ctx.tool_result is a plain string (Gemini CLI, test mocks).
@@ -466,6 +623,24 @@ class TestHandleTaskCreateStringResult:
 
         assert manager.tasks["pi-1"]["metadata"] == {
             "caller": "model",
+            "source": "pi_task_tool",
+        }
+
+    def test_pi_unknown_update_is_tagged_for_branch_reprojection(
+        self, isolated_config, isolated_session_manager
+    ):
+        manager = TaskLifecycle(
+            session_id=f"test-pi-ghost-source-{time.time()}",
+            config=isolated_config,
+        )
+        manager._cli_type = "pi"
+        ctx = MagicMock()
+        ctx.tool_result = "Updated task pi-ghost"
+        ctx.tool_input = {"taskId": "pi-ghost", "status": "in_progress"}
+
+        assert manager.handle_task_update(ctx) == "ghost_skip"
+        assert manager.tasks["pi-ghost"]["metadata"] == {
+            "ghost_task": True,
             "source": "pi_task_tool",
         }
 

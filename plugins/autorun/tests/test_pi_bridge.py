@@ -78,6 +78,7 @@ def _install_pi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_pi_install_is_owned_idempotent_and_preserves_other_extensions(tmp_path, monkeypatch):
     from autorun.installer import entrypoint
+    from autorun.installer.fs import TreeManifest
 
     home = _install_pi(tmp_path, monkeypatch)
     extension_root = home / ".pi" / "agent" / "extensions"
@@ -89,12 +90,39 @@ def test_pi_install_is_owned_idempotent_and_preserves_other_extensions(tmp_path,
     assert (installed / "daemon-client.mjs").is_file()
     assert (installed / ".autorun-owned").is_file()
 
+    obsolete = installed / "obsolete-owned-runtime.ts"
+    obsolete.write_text("stale\n", encoding="utf-8")
+    marker = TreeManifest.of(installed, "ar").as_payload()
+    (installed / ".autorun-owned").write_text(
+        json.dumps(marker, indent=2) + "\n", encoding="utf-8"
+    )
+
     assert entrypoint.install_plugins("ar", conductor=False, tool=False) == 0
+    assert not obsolete.exists(), "reinstall must replace the complete owned Pi runtime"
     assert stranger.is_file()
 
     assert entrypoint.uninstall_plugins("ar") == 0
     assert not installed.exists()
     assert stranger.is_file()
+
+
+def test_pi_uninstall_preserves_a_user_modified_owned_extension(tmp_path, monkeypatch):
+    from autorun.installer import entrypoint
+
+    home = _install_pi(tmp_path, monkeypatch)
+    installed = home / ".pi" / "agent" / "extensions" / "ar"
+    sibling = installed.parent / "sibling.ts"
+    sibling.write_text("export default () => {}\n", encoding="utf-8")
+    (installed / "index.ts").write_text(
+        "// user customization\n", encoding="utf-8"
+    )
+
+    assert entrypoint.uninstall_plugins("ar") == 0
+    assert installed.is_dir(), "uninstall must preserve a user-modified owned tree"
+    assert (installed / "index.ts").read_text(encoding="utf-8") == (
+        "// user customization\n"
+    )
+    assert sibling.is_file()
 
 
 def test_pi_development_install_uses_redirected_runtime_roots(tmp_path, monkeypatch):
@@ -447,6 +475,43 @@ console.log(JSON.stringify({
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_pi_task_mutation_uses_authoritative_snapshot_in_result(tmp_path):
+    result, _frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{"_autorun_bridge": {"task_snapshot": {
+            "id": "pi-1", "subject": "Recovered task", "status": "ignored",
+            "blockedBy": [], "metadata": {"ghost_task": True},
+        }}}],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map();
+const pi = {
+  registerCommand() {}, registerTool() {}, on(name, handler) { handlers.set(name, handler); },
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "rpc",
+  sessionManager: {
+    getSessionId: () => "pi-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }),
+  },
+};
+const receipt = await handlers.get("tool_result")({
+  toolName: "TaskUpdate", input: { taskId: "pi-1", status: "in_progress" },
+  content: [{ type: "text", text: "Updated task pi-1" }],
+  details: { taskId: "pi-1", updates: { status: "in_progress" } }, isError: false,
+}, ctx);
+console.log(JSON.stringify({ receipt }));
+''',
+    )
+
+    assert result["receipt"]["isError"] is False
+    assert result["receipt"]["content"] == [{
+        "type": "text",
+        "text": "Task pi-1 [ignored] Recovered task",
+    }]
+    assert result["receipt"]["details"]["taskSnapshot"]["status"] == "ignored"
+
+
 def test_pi_task_mutation_reports_missing_authoritative_snapshot(tmp_path):
     result, _frames = _run_pi_adapter_driver(
         tmp_path,

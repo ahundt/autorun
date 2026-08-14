@@ -1441,6 +1441,64 @@ class TestAutorunDaemon:
         assert settled.get("decision") != "block"
 
     @pytest.mark.asyncio
+    async def test_pi_task_update_and_list_are_safe_when_requests_overlap(self):
+        from autorun import plugins as _plugins  # noqa: F401
+
+        daemon = AutorunDaemon(app)
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def invoke(payload):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps({
+                "session_id": "pi-task-overlap",
+                "cli_type": "pi",
+                "inprocess_capabilities": ["task_operations_v1"],
+                **payload,
+            }).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        await invoke({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "TaskCreate",
+            "tool_input": {
+                "subject": "Overlap", "description": "Concurrent check",
+                "activeForm": "Checking overlap",
+            },
+            "tool_result": {"task": {"id": "pi-overlap-1"}},
+        })
+        updated, listed = await asyncio.gather(
+            invoke({
+                "hook_event_name": "PostToolUse",
+                "tool_name": "TaskUpdate",
+                "tool_input": {"taskId": "pi-overlap-1", "status": "completed"},
+                "tool_result": {"taskId": "pi-overlap-1"},
+            }),
+            invoke({
+                "hook_event_name": "AutorunOperation",
+                "inprocess_operation": "task_list_v1",
+            }),
+        )
+        final = await invoke({
+            "hook_event_name": "AutorunOperation",
+            "inprocess_operation": "task_list_v1",
+        })
+
+        assert updated["_autorun_bridge"]["task_snapshot"]["status"] == "completed"
+        overlap = listed["_autorun_bridge"]
+        assert overlap["total"] == 1
+        assert overlap["truncated"] is False
+        assert overlap["tasks"][0]["status"] in {"pending", "completed"}
+        assert final["_autorun_bridge"]["tasks"][0]["status"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_pi_task_operation_does_not_block_daemon_event_loop(self, monkeypatch):
         import threading
         from autorun import task_lifecycle
@@ -1450,11 +1508,11 @@ class TestAutorunDaemon:
 
         class SlowLifecycle:
             def __init__(self, ctx): pass
-            @property
-            def tasks(self):
+            def task_projection(self, *, limit):
+                assert limit == 100
                 entered.set()
                 release.wait(timeout=2)
-                return {}
+                return {"tasks": [], "total": 0, "truncated": False}
 
         monkeypatch.setattr(task_lifecycle, "TaskLifecycle", SlowLifecycle)
         daemon = AutorunDaemon(AutorunApp())
@@ -1488,6 +1546,49 @@ class TestAutorunDaemon:
         assert ticked is True
 
     @pytest.mark.asyncio
+    async def test_handle_client_orders_pi_tasks_through_lifecycle_priority(self, monkeypatch):
+        from autorun import task_lifecycle
+
+        tasks = {
+            "blocked": {
+                "id": "blocked", "subject": "Blocked", "status": "pending",
+                "blockedBy": ["ready"],
+            },
+            "done": {"id": "done", "subject": "Done", "status": "completed"},
+            "ready": {
+                "id": "ready", "subject": "Ready", "status": "in_progress",
+                "blockedBy": [],
+            },
+        }
+
+        class FakeLifecycle:
+            def __init__(self, ctx):
+                assert ctx.cli_type == "pi"
+            @property
+            def tasks(self):
+                return tasks
+            def task_projection(self, *, limit):
+                assert limit == 100
+                return {
+                    "tasks": [tasks["ready"], tasks["blocked"], tasks["done"]],
+                    "total": 3,
+                    "truncated": False,
+                }
+
+        monkeypatch.setattr(task_lifecycle, "TaskLifecycle", FakeLifecycle)
+        operation = AutorunDaemon(AutorunApp())._run_pi_task_operation(
+            EventContext(session_id="priority", event="AutorunOperation", cli_type="pi"),
+            "task_list_v1",
+            {},
+        )["_autorun_bridge"]
+
+        assert [task["id"] for task in operation["tasks"]] == [
+            "ready", "blocked", "done"
+        ]
+        assert operation["total"] == 3
+        assert operation["truncated"] is False
+
+    @pytest.mark.asyncio
     async def test_handle_client_returns_bounded_task_projection_for_pi_operation(self, monkeypatch):
         from autorun import task_lifecycle
 
@@ -1502,6 +1603,13 @@ class TestAutorunDaemon:
             @property
             def tasks(self):
                 return tasks
+            def task_projection(self, *, limit):
+                rows = list(tasks.values())
+                return {
+                    "tasks": rows[:limit],
+                    "total": len(rows),
+                    "truncated": len(rows) > limit,
+                }
 
         monkeypatch.setattr(task_lifecycle, "TaskLifecycle", FakeLifecycle)
         daemon = AutorunDaemon(AutorunApp())

@@ -1231,37 +1231,62 @@ class TaskLifecycle:
         else:
             return [t for t in tasks.values() if t["status"] not in self.COMPLETED_STATUSES]
 
-    def get_prioritized_tasks(self) -> List[Dict]:
-        """Get tasks in priority order using blockedBy/blocks.
-
-        Hard prioritization (uses EXISTING fields - no schema changes):
-        1. Ready: Tasks with no blockers (can start now)
-        2. Waiting: Tasks with all blockers completed (unblocked, can start)
-        3. Blocked: Tasks with incomplete blockers (must wait)
-
-        Returns:
-            List of tasks ordered by priority
-        """
-        incomplete = self.get_incomplete_tasks(exclude_blocking=True)
-        tasks_dict = self.tasks
-
-        ready = []  # No blockers
-        waiting = []  # All blockers completed
-        blocked = []  # Some blockers incomplete
+    def _prioritize_task_snapshot(self, tasks: Dict[str, Dict]) -> List[Dict]:
+        """Order blocking tasks from one authoritative task snapshot."""
+        incomplete = [
+            task for task in tasks.values()
+            if task["status"] not in self.NON_BLOCKING_STATUSES
+        ]
+        ready = []
+        waiting = []
+        blocked = []
 
         for task in incomplete:
             blockers = task.get("blockedBy", [])
-
             if not blockers:
                 ready.append(task)
+            elif all(
+                tasks.get(blocker_id, {}).get("status") in self.COMPLETED_STATUSES
+                for blocker_id in blockers
+            ):
+                waiting.append(task)
             else:
-                all_done = all(tasks_dict.get(blocker_id, {}).get("status") in self.COMPLETED_STATUSES for blocker_id in blockers)
-                if all_done:
-                    waiting.append(task)
-                else:
-                    blocked.append(task)
+                blocked.append(task)
 
         return ready + waiting + blocked
+
+    def get_prioritized_tasks(self) -> List[Dict]:
+        """Get blocking tasks in dependency-aware priority order."""
+        return self._prioritize_task_snapshot(self.tasks)
+
+    def task_projection(self, *, limit: int = 100) -> Dict[str, object]:
+        """Return one bounded, dependency-aware view from one task snapshot.
+
+        Worst-case time is O(T log T) for terminal-history ordering and peak
+        memory is O(T), where T is the session task count. Output is
+        O(min(T, limit)); persisted task history is never mutated or pruned.
+        """
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError("Task projection limit must be a positive integer")
+        tasks = self.tasks
+        prioritized = self._prioritize_task_snapshot(tasks)
+        prioritized_ids = {str(task.get("id", "")) for task in prioritized}
+        history = sorted(
+            (
+                task for task in tasks.values()
+                if str(task.get("id", "")) not in prioritized_ids
+            ),
+            key=lambda task: (
+                float(task.get("created_at") or 0),
+                str(task.get("id", "")),
+            ),
+        )
+        rows = [*prioritized, *history]
+        return {
+            "tasks": rows[:limit],
+            "total": len(rows),
+            "truncated": len(rows) > limit,
+        }
 
     def create_task(self, task_id: str, input_data: Dict, result: str) -> None:
         """Create task with full metadata (handles duplicates)."""
@@ -1628,11 +1653,21 @@ class TaskLifecycle:
         if not task_id:
             return None  # Skip if no task ID
 
+        # Attach native provenance at the Python authority boundary. This also
+        # tags ghost-protected unknown updates so branch reprojection can remove
+        # them when their Pi receipt is no longer on the active branch.
+        updates = dict(ctx.tool_input)
+        task_source = platform_for(self._cli_type).task_record_source
+        if task_source:
+            metadata = dict(updates.get("metadata") or {})
+            metadata["source"] = task_source
+            updates["metadata"] = metadata
+
         # Update task with all metadata
         # Use raw tool_result directly if string (Gemini/test mocks), else tool_result_str
         raw_result = ctx.tool_result
         result_str = raw_result if isinstance(raw_result, str) else ctx.tool_result_str
-        return self.update_task(task_id, ctx.tool_input, result_str)
+        return self.update_task(task_id, updates, result_str)
 
     def handle_bulk_todos(self, ctx: EventContext) -> None:
         """Handle WriteTodos tool (Gemini Planner).

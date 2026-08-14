@@ -49,6 +49,11 @@ function textResult(text: string, details: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text }], details };
 }
 
+function confirmedTaskText(task: Record<string, any>): string {
+  const subject = String(task.subject ?? "").trim();
+  return `Task ${task.id} [${task.status}]${subject ? ` ${subject}` : ""}`;
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw signal.reason ?? new Error("Task operation aborted");
 }
@@ -249,10 +254,13 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
       };
     }
     if (!content && !taskSnapshot) return undefined;
+    const confirmedContent = taskSnapshot
+      ? [{ type: "text" as const, text: confirmedTaskText(taskSnapshot) }]
+      : event.content;
     return {
       content: content
-        ? [...event.content, { type: "text", text: content }]
-        : event.content,
+        ? [...confirmedContent, { type: "text", text: content }]
+        : confirmedContent,
       details: taskSnapshot ? { ...event.details, taskSnapshot } : event.details,
       isError: event.isError,
       usage: event.usage,

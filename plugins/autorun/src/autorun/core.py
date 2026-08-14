@@ -2832,17 +2832,10 @@ class AutorunDaemon:
                 }
             }
 
-        rows = sorted(
-            manager.tasks.values(),
-            key=lambda task: str(task.get("id", "")),
-        )
-        limit = 100
         return {
             "_autorun_bridge": {
                 "operation": "task_list_v1",
-                "tasks": rows[:limit],
-                "total": len(rows),
-                "truncated": len(rows) > limit,
+                **manager.task_projection(limit=100),
             }
         }
 
