@@ -5,11 +5,17 @@ description: "autorun control commands, stated as prose after $ar: status; allow
 
 # autorun commands (ar)
 
+<purpose>
+
 autorun's daemon dispatches these from plain prompt text; no slash menu or
 catalog entry is required for them to work. Type `ar:<command> [args]`
 (`ar <command>` and `/ar:<command>` are also accepted). Type `ar:help` for
 the live list in this harness's spelling, or `ar:help <command>` for one
 command.
+
+</purpose>
+
+<commands>
 
 ## File-creation policy (AutoFile)
 
@@ -71,3 +77,5 @@ command.
 
 - `ar:reload` — force-reload integration rules from config files.
 - `ar:help` — list every command with what it does.
+
+</commands>

@@ -34,6 +34,21 @@ Checked: 2026-08
   — confirmed Qwen personal, project, and extension skill locations plus
   model- and user-invocation behavior
 
+- [GitHub Copilot: add skills](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/add-skills)
+  (checked 2026-07-27) — confirmed Copilot's documented project roots (`.github/skills`,
+  `.claude/skills`, `.agents/skills`), personal roots, and the dangerous-shell approval warning
+  for `allowed-tools`. Basis for the runtime-differences table in
+  `portability-and-claim-audit.md`.
+
+- [Microsoft Agent Framework: skills](https://learn.microsoft.com/en-us/agent-framework/agents/skills)
+  (checked 2026-07-27) — confirmed provider-driven progressive disclosure and an experimental
+  MCP skill source; not a filesystem-root claim for unrelated harnesses.
+
+- Codex `skill-creator/scripts/quick_validate.py` (installed under the active Codex harness;
+  checked 2026-08-15) — confirmed the accepted top-level frontmatter keys `allowed-tools`,
+  `description`, `license`, `metadata`, `name`; rejects `version`, `aliases`, and
+  `argument-hint`. Basis for the top-level `version` FAIL in `scripts/audit-skill.sh`.
+
 - [Model Context Protocol specification](https://modelcontextprotocol.io)
   — confirmed MCP server tool list/parameter schema behavior referenced in Category 3
   skill guidance; basis for MCP Enhancement skill category research targets
@@ -83,6 +98,15 @@ Checked: 2026-08
   opening clause. Both are shown as Format A and Format B under "Description Writing Formula"
   in `best-practices.md`. Outcome-only descriptions ("87% faster") satisfy neither and fail
   the audit.
+
+- **XML in the body**: the Anthropic PDF's development checklist reads "No XML tags (< >)
+  anywhere", while its Reference B enumerates the restriction for frontmatter only ("XML angle
+  brackets (< >) - security restriction") and Claude Code documents that `description` must not
+  contain XML tags. This skill enforces the frontmatter ban and, as its own methodology policy
+  (SKILL-REQ004), requires balanced semantic XML regions in the body, on the strength of the
+  Anthropic prompting guidance above. No source establishes a measured cross-model improvement
+  from body XML; the claim audit in `portability-and-claim-audit.md` rejects the 28–40 percent
+  figure that circulates. A host that rejects body tags on upload is recorded as unsupported.
 
 ## Catalog boundary
 

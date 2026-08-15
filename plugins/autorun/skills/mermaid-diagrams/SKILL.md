@@ -5,6 +5,8 @@ description: Render Mermaid diagrams to SVG using beautiful-mermaid and bun. Use
 
 # Mermaid Diagram Rendering with beautiful-mermaid
 
+<purpose>
+
 Render Mermaid `.mmd` files into styled SVG using [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) v1.0.2 and [bun](https://bun.sh).
 
 ## Skill Contents
@@ -13,6 +15,10 @@ Render Mermaid `.mmd` files into styled SVG using [beautiful-mermaid](https://gi
 |------|---------|
 | `render-mermaid.ts` | CLI tool: renders `.mmd` files to SVG |
 | `gemini-diagram-prompt.md` | Prompt for Gemini image generation |
+
+</purpose>
+
+<setup>
 
 ## Installation
 
@@ -25,6 +31,10 @@ brew install oven-sh/bun/bun
 # Or universal installer
 curl -fsSL https://bun.sh/install | bash
 ```
+
+</setup>
+
+<reference>
 
 ## CLI Reference
 
@@ -46,6 +56,10 @@ Options:
 **Output defaults:** Without `-o` or `-d`, writes `<name>.svg` next to each input file.
 
 **Shorthand:** Set `MERMAID=plugins/autorun/skills/mermaid-diagrams/render-mermaid.ts` for shorter commands.
+
+</reference>
+
+<examples>
 
 ## Examples
 
@@ -87,11 +101,21 @@ Regenerate:
 bun run $MERMAID docs/diagrams/*.mmd --outdir docs/diagrams
 ```
 
+</examples>
+
+<limitations>
+
 ## Known Limitations
 
 - Complex diagrams with deeply nested subgraphs may hit dagre layout bugs. Failed diagrams are reported but don't block other renders.
 - `%%{init:...}%%` front matter is stripped automatically (beautiful-mermaid applies its own theming).
 
+</limitations>
+
+<image_generation>
+
 ## Gemini Image Generation
 
 `gemini-diagram-prompt.md` contains a prompt for Gemini to generate an outcome-focused project overview image. Copy the prompt into a Gemini conversation.
+
+</image_generation>

@@ -1,17 +1,24 @@
 ---
 name: pdf-extractor
 description: This skill should be used when the user asks to "extract text from PDF", "convert PDF to text", "parse PDF", "read PDF contents", "extract data from documents", "batch PDF extraction", "PDF to markdown", "OCR PDF", "get text from PDF files", "I have a PDF", "can you read this PDF", "what's in this PDF", "summarize this PDF", "open PDF file", "extract from [filename].pdf", or needs to process PDF documents for data extraction. Handles single-file extraction, batch processing, and OCR for scanned documents with automatic backend selection.
-version: 1.0.0rc1
-example-prompt: "Extract text from document.pdf"
+metadata:
+  version: 1.0.0rc1
+  example-prompt: "Extract text from document.pdf"
 ---
 
 # PDF Data Extraction
+
+<purpose>
 
 Extract text and structured data from PDF documents using a multi-backend approach with automatic fallback.
 
 ## Overview
 
 This skill provides PDF text extraction with 9 different backends, automatic GPU detection, and intelligent backend selection. The extraction system tries backends in order until one succeeds, producing markdown output optimized for further processing.
+
+</purpose>
+
+<workflow>
 
 ## Quick Start Workflow
 
@@ -161,6 +168,10 @@ output_files, metadata = pdf_to_txt(
 )
 ```
 
+</workflow>
+
+<reference>
+
 ## Extraction Metadata
 
 Every extraction returns metadata for quality assessment:
@@ -283,6 +294,10 @@ Working examples in the insurance analysis that prompted this skill:
 - Used markitdown backend for fast extraction
 - Parsed structured data (dates, amounts, policy numbers)
 
+</reference>
+
+<troubleshooting>
+
 ## Error Handling
 
 The extraction system handles errors gracefully:
@@ -367,3 +382,5 @@ uv pip install "pdfminer.six>=20221105"
 # API changed significantly in 0.1.0; ensure correct version:
 uv pip install "markitdown>=0.1.0"
 ```
+
+</troubleshooting>

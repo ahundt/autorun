@@ -7,6 +7,8 @@ argument-hint: "[A,B:command] or [all:continue] or [awaiting:status]"
 
 # Claude Session Manager
 
+<purpose>
+
 Discover, analyze, and interact with Claude Code sessions across tmux windows.
 
 ## Context
@@ -20,6 +22,10 @@ Run `tmux list-sessions` and read its output before choosing a session.
 The user's request is the task description for everything below.
 
 If no arguments provided, discover all Claude sessions and present them to the user.
+
+</purpose>
+
+<workflow>
 
 ## Workflow
 
@@ -71,6 +77,10 @@ When discovering sessions, detect what state each Claude session is in:
 | `clarification` | Question ending with `?` |
 | `working` | No prompt detected - Claude is active |
 
+</workflow>
+
+<output_contract>
+
 ## Session Table Format
 
 Present discovered sessions as:
@@ -90,3 +100,5 @@ Then ask: "Which sessions would you like to interact with?"
 - `cli-test-automation.md` - CLI testing automation patterns
 
 **Implementation**: See `tabs-exec` script for discovery and execution logic.
+
+</output_contract>

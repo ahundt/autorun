@@ -53,7 +53,9 @@ varies. Name the host and version you tested rather than assuming portability.
 
 ### Description Field Constraints
 - **Under 1024 characters** (hard limit — longer descriptions are truncated)
-- **No XML angle brackets** (`<` or `>`) in any frontmatter field
+- **No XML angle brackets** (`<` or `>`) in any frontmatter field — a host restriction from
+  Anthropic's skill guide and the Claude Code docs, not a YAML rule; the body must carry balanced
+  semantic XML regions (SKILL-REQ004 in `SKILL.md`)
 - **Skill name must be kebab-case** (e.g., `my-skill`) — no spaces, no capitals
 
 ## Description Writing Formula
@@ -222,6 +224,20 @@ skill-name/
 └── assets/
     ├── config.json
     └── template.yaml
+```
+
+### Annotated (Claude Code standalone example)
+```
+~/.claude/skills/your-skill-name/
+├── SKILL.md                         # Required — loaded when skill triggers (<5k words)
+├── references/                      # Docs Claude loads into context as needed
+│   ├── detailed-guide.md            #   schemas, API docs, policies, detailed workflows
+│   └── examples/                    #   working code users copy (subdirectory of references/)
+│       └── working-example.sh
+├── scripts/                         # Executables (run without loading into context)
+│   └── validate.sh
+└── assets/                          # Files used IN skill output (not loaded to context)
+    └── template.html
 ```
 
 ## Testing Framework

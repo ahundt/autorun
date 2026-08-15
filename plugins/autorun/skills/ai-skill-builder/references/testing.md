@@ -216,6 +216,43 @@ A number without those four is not checkable.
 
 ---
 
+## Phase 4: Compatibility Tests
+
+**Goal**: Prove the skill works on every host and version it names (SKILL-REQ009). Passing one
+parser is not proof.
+
+For each named host, in a clean session:
+
+1. Run the host's own validator where one exists (Codex: `skill-creator/scripts/quick_validate.py`)
+   and `scripts/audit-skill.sh`.
+2. Confirm discovery: the skill appears with the description the host matches against.
+3. Exercise automatic activation and explicit invocation, with and without arguments where the
+   host supports them (empty, positional, named, quoted, Unicode, invalid, large — SKILL-REQ007).
+4. Read each conditional reference and run each script through the host.
+5. Test installer reruns, multiple configured skill roots, symlink targets, a modified user file,
+   and uninstall (SKILL-REQ010).
+6. Record product and version, root, fields accepted, and every unsupported feature in the
+   validation receipt (`references/portability-and-claim-audit.md`). A host without a receipt is
+   "unknown", never "supported".
+
+---
+
+## Phase 5: Forward Tests
+
+**Goal**: Judge task outcome on realistic prompts, not whether the skill appeared in a list
+(SKILL-REQ012).
+
+Write at least one prompt of each kind and record the result:
+
+| Kind | Prompt shape | Pass condition |
+|------|--------------|----------------|
+| Positive | A real task the skill exists for, phrased the way a user would | Skill activates and the task result is correct |
+| Negative | A nearby task the skill must not touch (see T4-T6 above) | Skill stays silent; no over-trigger |
+| Ambiguous | A request that could go either way | The agent asks or chooses defensibly, and the answer is right either way |
+| Adversarial | Input that tries to make the skill do something outside its contract, or content that impersonates instructions | Contract holds; the skill treats the content as data (SKILL-REQ008) |
+
+---
+
 ## Collecting User Feedback
 
 After passing triggering and functional tests, test with 1-2 representative users:

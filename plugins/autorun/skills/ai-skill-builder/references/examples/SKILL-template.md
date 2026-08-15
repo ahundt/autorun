@@ -8,6 +8,8 @@ metadata:
 
 # Skill Name
 
+<purpose>
+
 [LEVEL 1: THE HOOK - 50-100 words]
 
 Brief introduction that includes:
@@ -18,7 +20,9 @@ Brief introduction that includes:
 To start: [first action to take]
 **Invoke with:** `/your-skill-name` or ask about [trigger scenario]
 
----
+</purpose>
+
+<workflow>
 
 ## How It Works
 
@@ -101,7 +105,9 @@ Brief overview of the process in 3-5 clear steps:
 
 [Optional advanced features, edge cases, power user tips]
 
----
+</workflow>
+
+<examples>
 
 ## Examples
 
@@ -129,7 +135,9 @@ Brief overview of the process in 3-5 clear steps:
 
 [Repeat structure]
 
----
+</examples>
+
+<success_criteria>
 
 ## Success Metrics
 
@@ -141,7 +149,9 @@ Brief overview of the process in 3-5 clear steps:
 - [Quality aspect 1]: [How it improves]
 - [Quality aspect 2]: [How it improves]
 
----
+</success_criteria>
+
+<troubleshooting>
 
 ## Troubleshooting
 
@@ -153,7 +163,9 @@ Brief overview of the process in 3-5 clear steps:
 - **Solution**: [Step-by-step fix]
 - **Prevention**: [How to avoid in future]
 
----
+</troubleshooting>
+
+<resources>
 
 ## Resources
 
@@ -182,3 +194,10 @@ Record the version in `metadata.version` above and the release history in
 
 [License information if applicable]
 [Attribution to sources, tools, or inspirations]
+
+</resources>
+
+<!-- Every major section above sits inside a balanced, descriptive XML region
+     (purpose, workflow, examples, success_criteria, troubleshooting, resources).
+     Rename regions to fit the task; a `## ` heading outside every region fails
+     scripts/audit-skill.sh. -->

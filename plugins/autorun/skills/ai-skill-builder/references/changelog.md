@@ -5,6 +5,32 @@ you are building. Release history first, then the detail behind each release, ne
 
 ## Release history
 
+### v1.3.0 - 2026-08-15
+- Absorbed the `engineer-agent-skills` package: its thirteen P0 requirements
+  (SKILL-REQ001–013) now sit in a `<requirements>` region of `SKILL.md`, its
+  compatibility matrix, claim audit, and validation receipt are
+  `references/portability-and-claim-audit.md`, and its `agents/openai.yaml` shape is
+  shipped here. Listed the package as superseded so nobody installs both.
+- Made semantic XML body regions mandatory (SKILL-REQ004): every major section inside a
+  balanced, descriptive tag on its own line, Markdown inside, code in fences. `SKILL.md`,
+  `scripts/scaffold-skill.sh` output, and `references/examples/SKILL-template.md` now follow it.
+- `scripts/audit-skill.sh`: new section 4 fails a body with no region, an unbalanced or
+  mis-nested tag, an HTML presentational tag used as a region, or a `## ` heading outside every
+  region; warns about prose outside every region; ignores frontmatter and fenced code. Added
+  reader item 8 for what it cannot decide (whether a tag name describes its content). Later
+  sections renumbered 5–8. Corrected the frontmatter angle-bracket FAIL to cite the host
+  restriction rather than "forbidden in YAML", which was false.
+- Step 1 classifies authoring, execution, and evaluation; Step 4 adds host validators, per-host
+  validation receipts, and forward tests; Step 5 states installer ownership and the delivery
+  report. Distribution channels moved verbatim to `references/distribution.md`; the annotated
+  folder tree moved verbatim to `references/best-practices.md`.
+- `references/sources.md`: added GitHub Copilot, Microsoft Agent Framework, and the Codex
+  `quick_validate.py` accepted-key list; recorded the discrepancy between the Anthropic guide's
+  "no XML tags anywhere" checklist line and its frontmatter-only Reference B.
+- Description gains "create an agent skill", "audit a SKILL.md", "test skill discovery",
+  "install skills across harnesses" and names semantic XML regions, frontmatter, scripts,
+  arguments, and security among the topics it covers.
+
 ### v1.2.1 - 2026-08-13
 - Added Antipattern 6, The Unmeasured Rewrite, to `references/best-practices.md`: run the same
   tasks against the version being replaced and keep the revision only if it does them better.
@@ -39,6 +65,12 @@ you are building. Release history first, then the detail behind each release, ne
 - Testing framework
 - Distribution strategies
 - Common pitfalls guide
+
+## TODO — empirical regression guard for over-engineered skills
+
+- Investigate the deep-superset regression: its `SKILL.md` grew from 167 lines / 1,129 words at `a3e571c` to 715 lines / 4,991 words at `01cc1d9`; structural audits still passed while cold reads found executable and sequencing defects, and the worktree was rolled back to the pre-cluster behavior.
+- Thread the needle: retain the smallest coherent portable core and only add a guard when it maps to a reproduced failure. Validate the real task empirically with failing fixtures, focused scripts, state/exit-status checks, cold reads, and longer-term dogfood/recurrence evidence; a clean structural audit is not a behavior verdict.
+- Add a refinement checklist and regression fixture that reject complexity without measured outcome gain, preserve the last known-good baseline, and make rollback/reassessment explicit.
 
 ## v1.2.0 detail — internal-contradiction audit
 

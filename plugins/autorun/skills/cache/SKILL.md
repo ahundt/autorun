@@ -5,6 +5,8 @@ description: Use this skill when the user asks to "enable cache protection", "bl
 
 # /ar:cache — Cache Miss / Compaction Protection Skill
 
+<purpose>
+
 A PreToolUse gate that blocks commands when the prompt cache is effectively
 cold — saving tokens by preventing full-rate re-reads of context that has
 just fallen out of the 5-minute prompt-cache TTL. **Off by default.**
@@ -36,6 +38,10 @@ unknown slash commands before hooks see them, so use `ar:cache` or
   user's `statusLine` setting. An optional one-line tap exists for users who
   want to feed their statusline's rich JSON into the gate themselves.
 
+</purpose>
+
+<commands>
+
 ## 2. Commands
 
 ```
@@ -64,6 +70,10 @@ command-string pattern; `/ar:cache ok <scope>` overrides the feature gate.
 Overloading `/ar:ok cache` would silently collide with any user command named
 `cache`. Decision in plan §6.5.1 is: no `/ar:ok cache` alias in v1. A sigil-based
 alias (e.g. `/ar:ok @cache`) is backwards-compatible to add later if users ask.
+
+</commands>
+
+<workflow>
 
 ## 4. How the decision flows (PreToolUse)
 
@@ -117,6 +127,10 @@ re-load inside the lock. Parallel hook invocations (e.g. rtk-spawned) inherit
 the same `_PARALLEL_GRACE_SECONDS = 1.0` s window that `ScopedAllow` already
 uses. No new state file, no new lock.
 
+</workflow>
+
+<reference>
+
 ## 7. Files
 
 | Path                                                     | Role                                  |
@@ -141,3 +155,5 @@ uses. No new state file, no new lock.
 See `plugins/autorun/src/autorun/cache_guard.py` for parsing, usage detection,
 block-message construction, and multiprocess-safe override handling. See
 `plugins/autorun/commands/cache.md` for the user-facing command grammar.
+
+</reference>

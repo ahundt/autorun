@@ -88,6 +88,124 @@ def test_packaged_skill_passes_the_structural_audit(skill_dir):
     assert result.returncode == 0, result.stdout
 
 
+# ─── Semantic XML regions ───────────────────────────────────────────────────
+#
+# Methodology rule SKILL-REQ004 (plugins/autorun/skills/ai-skill-builder/SKILL.md):
+# every major operational region of a SKILL.md body sits inside a balanced,
+# descriptive XML tag on its own line, Markdown inside, code in fences. It is a
+# quality policy for separating instructions, context, and examples, not a
+# parser requirement of the portable Agent Skills specification. audit-skill.sh
+# section 4 enforces the same rules in bash; this Python mirror runs where the
+# bash audit is skipped (Windows CI) so the gate has no platform hole.
+
+_PRESENTATIONAL_TAGS = frozenset(
+    "a b big br center code div em font hr i img li ol p pre small span strong "
+    "table td th tr u ul".split()
+)
+
+
+def _semantic_regions(text: str) -> tuple[list[str], list[str]]:
+    """Return (region names in order, defects) for one SKILL.md text.
+
+    Frontmatter and fenced code are excluded. Defects are unbalanced or
+    mis-nested tags, presentational tag names, and `## ` headings outside every
+    region; an empty region list is itself a defect.
+    """
+    import re
+
+    lines = text.splitlines()
+    start = 0
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                start = i + 1
+                break
+    open_re = re.compile(r"^<([a-z][a-z0-9_-]*)>\s*$")
+    close_re = re.compile(r"^</([a-z][a-z0-9_-]*)>\s*$")
+    fence_re = re.compile(r"^(`{3,})(\s*\S+)?\s*$")
+    stack: list[tuple[str, int]] = []
+    regions: list[str] = []
+    defects: list[str] = []
+    in_fence, opener = False, 0
+    for n in range(start, len(lines)):
+        line = lines[n]
+        m = fence_re.match(line)
+        if m:
+            ticks, info = len(m.group(1)), (m.group(2) or "").strip()
+            if not in_fence:
+                in_fence, opener = True, ticks
+            elif not info and ticks >= opener:
+                in_fence = False
+            continue
+        if in_fence:
+            continue
+        if m := open_re.match(line):
+            name = m.group(1)
+            if name in _PRESENTATIONAL_TAGS or len(name) < 2:
+                defects.append(f"line {n + 1}: <{name}> is not a descriptive region name")
+            stack.append((name, n + 1))
+            regions.append(name)
+            continue
+        if m := close_re.match(line):
+            name = m.group(1)
+            if not stack:
+                defects.append(f"line {n + 1}: </{name}> closes nothing")
+            elif stack[-1][0] != name:
+                defects.append(f"line {n + 1}: </{name}> closes <{stack[-1][0]}>")
+                stack.pop()
+            else:
+                stack.pop()
+            continue
+        if not stack and line.startswith("## "):
+            defects.append(f"line {n + 1}: H2 outside every region: {line.strip()[:50]}")
+    defects.extend(f"<{name}> opened at line {ln} never closed" for name, ln in stack)
+    if not regions:
+        defects.append("no semantic XML regions")
+    return regions, defects
+
+
+# Every SKILL.md this repository ships or links, not only plugins/autorun/skills:
+# the Codex `$ar` catalog skill, the pdf-extractor plugin skill, and the
+# repo-internal maintainer skill are loaded by the same harnesses.
+OTHER_SHIPPED_SKILLS = (
+    PLUGIN_ROOT / ".codex-plugin" / "skills" / "ar",
+    REPO_ROOT / "plugins" / "pdf-extractor" / "skills" / "pdf-extractor",
+    AGENTS_SKILLS_ROOT / "autorun-maintainer",
+)
+
+
+def _every_shipped_skill_dir() -> list[Path]:
+    return _packaged_skill_dirs() + list(OTHER_SHIPPED_SKILLS)
+
+
+@pytest.mark.parametrize(
+    "skill_dir",
+    _every_shipped_skill_dir(),
+    ids=lambda p: p.name if p.name != "ar" else "codex-ar",
+)
+def test_shipped_skill_body_uses_balanced_semantic_xml_regions(skill_dir):
+    """SKILL-REQ004: regions present, balanced, descriptive, and every H2 inside one."""
+    regions, defects = _semantic_regions((skill_dir / "SKILL.md").read_text(encoding="utf-8"))
+
+    assert not defects, f"{skill_dir.name}/SKILL.md: " + "; ".join(defects)
+    assert regions
+
+
+def test_semantic_region_checker_reports_each_defect_kind():
+    """The mirror must fail for the same reasons audit-skill.sh section 4 fails."""
+    body = "---\nname: x\ndescription: y\n---\n# T\n\n"
+    _, ok = _semantic_regions(body + "<purpose>\n## A\n```markdown\n<unclosed>\n## fenced\n```\n</purpose>\n")
+    assert ok == []
+    _, none = _semantic_regions(body + "## A\ntext\n")
+    assert none == ["line 7: H2 outside every region: ## A", "no semantic XML regions"]
+    _, nested = _semantic_regions(body + "<purpose>\n<workflow>\n</purpose>\n</workflow>\n")
+    assert any("closes <workflow>" in d for d in nested)
+    _, html = _semantic_regions(body + "<div>\n## A\n</div>\n")
+    assert html == ["line 7: <div> is not a descriptive region name"]
+    _, escaped = _semantic_regions(body + "<purpose>\ntext\n</purpose>\n\n## Outside\n")
+    assert escaped == ["line 11: H2 outside every region: ## Outside"]
+
+
 def _run_audit(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(AUDIT_SCRIPT), *args],
@@ -117,13 +235,33 @@ def test_audit_script_exits_zero_on_a_structurally_clean_skill(tmp_path):
         'description: Render a fixture report from a directory. Use when asked to'
         ' "render a fixture report" or "audit a fixture skill", for example `pytest`'
         " cases naming *.md inputs.",
-        "# Clean Fixture Skill\n\n## Workflow\n\n1. Read the input.\n2. Report.\n",
+        "# Clean Fixture Skill\n\n<workflow>\n\n## Workflow\n\n1. Read the input.\n2. Report.\n\n</workflow>\n",
     )
 
     result = _run_audit(str(skill))
 
     assert "❌ FAIL" not in result.stdout, result.stdout
     assert result.returncode == 0, result.stdout
+
+
+@pytest.mark.skipif(
+    not POSIX_AUDIT_AVAILABLE,
+    reason="audit-skill.sh requires a POSIX shell; Windows CI has no WSL distribution",
+)
+def test_audit_script_fails_a_body_without_semantic_xml_regions(tmp_path):
+    """SKILL-REQ004 is a release gate, so a region-less body must be a FAIL, not a note."""
+    skill = _write_skill(
+        tmp_path,
+        "plain-fixture-skill",
+        "name: plain-fixture-skill\n"
+        'description: Render a fixture report. Use when asked to "render a fixture report".',
+        "# Plain Fixture Skill\n\n## Workflow\n\n1. Read the input.\n",
+    )
+
+    result = _run_audit(str(skill))
+
+    assert "Semantic XML regions missing or unbalanced" in result.stdout, result.stdout
+    assert result.returncode == 1
 
 
 @pytest.mark.skipif(
@@ -187,7 +325,7 @@ def test_audit_resolves_repository_owned_notes_from_git_root(tmp_path):
         "repo-note-skill",
         "name: repo-note-skill\n"
         'description: Read repository notes. Use when asked to "read repository notes".',
-        "# Repo Note Skill\n\nRead `notes/actual.md`.\n",
+        "# Repo Note Skill\n\n<workflow>\n\nRead `notes/actual.md`.\n\n</workflow>\n",
     )
 
     result = _run_audit(str(skill))

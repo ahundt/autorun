@@ -7,6 +7,8 @@ metadata:
 
 # Streamline Text
 
+<purpose>
+
 Make a document shorter and clearer while provably losing no required fact. Correctness before brevity: trimming a wrong sentence produces a shorter wrong sentence, so verify claims before compressing them.
 
 ## Companion skills
@@ -24,6 +26,10 @@ and a draft with every flagged word removed can still carry three paragraphs of 
 Order: this skill's passes for the facts first, then the `avoid-ai-isms` checks for the tells,
 then this skill's restore pass again if removing tells cut anything. Apply the `avoid-ai-isms`
 carve-outs during its pass so neither job strips a precise hedge or a scope qualifier.
+
+</purpose>
+
+<workflow>
 
 ## How It Works
 
@@ -50,6 +56,10 @@ Run these as separate passes. Combining them is how facts get lost.
 5. **Restore by cross-check.** Walk the index line by line, confirming the result still asserts that one fact with its detail intact, and mark each line present, merged into another sentence, or consciously dropped with a stated reason; no fourth state and no unmarked lines. Marking a line present because the result still covers the topic is not a check: the check is whether the specific qualifier, modal, actor, unit, or example on that line survived. Where statements about different measurements or sources were merged, confirm the merged sentence's quantifiers and referents still match each original; paraphrase is where numbers silently swap. Then diff against the preserved copy for anything the index itself missed. Then check your context: the surrounding conversation, the request that produced the document, and linked sources often contain requirements the document never wrote down; restore those too. Never restore a stale or disproven claim.
 6. **Reread whole.** Read the full document start to finish once more; check heading order, transitions, table placement, and that every conclusion still sits beside what supports it. If the format renders (markdown tables, links, a table of contents), inspect the rendered result, not only the source.
 7. **Diff-verify against the pre-edit version, then fix.** Read the complete diff between the preserved copy and the result (under git, `git diff` on every touched file; `git diff --word-diff` exposes exactly which words changed inside long lines). Walk every removed segment and match it to a conscious decision in the index; a removal with no matching decision is a regression, found now rather than by a reader. Hunt the diff-specific failure forms the earlier passes cannot see: a replace-all that fired outside its intended scope, an edit that landed in a generated or derived file instead of its source, a deletion that took a neighboring sentence with it, a merged sentence whose quantifier or referent silently widened, and characters corrupted by editing: scan for anything outside the document's expected character set, because fused or broken glyphs look fine in the source and render wrong. Then run a fix round for everything found, and re-run this pass on the fix diff until it comes back clean; a fix round that itself goes unverified is how regressions survive review.
+
+</workflow>
+
+<requirements>
 
 ## Keep the artifact free of process residue
 
@@ -105,6 +115,10 @@ For every remaining title, sentence, bullet, row, and label ask:
 5. Does it follow from the preceding sentence and belong under its heading?
 6. Is every term, metric, subject, and reference introduced before use?
 
+</requirements>
+
+<examples>
+
 ## Examples
 
 Before (40 words): "We then ran the comprehensive test suite, which significantly improved our confidence, and all of the 3/3 checks passed successfully, demonstrating that the robust new implementation is working as expected across the various configurations that we tested during this effort."
@@ -123,6 +137,10 @@ Accounting for every index line: all three facts survive, each now naming what i
 4. Streamlining before fact-checking, which locks wrong claims into confident prose.
 5. Skipping the restore pass and only noticing the lost fact when a reader asks.
 
+</examples>
+
+<resources>
+
 ## Scripts
 
 `scripts/number_lists.py` converts dashed markdown lists to numbered lists in place; run it with `--help` for usage and caveats, and review the diff afterward.
@@ -132,3 +150,5 @@ Script whatever benefits from exactness or scale, then read for judgment: a clea
 ## Sources
 
 Provenance for every rule here, with what each source confirmed: `references/sources.md`.
+
+</resources>

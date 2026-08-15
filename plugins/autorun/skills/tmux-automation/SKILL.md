@@ -5,6 +5,8 @@ description: Drive CLI tests inside isolated tmux/byobu sessions with ai-monitor
 
 # Automated CLI Testing with Session Management
 
+<purpose>
+
 **autorun-specific procedures** (read the one you need, not both):
 `references/session-management.md` creates, lists, and cleans up isolated
 sessions, including the rule that cleanup only ever touches names starting with
@@ -12,6 +14,10 @@ sessions, including the rule that cleanup only ever touches names starting with
 dedicated `autorun-test` session so the caller's own session is never touched.
 
 This skill provides comprehensive capabilities for automated testing of CLI applications, plugins, and terminal workflows using tmux/byobu sessions with full ai-monitor integration. Perfect for testing Claude Code plugins, command-line tools, and automated workflows.
+
+</purpose>
+
+<commands>
 
 ## Core Commands
 
@@ -79,6 +85,10 @@ This skill provides comprehensive capabilities for automated testing of CLI appl
 - `Ctrl+B o` - Switch panes
 - `Ctrl+B d` - Detach session
 - `Ctrl+B s` - List sessions
+
+</commands>
+
+<integrations>
 
 ## AI-Monitor Integration
 
@@ -150,6 +160,10 @@ autorun provides convenient commands for tmux session automation:
 - `--check-interval <n>` - Seconds between checks
 - `--prompt-on-start` - Send prompt immediately on start
 - `--start <window_numbers>` - Target specific windows
+
+</integrations>
+
+<examples>
 
 ## Usage Examples
 
@@ -229,6 +243,10 @@ byobu send-keys -t "test-session" C-c
 byobu kill-session -t "test-session"
 byobu new-session -d -s "test-session"
 ```
+
+</examples>
+
+<pitfalls>
 
 ## Common Mistakes and Solutions
 
@@ -313,6 +331,10 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 14. **Debugging Strategy**: Test functionality step-by-step instead of assuming installation state
 15. **Slash Command Priority**: Check `~/.claude/commands/` first before plugin installation attempts
 
+</pitfalls>
+
+<reference>
+
 ## Implementation Notes
 
 - This skill uses tmux as the primary backend (byobu is a tmux wrapper providing user-friendly interface)
@@ -383,3 +405,5 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 - Always reference official Claude Code Plugin Examples for patterns
 - Keep Byobu Documentation handy for session management shortcuts
 - Use tmux Manual for scripting complex automation scenarios
+
+</reference>

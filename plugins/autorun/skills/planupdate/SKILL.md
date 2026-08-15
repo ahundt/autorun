@@ -7,6 +7,8 @@ argument-hint: [plan file]
 
 # Quick Plan Update (/ar:planupdate)
 
+<purpose>
+
 The user's request is the task description for everything below.
 
 ## Harness-specific plan lifecycle
@@ -15,7 +17,11 @@ The user's request is the task description for everything below.
 - **Pi:** Do not call `EnterPlanMode` or `ExitPlanMode` on Pi because Pi exposes neither tool. Write or refine the durable plan note directly, report its exact path for approval, and after approval start execution with `/ar pp <path>`. Pi's native autorun `TaskCreate`, `TaskUpdate`, and `TaskList` tools still enforce the task DAG.
 - **Other harnesses:** Use a native plan-mode boundary only when that tool actually exists; otherwise use the same durable-note approval workflow as Pi with that harness's documented autorun command spelling.
 
+</purpose>
+
 ---
+
+<requirements>
 
 ## CRITICAL RULES — SURVIVE COMPACTION
 
@@ -102,7 +108,11 @@ Quick update syncing plan status with codebase state. Not a full refinement. Do 
 3. Change goals without discussion
 4. Skip verification
 
+</requirements>
+
 ---
+
+<workflow>
 
 ## 4. Quick Checklist
 
@@ -137,7 +147,11 @@ After completing all status changes, verify:
 2. Add blocker descriptions when status is `BLOCKED`
 3. Mark complete only when verification done
 
+</workflow>
+
 ---
+
+<output_contract>
 
 ## 7. Output Summary
 
@@ -165,7 +179,11 @@ Before finishing, verify:
 3. [ ] Goals unchanged (or change discussed with user)
 4. [ ] Principles preserved per §1.1
 
+</output_contract>
+
 ---
+
+<delegation>
 
 ## 9. Subagent Guidelines
 
@@ -174,7 +192,11 @@ Before finishing, verify:
 - Avoid Plan subagents - not a full planning exercise
 - Goal: Sync status, not redesign
 
+</delegation>
+
 ---
+
+<acceptance_protocol>
 
 ## 10. Plan Acceptance and Execution Protocol
 
@@ -204,3 +226,5 @@ Then transition to execution:
 4. **CRITICAL ESCAPE TO STOP SYSTEM**: Only if irreversible, catastrophic, or cannot be mitigated, immediately output exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
 
 5. **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM**: When 100% complete and verified, remember you are often overconfident—double-check the resources from which you receive or retrieve new tasks and think if anything was missed, then output exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
+
+</acceptance_protocol>

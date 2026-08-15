@@ -7,6 +7,8 @@ argument-hint: "[task description]"
 
 # Development Planning (/ar:planprocess)
 
+<purpose>
+
 The user's request is the task description for everything below.
 
 ## Harness-specific plan lifecycle
@@ -15,7 +17,11 @@ The user's request is the task description for everything below.
 - **Pi:** Do not call `EnterPlanMode` or `ExitPlanMode` on Pi because Pi exposes neither tool. Write or refine the durable plan note directly, report its exact path for approval, and after approval start execution with `/ar pp <path>`. Pi's native autorun `TaskCreate`, `TaskUpdate`, and `TaskList` tools still enforce the task DAG.
 - **Other harnesses:** Use a native plan-mode boundary only when that tool actually exists; otherwise use the same durable-note approval workflow as Pi with that harness's documented autorun command spelling.
 
+</purpose>
+
 ---
+
+<requirements>
 
 ## CRITICAL RULES — SURVIVE COMPACTION
 
@@ -116,7 +122,11 @@ Execute rigorous methodology step by step. Do NOT execute code changes until pla
 5. Is it superbly designed for architect, maintainer, AND user audiences?
 6. Are different backends handled transparently, seamlessly, and robustly for future API changes?
 
+</requirements>
+
 ---
+
+<workflow>
 
 ## 4. Process Steps
 
@@ -209,7 +219,11 @@ After outputting "Wait," execute these 8 steps:
 3. **Check off only when**: Execution complete AND error correction complete
 4. **On errors**: Continue until resolved, then check off
 
+</workflow>
+
 ---
+
+<output_contract>
 
 ## 7. Output Format
 
@@ -231,7 +245,11 @@ After outputting "Wait," execute these 8 steps:
 
 **Requirement**: Every implementation step needs ≥1 code block showing exact change.
 
+</output_contract>
+
 ---
+
+<delegation>
 
 ## 8. Subagent Guidelines
 
@@ -246,7 +264,11 @@ After outputting "Wait," execute these 8 steps:
 
 **Parallel execution**: Launch multiple in single message when tasks are independent.
 
+</delegation>
+
 ---
+
+<acceptance_protocol>
 
 ## 9. Plan Acceptance and Execution Protocol
 
@@ -276,3 +298,5 @@ Then transition to execution:
 4. **CRITICAL ESCAPE TO STOP SYSTEM**: Only if irreversible, catastrophic, or cannot be mitigated, immediately output exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
 
 5. **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM**: When 100% complete and verified, remember you are often overconfident—double-check the resources from which you receive or retrieve new tasks and think if anything was missed, then output exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
+
+</acceptance_protocol>

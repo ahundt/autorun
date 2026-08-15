@@ -5,6 +5,8 @@ description: Expertise in maintaining, debugging, and deploying the autorun hook
 
 # Autorun Maintainer Skill: The Definitive Guide
 
+<purpose>
+
 You are a Senior QA and Release Engineer specialized in the autorun hook ecosystem. Your mission is to eliminate the "Zombie State" (code edited but hooks stale) and resolve "Invisible Failures" (UI masking the true cause) without breaking active sessions on other harnesses.
 
 ---
@@ -28,7 +30,11 @@ Claude Code's "hook error" is a generic mask. **Never trust the UI.** You MUST f
 *   **Stale Code**: Is the daemon loading from the intended source tree, plugin cache, or editable UV tool?
 *   **Identity**: Confirm the **Commit Hash**, source directory, and **PID** change when a restart is intentionally requested.
 
+</purpose>
+
 ---
+
+<architecture>
 
 ## 2. Platform Schema Deep Dive (Claude v2.1.41)
 
@@ -115,7 +121,11 @@ Use `autorun --restart-daemon` for the current install/source tree. Use `autorun
 *   **Gemini Hooks Reference**: [https://geminicli.com/docs/hooks/reference/](https://geminicli.com/docs/hooks/reference/)
 *   **Claude Bug #4669 (Exit 2)**: [https://claude.com/blog/how-to-configure-hooks](https://claude.com/blog/how-to-configure-hooks)
 
+</architecture>
+
 ---
+
+<verification>
 
 ## 7. Mandatory Verification Checklist
 
@@ -128,7 +138,11 @@ Before declaring a task "Complete," you MUST:
 6.  [ ] **Status Test**: `autorun --status` (Ensure paths aren't doubled and all configured harnesses report).
 7.  [ ] **Custom Harness Test**: If custom targets are in scope, run `autorun --status --custom-harness SPEC` for each configured custom harness.
 
+</verification>
+
 ---
+
+<architecture_inventory>
 
 ## 8. Detailed Architectural Inventory
 
@@ -146,7 +160,11 @@ If synchronization fails, verify these locations for stale code:
 11. **Qwen Extension**: `~/.qwen/extensions/ar/`
 12. **Custom Harness Root**: the `config_dir` from `name=flavor:binary:config_dir[::display]`; the optional display name follows `::`
 
+</architecture_inventory>
+
 ---
+
+<pitfalls>
 
 ## 9. Loop Detection Checklist
 
@@ -165,7 +183,11 @@ You are in a "Failure Loop" if:
 *   **PID Management**: Prefer `autorun --restart-daemon` for the current source tree. Use broader daemon cleanup only when scoped restart cannot recover and the user has approved interrupting other active sessions.
 *   **Bytecode Cache**: `__pycache__` can persist stale logic. The restart script must purge these explicitly.
 
+</pitfalls>
+
 ---
+
+<testing>
 
 ## 11. Testing Strategy (Triple-Layer)
 
@@ -185,7 +207,11 @@ echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"comman
 echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"git log | grep fix"}}' | autorun
 ```
 
+</testing>
+
 ---
+
+<daemon_and_hooks>
 
 ## 12. Daemon Architecture & Lifecycle
 
@@ -315,3 +341,5 @@ Claude's parser is fragile. If `stdout` contains anything other than a single va
 *   **Double-Escape**: Occurs when you manually escape a string (e.g., replacing `\n` with `\\n`) and then pass it to `json.dumps()`.
     *   *Result*: User sees literal `\n` text instead of newlines.
     *   *Solution*: Always pass **raw strings** through the internal logic. Let the final `json.dumps()` at the system boundary handle the encoding.
+
+</daemon_and_hooks>

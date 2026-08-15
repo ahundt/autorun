@@ -6,11 +6,17 @@ allowed-tools: Bash(git, ls, find, cat, echo)
 
 # Marketplace Plugin Testing
 
+<purpose>
+
 You are running tests for all installed Claude Code marketplace plugins to ensure they work correctly together.
 
 ## Your Task
 
 Run the test suite for all plugins in the autorun marketplace that have tests, and provide a comprehensive report of the results.
+
+</purpose>
+
+<workflow>
 
 ## Steps
 
@@ -76,6 +82,10 @@ Run the test suite for all plugins in the autorun marketplace that have tests, a
 - **Report test coverage**: If available, include coverage information
 - **Check for UV compatibility**: Verify plugins use UV for dependency management
 
+</workflow>
+
+<output_contract>
+
 ## Example Output Format
 
 ```
@@ -102,6 +112,10 @@ Failed tests details:
 - pdf-extractor/test_extraction.py::test_unicode: FAILED
 ```
 
+</output_contract>
+
+<additional_checks>
+
 ## Additional Checks
 
 For each plugin tested, also verify:
@@ -110,9 +124,15 @@ For each plugin tested, also verify:
 3. **tests/ directory with test_*.py files**
 4. **README.md or tests/README.md documenting how to run tests**
 
+</additional_checks>
+
+<error_handling>
+
 ## Error Handling
 
 If a plugin's tests fail to run (e.g., import errors, missing dependencies):
 - Note the error in the report
 - Continue testing other plugins
 - Don't let one plugin's test failure stop the entire process
+
+</error_handling>

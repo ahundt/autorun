@@ -242,10 +242,14 @@ audit_skill() {
                     print_pass "description length OK ($desc_chars chars of 1024-char limit)"
                 fi
 
-                # Angle bracket check — YAML parsers reject < > in frontmatter values, silently breaking frontmatter parsing
+                # Angle bracket check. Anthropic's skill guide lists "XML angle brackets
+                # (< >)" as forbidden in frontmatter (Reference B, security restriction)
+                # and Claude Code documents that description must not contain XML tags.
+                # This is a host restriction, not a YAML rule: YAML parses '<' and '>'
+                # in a plain scalar. Body regions (section 4) are unaffected.
                 if echo "$frontmatter" | grep -q '[<>]'; then
-                    print_fail "Angle brackets < > found in frontmatter — forbidden in YAML (causes parse errors)" \
-                        "Replace < > with words: 'less than', 'greater than', or remove them"
+                    print_fail "Angle brackets < > found in frontmatter — Anthropic's skill guide forbids XML tags there and Claude.ai rejects the upload" \
+                        "Replace < > in frontmatter with words ('less than', 'greater than') or remove them; XML regions belong in the body, not the frontmatter"
                 else
                     print_pass "No angle brackets in frontmatter"
                 fi
@@ -359,9 +363,144 @@ audit_skill() {
     fi
 
     # ──────────────────────────────────────────────────────────
-    # 4. Content Quality
+    # 4. Semantic XML regions
+    #
+    # Methodology rule (SKILL-REQ004 in SKILL.md): every major operational
+    # region of the body sits inside a balanced, descriptive XML tag on its own
+    # line — <purpose>, <requirements>, <workflow>, <output_contract> — with
+    # Markdown inside and literal source in fenced code blocks. The portable
+    # Agent Skills specification does not require this; it is a quality policy
+    # for separating instructions, context, and examples, and it grants no
+    # runtime authority. See references/portability-and-claim-audit.md.
+    #
+    # DECIDED here: at least one region exists; every open tag closes in
+    # order; no `## ` heading sits outside every region (an H2 is the smallest
+    # unit this script can call "a major region"); no tag name is an HTML
+    # presentational element. Frontmatter and fenced code are excluded, so a
+    # ```markdown teaching example that shows tags is not counted.
+    # WARN: prose outside every region other than the H1 title, `---` rules,
+    # and HTML comments.
+    # NOT DECIDABLE: whether a tag name describes its content, whether the
+    # split matches the task, whether nesting is deeper than the task needs.
+    # Those are listed under "Needs a reader".
     # ──────────────────────────────────────────────────────────
-    print_section "4. Content Quality"
+    print_section "4. Semantic XML regions"
+
+    if [ -f "$skill_path/SKILL.md" ]; then
+        local xml_report
+        if ! command -v python3 >/dev/null 2>&1; then
+            print_info "Semantic XML region check skipped — python3 not found on PATH"
+            xml_report="__skipped__"
+        else
+        xml_report=$(python3 - "$skill_path/SKILL.md" <<'PY' 2>/dev/null || true
+import re, sys, pathlib
+# Output protocol, one line each: FAIL <text> | WARN <text> | OK <text>.
+PRESENTATIONAL = {
+    "a", "b", "big", "br", "center", "code", "div", "em", "font", "hr", "i",
+    "img", "li", "ol", "p", "pre", "small", "span", "strong", "table", "td",
+    "th", "tr", "u", "ul",
+}
+lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+body_start = 0
+if lines and lines[0].strip() == "---":
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            body_start = i + 1
+            break
+open_re = re.compile(r"^<([a-z][a-z0-9_-]*)>\s*$")
+close_re = re.compile(r"^</([a-z][a-z0-9_-]*)>\s*$")
+fence_re = re.compile(r"^(`{3,})(\s*\S+)?\s*$")
+stack, regions, fails, warns = [], [], [], []
+h2_outside, prose_outside, seen_h1 = [], [], False
+inside_fence, opener_len = False, 0
+for n in range(body_start, len(lines)):
+    line = lines[n]
+    lineno = n + 1
+    m = fence_re.match(line)
+    if m:
+        ticks, info = len(m.group(1)), (m.group(2) or "").strip()
+        if not inside_fence:
+            inside_fence, opener_len = True, ticks
+        elif not info and ticks >= opener_len:
+            inside_fence = False
+        continue
+    if inside_fence:
+        continue
+    m = open_re.match(line)
+    if m:
+        name = m.group(1)
+        if name in PRESENTATIONAL or len(name) < 2:
+            fails.append(f"line {lineno}: <{name}> is not a descriptive region name")
+        stack.append((name, lineno))
+        regions.append(name)
+        continue
+    m = close_re.match(line)
+    if m:
+        name = m.group(1)
+        if not stack:
+            fails.append(f"line {lineno}: </{name}> closes nothing")
+        elif stack[-1][0] != name:
+            fails.append(
+                f"line {lineno}: </{name}> closes <{stack[-1][0]}> opened at line {stack[-1][1]}"
+            )
+            stack.pop()
+        else:
+            stack.pop()
+        continue
+    stripped = line.strip()
+    if not stripped or stack:
+        continue
+    if stripped.startswith("## "):
+        h2_outside.append(f"line {lineno}: {stripped[:60]}")
+    elif stripped.startswith("# ") and not seen_h1:
+        seen_h1 = True
+    elif re.fullmatch(r"-{3,}|\*{3,}|_{3,}", stripped) or stripped.startswith("<!--"):
+        continue
+    else:
+        prose_outside.append(f"line {lineno}: {stripped[:60]}")
+for name, lineno in stack:
+    fails.append(f"<{name}> opened at line {lineno} is never closed")
+if not regions:
+    fails.append("no semantic XML regions: no line is exactly an opening tag such as <purpose>")
+elif h2_outside:
+    shown = "; ".join(h2_outside[:5])
+    more = f" (+{len(h2_outside) - 5} more)" if len(h2_outside) > 5 else ""
+    fails.append(f"H2 heading(s) outside every region — {shown}{more}")
+for f in fails:
+    print("FAIL " + f)
+if prose_outside and regions:
+    shown = "; ".join(prose_outside[:3])
+    more = f" (+{len(prose_outside) - 3} more)" if len(prose_outside) > 3 else ""
+    print(f"WARN {len(prose_outside)} non-blank line(s) outside every region — {shown}{more}")
+if regions and not fails:
+    print("OK " + ", ".join(dict.fromkeys(regions)))
+PY
+)
+        fi
+        if [ "$xml_report" = "__skipped__" ]; then
+            :
+        else
+            local xml_fail_lines xml_warn_line xml_ok_line
+            xml_fail_lines=$(printf '%s\n' "$xml_report" | grep '^FAIL ' | sed 's/^FAIL //' || true)
+            xml_warn_line=$(printf '%s\n' "$xml_report" | grep '^WARN ' | sed 's/^WARN //' || true)
+            xml_ok_line=$(printf '%s\n' "$xml_report" | grep '^OK ' | sed 's/^OK //' || true)
+            if [ -n "$xml_fail_lines" ]; then
+                print_fail "Semantic XML regions missing or unbalanced: $(echo "$xml_fail_lines" | tr '\n' ';' | sed 's/;$//; s/;/; /g')" \
+                    "Wrap each major section in a balanced descriptive tag on its own line — <purpose>…</purpose>, <requirements>…</requirements>, <workflow>…</workflow>, <output_contract>…</output_contract> — with Markdown inside and code in fences. Every '## ' heading must sit inside a region."
+            else
+                print_pass "Semantic XML regions present and balanced: $xml_ok_line"
+            fi
+            if [ -n "$xml_warn_line" ]; then
+                print_warn "$xml_warn_line" \
+                    "Move stray prose into a region (the H1 title, '---' rules, and HTML comments may stay outside)."
+            fi
+        fi
+    fi
+
+    # ──────────────────────────────────────────────────────────
+    # 5. Content Quality
+    # ──────────────────────────────────────────────────────────
+    print_section "5. Content Quality"
 
     if [ -f "$skill_path/SKILL.md" ]; then
         # Invocation: body phrase OR frontmatter trigger phrases
@@ -419,9 +558,9 @@ audit_skill() {
     fi
 
     # ──────────────────────────────────────────────────────────
-    # 5. Supporting Files
+    # 6. Supporting Files
     # ──────────────────────────────────────────────────────────
-    print_section "5. Supporting Files"
+    print_section "6. Supporting Files"
 
     # Scripts
     if [ -d "$skill_path/scripts" ]; then
@@ -463,9 +602,9 @@ audit_skill() {
     fi
 
     # ──────────────────────────────────────────────────────────
-    # 6. Common Issues
+    # 7. Common Issues
     # ──────────────────────────────────────────────────────────
-    print_section "6. Common Issues"
+    print_section "7. Common Issues"
 
     # Internal links.
     #
@@ -621,7 +760,7 @@ PY
     fi
 
     # ──────────────────────────────────────────────────────────
-    # 7. Activation shape
+    # 8. Activation shape
     #
     # Both checks here are PROXY. They match the shape of a description, and
     # nothing in this script observes whether a host actually activated the
@@ -630,7 +769,7 @@ PY
     # This section checks only activation-shape heuristics. Packaged claims
     # must cite sources a reader can retrieve.
     # ──────────────────────────────────────────────────────────
-    print_section "7. Activation shape (proxy checks)"
+    print_section "8. Activation shape (proxy checks)"
 
     if [ -f "$skill_path/SKILL.md" ] && [ "$has_frontmatter" -eq 1 ]; then
         # "Use when" phrasing states the activation condition in the field the
@@ -725,6 +864,10 @@ PY
     echo "     generates skill content, run it and audit the result — that is how"
     echo "     ai-skill-builder found its own scaffolder emitting a skill this"
     echo "     script fails."
+    echo "  8. Whether each XML region's name describes what it holds, whether the"
+    echo "     split into regions matches the task, and whether nesting is deeper"
+    echo "     than the task needs. Section 4 proves presence, balance, and that"
+    echo "     no H2 escapes a region; it cannot read the tag name for meaning."
     echo ""
 
     # Actionable fix list

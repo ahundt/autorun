@@ -10,6 +10,8 @@ metadata:
 
 # CLI Demo Recorder
 
+<purpose>
+
 Record polished demo videos for CLI tools — either as **direct subprocess recordings** (CLI tools, no AI session) or **real TUI recordings** (interactive AI sessions via tmux).
 
 **Use this skill when:** A demo GIF/video is needed for a CLI tool, plugin, or terminal application.
@@ -32,7 +34,11 @@ Pick the pathway based on whether the tool has an interactive TUI session. Wrong
 
 **WARNING**: Using `subprocess.run(capture_output=True)` for a CLI demo silences recording entirely — asciinema captures nothing. See CLI pathway for the correct pattern.
 
+</purpose>
+
 ---
+
+<workflow>
 
 ## How It Works [Both]
 
@@ -790,7 +796,11 @@ Note: `--idle-time-limit` appears in two contexts with different values:
 
 See `references/common-pitfalls.md` for the full 30+ pitfall table covering CLI, TUI, and shared issues including recording failures, timing problems, prompt engineering failures, and encoding pitfalls.
 
+</workflow>
+
 ---
+
+<examples>
 
 ## Concrete Examples
 
@@ -799,7 +809,11 @@ Working examples with act lists, design decisions, prompt evolution, and recordi
 - **CLI pathway**: `references/examples/aise-cli-example.md` — AI Session Search (`aise`), 7 CLI acts
 - **TUI pathway**: `references/examples/autorun-tui-example.md` — autorun for Claude Code, 7 TUI acts with prompt debugging history
 
+</examples>
+
 ---
+
+<resources>
 
 ## Tool Stack [Both]
 
@@ -895,3 +909,5 @@ Working examples with act lists, design decisions, prompt evolution, and recordi
 
 **v1.0.0** — 2026-03-01
 - Initial release
+
+</resources>

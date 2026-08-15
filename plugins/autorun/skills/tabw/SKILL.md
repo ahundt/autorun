@@ -7,6 +7,8 @@ argument-hint: "[A,B:continue] or [all:escape] or [awaiting:continue]"
 
 # Claude Session Writer
 
+<purpose>
+
 Execute actions on Claude Code sessions across tmux windows.
 
 ## Context
@@ -21,6 +23,10 @@ The user's request is the task description for everything below.
 
 If no arguments provided, discover sessions first, then ask user what action to execute.
 
+</purpose>
+
+<safety>
+
 ## Safety Warning
 
 This command sends input to tmux windows. Before executing:
@@ -29,6 +35,10 @@ This command sends input to tmux windows. Before executing:
 2. **PREFER IDLE SESSIONS** - Use `awaiting:` prefix to target only idle sessions
 3. **TEST SINGLE FIRST** - Test with one window before batch operations
 4. **HAVE ESCAPE READY** - `all:escape` can stop runaway operations
+
+</safety>
+
+<workflow>
 
 ## Workflow
 
@@ -199,6 +209,10 @@ print(f'Success: {result[\"success_count\"]}, Failed: {result[\"failure_count\"]
 "
 ```
 
+</workflow>
+
+<output_contract>
+
 ## Session Table Format
 
 Present discovered Claude sessions as:
@@ -210,6 +224,10 @@ Present discovered Claude sessions as:
 | B | main:5  | plan    | working         | yes      |
 | C | main:7  | bypass  | plan approval   | no       |
 ```
+
+</output_contract>
+
+<examples>
 
 ## Example Interactions
 
@@ -252,3 +270,5 @@ Action: Cycle mode to "plan" on sessions A, B, C
 # Exit all sessions
 /ar:tabw all:exit
 ```
+
+</examples>

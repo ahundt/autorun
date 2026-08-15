@@ -6,8 +6,14 @@ aliases: [ph]
 
 # Universal System Design Philosophy
 
+<purpose>
+
 Systems should follow these core principles to create an exceptional user experience.
 These are ordered from most fundamental to most specific:
+
+</purpose>
+
+<principles>
 
 ## CORE PRINCIPLES
 
@@ -116,3 +122,5 @@ These are ordered from most fundamental to most specific:
 17. **Transparent Operations**: Tell users what's happening and why. They should
     understand what the system is doing, even if they don't need to intervene.
     Build trust through transparency.
+
+</principles>

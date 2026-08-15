@@ -7,6 +7,8 @@ argument-hint: "[feature or project description]"
 
 # Create New Plan (/ar:plannew)
 
+<purpose>
+
 The user's request is the task description for everything below.
 
 ## Harness-specific plan lifecycle
@@ -15,7 +17,11 @@ The user's request is the task description for everything below.
 - **Pi:** Do not call `EnterPlanMode` or `ExitPlanMode` on Pi because Pi exposes neither tool. Write or refine the durable plan note directly, report its exact path for approval, and after approval start execution with `/ar pp <path>`. Pi's native autorun `TaskCreate`, `TaskUpdate`, and `TaskList` tools still enforce the task DAG.
 - **Other harnesses:** Use a native plan-mode boundary only when that tool actually exists; otherwise use the same durable-note approval workflow as Pi with that harness's documented autorun command spelling.
 
+</purpose>
+
 ---
+
+<requirements>
 
 ## CRITICAL RULES — SURVIVE COMPACTION
 
@@ -108,7 +114,11 @@ Include EVERY distinct user message that shaped this plan. Do not summarize or m
 
 You are creating a NEW plan from scratch. No existing plan to reference. Do NOT execute code changes until plan approved.
 
+</requirements>
+
 ---
+
+<workflow>
 
 ## 4. Process Steps
 
@@ -215,7 +225,11 @@ After outputting "Wait," execute these 8 steps:
 3. **Check off only when**: Execution complete AND error correction complete
 4. **On errors**: Continue until resolved, then check off
 
+</workflow>
+
 ---
+
+<output_contract>
 
 ## 7. Output Format
 
@@ -237,7 +251,11 @@ After outputting "Wait," execute these 8 steps:
 
 **Requirement**: Every implementation step needs ≥1 code block showing exact change.
 
+</output_contract>
+
 ---
+
+<delegation>
 
 ## 8. Subagent Guidelines
 
@@ -251,7 +269,11 @@ After outputting "Wait," execute these 8 steps:
 
 **Parallel execution**: Launch multiple in single message when tasks are independent.
 
+</delegation>
+
 ---
+
+<acceptance_protocol>
 
 ## 9. Plan Acceptance and Execution Protocol
 
@@ -313,3 +335,5 @@ Before executing ANY plan step after approval:
 
 5. **Task update frequency:** After every 3 tool calls, check `TaskList` and verify the current task
    is marked `in_progress`. If no task is `in_progress`, mark the correct task before continuing.
+
+</acceptance_protocol>

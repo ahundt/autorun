@@ -194,6 +194,8 @@ metadata:
 
 # $SKILL_TITLE
 
+<purpose>
+
 [TODO: Write 50-100 word hook explaining what this skill does and who it's for]
 
 This skill [describe what it produces in one sentence].
@@ -203,7 +205,9 @@ This skill [describe what it produces in one sentence].
 
 **Category**: $CATEGORY_NAME
 
----
+</purpose>
+
+<workflow>
 
 ## How It Works
 
@@ -264,7 +268,9 @@ This skill follows these steps:
 
 [TODO: Continue for all steps]
 
----
+</workflow>
+
+<examples>
 
 ## Examples
 
@@ -284,7 +290,9 @@ This skill follows these steps:
 
 **Result**: [Outcome achieved]
 
----
+</examples>
+
+<success_criteria>
 
 ## Success Metrics
 
@@ -299,9 +307,13 @@ unit, and which direction is better. A figure with none of those is not checkabl
 - Consistency: [How it standardizes the process]
 - Best Practices: [What standards it follows]
 
----
+</success_criteria>
+
+<authoring_notes>
 
 ## Next Steps
+
+Delete this region once the skill is written; it instructs the author, not the agent.
 
 1. **Fill in TODOs**: Replace all [TODO] sections with actual content
 2. **Add Examples**: Include real examples from your use case
@@ -318,7 +330,13 @@ that skill, not to this one, so they will not resolve from here:
 - Template: ai-skill-builder/references/examples/SKILL-template.md
 - Best practices: ai-skill-builder/references/best-practices.md
 
+Keep every major section inside a balanced, descriptive XML region as above (\`<purpose>\`,
+\`<workflow>\`, \`<examples>\`, \`<success_criteria>\`); the audit fails a \`## \` heading that sits
+outside every region. Rename regions to fit the task; do not add depth the task does not need.
+
 Validate this file: \`bash ai-skill-builder/scripts/audit-skill.sh $SKILL_DIR\`
+
+</authoring_notes>
 EOF
     print_success "SKILL.md created"
 

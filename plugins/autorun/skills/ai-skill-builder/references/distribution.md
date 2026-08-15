@@ -15,6 +15,28 @@ simple git clone into `~/.claude/skills/`. This means:
 - **Compatibility**: state the hosts and versions you tested. Discovery roots, `allowed-tools`
   handling, plugin versus standalone placement, and reload behavior all differ by host.
 
+### Three distribution channels (choose one or all)
+
+**A. Claude.ai / Claude Code (individual install)**
+```bash
+# Clone into Claude Code skills directory:
+cd ~/.claude/skills && git clone https://github.com/username/your-skill-name
+# Or: download ZIP → upload in Claude.ai Settings > Capabilities > Skills
+```
+
+**B. Organization-wide deployment** (admins only, shipped Dec 2025)
+Admins can deploy skills workspace-wide via Claude.ai admin console — automatic updates,
+centralized management. Users get the skill without any install step.
+
+**C. Programmatic / API**
+Add skills to Messages API requests via `container.skills` parameter. Use the `/v1/skills`
+endpoint to manage skills. Works with the Claude Agent SDK for building custom agents.
+
+Other hosts install from their own skill roots (`~/.agents/skills`, `~/.codex/skills`,
+`~/.qwen/skills`, and so on); the installer that places the skill must own exact generated
+paths, preserve manual edits, support multiple configured roots, and remove only its own links or
+files (SKILL-REQ010).
+
 ---
 
 ## Step 1: Prepare the Skill for Distribution

@@ -5,6 +5,8 @@ description: Eliminate a stubborn configuration bug by testing 8-10 fundamentall
 
 # Fix Stubborn Bugs Fast By Parallelizing
 
+<purpose>
+
 **Eliminate ambiguous configuration bugs in hours, not days.** Test 8-10 fundamentally different solution approaches simultaneously to discover what works and understand why. Transforms trial-and-error into systematic exploration.
 
 ## Summary
@@ -46,7 +48,11 @@ This methodology is optimized for **configuration/integration debugging** where 
 4. Time-critical hotfixes
 5. Cannot isolate
 
+</purpose>
+
 ---
+
+<examples>
 
 ## Quick Example: UI Scrolling Bug
 
@@ -58,7 +64,11 @@ This methodology is optimized for **configuration/integration debugging** where 
 
 **Gotcha:** Applied fix → still broken! Logs showed data was empty (std::mem::take() moved it earlier). **Fix:** Calculate width BEFORE take() using available data. Production: 744 processes, 1609-char commands, 11,189px width (vs test: 50 processes, 150-char, 2000px).
 
+</examples>
+
 ---
+
+<workflow>
 
 ## The 6-Step Method
 
@@ -268,9 +278,11 @@ PRODUCTION: Data: 0 rows    ← FOUND PROBLEM (data moved/consumed)
 
 **Output:** Working fix in production with clear analysis.
 
+</workflow>
+
 ---
 
-## Critical Pitfalls (Consolidated)
+<rationale>
 
 ## Why This Works
 
@@ -282,7 +294,11 @@ PRODUCTION: Data: 0 rows    ← FOUND PROBLEM (data moved/consumed)
 
 **ROI:** Worthwhile when serial debugging would take >4 hours. Best for complex subsystems, multiple failed attempts, or when deep understanding needed.
 
+</rationale>
+
 ---
+
+<pitfalls>
 
 ## Critical Pitfalls
 
@@ -339,7 +355,11 @@ References: See tests/scroll_test, egui docs (egui.rs/api/v0.33/ScrollArea)
 
 **Value:** Reference for similar bugs, verify fix survives updates, training material, academic integrity.
 
+</pitfalls>
+
 ---
+
+<reference>
 
 ## Quick Reference
 
@@ -394,3 +414,5 @@ References: See tests/scroll_test, egui docs (egui.rs/api/v0.33/ScrollArea)
 4. [ ] Comments explain WHY + list failed alternatives + cite sources
 5. [ ] Verified with production data
 6. [ ] Committed test harness to repo with README citing all research
+
+</reference>

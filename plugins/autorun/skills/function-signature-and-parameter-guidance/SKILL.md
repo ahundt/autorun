@@ -18,6 +18,8 @@ description: |
 
 # Function Signature and Parameter Guidance
 
+<purpose>
+
 A tool or parameter has four visible parts: its **name**, the **description** that teaches it,
 the **error** when a caller gets it wrong, and the **behavior** matching all three. Callers are
 increasingly AI agents reading a schema once and guessing, so merely *not wrong* still produces
@@ -33,6 +35,10 @@ That is true of the caller reading your description and of you reading these che
 words must state the concept explicitly — examples alone are not enough. Make the concept
 behind the concept explicit, or it is missed entirely. **Apply this to this document too:**
 every case named below is one instance of its rule, never the rule's limit.
+
+</purpose>
+
+<workflow>
 
 ## The Process
 
@@ -60,6 +66,10 @@ sentence.
    fact, since tails truncate. Keep a restatement when the reader lacks the original (A8).
 9. **Regression-lock.** Assert the *absence* of banned phrasing, not only the presence of the
    good. Presence-only tests let bad wording return alongside.
+
+</workflow>
+
+<requirements>
 
 ## The Four Facts
 
@@ -162,6 +172,10 @@ nothing about `0` or `-1`; `"a positive count, or 0 for every match"` teaches th
 | do listed features compose | documented capability exceeds tested surface | capability matrices, format × mode combinations, flag pairs |
 | a check phrased for one scalar | a container is a namespace, holding *more* ambiguity | options objects, config blocks, nested structs — every rule applies to each member and to the container (empty? absent? unknown key?) |
 
+</requirements>
+
+<pitfalls>
+
 ## What to Avoid
 
 1. **Testing acceptance, not effect** — "no validation error" passes on every silent-ignore bug.
@@ -181,6 +195,10 @@ assuming red means the code is wrong when the assertion miscounted; suppressing 
 reading the empty output as a result; auditing a build older than your branch; claiming files
 diverged without diffing; blaming the tool before re-reading your invocation. Part 2 tabulates
 twelve with corrections.
+
+</pitfalls>
+
+<resources>
 
 ## References
 
@@ -212,3 +230,5 @@ twelve with corrections.
       no clap/argparse/click/cobra definitions, `--help` output, config files, or docstrings —
       use the passes' grep recipes there. A clean run is not a clean review: the passes it
       skips catch the failures that return success.
+
+</resources>

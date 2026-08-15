@@ -37,6 +37,18 @@ marketplace itself carries a separate `version` field.
 - **Pi `TaskGet` and atomic `TaskUpdate` batches.** Pi and Prime gain a
   `TaskGet` tool, and `TaskUpdate` accepts a `taskUpdates` array applied in one
   lifecycle transaction with per-task confirmations.
+- **Semantic XML regions in every shipped skill.** All 17 plugin skills, the
+  Codex `$ar` catalog skill, the pdf-extractor skill, and the repo-internal
+  maintainer skill wrap each major section in balanced, descriptive tags
+  (`<purpose>`, `<requirements>`, `<workflow>`, `<output_contract>`, ...),
+  Markdown inside and code in fences. `ai-skill-builder` 1.3.0 states the rule
+  as SKILL-REQ004, `scripts/audit-skill.sh` fails a body with no region, an
+  unbalanced tag, or a `## ` heading outside every region, its scaffolder and
+  template emit regions, and `tests/test_skill_docs.py` gates every shipped
+  SKILL.md on the same rules. `ai-skill-builder` also absorbs the standalone
+  `engineer-agent-skills` package (P0 requirements SKILL-REQ001–013, the
+  portable-standard vs runtime-extension matrix, claim audit, and per-host
+  validation receipt in `references/portability-and-claim-audit.md`).
 
 ### Fixed
 

@@ -6,11 +6,17 @@ aliases: [gc]
 
 # Git Commit Requirements
 
+<purpose>
+
 **Third-party repos**: Use `.git/info/exclude` for local-only ignores (e.g., `notes/`) without modifying `.gitignore`.
 
 **IMPORTANT: Read this entire process (steps 1-17) before starting any git commit work and you must carefully re-analyze the actual for regressions and errors and complete each numbered item and sub-item step-by-step.**
 
+</purpose>
+
 ---
+
+<requirements>
 
 ## Pre-Git Commit Analysis Process
 
@@ -182,7 +188,11 @@ Before committing, verify:
 - If commit succeeds but hooks modified files, MUST amend commit
 - Never use interactive git commands (`-i` flag)
 
+</requirements>
+
 ---
+
+<pitfalls>
 
 ## Common Git Commit Message Pitfalls & Solutions
 
@@ -232,3 +242,5 @@ Testable: [Specific commands to verify the fix works]
 ```
 
 This process ensures git commits are **self-documenting**, **technically precise**, **security-conscious**, and **contextually complete** while maintaining proper git workflow practices.
+
+</pitfalls>
