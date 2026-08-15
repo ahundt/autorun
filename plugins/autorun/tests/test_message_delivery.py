@@ -55,8 +55,24 @@ def _warning(identity="git-rules", window_seconds=None):
 
 
 def _process_claim(session_id, barrier, results):
-    ctx = EventContext(session_id, "PreToolUse", cli_type="codex")
-    barrier.wait()
+    # Production hooks carry a wrapper deadline, and that deadline is what
+    # authorizes claim retries under store-lock contention: without one the
+    # FIRST contended attempt fails open and delivers by design (duplication
+    # over loss). Four spawned processes on a slow Windows runner exceed the
+    # 0.5s lock attempt at the barrier, which turned this exactly-one
+    # assertion into two winners. A wide explicit deadline makes every
+    # process retry to a real decision, which is the atomicity property this
+    # test exists to pin.
+    ctx = EventContext(
+        session_id,
+        "PreToolUse",
+        cli_type="codex",
+        deadline_monotonic=time.monotonic() + 30.0,
+    )
+    # A timeout so a sibling that never spawns breaks the barrier into a
+    # clean nonzero exit instead of leaving this child blocked forever and
+    # hanging interpreter exit (see test_task_pause's spawn constants).
+    barrier.wait(timeout=90.0)
     results.put(
         claim_message_delivery(
             ctx,
@@ -83,6 +99,7 @@ def test_exactly_one_concurrent_claim_wins(delivery_config):
 
 
 @pytest.mark.race
+@pytest.mark.timeout(300)
 def test_exactly_one_process_claim_wins(delivery_config):
     process_context = multiprocessing.get_context("spawn")
     barrier = process_context.Barrier(4)
@@ -99,7 +116,9 @@ def test_exactly_one_process_claim_wins(delivery_config):
     for process in processes:
         process.start()
     for process in processes:
-        process.join(timeout=10)
+        # Cold spawn interpreters import the full package before the barrier;
+        # 10s was regularly exceeded on busy machines.
+        process.join(timeout=120)
         assert process.exitcode == 0
 
     outcomes = [results.get(timeout=1) for _ in processes]

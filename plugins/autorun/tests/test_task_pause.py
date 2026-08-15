@@ -24,7 +24,16 @@ from autorun.task_pause import (
 from autorun.task_lifecycle import TaskLifecycle
 
 
-PROCESS_JOIN_TIMEOUT_SECONDS = 30.0
+# Eight cold `spawn` interpreters each import the full autorun package before
+# reaching the barrier; on a busy machine the first batch alone can exceed the
+# repo's global 30s pytest timeout, so the spawn test carries its own budget.
+PROCESS_JOIN_TIMEOUT_SECONDS = 120.0
+# A child that waits on the barrier without a timeout waits forever when one
+# sibling never arrives, and the leaked children then block interpreter exit
+# (observed as a 27-minute post-suite hang). The barrier timeout converts a
+# missing sibling into BrokenBarrierError -> nonzero child exit -> a clean
+# parent assertion.
+BARRIER_TIMEOUT_SECONDS = 90.0
 QUEUE_READ_TIMEOUT_SECONDS = 5.0
 PAUSE_REMINDER_THRESHOLD = 25
 CONCURRENT_REMINDER_PROCESSES = 8
@@ -71,7 +80,7 @@ def _process_pause_guidance_check(
             cli_type="codex",
         )
         ctx.task_staleness_threshold = PAUSE_REMINDER_THRESHOLD
-        barrier.wait()
+        barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
         plugins.check_task_staleness(ctx)
         # Count the pause recovery reminder, not every notification. Under lock
         # contention `report_state_persistence_failure` attaches its own warning
@@ -391,7 +400,7 @@ def test_parallel_pause_recovery_threshold_has_one_notification():
             tool_name="exec_command",
         )
         ctx.task_staleness_threshold = PAUSE_REMINDER_THRESHOLD
-        barrier.wait()
+        barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
         plugins.check_task_staleness(ctx)
         return ctx._chain_notifications
 
@@ -405,6 +414,7 @@ def test_parallel_pause_recovery_threshold_has_one_notification():
     assert sum(bool(items) for items in notifications) == 1
 
 
+@pytest.mark.timeout(300)
 @pytest.mark.parametrize("backend", ["json", "sqlite"])
 def test_spawned_processes_emit_one_pause_recovery_reminder(
     backend,
