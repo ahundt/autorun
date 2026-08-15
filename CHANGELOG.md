@@ -8,7 +8,7 @@ marketplace itself carries a separate `version` field.
 
 ## [Unreleased]
 
-## [1.0.0rc1] - 2026-08-14
+## [1.0.0rc1] - 2026-08-15
 
 ### Added
 
@@ -18,6 +18,34 @@ marketplace itself carries a separate `version` field.
   session lifecycle hooks, compaction events, and daemon-backed `TaskCreate`,
   `TaskUpdate`, and `TaskList` tools. Python remains the policy, task,
   persistence, ordering, and Stop-enforcement owner.
+- **Prime Agent support as a Pi variant.** `prime-agent` (PrimeIntellect's
+  build of the Pi coding agent) installs the same extension under
+  `~/.prime/agent/extensions/ar/` with its own `cliType: "prime"` identity,
+  `--cli prime` hook fallback, and `~/.prime/agent/AGENTS.md` guidance block.
+  One template, one installer step, and one wire protocol serve both
+  harnesses; `--prime` selects it alone.
+- **Day units in scope durations.** `/ar:ok`, `/ar:no`, `/ar:globalok`,
+  `/ar:cache`, and `/ar:task pause` durations accept `d` alongside `h`, `m`,
+  and `s` — for example `2d` or `1d12h` — through the one shared
+  `parse_duration` grammar.
+
+### Fixed
+
+- **A user-authored shared skill no longer produces a duplicate listing.**
+  When `~/.agents/skills/<name>` holds the user's own loadable skill, the
+  installer previously published autorun's same-named skill natively (for
+  example into `~/.pi/agent/skills/`), so harnesses that read both routes
+  listed the name twice. The native fallback now runs only when the blocked
+  name would otherwise reach the harness by no route at all; the withheld
+  copy is reported as a preserved conflict, and reinstalling retires
+  previously published duplicates.
+- **Python 3.10 installs resolve again.** The lock selected onnxruntime
+  1.24.3 for the `<3.11` fork (via markitdown → magika in the `pdf` extra),
+  a version that ships no cp310 wheels; a workspace constraint now holds
+  onnxruntime below 1.24 for Python 3.10.
+- **Cross-process message-claim test carries a hook deadline.** Without one,
+  the first contended store-lock attempt fails open by design and slow
+  Windows runners saw two claim winners.
 - **PyPI publishing through one distribution.** `autorun` is the only published
   package. PDF extraction ships inside it: `pdf_extraction` and the
   `extract-pdfs` script are always present, and every extraction backend is an

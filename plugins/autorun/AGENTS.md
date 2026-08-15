@@ -53,7 +53,7 @@ or they reach the live daemon. Rules: root [`AGENTS.md`](../../AGENTS.md)
 
 Follow these when adding any new gated feature.
 
-1. **Reuse `ScopedAllow` and `parse_scope_args` for every override grant.** Never write a second TTL/count parser: the `5m | 5 | perm | 2h30m` grammar is `scoped_allow.py:parse_scope_args` (line 44), and `_PARALLEL_GRACE_SECONDS` (line 187) already absorbs rtk's double-hook. See `cache_guard.grant_override`.
+1. **Reuse `ScopedAllow` and `parse_scope_args` for every override grant.** Never write a second TTL/count parser: the `5m | 5 | perm | 2h30m | 2d` grammar is `scoped_allow.py:parse_scope_args` (line 44), and `_PARALLEL_GRACE_SECONDS` (line 187) already absorbs rtk's double-hook. See `cache_guard.grant_override`.
 2. **Use `state_get`, `state_set`, and `state_update` in daemon paths, never `session_state()`.** They keep `ThreadSafeDB` coherent; wrap legacy direct-persistence helpers in `state_synchronize`. `session_state()` is for standalone administration and persistence internals only.
 3. **A new Claude event needs its Gemini analog wired in the same change, in three places:** `plugins.py:@app.on(...)`, `core.py:GEMINI_EVENT_MAP`, and BOTH `hooks/hooks.json` and `src/autorun/gemini_template/hooks/hooks.json`. `PreCompact` maps to `PreCompress`, which is advisory and cannot block; no `PostCompress` exists.
 4. **New hook-stdin data needs a slot, a property, an `__init__` kwarg, and every `EventContext(...)` call site updated.** Never `getattr(ctx, "field", None)`: it returns None when the plumbing is broken instead of failing. `transcript_path` is the case that taught this.
@@ -147,6 +147,17 @@ forked Gemini CLI, so `GEMINI_EVENT_MAP`, `gemini_template/`, and the `gemini`
 platform key cover all of them. Standalone Gemini CLI is retired but still
 supported; its `enableHooks` prerequisite and legacy install live in
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) and [README.md](../../README.md).
+
+## Pi-family harnesses
+
+`prime` is Prime Agent, PrimeIntellect's build of the Pi coding agent
+(`pkg.piConfig` rebrands the config dir to `~/.prime/agent/`; the bundle still
+sets `PI_CODING_AGENT=true`). `platforms.PRIME` is `dataclasses.replace(PI,
+...)` with only identity and discovery paths changed, and `pi_template/` plus
+`steps.pi_extension_step` serve both: staging substitutes `__AUTORUN_CLI_TYPE__`
+per harness, so the installed extension reports `cliType: "pi"` or
+`"prime"` and the fallback hook carries the matching `--cli`. A new Pi
+variant is a registry entry and a `STEPS` row, never a second template.
 
 ## Entry points
 

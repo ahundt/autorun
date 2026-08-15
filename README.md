@@ -227,7 +227,7 @@ claude plugin marketplace list
 
 ### Multi-CLI Support
 
-**autorun defaults to Claude Code, Google Antigravity, Qwen Code, Codex CLI, Pi, ForgeCode, and OpenCode**, providing shared safety features, command handlers, and autonomous execution capabilities across maintained harnesses. Legacy Gemini CLI support remains available only through explicit `--gemini` selection.
+**autorun defaults to Claude Code, Google Antigravity, Qwen Code, Codex CLI, Pi, Prime Agent, ForgeCode, and OpenCode**, providing shared safety features, command handlers, and autonomous execution capabilities across maintained harnesses. Legacy Gemini CLI support remains available only through explicit `--gemini` selection.
 
 #### Codex CLI Support
 
@@ -264,7 +264,7 @@ autorun --install --skill-placement native --skill-placement codex=both
 
 | Mode | Effect |
 |---|---|
-| `auto` | One route per harness: the shared `~/.agents/skills` root for harnesses whose docs describe reading it (Codex, legacy Gemini, Qwen Code, Pi, ForgeCode, and OpenCode), otherwise that harness's native plugin/extension skills directory. |
+| `auto` | One route per harness: the shared `~/.agents/skills` root for harnesses whose docs describe reading it (Codex, legacy Gemini, Qwen Code, Pi, Prime Agent, ForgeCode, and OpenCode), otherwise that harness's native plugin/extension skills directory. |
 | `native` | Native route only. Nothing is written to the shared root. |
 | `both` | Shared **and** native where the harness reads both. The only mode that can list one skill twice, after which the two copies can drift apart. |
 
@@ -285,7 +285,7 @@ and the exact directories each harness would receive, before anything is written
 
 #### Sharing skills with Claude Code
 
-Codex, OpenCode, Pi, ForgeCode, Qwen Code, and legacy Gemini CLI all scan `~/.agents/skills/`, the cross-tool shared location. Claude Code does not — it reads `~/.claude/skills/` only. A skill authored in the shared directory is therefore invisible to Claude Code until it is bridged:
+Codex, OpenCode, Pi, Prime Agent, ForgeCode, Qwen Code, and legacy Gemini CLI all scan `~/.agents/skills/`, the cross-tool shared location. Claude Code does not — it reads `~/.claude/skills/` only. A skill authored in the shared directory is therefore invisible to Claude Code until it is bridged:
 
 ```bash
 autorun --install --claude --claude-agents-skills link  # symlink shared skills into ~/.claude/skills
@@ -684,7 +684,7 @@ python -m autorun --install --force
 The grammar is `ar:<command> [arguments]` everywhere. Harnesses differ only in
 which spellings they hand to autorun.
 
-| You type | Claude Code, Antigravity, Qwen Code | Pi | Codex CLI | ForgeCode, OpenCode |
+| You type | Claude Code, Antigravity, Qwen Code | Pi, Prime Agent | Codex CLI | ForgeCode, OpenCode |
 |---|---|---|---|---|
 | `/ar:st` | runs, and appears in the slash menu | runs | never arrives | never arrives |
 | `ar:st`, `ar st`, `ar-st` | runs | runs | runs | never arrives |
@@ -746,7 +746,7 @@ opens with the rule for the harness you are on.
 | `/ar:cache` | - | - | Cache-miss / compaction protection gate (off by default) — show status |
 | `/ar:cache on [5m\|1h\|perm]` | - | - | Enable the gate (optionally for a window) |
 | `/ar:cache off [5m\|1h\|perm]` | - | - | Disable the gate (optionally temporarily, prior state restores) |
-| `/ar:cache set ratio\|read\|age\|full <v>` | - | - | Configure threshold axes (tokens `50k\|.5M`, `85%`, durations `5m\|2h30m`) |
+| `/ar:cache set ratio\|read\|age\|full <v>` | - | - | Configure threshold axes (tokens `50k\|.5M`, `85%`, durations `5m\|2h30m\|2d`) |
 | `/ar:cache ok [5m\|N\|perm]` | - | - | Override the gate — same grammar as `/ar:ok` |
 | `/ar:cache no` | - | - | Cancel outstanding overrides |
 | `/ar:cache global <subcmd>` | - | - | Same operations at the global (cross-session) scope |
@@ -1125,6 +1125,7 @@ autorun --install --claude           # Register for Claude Code only
 autorun --install --gemini           # Explicitly register the legacy Gemini CLI
 autorun --install --qwen             # Register for Qwen Code only
 autorun --install --pi               # Register for Pi only
+autorun --install --prime            # Register for Prime Agent only (Pi variant)
 autorun --install --codex            # Register for Codex CLI only
 autorun --install --codex --codex-hook-source plugin
                                       # Package Codex hooks in ar@personal instead of ~/.codex/hooks.json
@@ -1236,11 +1237,11 @@ autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|al
 autorun --conductor                  # Install Conductor extension for Gemini (default)
 autorun --no-conductor               # Skip Conductor extension
 autorun --install --antigravity      # Install Google Antigravity plugin (native bundle, importer fallback)
-autorun --cli claude                 # Hook identity: claude|gemini|antigravity|qwen|codex|opencode
+autorun --cli claude                 # Hook identity: claude|gemini|antigravity|qwen|codex|opencode|pi|prime
 ```
 
 Accepted values: `--exit2-mode: auto|always|never`;
-`--cli: claude|gemini|antigravity|qwen|codex|pi|opencode`;
+`--cli: claude|gemini|antigravity|qwen|codex|pi|prime|opencode`;
 `--update-method: auto|claude|gemini|plugin|uv|pip`.
 
 > `--exit2-mode` works around a Claude Code bug ([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669)). Controls whether hook deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI).

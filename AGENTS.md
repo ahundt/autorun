@@ -217,7 +217,7 @@ See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS lis
 | `/ar:cache` | Show status (enabled/disabled, thresholds, active overrides). |
 | `/ar:cache on [5m\|1h\|perm]` | Enable the gate (optionally for a window). |
 | `/ar:cache off [5m\|1h\|perm]` | Disable the gate. |
-| `/ar:cache set ratio\|read\|age\|full <value>` | Configure threshold axes. Tokens `50k \| .5M`, percents `85%`, durations `5m \| 2h30m`. |
+| `/ar:cache set ratio\|read\|age\|full <value>` | Configure threshold axes. Tokens `50k \| .5M`, percents `85%`, durations `5m \| 2h30m \| 2d`. |
 | `/ar:cache ok [5m\|N\|perm]` | Override the gate (same grammar as `/ar:ok`). |
 | `/ar:cache no` | Cancel outstanding overrides. |
 
