@@ -69,13 +69,15 @@ provenance is written by the release builder and is not hand-edited.
 | `plugins/autorun/src/autorun/gemini_template/gemini-extension.json` | `"version": "X.Y.Z"` | Lives under `gemini_template/`, outside Claude's marketplace scan path — see the bug #24115 / #14449 workaround in `installer/extension.py` |
 | `plugins/autorun/.codex-plugin/plugin.json` | `"version": "X.Y.Z"` | Codex package manifest |
 
-### pdf-extractor Plugin (4+ files)
+### pdf-extractor Plugin (3+ files)
+
+It has no `pyproject.toml`: the plugin is a harness plugin, and its code ships
+inside the `autorun` distribution as `pdf_extraction` behind the `pdf` extra.
 
 | File | Field/Pattern | Notes |
 |------|---------------|-------|
-| `plugins/pdf-extractor/pyproject.toml` | `version = "X.Y.Z"` | Do NOT change `pdfplumber>=0.10.0` — that's a third-party dep! |
+| `plugins/pdf-extractor/src/pdf_extraction/__init__.py` | `__version__ = "X.Y.Z"` | Do NOT change `pdfplumber>=0.10.0` in `plugins/autorun/pyproject.toml` — that's a third-party dep! |
 | `plugins/pdf-extractor/.claude-plugin/plugin.json` | `"version": "X.Y.Z"` | |
-| `plugins/pdf-extractor/src/pdf_extraction/__init__.py` | `__version__ = "X.Y.Z"` | |
 | `plugins/pdf-extractor/gemini-extension.json` | `"version": "X.Y.Z"` | |
 
 ### Documentation (7+ files)
@@ -122,7 +124,7 @@ provenance is written by the release builder and is not hand-edited.
 Unchecked `0.10.0` → `0.10.1` replace will change `pdfplumber>=0.10.0` to `pdfplumber>=0.10.1`. This is a **third-party library version**, not autorun's version.
 
 **Affected files:**
-- `plugins/pdf-extractor/pyproject.toml` — `pdfplumber>=0.10.0`
+- `plugins/autorun/pyproject.toml` — `pdfplumber>=0.10.0` in the `pdf` extra
 - `plugins/pdf-extractor/CLAUDE.md` — install commands
 - `plugins/pdf-extractor/skills/pdf-extractor/SKILL.md` — install commands (2 places)
 - `plugins/pdf-extractor/skills/pdf-extractor/references/backends.md` — dependency note
@@ -144,7 +146,7 @@ Unchecked replacement turns ALL three into `("0.10.1", "v0.10.1", ...)` — coll
 
 ### Gotcha 3: Minimum version deps in root pyproject.toml
 
-`pyproject.toml` has `autorun>=0.10.0` and `pdf-extractor>=0.10.0` in `[project.optional-dependencies]`. These are **minimum** version requirements. Only bump these for breaking changes, not patch releases.
+`pyproject.toml` has `autorun[pdf,pdf-gpu,pdf-llm,pdf-progress]>=0.10.0` in `[project.optional-dependencies]`. That is a **minimum** version requirement. Only bump it for breaking changes, not patch releases.
 
 ### Gotcha 4: Block message scope hint must be on separate line
 
@@ -181,8 +183,7 @@ The root `pyproject.toml` has minimum version requirements:
 ```toml
 [project.optional-dependencies]
 all = [
-    "autorun>=X.Y.Z",
-    "pdf-extractor>=X.Y.Z",
+    "autorun[pdf,pdf-gpu,pdf-llm,pdf-progress]>=X.Y.Z",
 ]
 ```
 
@@ -305,28 +306,29 @@ trailing version comment is for humans.
 
 ## PyPI prerelease setup
 
-`.github/workflows/publish.yml` uploads two distributions with Trusted
+`.github/workflows/publish.yml` uploads one distribution with Trusted
 Publishing (OIDC). No API token is stored anywhere.
 
 | Distribution | Source directory | Installs as |
 |--------------|------------------|-------------|
-| `autorun` | `plugins/autorun` | `uv tool install autorun` |
-| `pdf-extractor` | `plugins/pdf-extractor` | `uv tool install 'pdf-extractor[cpu]'` |
+| `autorun` | `plugins/autorun` | `uv tool install autorun`, or `'autorun[pdf]'` for PDF extraction |
 
-`pdf-extractor` on PyPI is an unrelated project, which is why the second one
-carries the prefix. The Claude plugin id stays `pdf-extractor`;
-`test_documentation_consistency.py::test_published_distribution_names_stay_under_the_autorun_namespace`
-holds both halves in place.
+There is no second package. `plugins/pdf-extractor` is a plugin in every
+harness — its own manifest, command, and skill — while its code ships inside
+this wheel as `pdf_extraction` behind the `pdf` extra.
+`test_documentation_consistency.py::test_the_pdf_plugin_ships_inside_autorun_and_not_beside_it`
+holds that in place, and the publish workflow fails the build if the wheel stops
+carrying `pdf_extraction`, `extract-pdfs`, or the pdf extras.
 
 ### One-time setup — **RELEASER, account access required**
 
-Four registrations are required: two projects on each of two indexes. Until the
-first upload, register each project as a pending publisher
+Two registrations are required: one project on each of two indexes. Until the
+first upload, register the project as a pending publisher
 ([PyPI documentation](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
 
 At <https://test.pypi.org/manage/account/publishing/> and
 <https://pypi.org/manage/account/publishing/>, add a pending publisher for
-`autorun` and again for `pdf-extractor`, each with:
+`autorun` with:
 
 | Field | Value |
 |-------|-------|
@@ -346,7 +348,7 @@ test "$names" = "pypi testpypi"
 ```
 
 The GitHub API cannot confirm pending-publisher records on PyPI. The releaser
-must verify all four records in the two account pages before continuing.
+must verify both records in the two account pages before continuing.
 
 ### Rehearse on TestPyPI before any tag
 
@@ -358,8 +360,9 @@ Run this only after Stage 3 has pushed `publish.yml` and exact-SHA CI is green.
 gh workflow run publish.yml --ref main
 ```
 
-Require the workflow to succeed, then install both distributions in throwaway
-tool directories so the rehearsal cannot disturb the installed CLIs:
+Require the workflow to succeed, then install it both ways in throwaway tool
+directories so the rehearsal cannot disturb the installed CLIs. Install the
+plain form too: it is the one that proves no extraction library is required.
 
 ```bash
 UV_TOOL_DIR=$(mktemp -d) UV_TOOL_BIN_DIR=$(mktemp -d) \
@@ -367,7 +370,7 @@ UV_TOOL_DIR=$(mktemp -d) UV_TOOL_BIN_DIR=$(mktemp -d) \
   --extra-index-url https://pypi.org/simple/ autorun
 UV_TOOL_DIR=$(mktemp -d) UV_TOOL_BIN_DIR=$(mktemp -d) \
   uv tool install --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ 'pdf-extractor[cpu]'
+  --extra-index-url https://pypi.org/simple/ 'autorun[pdf]'
 ```
 
 TestPyPI refuses a re-upload of an existing file. The workflow passes

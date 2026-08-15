@@ -29,6 +29,47 @@ PLUGIN_ASSET_TREES = (
 )
 
 
+#: Packages whose source lives in a sibling plugin directory and reaches this
+#: distribution through a symlink under ``src/``. ``pdf_extraction`` belongs to
+#: the ``pdf-extractor`` marketplace plugin, which keeps its own directory,
+#: manifest, commands, skill, source and tests; it is not a second Python
+#: distribution, so its code ships here behind the ``pdf`` extra.
+#:
+#: setuptools' package discovery follows the symlink, but its sdist does not,
+#: and ``uv build`` builds the wheel *from the sdist*. Without this the sdist
+#: ships a dangling link, the wheel silently loses the package, and the only
+#: visible symptom is an ``extract-pdfs`` entry point that cannot import.
+SIBLING_PACKAGE_LINKS = (Path("src") / "pdf_extraction",)
+
+
+def materialize_sibling_packages(plugin_root: Path, base_dir: Path) -> list[Path]:
+    """Replace symlinked package trees in a staged tree with their real files.
+
+    Returns the destinations written, so a caller can assert the work happened
+    rather than trusting a silent no-op.
+    """
+    written: list[Path] = []
+    for relative in SIBLING_PACKAGE_LINKS:
+        link = plugin_root / relative
+        if not link.is_dir():
+            continue
+        destination = base_dir / relative
+        if destination.is_symlink() or destination.is_file():
+            destination.unlink()
+        elif destination.is_dir():
+            shutil.rmtree(destination)
+        shutil.copytree(
+            link.resolve(),
+            destination,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(
+                "__pycache__", "*.py[cod]", "*.tmp", ".DS_Store"
+            ),
+        )
+        written.append(destination)
+    return written
+
+
 def _tracked_paths(plugin_root: Path) -> set[Path] | None:
     """Return Git-tracked asset paths, or None for an already-clean sdist."""
     try:

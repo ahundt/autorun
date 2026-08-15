@@ -107,11 +107,14 @@ jobs:
           fail-on-error: false
 
       - name: Run PDF extractor tests
-        working-directory: plugins/pdf-extractor
-        # Every backend is an extra now, so `cpu` is what makes the CPU backends
-        # importable here. Without it the suite would pass against a package
-        # that has no extraction library installed at all.
-        run: uv run --project . --locked --extra dev --extra cpu pytest tests/ --tb=short -v
+        # The tests stay with their plugin; the code they import ships in the
+        # autorun distribution, so the environment comes from that project.
+        # `--extra pdf` is what makes the backends importable — without it the
+        # suite would pass against a package that has no extraction library
+        # installed at all.
+        run: >-
+          uv run --project plugins/autorun --extra pdf --extra dev
+          pytest plugins/pdf-extractor/tests/ --tb=short -v
 
   coverage:
     runs-on: ubuntu-latest

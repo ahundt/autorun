@@ -1,0 +1,152 @@
+# Publish autorun to TestPyPI, then PyPI.
+#
+# One distribution. The pdf-extractor plugin is a plugin in every harness — its
+# own plugin.json, commands and skill — but it is not a separate package: its
+# code ships inside this wheel as `pdf_extraction`, behind the `pdf` extra.
+#
+# Authentication is Trusted Publishing (OIDC): no API token is stored anywhere.
+# The project must be registered on each index BEFORE its first publish, and a
+# project that does not exist yet is registered as a *pending* publisher.
+# https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/
+#
+# Register both of these (one project x two indexes) with:
+#   Owner: ahundt   Repository: autorun   Workflow: publish.yml
+#   Environment: testpypi (on test.pypi.org) or pypi (on pypi.org)
+#
+#   test.pypi.org/manage/account/publishing/  -> autorun
+#   pypi.org/manage/account/publishing/       -> autorun
+#
+# Two ways to run:
+#   1. workflow_dispatch -> builds and publishes to TestPyPI only. Use this to
+#      prove the setup works without creating anything permanent on PyPI.
+#   2. push of a v* tag  -> full CI, then TestPyPI, then PyPI.
+#
+# Actions are pinned to full commit SHAs; test_documentation_consistency.py
+# ::test_ci_actions_are_pinned_to_full_commits fails the build otherwise.
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      testpypi_only:
+        description: 'Publish to TestPyPI only (leave checked until PyPI is proven)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # A tag push republishes whatever the tag points at, which may not be the
+    # commit CI last ran on. Gate on a fresh run rather than trusting history.
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      checks: write
+
+  build:
+    needs: test
+    # needs.test is skipped on workflow_dispatch; without this the whole job
+    # would be skipped with it.
+    if: always() && (needs.test.result == 'success' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: '3.12'
+
+      - name: Verify the tag matches the declared version
+        # Only a tag carries a version to check. A dispatch run builds whatever
+        # the branch declares, which is the point of a TestPyPI rehearsal.
+        if: github.event_name == 'push'
+        run: |
+          tag_version="${GITHUB_REF#refs/tags/v}"
+          declared=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('plugins/autorun/pyproject.toml','rb'))['project']['version'])")
+          if [ "$tag_version" != "$declared" ]; then
+            echo "Tag v$tag_version does not match plugins/autorun version $declared"
+            exit 1
+          fi
+          echo "autorun $declared matches tag v$tag_version"
+
+      - name: Build sdist and wheel
+        run: uv build --package autorun --out-dir dist
+
+      - name: Verify one wheel carries both packages and both entry points
+        # The pdf plugin has no pyproject of its own, so nothing else would
+        # notice if setuptools stopped collecting `pdf_extraction` or a second
+        # distribution reappeared. Publishing either mistake is permanent.
+        run: |
+          uv run --no-project python - <<'PY'
+          import pathlib, zipfile
+          wheels = sorted(pathlib.Path("dist").glob("*.whl"))
+          assert [w.name.split("-")[0] for w in wheels] == ["autorun"], wheels
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names = archive.namelist()
+              entry = next(n for n in names if n.endswith(".dist-info/entry_points.txt"))
+              scripts = archive.read(entry).decode()
+              meta = archive.read(
+                  next(n for n in names if n.endswith(".dist-info/METADATA"))
+              ).decode()
+          assert "pdf_extraction/cli.py" in names, "pdf_extraction is missing from the wheel"
+          for script in ("autorun =", "autorun-install =", "extract-pdfs ="):
+              assert script in scripts, f"{script} missing:\n{scripts}"
+          for extra in ("pdf", "pdf-gpu", "pdf-llm", "pdf-progress"):
+              assert f"Provides-Extra: {extra}" in meta, f"extra {extra} missing"
+          print(wheels[0].name, "carries pdf_extraction, extract-pdfs and the pdf extras")
+          PY
+
+      - name: Check the metadata renders on PyPI
+        run: uvx twine check --strict dist/*
+
+      - name: Upload the built distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-autorun
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment: testpypi
+    steps:
+      - name: Download the built distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist-autorun
+          path: dist/
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # A rerun of the same tag would otherwise fail on files TestPyPI
+          # already has. PyPI below stays strict.
+          skip-existing: true
+
+  publish-pypi:
+    needs: publish-testpypi
+    # Never reachable from a dispatch run with the default input, so the
+    # rehearsal cannot publish to the real index by accident.
+    if: github.event_name == 'push' && inputs.testpypi_only != true
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment: pypi
+    steps:
+      - name: Download the built distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist-autorun
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1

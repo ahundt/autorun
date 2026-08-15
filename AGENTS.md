@@ -278,6 +278,11 @@ extract-pdfs doc.pdf --backends marker # Use specific backend (GPU OCR)
 | `plugins/pdf-extractor/src/pdf_extraction/cli.py` | CLI entry point |
 | `plugins/pdf-extractor/CLAUDE.md` | Full documentation |
 
+The code lives under `plugins/autorun/src/` because this is a harness plugin,
+not a Python distribution: `extract-pdfs` and `pdf_extraction` ship inside the
+`autorun` package behind the `pdf` extra. `plugins/pdf-extractor/` holds the
+plugin manifest, commands, and skill.
+
 ---
 
 ## Architecture

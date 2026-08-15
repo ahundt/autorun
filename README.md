@@ -112,18 +112,27 @@ aise analyze --when 30d --output /absolute/new/analysis
 ## UV Installation (Recommended)
 
 The source marketplace includes **autorun** and **pdf-extractor**. The standalone
-autorun Python distribution embeds only the `ar` plugin; install pdf-extractor
-from its own plugin subdirectory or from the Claude marketplace.
+autorun Python distribution embeds only the `ar` plugin's harness assets;
+install the pdf-extractor plugin from the Claude marketplace or a source
+checkout. Its extraction code needs no separate package — see below.
 
 > **Note:** plan-export functionality is now built into the autorun plugin. Use `/ar:planexport` commands for plan management.
 
 ### Python package installation
 
-Install a published release from PyPI:
+`autorun` is the only published distribution. Install a release from PyPI:
 
 ```bash
 uv tool install autorun
 autorun --install
+```
+
+PDF extraction ships inside it. `extract-pdfs` is always present, and every
+extraction backend is optional, so nobody who never opens a PDF downloads one:
+
+```bash
+uv tool install --force 'autorun[pdf]'
+extract-pdfs --list-backends
 ```
 
 ### GitHub installation

@@ -20,9 +20,10 @@ claude plugin marketplace add https://github.com/ahundt/autorun.git
 claude plugin install pdf-extractor@autorun
 ```
 
-The standalone autorun wheel embeds only the `ar` plugin. Its
+The standalone autorun wheel embeds only the `ar` plugin's harness assets. Its
 `autorun --install pdf-extractor` selection is therefore available only when
-running from a source marketplace checkout that contains both plugin trees.
+running from a source marketplace checkout that contains both plugin trees. The
+extraction code itself is always present — see below.
 
 Target one harness with `--claude`, `--gemini`, `--qwen`, `--antigravity`, or
 `--codex`. Claude, Gemini, Qwen, and Antigravity use native per-plugin skills.
@@ -32,41 +33,43 @@ rules as autorun's other global skills.
 
 ### Python CLI
 
-Python extraction libraries are optional extras. `cpu` installs markitdown,
-pdfplumber, pdfminer, and pypdf:
+There is no separate package to install. `extract-pdfs` and the `pdf_extraction`
+module ship inside the `autorun` distribution, and every extraction library is an
+optional extra. `pdf` installs markitdown, pdfplumber, pdfminer, and pypdf:
 
 ```bash
-uv tool install 'pdf-extractor[cpu]'
+uv tool install 'autorun[pdf]'
 ```
 
 For the Linux/Windows GPU backend (docling):
 ```bash
-uv tool install --force 'pdf-extractor[cpu,gpu]'
+uv tool install --force 'autorun[pdf,pdf-gpu]'
 ```
 
 Source checkout installation:
 
 ```bash
-uv tool install 'pdf-extractor[cpu] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/pdf-extractor'
+uv tool install 'autorun[pdf] @ git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'
 ```
 
 | Extra | Adds |
 |-------|------|
-| `cpu` | markitdown, pdfplumber, pdfminer.six, pypdf |
-| `gpu` | docling on Linux/Windows (needs PyTorch; downloads models on first use) |
-| `llm` | pymupdf4llm |
-| `progress` | tqdm progress bars (falls back to no output when absent) |
-| `all` | cpu, gpu, llm, and progress |
+| `pdf` | markitdown, pdfplumber, pdfminer.six, pypdf |
+| `pdf-gpu` | docling on Linux/Windows (needs PyTorch; downloads models on first use) |
+| `pdf-llm` | pymupdf4llm |
+| `pdf-progress` | tqdm progress bars (falls back to no output when absent) |
+| `pdf-all` | all four above |
 
 The `marker` backend id remains available for users who manage that dependency
 separately. It is not in a published extra because marker-pdf's supported
-platform graph pins Pillow below the first fully patched release. The `gpu`
+platform graph pins Pillow below the first fully patched release. The `pdf-gpu`
 extra is empty on macOS because docling's macOS model stack still selects an
 advisory-affected transformers 4.x release.
 
-Installing with no extra still works: the CLI runs, `--list-backends` reports
-what is missing, and an extraction attempt names the extra to install. The only
-backend available in a bare install is `pdftotext`, if poppler is on the system.
+Plain `uv tool install autorun` still gives you the CLI: `--list-backends`
+reports what is missing, and an extraction attempt names the extra to install.
+The only backend available without an extra is `pdftotext`, if poppler is on the
+system. Nobody who never touches a PDF downloads an extraction library.
 
 ## Usage
 

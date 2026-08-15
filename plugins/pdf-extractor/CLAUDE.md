@@ -32,19 +32,20 @@ one harness. Codex and ForgeCode load `$pdf-extractor` through the shared
 
 ### Using uv tool install (Recommended — makes extract-pdfs globally available)
 
-Install a published release:
+There is no separate package. `extract-pdfs` and the `pdf_extraction` module
+ship inside the `autorun` distribution, and every extraction backend lives in an
+optional extra, so name the ones you want. `pdf` gets the CPU backends and is
+the ordinary choice:
 
 ```bash
-uv tool install 'pdf-extractor[cpu]'
+uv tool install 'autorun[pdf]'
 extract-pdfs --list-backends
 ```
 
-For an editable source checkout, every extraction backend lives in an extra, so
-name the ones you want. `cpu` gets the CPU backends and is the ordinary choice:
+For an editable source checkout, from the repository root:
 
 ```bash
-# From repository root:
-cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf]"
 
 # Verify:
 extract-pdfs --list-backends
@@ -52,29 +53,29 @@ extract-pdfs --list-backends
 
 | Extra | Adds |
 |-------|------|
-| `cpu` | markitdown, pdfplumber, pdfminer.six, pypdf |
-| `gpu` | docling on Linux/Windows |
-| `llm` | pymupdf4llm |
-| `progress` | tqdm progress bars |
-| `all` | every extra above |
+| `pdf` | markitdown, pdfplumber, pdfminer.six, pypdf |
+| `pdf-gpu` | docling on Linux/Windows |
+| `pdf-llm` | pymupdf4llm |
+| `pdf-progress` | tqdm progress bars |
+| `pdf-all` | every extra above |
 
 The `marker` backend id remains discoverable when users install marker-pdf
 separately. It is excluded from published extras because its supported-platform
-dependency graph pins Pillow below the first fully patched release. The `gpu`
-extra is empty on macOS because docling's macOS model stack still selects an
-advisory-affected transformers 4.x release.
+dependency graph pins Pillow below the first fully patched release. The
+`pdf-gpu` extra is empty on macOS because docling's macOS model stack still
+selects an advisory-affected transformers 4.x release.
 
-Installing bare (`--editable .`) is supported and leaves `pdftotext` as the only
-usable backend, if poppler is on the system. An extraction attempt with no
-backend installed names the extra to install rather than failing silently
-(`src/pdf_extraction/extractors.py:extract_single_pdf`).
+Installing with no extra is supported and leaves `pdftotext` as the only usable
+backend, if poppler is on the system. An extraction attempt with no backend
+installed names the extra to install rather than failing silently
+(`plugins/pdf-extractor/src/pdf_extraction/extractors.py:extract_single_pdf`).
 
 ### Optional GPU backend
 
 For GPU-accelerated extraction on Linux or Windows:
 
 ```bash
-cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu,gpu]" && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf,pdf-gpu]"
 # Requires PyTorch; docling downloads models on first use.
 extract-pdfs --list-backends  # Verify docling appears
 ```
@@ -82,16 +83,20 @@ extract-pdfs --list-backends  # Verify docling appears
 ### Venv Install (alternative — installs into current venv only)
 
 ```bash
-cd plugins/pdf-extractor && uv pip install -e ".[cpu]" && cd ../..
+uv pip install -e "./plugins/autorun[pdf]"
 ```
 
 ### Development Setup
 
+Run from the repository root. The tests live in autorun's suite because the code
+ships in autorun's distribution; `--extra pdf` is what makes the backends
+importable, and without it they are all reported unavailable and still pass.
+
 ```bash
-cd plugins/pdf-extractor
-uv pip install -e ".[dev]"  # Adds pytest, pytest-cov, ruff
-uv run pytest tests/ -v     # Run tests
-uv run ruff check src/ tests/  # Run linter
+uv run --project plugins/autorun --extra pdf --extra dev \
+  pytest plugins/pdf-extractor/tests/ -v
+uv run ruff check \
+  plugins/pdf-extractor/src/pdf_extraction plugins/pdf-extractor/tests
 ```
 
 ## Usage
@@ -135,7 +140,7 @@ for pdf, info in metadata.items():
 python -m pdf_extraction document.pdf
 
 # Standalone script (no install required)
-python src/pdf_extraction/cli.py document.pdf
+python plugins/pdf-extractor/src/pdf_extraction/cli.py document.pdf
 ```
 
 ## Available Backends
@@ -156,20 +161,26 @@ Backends are tried in order until one succeeds. Default order is auto-detected b
 
 ## Project Structure
 
+The harness plugin and the Python code live apart on purpose. This is a plugin
+in every harness, and it is not a Python distribution: there is no
+`pyproject.toml` and no `uv.lock` here, because the code ships inside `autorun`.
+
 ```
-pdf-extractor/
-├── .claude-plugin/plugin.json   # Claude Code plugin manifest
-├── pyproject.toml               # Package config with uv/pip support
-├── uv.lock                      # Locked dependencies
-├── commands/extract.md          # Slash command definition
-├── skills/pdf-extractor/        # Skill files for Claude
-├── src/pdf_extraction/          # Main package
-│   ├── __init__.py              # Public API exports
-│   ├── backends.py              # 9 backend extractors
-│   ├── extractors.py            # extract_single_pdf, pdf_to_txt
-│   ├── utils.py                 # GPU detection, quality metrics
-│   └── cli.py                   # CLI entry point
-└── tests/                       # pytest test suite
+plugins/pdf-extractor/            # The harness plugin
+├── .claude-plugin/plugin.json    # Claude Code plugin manifest
+├── gemini-extension.json         # Gemini-family manifest
+├── commands/extract.md           # Slash command definition
+└── skills/pdf-extractor/         # Skill files
+
+plugins/autorun/                  # The distribution that ships the code
+├── pyproject.toml                # `pdf` extra, extract-pdfs entry point
+├── src/pdf_extraction/           # Main package
+│   ├── __init__.py               # Public API exports
+│   ├── backends.py               # 9 backend extractors
+│   ├── extractors.py             # extract_single_pdf, pdf_to_txt
+│   ├── utils.py                  # GPU detection, quality metrics
+│   └── cli.py                    # CLI entry point
+└── tests/pdf_extraction/         # pytest test suite
 ```
 
 ## Skill Triggers
@@ -186,7 +197,7 @@ The plugin skill activates when you ask to:
 ### `extract-pdfs: command not found`
 ```bash
 # Install as global UV tool from repo root:
-cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf]"
 # Verify:
 extract-pdfs --list-backends
 ```
@@ -194,14 +205,14 @@ extract-pdfs --list-backends
 ### "No extraction backend installed"
 The backends are extras and none is installed. Add one:
 ```bash
-cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf]"
 extract-pdfs --list-backends  # confirm they moved out of "Supported but not installed"
 ```
 
 ### `ModuleNotFoundError: No module named 'pdf_extraction'` (or 'markitdown', 'pdfplumber')
 ```bash
 # Re-install with the cpu backends:
-cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu]" && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf]"
 # If that fails, install explicitly:
 uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "pypdf>=6.0.0" tqdm
 ```
@@ -209,7 +220,7 @@ uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105"
 ### GPU backend (docling) not available
 ```bash
 # This requires PyTorch; install the optional GPU extra:
-cd plugins/pdf-extractor && uv tool install --force --editable ".[cpu,gpu]" && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf,pdf-gpu]"
 extract-pdfs --list-backends  # verify docling appears
 # Note: docling downloads models on first use.
 ```

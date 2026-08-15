@@ -327,16 +327,13 @@ def test_current_changelog_covers_pi_and_published_distributions():
     changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     section = changelog.split(f"## [{version}]", 1)[1].split("\n## [", 1)[0]
 
-    for required in ("Pi", "PyPI", "`autorun`", "`pdf-extractor`"):
+    for required in ("Pi", "PyPI", "`autorun`", "`autorun[pdf]`"):
         assert required in section, f"CHANGELOG.md [{version}] omits {required}"
 
 
 def test_published_distributions_have_project_urls():
     """Package-index users need source, issue, and homepage links in metadata."""
-    for relative_path in (
-        "plugins/autorun/pyproject.toml",
-        "plugins/pdf-extractor/pyproject.toml",
-    ):
+    for relative_path in ("plugins/autorun/pyproject.toml",):
         project = tomllib.loads((REPO_ROOT / relative_path).read_text(encoding="utf-8"))[
             "project"
         ]
@@ -372,7 +369,7 @@ def test_public_install_guides_use_release_artifact_identities():
     pdf_readme = (
         REPO_ROOT / "plugins" / "pdf-extractor" / "README.md"
     ).read_text(encoding="utf-8")
-    assert "uv tool install 'pdf-extractor[cpu]'" in pdf_readme
+    assert "uv tool install 'autorun[pdf]'" in pdf_readme
 
 
 def test_release_checklist_covers_every_file_carrying_the_version():
@@ -456,9 +453,10 @@ RELEASE_IDENTITY_FIELDS = (
     ("plugins/autorun/src/autorun/__init__.py", "__version__"),
     ("plugins/autorun/src/autorun/metadata.json", "version"),
     ("plugins/autorun/src/autorun/gemini_template/gemini-extension.json", "version"),
-    ("plugins/pdf-extractor/pyproject.toml", "version"),
-    ("plugins/pdf-extractor/.claude-plugin/plugin.json", "version"),
+    # The pdf plugin has no pyproject: it is a harness plugin whose code ships
+    # inside the autorun distribution as `pdf_extraction`.
     ("plugins/pdf-extractor/src/pdf_extraction/__init__.py", "__version__"),
+    ("plugins/pdf-extractor/.claude-plugin/plugin.json", "version"),
     ("plugins/pdf-extractor/gemini-extension.json", "version"),
 )
 
@@ -502,22 +500,29 @@ def test_root_marketplace_catalog_tracks_the_plugin_base_release():
     )
 
 
-def test_workspace_sources_match_the_declared_distribution_names():
-    """A `[tool.uv.sources]` key that does not name a member is silently wrong.
+def test_the_pdf_plugin_ships_inside_autorun_and_not_beside_it():
+    """One distribution. The pdf plugin is a harness plugin, not a package.
 
-    uv matches these keys against distribution names, not directory names. A
-    mismatch does not error — uv just resolves the member from PyPI instead of
-    the local tree, so a developer edits one copy and tests another.
+    Two things pull the other way and both have already been tried. Splitting it
+    out again is easy to do by accident, and it costs a second trusted publisher,
+    a second version to keep in step, and a second `uv tool install` whose
+    ``extract-pdfs`` entry point silently loses the shared name to whichever tool
+    installed last. The plugin id in .claude-plugin/plugin.json is a separate
+    namespace from any of this and stays `pdf-extractor`.
     """
-    names = {
-        "plugins/autorun/pyproject.toml": "autorun",
-        "plugins/pdf-extractor/pyproject.toml": "pdf-extractor",
-    }
-    for relative_path, expected in names.items():
-        declared = tomllib.loads(
-            (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-        )["project"]["name"]
-        assert declared == expected, f"{relative_path} declares '{declared}'"
+    assert not (REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml").exists(), (
+        "plugins/pdf-extractor declares a distribution again; its code belongs "
+        "in plugins/pdf-extractor/src/pdf_extraction behind the `pdf` extra"
+    )
+    assert (REPO_ROOT / "plugins" / "autorun" / "src" / "pdf_extraction").is_dir()
+
+    autorun = tomllib.loads(
+        (REPO_ROOT / "plugins" / "autorun" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )["project"]
+    assert autorun["name"] == "autorun"
+    assert autorun["scripts"]["extract-pdfs"] == "pdf_extraction.cli:main"
 
     plugin = json.loads(
         (
@@ -525,27 +530,31 @@ def test_workspace_sources_match_the_declared_distribution_names():
         ).read_text(encoding="utf-8")
     )
     assert plugin["name"] == "pdf-extractor", (
-        "the harness plugin id is a different namespace from the PyPI name and "
-        "renaming it would break `claude plugin install pdf-extractor@autorun`"
+        "the harness plugin id is its own namespace and renaming it would break "
+        "`claude plugin install pdf-extractor@autorun`"
     )
 
     workspace = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert set(workspace["tool"]["uv"]["sources"]) == set(names.values()), (
+    assert set(workspace["tool"]["uv"]["sources"]) == {"autorun"}, (
         "[tool.uv.sources] keys must match the member distribution names or uv "
         "resolves the workspace member from PyPI instead of the local tree"
     )
+    assert workspace["tool"]["uv"]["workspace"]["members"] == ["plugins/autorun"]
+
+
+def _autorun_extras() -> dict:
+    return tomllib.loads(
+        (REPO_ROOT / "plugins" / "autorun" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )["project"]["optional-dependencies"]
 
 
 def test_pdf_extractor_extras_avoid_retired_or_known_vulnerable_backends():
     """Published extras must not select abandoned or unpatched dependencies."""
-    pyproject = tomllib.loads(
-        (REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml").read_text(
-            encoding="utf-8"
-        )
-    )
-    extras = pyproject["project"]["optional-dependencies"]
-    cpu = "\n".join(extras["cpu"]).lower()
-    gpu = "\n".join(extras["gpu"]).lower()
+    extras = _autorun_extras()
+    cpu = "\n".join(extras["pdf"]).lower()
+    gpu = "\n".join(extras["pdf-gpu"]).lower()
 
     assert "pypdf>=" in cpu
     assert "pypdf2" not in cpu
@@ -554,31 +563,33 @@ def test_pdf_extractor_extras_avoid_retired_or_known_vulnerable_backends():
     assert "marker-pdf" not in gpu
 
 
-def test_pdf_extractor_requires_no_extraction_backend():
-    """Installing the package must not force any extraction library on anyone.
+def test_pdf_extraction_backends_are_all_optional():
+    """Installing autorun must not force any extraction library on anyone.
 
     Every backend imports inside its own ``extract()`` call, so a required
-    dependency here would buy nothing and cost every user the download. The CI
-    job that runs this plugin's tests therefore has to name ``--extra cpu``, or
-    it would exercise a package with no backend installed and still pass.
+    dependency here would buy nothing and cost every autorun user the download —
+    including the ones who never touch a PDF. tests/pdf_extraction/ runs in
+    autorun's own suite now, so CI has to name ``--extra pdf`` or it would
+    exercise a package with no backend installed and still pass.
     """
-    pyproject = tomllib.loads(
-        (REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml").read_text(
+    required = tomllib.loads(
+        (REPO_ROOT / "plugins" / "autorun" / "pyproject.toml").read_text(
             encoding="utf-8"
         )
-    )
+    )["project"]["dependencies"]
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
 
-    assert pyproject["project"]["dependencies"] == [], (
-        "pdf-extractor declares a required dependency; every backend belongs in "
-        "[project.optional-dependencies]"
+    backends = ("markitdown", "pdfplumber", "pdfminer", "pypdf", "docling", "pymupdf4llm")
+    assert not [
+        entry for entry in required if entry.lower().startswith(backends)
+    ], f"an extraction backend became a required autorun dependency: {required}"
+    assert {"pdf", "pdf-gpu", "pdf-llm", "pdf-progress", "pdf-all"} <= set(
+        _autorun_extras()
     )
-    extras = pyproject["project"]["optional-dependencies"]
-    assert {"cpu", "gpu", "llm", "progress", "all"} <= set(extras)
-    assert "--extra cpu" in workflow, (
-        "CI runs the pdf-extractor suite without the cpu extra, so the backend "
+    assert "--extra pdf" in workflow, (
+        "CI runs tests/pdf_extraction/ without the pdf extra, so the backend "
         "tests would pass against a package that has no backend installed"
     )
 
@@ -592,7 +603,7 @@ def test_pdf_extractor_installs_from_wheels_on_python_314():
     known advisories and publishes cp314 wheels.
     """
     pyproject = (
-        REPO_ROOT / "plugins" / "pdf-extractor" / "pyproject.toml"
+        REPO_ROOT / "plugins" / "autorun" / "pyproject.toml"
     ).read_text(encoding="utf-8")
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"

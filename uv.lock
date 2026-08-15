@@ -32,7 +32,6 @@ resolution-markers = [
 members = [
     "autorun",
     "autorun-workspace",
-    "pdf-extractor",
 ]
 
 [[package]]
@@ -186,6 +185,36 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-mock" },
 ]
+pdf = [
+    { name = "markitdown", marker = "python_full_version < '3.14'" },
+    { name = "pdfminer-six", version = "20251230", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "pdfminer-six", version = "20260107", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+    { name = "pdfplumber", version = "0.11.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "pdfplumber", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+    { name = "pillow" },
+    { name = "pypdf" },
+]
+pdf-all = [
+    { name = "docling", marker = "sys_platform != 'darwin'" },
+    { name = "markitdown", marker = "python_full_version < '3.14'" },
+    { name = "pdfminer-six", version = "20251230", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "pdfminer-six", version = "20260107", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+    { name = "pdfplumber", version = "0.11.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "pdfplumber", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+    { name = "pillow" },
+    { name = "pymupdf4llm" },
+    { name = "pypdf" },
+    { name = "tqdm" },
+]
+pdf-gpu = [
+    { name = "docling", marker = "sys_platform != 'darwin'" },
+]
+pdf-llm = [
+    { name = "pymupdf4llm" },
+]
+pdf-progress = [
+    { name = "tqdm" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -198,18 +227,27 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "autorun", extras = ["pdf", "pdf-gpu", "pdf-llm", "pdf-progress"], marker = "extra == 'pdf-all'", editable = "plugins/autorun" },
     { name = "bashlex", specifier = ">=0.18" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
+    { name = "docling", marker = "sys_platform != 'darwin' and extra == 'pdf-gpu'", specifier = ">=2.94.0" },
     { name = "filelock", specifier = ">=3.12.0,<3.29.5" },
+    { name = "markitdown", marker = "python_full_version < '3.14' and extra == 'pdf'", specifier = ">=0.1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "pdfminer-six", marker = "extra == 'pdf'", specifier = ">=20221105" },
+    { name = "pdfplumber", marker = "extra == 'pdf'", specifier = ">=0.10.0" },
+    { name = "pillow", marker = "extra == 'pdf'", specifier = ">=12.3.0" },
     { name = "psutil" },
+    { name = "pymupdf4llm", marker = "extra == 'pdf-llm'", specifier = ">=0.0.1" },
+    { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=6.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.10.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "tqdm", marker = "extra == 'pdf-progress'", specifier = ">=4.60.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["pdf", "pdf-gpu", "pdf-llm", "pdf-progress", "pdf-all", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -227,8 +265,7 @@ source = { editable = "." }
 
 [package.optional-dependencies]
 all = [
-    { name = "autorun" },
-    { name = "pdf-extractor" },
+    { name = "autorun", extra = ["pdf", "pdf-gpu", "pdf-llm", "pdf-progress"] },
 ]
 dev = [
     { name = "black" },
@@ -250,10 +287,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "autorun", marker = "extra == 'all'", editable = "plugins/autorun" },
+    { name = "autorun", extras = ["pdf", "pdf-gpu", "pdf-llm", "pdf-progress"], marker = "extra == 'all'", editable = "plugins/autorun" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "pdf-extractor", marker = "extra == 'all'", editable = "plugins/pdf-extractor" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
@@ -2688,65 +2724,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/5a/82/42f767fc1c1143d6f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/d9/7fb5aa316bc299258e68c73ba3bddbc499654a07f151cba08f6153988714/pathspec-1.1.1-py3-none-any.whl", hash = "sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189", size = 57328, upload-time = "2026-04-27T01:46:07.06Z" },
 ]
-
-[[package]]
-name = "pdf-extractor"
-version = "1.0.0rc1"
-source = { editable = "plugins/pdf-extractor" }
-
-[package.optional-dependencies]
-all = [
-    { name = "docling", marker = "sys_platform != 'darwin'" },
-    { name = "markitdown", marker = "python_full_version < '3.14'" },
-    { name = "pdfminer-six", version = "20251230", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
-    { name = "pdfminer-six", version = "20260107", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
-    { name = "pdfplumber", version = "0.11.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
-    { name = "pdfplumber", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
-    { name = "pillow" },
-    { name = "pymupdf4llm" },
-    { name = "pypdf" },
-    { name = "tqdm" },
-]
-cpu = [
-    { name = "markitdown", marker = "python_full_version < '3.14'" },
-    { name = "pdfminer-six", version = "20251230", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
-    { name = "pdfminer-six", version = "20260107", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
-    { name = "pdfplumber", version = "0.11.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
-    { name = "pdfplumber", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
-    { name = "pillow" },
-    { name = "pypdf" },
-]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-gpu = [
-    { name = "docling", marker = "sys_platform != 'darwin'" },
-]
-llm = [
-    { name = "pymupdf4llm" },
-]
-progress = [
-    { name = "tqdm" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "docling", marker = "sys_platform != 'darwin' and extra == 'gpu'", specifier = ">=2.94.0" },
-    { name = "markitdown", marker = "python_full_version < '3.14' and extra == 'cpu'", specifier = ">=0.1.0" },
-    { name = "pdf-extractor", extras = ["cpu", "gpu", "llm", "progress"], marker = "extra == 'all'", editable = "plugins/pdf-extractor" },
-    { name = "pdfminer-six", marker = "extra == 'cpu'", specifier = ">=20221105" },
-    { name = "pdfplumber", marker = "extra == 'cpu'", specifier = ">=0.10.0" },
-    { name = "pillow", marker = "extra == 'cpu'", specifier = ">=12.3.0" },
-    { name = "pymupdf4llm", marker = "extra == 'llm'", specifier = ">=0.0.1" },
-    { name = "pypdf", marker = "extra == 'cpu'", specifier = ">=6.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
-    { name = "tqdm", marker = "extra == 'progress'", specifier = ">=4.60.0" },
-]
-provides-extras = ["cpu", "gpu", "llm", "progress", "all", "dev"]
 
 [[package]]
 name = "pdfminer-six"

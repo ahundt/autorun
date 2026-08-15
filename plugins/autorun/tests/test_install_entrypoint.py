@@ -277,9 +277,15 @@ def test_empty_home_uninstall_is_a_true_no_op_even_when_every_cli_is_on_path(
     assert tuple(isolated.rglob("*")) == before
 
 
-def test_no_uv_pdf_install_and_uninstall_are_symmetric(
-    monkeypatch, isolated, tmp_path
-):
+def test_a_pip_installed_retired_pdf_distribution_is_swept(monkeypatch, isolated):
+    """An older autorun pip-installed a separate pdf package; remove it.
+
+    ``pdf_extraction`` and ``extract-pdfs`` now ship inside ``autorun`` under the
+    ``pdf`` extra, so nothing publishes these names any more and no ownership
+    marker exists for ``traversal.retirements`` to find. The receipt an older
+    version wrote is the only record that this home installed one, and it is
+    what makes attempting the removal safe rather than a guess.
+    """
     from autorun.installer import entrypoint
 
     calls = []
@@ -288,38 +294,52 @@ def test_no_uv_pdf_install_and_uninstall_are_symmetric(
         calls.append(tuple(argv))
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    package = tmp_path / "pdf-extractor"
-    package.mkdir()
     monkeypatch.setattr(entrypoint, "_run", record)
     monkeypatch.setattr(entrypoint.shutil, "which", lambda _name: None)
 
-    installed = entrypoint._editable_package(
-        package,
-        "pdf-extractor CLI",
-        distribution="pdf-extractor",
-    )
-    assert installed.ok
     receipt = entrypoint._package_receipt("pdf-extractor")
-    assert receipt.is_file()
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "distribution": "pdf-extractor",
+                "installer": "pip",
+                "python": str(Path(entrypoint.sys.executable).resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    assert entrypoint.uninstall_plugins("pdf-extractor") == 0
-    assert calls[0] == (
-        entrypoint.sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--editable",
-        str(package),
-    )
-    assert calls[-1] == (
-        entrypoint.sys.executable,
-        "-m",
-        "pip",
-        "uninstall",
-        "-y",
-        "pdf-extractor",
-    )
+    retired = entrypoint._retire_legacy_distributions("ar")
+
+    assert [outcome.ok for outcome in retired] == [True]
+    assert calls == [
+        (
+            entrypoint.sys.executable,
+            "-m",
+            "pip",
+            "uninstall",
+            "-y",
+            "pdf-extractor",
+        )
+    ]
     assert not receipt.exists()
+
+
+def test_removing_the_pdf_plugin_never_reaches_a_python_distribution(isolated):
+    """``pdf-extractor`` is a harness plugin, not a package, and must stay one.
+
+    Listing it in ``_PLUGIN_DISTRIBUTIONS`` would make ``--uninstall
+    pdf-extractor`` remove a distribution that also carries autorun's own CLI.
+    """
+    from autorun.installer import entrypoint
+
+    assert "pdf-extractor" not in entrypoint._PLUGIN_DISTRIBUTIONS
+    assert entrypoint._PLUGIN_DISTRIBUTIONS["ar"][0] == "autorun"
+    assert set(entrypoint._PLUGIN_DISTRIBUTIONS["ar"][1:]) == {
+        "autorun-pdf-extractor",
+        "pdf-extractor",
+    }
 
 
 def test_uninstall_keeps_stable_publication_lock_files(tmp_path):
@@ -895,13 +915,11 @@ def test_partial_uninstall_of_pdf_preserves_every_autorun_artifact(monkeypatch, 
 
     monkeypatch.setattr(entrypoint, "_run", record)
     monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
-    monkeypatch.setattr(
-        entrypoint,
-        "_uv_tool_installed",
-        lambda package: package == "pdf-extractor",
-    )
+    monkeypatch.setattr(entrypoint, "_uv_tool_installed", lambda _package: True)
 
     assert entrypoint.uninstall_plugins("pdf-extractor") == 0
     assert agents.is_file() and hooks.is_file() and package.is_dir()
-    assert ("uv", "tool", "uninstall", "pdf-extractor") in calls
-    assert ("uv", "tool", "uninstall", "autorun") not in calls
+    # Removing the pdf plugin moves harness files only. Its code ships inside
+    # the `autorun` distribution, which also carries autorun's own CLI, so
+    # reaching any package here would uninstall the tool the user kept.
+    assert not [call for call in calls if "uninstall" in call and "tool" in call], calls

@@ -38,9 +38,9 @@ dev = [
     "mypy>=1.0.0",
     "ruff>=0.14.1",
 ]
+# One distribution. PDF extraction is `autorun[pdf]`, not a second package.
 all = [
-    "autorun>=0.10.0",
-    "pdf-extractor>=0.10.0",
+    "autorun[pdf,pdf-gpu,pdf-llm,pdf-progress]>=0.10.0",
 ]
 
 # NO [project.scripts] - scripts come from plugins/autorun/pyproject.toml
@@ -51,14 +51,15 @@ Repository = "https://github.com/ahundt/autorun.git"
 Issues = "https://github.com/ahundt/autorun/issues"
 
 [tool.uv.workspace]
+# plugins/pdf-extractor is deliberately absent: it is a Claude marketplace
+# plugin, not a Python distribution. Its code stays in that directory and
+# reaches this wheel through the plugins/autorun/src/pdf_extraction symlink.
 members = [
     "plugins/autorun",
-    "plugins/pdf-extractor",
 ]
 
 [tool.uv.sources]
 autorun = { workspace = true }
-pdf-extractor = { workspace = true }
 
 # Minimal stub package for UV workspace
 [tool.hatch.build.targets.wheel]

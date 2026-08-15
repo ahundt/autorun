@@ -63,7 +63,7 @@ def extract_single_pdf(input_file: str, output_file: str, backends: list = None)
     if not backends:
         metadata['error'] = (
             "No extraction backend installed. Install one with: "
-            "pip install 'pdf-extractor[cpu]' (or [gpu] for scanned PDFs). "
+            "pip install 'autorun[pdf]' (or [pdf-gpu] for scanned PDFs). "
             "Run extract-pdfs --list-backends to see what is available."
         )
         print(f"X {metadata['error']}")

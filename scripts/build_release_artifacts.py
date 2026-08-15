@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build both distributions with byte-stable metadata for one pinned toolchain."""
+"""Build the distribution with byte-stable metadata for one pinned toolchain."""
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PACKAGES = (Path("plugins/autorun"), Path("plugins/pdf-extractor"))
+# One package. plugins/pdf-extractor is a harness plugin, not a distribution:
+# its code ships inside this wheel as `pdf_extraction`, behind the `pdf` extra.
+PACKAGES = (Path("plugins/autorun"),)
 
 
 def _source_date_epoch(env: dict[str, str]) -> int:

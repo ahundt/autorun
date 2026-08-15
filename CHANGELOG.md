@@ -18,15 +18,20 @@ marketplace itself carries a separate `version` field.
   session lifecycle hooks, compaction events, and daemon-backed `TaskCreate`,
   `TaskUpdate`, and `TaskList` tools. Python remains the policy, task,
   persistence, ordering, and Stop-enforcement owner.
-- **PyPI distributions and trusted publishing.** `autorun` and
-  `pdf-extractor` build as separate wheel/sdist pairs. The PDF package
-  has no required extraction backend; users select `cpu`, `gpu`, `llm`, or
-  `progress` extras. The CPU extra uses maintained `pypdf` under the compatible
-  `pypdf2` backend id. marker-pdf is omitted because it pins Pillow below the
-  patched release; docling is constrained off macOS while its model stack pins
-  transformers 4.x. A tag workflow runs the complete CI gate, publishes to
-  TestPyPI, then enters the protected PyPI environment
-  through OIDC.
+- **PyPI publishing through one distribution.** `autorun` is the only published
+  package. PDF extraction ships inside it: `pdf_extraction` and the
+  `extract-pdfs` script are always present, and every extraction backend is an
+  optional extra, so `autorun[pdf]` is the ordinary PDF install and nobody else
+  downloads an extraction library. `pdf-extractor` remains a separate plugin in
+  every harness — its own manifest, command, and skill — it is simply not a
+  separate Python package. The remaining extras are `pdf-gpu`, `pdf-llm`,
+  `pdf-progress`, and `pdf-all`. The `pdf` extra uses maintained `pypdf` under
+  the compatible `pypdf2` backend id. marker-pdf is omitted because it pins
+  Pillow below the patched release; docling is constrained off macOS while its
+  model stack pins transformers 4.x. `autorun --install` retires the
+  `autorun-pdf-extractor` and `pdf-extractor` distributions that earlier
+  versions installed. A tag workflow runs the complete CI gate, publishes to
+  TestPyPI, then enters the protected PyPI environment through OIDC.
 - **Shared Pi/OpenCode daemon transport.** Both in-process adapters use the
   packaged bounded JSON client while retaining their native event and response
   shapes.

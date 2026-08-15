@@ -26,7 +26,7 @@ from . import (
     status,
     steps,
 )
-from .fs import Verdict, atomic_write
+from .fs import Verdict
 
 __all__ = [
     "install_plugins",
@@ -42,7 +42,28 @@ _FALLBACK_PLUGINS = ("ar", "pdf-extractor")
 _ALIASES = {"autorun": "ar"}
 _run = runtime._spawn
 
-_UV_TOOL_SCRIPTS = {"autorun": "autorun", "pdf-extractor": "extract-pdfs"}
+_UV_TOOL_SCRIPTS = {
+    "autorun": "autorun",
+    "autorun-pdf-extractor": "extract-pdfs",
+    "pdf-extractor": "extract-pdfs",
+}
+
+# Plugin id -> distributions, the one we install first and retired names after.
+#
+# `pdf-extractor` is absent on purpose. It is a plugin in every harness — its
+# own plugin.json, commands and skill — but it is not a Python distribution:
+# `pdf_extraction` and the `extract-pdfs` script ship inside `autorun` under the
+# `pdf` extra. So installing or removing that plugin moves harness files only,
+# and must never reach a package.
+#
+# The two trailing names are distributions earlier versions really did install
+# and nothing else can remove. A retired distribution leaves no ownership marker
+# for `traversal.retirements` to sweep, and its `extract-pdfs` entry point loses
+# the shared name to whichever tool installed last, so the environment is
+# invisible from the CLI while still occupying its full size on disk.
+_PLUGIN_DISTRIBUTIONS = {
+    "ar": ("autorun", "autorun-pdf-extractor", "pdf-extractor"),
+}
 
 
 def _marketplace_root() -> Path:
@@ -333,36 +354,58 @@ def _package_receipt(package: str) -> Path:
     return _state_dir() / "package-installs" / f"{package}.json"
 
 
-def _editable_package(
-    package: Path,
-    label: str,
-    *,
-    distribution: str,
-) -> runtime.Outcome:
-    using_uv = bool(shutil.which("uv"))
-    argv = runtime.uv_tool_install_argv(package) if using_uv else (
-        sys.executable, "-m", "pip", "install", "--editable", str(package)
+def _remove_distribution(package: str) -> runtime.Outcome | None:
+    """Remove one distribution this home installed, or ``None`` if it owns none.
+
+    Shared by uninstall and by the install-time legacy sweep so the two cannot
+    disagree about what "installed by us" means.
+    """
+    uv_owned = bool(shutil.which("uv")) and _uv_tool_installed(package)
+    pip_owned = _pip_package_owned(package)
+    if not uv_owned and not pip_owned:
+        return None
+    argv = (
+        ("uv", "tool", "uninstall", package)
+        if uv_owned
+        else (sys.executable, "-m", "pip", "uninstall", "-y", package)
     )
     try:
-        result = _run(argv)
+        removed = _run(argv)
     except (OSError, subprocess.SubprocessError) as error:
-        return runtime.Outcome(label, False, f"{type(error).__name__}: {error}")
-    detail = runtime._first_line(result.stderr or result.stdout)
-    if result.returncode == 0 and not using_uv:
-        receipt = _package_receipt(distribution)
-        atomic_write(
-            receipt,
-            json.dumps(
-                {
-                    "distribution": distribution,
-                    "installer": "pip",
-                    "python": str(Path(sys.executable).resolve()),
-                },
-                indent=2,
-            )
-            + "\n",
-        )
-    return runtime.Outcome(label, result.returncode == 0, "" if result.returncode == 0 else detail)
+        return runtime.Outcome(f"{package} CLI", False, str(error))
+    text = removed.stderr or removed.stdout
+    absent = "not installed" in text.lower() or "not found" in text.lower()
+    ok = removed.returncode == 0 or absent
+    if ok and pip_owned:
+        _package_receipt(package).unlink(missing_ok=True)
+    return runtime.Outcome(
+        f"{package} CLI", ok, "" if ok else runtime._first_line(text)
+    )
+
+
+def _retire_legacy_distributions(plugin: str) -> list[runtime.Outcome]:
+    """Remove the distributions this plugin used to ship under another name.
+
+    ``traversal.retirements`` sweeps trees a previous version wrote somewhere
+    the current one no longer visits. A renamed *distribution* is the same
+    upgrade obligation with none of the same machinery: nothing publishes the
+    old package, nothing claims it, and no ownership marker exists to sweep, so
+    it stays installed forever. Its console script is worse than dead — uv hands
+    the shared name to whichever tool installed last, so the orphan is invisible
+    from the CLI while still occupying its full environment on disk.
+
+    Order matters. uv deletes an entry point when the tool that recorded it goes
+    away, so retiring the old name *after* installing the new one removes the
+    working script; this runs first and lets the install create it cleanly.
+
+    A failure here is reported, not fatal: an orphaned environment wastes disk
+    but does not break the install that follows it.
+    """
+    outcomes = [
+        _remove_distribution(package)
+        for package in _PLUGIN_DISTRIBUTIONS.get(plugin, ())[1:]
+    ]
+    return [outcome for outcome in outcomes if outcome is not None]
 
 
 def _pip_package_owned(package: str) -> bool:
@@ -450,6 +493,8 @@ def install_plugins(
             if plugin is None:
                 print("Error: autorun plugin source was not found")
                 return 1
+            for retired in _retire_legacy_distributions("ar"):
+                print(retired.describe())
             boot = runtime.bootstrap(
                 plugin,
                 uv_tool_env="/uv/tools/" in str(Path(sys.executable)),
@@ -459,22 +504,6 @@ def install_plugins(
             for outcome in boot:
                 print(outcome.describe())
             if not all(outcome.ok for outcome in boot):
-                return 1
-        if "pdf-extractor" in plugins:
-            pdf = discovery.plugin_dir(root, "pdf-extractor")
-            outcome = (
-                _editable_package(
-                    pdf,
-                    "pdf-extractor CLI",
-                    distribution="pdf-extractor",
-                )
-                if pdf is not None
-                else runtime.Outcome(
-                    "pdf-extractor CLI", False, "plugin source not found"
-                )
-            )
-            print(outcome.describe())
-            if not outcome.ok:
                 return 1
         if bool(resolved.get("write_source_metadata")):
             from .. import __commit__, __version__
@@ -536,7 +565,11 @@ def uninstall_plugins(selection: str = "all") -> int:
     )
     _print_result(result)
     ok = result.ok
-    for plugin, package in (("ar", "autorun"), ("pdf-extractor", "pdf-extractor")):
+    for plugin, package in (
+        (name, distribution)
+        for name, distributions in _PLUGIN_DISTRIBUTIONS.items()
+        for distribution in distributions
+    ):
         if plugin not in plugins:
             continue
         uv_owned = bool(shutil.which("uv")) and _uv_tool_installed(package)
@@ -571,8 +604,6 @@ def uninstall_plugins(selection: str = "all") -> int:
 def _uv_tool_installed(package: str) -> bool:
     """Whether the selected home positively owns this uv tool install."""
     executable = shutil.which(_UV_TOOL_SCRIPTS[package])
-    if not executable:
-        return False
     configured = os.environ.get("UV_TOOL_DIR")
     if configured:
         tool_root = Path(configured)
@@ -584,8 +615,15 @@ def _uv_tool_installed(package: str) -> bool:
             else discovery.process_home() / ".local" / "share" / "uv" / "tools"
         )
     expected = (tool_root / package).resolve()
-    resolved = Path(executable).resolve()
-    return resolved == expected or expected in resolved.parents
+    if executable:
+        resolved = Path(executable).resolve()
+        if resolved == expected or expected in resolved.parents:
+            return True
+    # A renamed distribution leaves its old environment behind and hands the
+    # shared console script to the new one, so PATH can no longer reach it.
+    # The environment still sits under this home's tool root, which is proof
+    # enough of ownership on its own.
+    return expected.is_dir()
 
 
 def _registry_entries() -> Mapping[str, Sequence[str]]:

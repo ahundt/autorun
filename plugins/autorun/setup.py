@@ -38,6 +38,9 @@ class TrackedSdist(_sdist):
             base_dir,
             _BUILD_SUPPORT.tracked_sdist_files(PLUGIN_ROOT, list(files)),
         )
+        # The sdist would otherwise carry a dangling `src/pdf_extraction` link,
+        # and `uv build` builds the wheel from the sdist.
+        _BUILD_SUPPORT.materialize_sibling_packages(PLUGIN_ROOT, Path(base_dir))
         _BUILD_SUPPORT.write_build_metadata(
             PLUGIN_ROOT,
             Path(base_dir) / "src" / "autorun" / "metadata.json",

@@ -126,13 +126,23 @@ def test_release_archives_repeat_bytes_in_one_toolchain_and_are_clean(release_bu
     second = {path.name: _digest(path) for path in builds[1].iterdir()}
     assert first == second
 
-    autorun_wheel = next(builds[0].glob("autorun-*.whl"))
-    pdf_wheel = next(builds[0].glob("pdf_extractor-*.whl"))
+    wheels = sorted(builds[0].glob("*.whl"))
+    assert [path.name.split("-")[0] for path in wheels] == ["autorun"], (
+        "a second distribution reappeared; pdf_extraction ships inside autorun"
+    )
+    autorun_wheel = wheels[0]
     with zipfile.ZipFile(autorun_wheel) as archive:
         names = archive.namelist()
         assert any(name.endswith(".dist-info/licenses/LICENSE") for name in names)
         assert not any(name.lower().endswith(".pdf") for name in names)
         assert sum(Path(name).name == "hook_entry.py" for name in names) == 1
+        # The pdf plugin has no build of its own, so nothing else notices if
+        # setuptools stops collecting it.
+        assert "pdf_extraction/cli.py" in names
+        entry_points = archive.read(
+            next(name for name in names if name.endswith(".dist-info/entry_points.txt"))
+        ).decode()
+        assert "extract-pdfs = pdf_extraction.cli:main" in entry_points
         metadata = json.loads(archive.read("autorun/metadata.json"))
         assert metadata == {
             "version": "1.0.0rc1",
@@ -145,12 +155,6 @@ def test_release_archives_repeat_bytes_in_one_toolchain_and_are_clean(release_bu
         assert "claude-agent-sdk" not in package_metadata
         assert "Requires-Dist: ruff" not in package_metadata
 
-    with zipfile.ZipFile(pdf_wheel) as archive:
-        assert any(
-            name.endswith(".dist-info/licenses/LICENSE")
-            for name in archive.namelist()
-        )
-
     for source_archive in builds[0].glob("*.tar.gz"):
         with tarfile.open(source_archive, "r:gz") as archive:
             names = archive.getnames()
@@ -159,8 +163,17 @@ def test_release_archives_repeat_bytes_in_one_toolchain_and_are_clean(release_bu
             assert any(name.endswith("/README.md") for name in names)
 
 
-def _venv(root: Path, wheel: Path, env: dict[str, str]) -> tuple[Path, dict[str, str]]:
-    target = root / wheel.stem
+def _venv(
+    root: Path, wheel: Path, env: dict[str, str], *, label: str
+) -> tuple[Path, dict[str, str]]:
+    """Install one wheel into an environment named for its caller.
+
+    ``label`` is not decoration. Both callers install the same wheel now that
+    there is one distribution, so deriving the directory from the wheel name
+    alone made the second `uv venv` fail on a directory the first had created.
+    """
+    slug = f"{wheel.stem}-{label}"
+    target = root / slug
     _run(["uv", "venv", "--python", sys.executable, target], cwd=root, env=env)
     python = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     _run(["uv", "pip", "install", "--python", python, wheel], cwd=root, env=env)
@@ -171,15 +184,15 @@ def _venv(root: Path, wheel: Path, env: dict[str, str]) -> tuple[Path, dict[str,
     else:
         fake_claude.symlink_to(shutil.which("true") or "/usr/bin/true")
 
-    home = root / f"home-{wheel.stem}"
+    home = root / f"home-{slug}"
     isolated = env.copy()
     isolated.update(
         {
             "HOME": str(home),
             "USERPROFILE": str(home),
-            "AUTORUN_HOME": str(root / f"autorun-home-{wheel.stem}"),
-            "AUTORUN_TEST_STATE_DIR": str(root / f"state-{wheel.stem}"),
-            "AUTORUN_TEST_RUNTIME_DIR": str(root / f"runtime-{wheel.stem}"),
+            "AUTORUN_HOME": str(root / f"autorun-home-{slug}"),
+            "AUTORUN_TEST_STATE_DIR": str(root / f"state-{slug}"),
+            "AUTORUN_TEST_RUNTIME_DIR": str(root / f"runtime-{slug}"),
             "AUTORUN_USE_DAEMON": "0",
             "PATH": os.pathsep.join((str(scripts), os.defpath)),
         }
@@ -190,7 +203,7 @@ def _venv(root: Path, wheel: Path, env: dict[str, str]) -> tuple[Path, dict[str,
 def test_autorun_wheel_install_status_bootstrap_and_uninstall(release_bundle):
     root, _checkout, _commit, env, builds = release_bundle
     wheel = next(builds[0].glob("autorun-*.whl"))
-    scripts, isolated = _venv(root, wheel, env)
+    scripts, isolated = _venv(root, wheel, env, label="cli")
     autorun = scripts / ("autorun.exe" if os.name == "nt" else "autorun")
 
     assert "1.0.0rc1" in _run([autorun, "--version"], cwd=root, env=isolated).stdout
@@ -238,25 +251,35 @@ def test_documented_vcs_subdirectory_installs_autorun_entrypoint(release_bundle)
     assert "1.0.0rc1" in _run([autorun, "--version"], cwd=root, env=env).stdout
 
 
-def test_pdf_wheel_help_and_backend_inventory_are_lightweight(release_bundle):
+def test_pdf_help_and_backend_inventory_are_lightweight(release_bundle):
+    """The PDF CLI must work, and cost nothing, in a plain `autorun` install.
+
+    Every backend is an extra, so the wheel installed here has none of them. The
+    CLI still has to run and report what is missing rather than fail on import.
+    """
     root, _checkout, _commit, env, builds = release_bundle
-    wheel = next(builds[0].glob("pdf_extractor-*.whl"))
+    wheel = next(builds[0].glob("autorun-*.whl"))
     with zipfile.ZipFile(wheel) as archive:
         metadata_name = next(
             name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
         )
         metadata = archive.read(metadata_name).decode("utf-8")
-    requirements = [
-        line for line in metadata.splitlines() if line.startswith("Requires-Dist:")
+    backends = ("markitdown", "pdfplumber", "pdfminer", "pypdf", "docling", "pymupdf4llm")
+    unconditional = [
+        line
+        for line in metadata.splitlines()
+        if line.startswith("Requires-Dist:")
+        and line.split(":", 1)[1].strip().lower().startswith(backends)
+        and "extra ==" not in line
     ]
-    assert requirements
-    assert all("extra ==" in requirement for requirement in requirements), (
-        "the bare PDF wheel requires an extraction dependency outside an optional extra"
+    assert not unconditional, (
+        "an extraction backend is a required autorun dependency, so every user "
+        f"downloads it: {unconditional}"
     )
     for label in ("Homepage", "Repository", "Issues"):
         assert f"Project-URL: {label}, " in metadata
 
-    scripts, isolated = _venv(root, wheel, env)
+    scripts, isolated = _venv(root, wheel, env, label="pdf")
     cli = scripts / ("extract-pdfs.exe" if os.name == "nt" else "extract-pdfs")
     help_result = _run([cli, "--help"], cwd=root, env=isolated, timeout=10)
     assert "--list-backends" in help_result.stdout

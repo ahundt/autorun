@@ -61,8 +61,8 @@ Or use these fallback methods without installing:
 # uv run (recommended fallback — no install required):
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m pdf_extraction document.pdf
 
-# Standalone script execution
-python "${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/cli.py" document.pdf
+# Module execution, if the console script is not on PATH
+python -m pdf_extraction document.pdf
 ```
 
 ## Backend Selection Guide
@@ -234,7 +234,10 @@ The output will contain markdown tables when detected:
 
 ### Source Code Layout
 
-**Location:** `${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/`
+**Location:** `plugins/pdf-extractor/src/pdf_extraction/` in a source checkout, and the
+importable `pdf_extraction` package once `autorun` is installed. This plugin
+directory holds the manifest, command, and this skill; the code ships inside the
+`autorun` distribution behind its `pdf` extra.
 
 | File | Purpose |
 |------|---------|
@@ -322,14 +325,14 @@ dependency graph pins Pillow below the first fully patched release.
 ### `extract-pdfs: command not found`
 ```bash
 # Install as global UV tool from repo root:
-cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf]"
 extract-pdfs --list-backends  # verify
 ```
 
 ### `ModuleNotFoundError: No module named 'pdf_extraction'` (or 'markitdown', 'pdfplumber')
 ```bash
 # Re-install with all base dependencies:
-cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf]"
 # Or install explicitly:
 uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "pypdf>=6.0.0" tqdm
 ```
@@ -337,7 +340,7 @@ uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105"
 ### GPU backend (docling) not available
 ```bash
 # Requires PyTorch; install the GPU extra:
-cd plugins/pdf-extractor && uv tool install --force --editable ".[gpu]" && cd ../..
+uv tool install --force --editable "./plugins/autorun[pdf,pdf-gpu]"
 extract-pdfs --list-backends  # verify docling appears
 # Note: docling downloads models on first use.
 ```
