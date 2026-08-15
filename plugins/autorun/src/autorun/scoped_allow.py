@@ -23,6 +23,20 @@ _PERMANENT_KEYWORDS = frozenset({"permanent", "perm", "p"})
 _DURATION_RE = re.compile(r"^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 
 
+def looks_like_duration(s: str) -> bool:
+    """Return whether ``s`` has duration shape (``5m``, ``2d``, ``0h``).
+
+    Shape only: a zero-valued duration still looks like one, which is how the
+    parsers tell "user typed a duration that is invalid" (reject loudly)
+    apart from "this token is free text" (leave it alone).
+    """
+    s = s.strip().lower()
+    if not s or s.isdigit():
+        return False
+    m = _DURATION_RE.match(s)
+    return bool(m and any(m.groups()))
+
+
 def parse_duration(s: str) -> float | None:
     """Parse a duration string into seconds. Returns None if not a valid duration.
 
@@ -52,8 +66,9 @@ def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
               e.g. "3", "5m", "permanent", "3 5m", None
 
     Rules:
-    - Bare integer: count (remaining_uses)
-    - Duration string (5m, 1h, 30s, 2h30m): ttl_seconds
+    - Bare integer: count (remaining_uses); must be > 0 (a 0-use allow is
+      never active, so it is rejected with ValueError instead of granted)
+    - Duration string (5m, 1h, 30s, 2h30m, 2d): ttl_seconds
     - Integer + duration: both (whichever expires first)
     - "permanent" / "perm" / "p": explicit no-limit -> returns (None, None, True)
     - None or empty: returns (None, None, False) -- caller applies 1-use default
@@ -64,18 +79,39 @@ def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
     parts = desc.strip().split()
     ttl: float | None = None
     uses: int | None = None
+    permanent = False
 
     for part in parts:
         low = part.lower()
         if low in _PERMANENT_KEYWORDS:
-            return (None, None, True)  # Explicit permanent — no limits
-        if low.isdigit():
+            permanent = True
+        elif low.isdigit():
             uses = int(low)
-        else:
+            if uses <= 0:
+                raise ValueError(
+                    f"count must be greater than 0, got {part!r}; pass a "
+                    "positive count, a duration such as 5m or 2d, or perm"
+                )
+        elif looks_like_duration(low):
             parsed_ttl = parse_duration(low)
-            if parsed_ttl is not None:
-                ttl = parsed_ttl
+            if parsed_ttl is None:
+                raise ValueError(
+                    f"duration must be greater than 0, got {part!r}; pass a "
+                    "duration such as 5m or 2d, a positive count, or perm"
+                )
+            ttl = parsed_ttl
+        # Any other token is free text the caller owns (pattern words).
 
+    if permanent and (ttl is not None or uses is not None):
+        # The strict sibling parser (parse_scope_tokens) rejects this too;
+        # silently letting perm win would widen an explicit 5m into a
+        # session-permanent grant.
+        raise ValueError(
+            "perm cannot be combined with a count or duration; pass perm "
+            "alone for the rest of the session, or a count/duration without it"
+        )
+    if permanent:
+        return (None, None, True)  # Explicit permanent — no limits
     return (ttl, uses, False)
 
 
@@ -311,8 +347,19 @@ class ScopedGrant:
                 0,
                 math.ceil(self.ttl_seconds - (timestamp - self.granted_at)),
             )
-            if remaining >= 60:
-                parts.append(f"{int(remaining // 60)}m{int(remaining % 60)}s")
+            # Render in the units the grant grammar accepts (d, h, m, s):
+            # a 2d grant reads back as 2d0h0m, not 2880m0s. Below an hour the
+            # historical m/s form is kept; at an hour and above seconds are
+            # noise and are dropped.
+            days, rest = divmod(int(remaining), 86400)
+            hours, rest = divmod(rest, 3600)
+            minutes, seconds = divmod(rest, 60)
+            if days:
+                parts.append(f"{days}d{hours}h{minutes}m")
+            elif hours:
+                parts.append(f"{hours}h{minutes}m")
+            elif remaining >= 60:
+                parts.append(f"{minutes}m{seconds}s")
             else:
                 parts.append(f"{int(remaining)}s")
         if not parts:

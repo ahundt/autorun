@@ -423,6 +423,88 @@ class TestParseScopeArgs:
         assert parse_scope_args("PERM") == (None, None, True)
         assert parse_scope_args("P") == (None, None, True)
 
+    def test_day_units_combine_with_counts_in_either_order(self):
+        assert parse_scope_args("2d") == (172800.0, None, False)
+        assert parse_scope_args("3 1d") == (86400.0, 3, False)
+        assert parse_scope_args("1d 3") == (86400.0, 3, False)
+        assert parse_scope_args("1d12h 2") == (129600.0, 2, False)
+
+    def test_zero_count_is_rejected_not_silently_granted(self):
+        """``/ar:ok rm 0`` must fail loudly: a 0-use allow is never active."""
+        with pytest.raises(ValueError, match="greater than 0"):
+            parse_scope_args("0")
+        with pytest.raises(ValueError, match="greater than 0"):
+            parse_scope_args("0 5m")
+
+    def test_zero_duration_is_rejected_not_silently_ignored(self):
+        """``0d``/``0m`` are duration-shaped; dropping them would grant the
+        1-use default (or fold them into the pattern) without a word."""
+        with pytest.raises(ValueError, match="greater than 0"):
+            parse_scope_args("0d")
+        with pytest.raises(ValueError, match="greater than 0"):
+            parse_scope_args("3 0m")
+
+    def test_status_label_renders_days_and_hours_users_typed(self):
+        """``/ar:ok x 2d`` must not read back as ``2880m0s``; below an hour
+        the pinned ``5m0s`` form is unchanged."""
+        now = 1_000_000.0
+
+        def label(ttl):
+            return ScopedAllow(pattern="x", granted_at=now, ttl_seconds=ttl).status_label(now=now)
+
+        assert label(172800) == "2d0h0m remaining"
+        assert label(129600) == "1d12h0m remaining"
+        assert label(10800) == "3h0m remaining"
+        assert label(5400) == "1h30m remaining"
+        assert label(300) == "5m0s remaining"
+        assert label(45) == "45s remaining"
+
+    def test_permanent_cannot_be_combined_with_a_bound(self):
+        """``perm`` beside a count or duration is contradictory: the strict
+        sibling parser rejects it and the lenient one must not silently
+        widen ``5m`` into a session-permanent allow."""
+        for desc in ("5m perm", "perm 5m", "3 perm", "perm 3", "2d 3 p"):
+            with pytest.raises(ValueError, match="cannot be combined"):
+                parse_scope_args(desc)
+
+
+class TestAllowCommandRejectsZeroCount:
+    def test_ok_with_zero_count_returns_an_error_and_grants_nothing(self):
+        sid = f"test-zero-count-{time.time()}"
+        store = ThreadSafeDB()
+        result = plugins.app.dispatch(
+            EventContext(session_id=sid, event="UserPromptSubmit", prompt="/ar:ok rm 0", store=store)
+        )
+        message = result.get("systemMessage", "")
+        assert message.startswith("❌"), message
+        assert "greater than 0" in message
+        blocked = plugins.app.dispatch(
+            EventContext(
+                session_id=sid, event="PreToolUse", tool_name="Bash",
+                tool_input={"command": "rm /tmp/zero-count-probe"}, store=store,
+            )
+        )
+        assert (blocked or {}).get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+    @pytest.mark.parametrize(
+        ("prompt", "fragment"),
+        [
+            ("/ar:ok rm 0d", "greater than 0"),
+            ("/ar:ok rm 5m perm", "cannot be combined"),
+        ],
+    )
+    def test_ok_rejects_contradictory_or_zero_scope_tokens(self, prompt, fragment):
+        """Scope-shaped tokens are validated, never folded into the pattern."""
+        sid = f"test-scope-reject-{time.time()}"
+        store = ThreadSafeDB()
+        result = plugins.app.dispatch(
+            EventContext(session_id=sid, event="UserPromptSubmit", prompt=prompt, store=store)
+        )
+        message = result.get("systemMessage", "")
+        assert message.startswith("❌"), message
+        assert fragment in message
+        assert "'rm 0d'" not in message and "'rm 5m perm'" not in message
+
 
 # === Enforcement integration tests ===
 

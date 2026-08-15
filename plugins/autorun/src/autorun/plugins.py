@@ -65,6 +65,7 @@ from .scoped_allow import (
     parse_scope_args,
     parse_scope_tokens,
     parse_duration,
+    looks_like_duration,
     _PERMANENT_KEYWORDS,
 )
 from .command_detection import (
@@ -445,9 +446,13 @@ def _auto_detect_regex(pattern: str, ptype: str) -> tuple[str, str]:
 
 
 def _is_scope_token(token: str) -> bool:
-    """Return whether a token is an /ar:ok scope modifier."""
+    """Return whether a token is an /ar:ok scope modifier.
+
+    Shape decides, not validity: ``0d`` is a scope token that
+    ``parse_scope_args`` then rejects, rather than pattern text.
+    """
     token = token.strip().lower()
-    return token.isdigit() or token in _PERMANENT_KEYWORDS or parse_duration(token) is not None
+    return token.isdigit() or token in _PERMANENT_KEYWORDS or looks_like_duration(token)
 
 
 def _parse_args(args: str) -> tuple:
@@ -665,10 +670,10 @@ def _make_block_op(scope: str, op: str):
                 return f"❌ Usage: {usage}"
             try:
                 pattern, desc, ptype = _parse_allow_args(args)
+                ttl, uses, explicit_permanent = parse_scope_args(desc)
             except ValueError as e:
                 return f"❌ Error: {e}"
 
-            ttl, uses, explicit_permanent = parse_scope_args(desc)
             default_scope = not explicit_permanent and ttl is None and uses is None
             if default_scope:
                 uses = 1  # Safe default: one user-visible command

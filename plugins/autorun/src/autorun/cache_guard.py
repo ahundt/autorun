@@ -783,7 +783,10 @@ def _cmd_set(rest: list, session_id: str) -> str:
 
 def _cmd_ok(rest: list, session_id: str) -> str:
     desc = " ".join(rest) if rest else ""
-    ttl, uses, perm = parse_scope_args(desc or None)
+    try:
+        ttl, uses, perm = parse_scope_args(desc or None)
+    except ValueError as e:
+        return f"ar:cache ok: {e}"
     if not perm and ttl is None and uses is None:
         uses = 1
     grant_override(session_id, ttl_seconds=ttl, uses=None if perm else uses, permanent=perm)
