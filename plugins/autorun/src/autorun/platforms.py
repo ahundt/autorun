@@ -22,7 +22,7 @@ Multi-session safety:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import os
 from pathlib import Path
 from typing import Callable, Mapping
@@ -1448,13 +1448,17 @@ QWEN = register(
         # exactly one route (the shared root, because Qwen reads it), and this
         # field says where a native copy goes when one is actually needed —
         # under `--skill-placement native`/`both`, or as the per-name fallback
-        # when a user-authored skill of the same name blocks the shared route.
+        # when something that is not a loadable skill blocks the shared route.
         #
-        # Retiring it was tried and reverted: it made a blocked name reach Qwen
-        # by no route at all, silently dropping that skill. The duplicate
-        # exposure that prompted it had a different cause — `if shared_conflicts:
-        # include_skills = True` republished *every* skill of *every* plugin
-        # natively after a single collision — and that is fixed per name.
+        # Retiring the field was tried and reverted: it made a blocked name
+        # reach Qwen by no route at all, silently dropping that skill. The
+        # duplicate exposure that prompted it had a different cause —
+        # `if shared_conflicts: include_skills = True` republished *every*
+        # skill of *every* plugin natively after a single collision — and that
+        # is fixed per name. A user-authored loadable skill on the shared root
+        # no longer triggers the fallback at all: Qwen already sees the user's
+        # copy, so a native copy would list the name twice
+        # (skills.skill_plan's visible_via_shared).
         native_skills=ExtensionSkills("extensions"),
         generates_toml_commands=False,
         extensions_subdir="extensions",
@@ -1622,6 +1626,40 @@ PI = register(
                 "SessionEnd",
             }
         ),
+    )
+)
+
+
+PRIME_HOOKS = HookProtocol("prime")
+
+# Prime Agent is PrimeIntellect's build of the Pi coding agent: the shipped
+# 0.7.1 bundle keeps Pi's runtime (its launcher's helper is named
+# __piBundleCreateRequire and it sets PI_CODING_AGENT=true in subprocesses)
+# and rebrands the config dir via pkg.piConfig = {name: "prime-agent",
+# configDir: ".prime/agent"}. Everything except identity, discovery paths,
+# and the wire label is therefore inherited from PI verbatim: same template,
+# same extension step, same event and tool contracts.
+PRIME = register(
+    replace(
+        PI,
+        name="prime",
+        display_name="Prime Agent",
+        binary="prime-agent",
+        # Prime sets PI_CODING_AGENT (Pi's spelling) even in its own build,
+        # so no environment signal distinguishes the two. Prime claims none:
+        # the installed extension always passes cliType explicitly, and
+        # transcript paths carry .prime/agent for the path-hint route. Its
+        # env prefix is PRIME_AGENT (from piConfig.name), which names the
+        # config-dir override below.
+        detect_env_vars=(),
+        detect_session_keys=(),
+        standalone_session_env_vars=(),
+        detect_path_hints=(".prime/agent",),
+        config_dir="~/.prime/agent/",
+        config_dir_env_vars=("PRIME_AGENT_CODING_AGENT_DIR",),
+        hook_protocol=PRIME_HOOKS,
+        task_record_source="prime_task_tool",
+        memory_sentinel_slug="prime-agents-md",
     )
 )
 

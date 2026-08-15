@@ -240,10 +240,22 @@ BRIDGE_TEMPLATE_SUBDIR = Path("bridge_template")
 
 
 def pi_extension_step(harness: object, ctx: Context) -> Iterable[Intent]:
-    """Publish Pi's TypeScript adapter as one dedicated owned extension tree."""
-    staged = ctx.settings.get("_staged_pi")
-    base = discovery.config_dir(getattr(harness, "platform", harness), home=ctx.home)
-    if not isinstance(staged, Mapping) or base is None:
+    """Publish the Pi-family TypeScript adapter as one owned extension tree.
+
+    The staged trees are keyed by harness name because each family member
+    (Pi, Prime Agent) gets the shared template with its own ``cliType`` and
+    ``--cli`` identity substituted. A custom harness cloned from the family
+    falls back to its flavor's staging.
+    """
+    platform = getattr(harness, "platform", harness)
+    staged_by_name = ctx.settings.get("_staged_pi")
+    base = discovery.config_dir(platform, home=ctx.home)
+    if not isinstance(staged_by_name, Mapping) or base is None:
+        return
+    staged = staged_by_name.get(getattr(platform, "name", "")) or staged_by_name.get(
+        getattr(platform, "install_flavor", "")
+    )
+    if not isinstance(staged, Mapping):
         return
     for plugin, source in staged.items():
         yield Intent(
@@ -291,7 +303,15 @@ STEPS: Mapping[str, tuple[Step, ...]] = {
     "forgecode": (skills_step, commands_step),
     "opencode": (skills_step, commands_step, opencode_shim_step),
     "pi": (skills_step, pi_extension_step),
+    # Prime Agent is Pi rebranded (see platforms.PRIME); same steps, and the
+    # staged adapter carries its own cliType.
+    "prime": (skills_step, pi_extension_step),
 }
+
+
+def pi_family_names() -> tuple[str, ...]:
+    """Names of every harness that publishes the Pi in-process adapter."""
+    return tuple(name for name, row in STEPS.items() if pi_extension_step in row)
 
 
 # --- the two phases a walk cannot express ------------------------------------
@@ -626,12 +646,21 @@ def prepared(
             port_file=str(ctx.settings.get("_daemon_port_file", "") or ""),
             command=ctx.settings.get("_hook_command", ()),
         )
-        pi_extensions = stage_pi_extension(
-            Path(tmp) / "_pi", plugins,
-            socket=str(ctx.settings.get("_daemon_socket", "") or ""),
-            port_file=str(ctx.settings.get("_daemon_port_file", "") or ""),
-            command=ctx.settings.get("_pi_hook_command", ()),
-        )
+        pi_hook_commands = ctx.settings.get("_pi_hook_commands", {})
+        pi_extensions = {
+            name: stage_pi_extension(
+                Path(tmp) / f"_{name}", plugins,
+                socket=str(ctx.settings.get("_daemon_socket", "") or ""),
+                port_file=str(ctx.settings.get("_daemon_port_file", "") or ""),
+                command=(
+                    pi_hook_commands.get(name, ())
+                    if isinstance(pi_hook_commands, Mapping)
+                    else ()
+                ),
+                cli_type=name,
+            )
+            for name in pi_family_names()
+        }
         yield _with(
             ctx,
             _staged_extensions=staged,
@@ -651,8 +680,13 @@ def _stage_inprocess_adapter(
     socket: str,
     port_file: str,
     command: object,
+    cli_type: str = "",
 ) -> bool:
-    """Stage one adapter through the shared placeholder and transport path."""
+    """Stage one adapter through the shared placeholder and transport path.
+
+    ``cli_type`` fills ``__AUTORUN_CLI_TYPE__`` where the template carries it;
+    templates without the placeholder (OpenCode's) are unaffected.
+    """
     import json
     import shutil
 
@@ -665,6 +699,7 @@ def _stage_inprocess_adapter(
         .replace("__AUTORUN_SOCKET__", json.dumps(socket))
         .replace("__AUTORUN_PORT_FILE__", json.dumps(port_file))
         .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", json.dumps(argv))
+        .replace("__AUTORUN_CLI_TYPE__", json.dumps(cli_type))
     )
     (directory / entry_name).write_text(text, encoding="utf-8")
     shutil.copy2(bridge, directory / "daemon-client.mjs")
@@ -678,8 +713,14 @@ def stage_pi_extension(
     socket: str,
     port_file: str,
     command: object,
+    cli_type: str = "pi",
 ) -> Mapping[str, Path]:
-    """Stage Pi's adapter and the shared daemon transport it imports."""
+    """Stage the Pi-family adapter and the shared daemon transport it imports.
+
+    One template serves every family member; ``cli_type`` is the staged
+    harness identity ("pi" or "prime") and also rides in ``command`` as the
+    fallback hook's ``--cli`` argument.
+    """
     staged: dict[str, Path] = {}
     for plugin, plugin_dir in plugins.items():
         runtime_root = discovery.plugin_runtime_root(plugin_dir)
@@ -692,6 +733,7 @@ def stage_pi_extension(
             socket=socket,
             port_file=port_file,
             command=command,
+            cli_type=cli_type,
         ):
             staged[plugin] = directory
     return staged

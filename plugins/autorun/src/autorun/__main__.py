@@ -393,6 +393,11 @@ For more information: https://github.com/ahundt/autorun
         help="Install for Pi only (native TypeScript extension surface)",
     )
     install_group.add_argument(
+        "--prime",
+        action="store_true",
+        help="Install for Prime Agent only (Pi variant; same extension surface)",
+    )
+    install_group.add_argument(
         "--custom-harness",
         action="append",
         default=[],
@@ -1014,6 +1019,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "antigravity_only": args.antigravity,
             "qwen_only": args.qwen,
             "pi_only": args.pi,
+            "prime_only": args.prime,
             "conductor": args.conductor,
             "codex_hook_source": args.codex_hook_source,
             "codex_plugin_marketplace": args.codex_plugin_marketplace,

@@ -481,6 +481,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
@@ -501,6 +502,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
@@ -521,6 +523,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
@@ -541,6 +544,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
@@ -561,6 +565,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source="plugin", codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
@@ -581,6 +586,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace="github", claude_agents_skills=None,
             skill_placement=None,
         )
@@ -602,6 +608,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
             custom_harnesses=[spec],
@@ -623,6 +630,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
             dry_run=True,
@@ -656,6 +664,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=True,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )
@@ -674,6 +683,19 @@ class TestMainFunctionRouting:
         assert mock_install.call_args.kwargs["pi_only"] is True
         assert mock_install.call_args.kwargs["qwen_only"] is False
 
+    def test_install_with_prime_passes_prime_only_flag(self):
+        """Test that --install --prime targets Prime Agent installation."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--prime"])
+
+        assert result == 0
+        assert mock_install.call_args.kwargs["prime_only"] is True
+        assert mock_install.call_args.kwargs["pi_only"] is False
+
     def test_install_with_antigravity_passes_antigravity_only_flag(self):
         """Test that --install --antigravity targets Antigravity CLI installation."""
         from autorun.__main__ import main
@@ -689,6 +711,7 @@ class TestMainFunctionRouting:
             antigravity_only=True,
             qwen_only=False,
             pi_only=False,
+            prime_only=False,
             conductor=None, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             skill_placement=None,
         )

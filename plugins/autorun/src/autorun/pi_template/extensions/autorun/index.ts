@@ -33,7 +33,7 @@ const TaskListParameters = {
 };
 
 const bridge = createDaemonBridge({
-  cliType: "pi",
+  cliType: __AUTORUN_CLI_TYPE__,
   socketPath: __AUTORUN_SOCKET__,
   portFile: __AUTORUN_PORT_FILE__,
   hookEntryCommand: __AUTORUN_HOOK_ENTRY_COMMAND__,

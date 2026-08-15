@@ -52,6 +52,7 @@ NATIVE_DISPLAY_PREFIXES = {
     "forgecode": "/ar-",
     "opencode": "/ar-",
     "pi": "/ar ",
+    "prime": "/ar ",
 }
 
 

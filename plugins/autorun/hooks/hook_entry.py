@@ -61,6 +61,7 @@ HOOK_TIMEOUT_BY_CLI = {
     "forgecode": 5.0,
     "opencode": 4.5,
     "pi": 4.5,
+    "prime": 4.5,
 }
 HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
 # Tests may override this legacy seam. Production derives both files from the
@@ -129,7 +130,7 @@ def _append_debug_log(message: str) -> None:
 # =============================================================================
 
 
-_VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode", "pi")
+_VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode", "pi", "prime")
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _VALID_EXPLICIT_EVENTS = {
     "PreToolUse",
@@ -254,6 +255,8 @@ def detect_cli_type(payload: dict | None = None) -> str:
             transcript_path = str(payload.get("transcript_path", ""))
             if ".opencode" in transcript_path or ".config/opencode" in transcript_path:
                 return "opencode"
+            if ".prime/agent" in transcript_path:
+                return "prime"
             if ".pi/agent" in transcript_path:
                 return "pi"
             # Antigravity roots live under ~/.gemini, so its hints must be

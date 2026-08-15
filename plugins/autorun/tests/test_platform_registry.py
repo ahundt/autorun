@@ -672,7 +672,7 @@ def test_shared_agents_skills_capability_is_declared_per_platform():
     # ("{workspace}/.agents/skills/{skill_name}/SKILL.md" in the shipped agy
     # binary), never ~/.agents/skills. Claude Code is absent because
     # anthropics/claude-code#31005 is still open; it reads ~/.claude/skills.
-    assert claiming == {"codex", "forgecode", "gemini", "opencode", "pi", "qwen"}
+    assert claiming == {"codex", "forgecode", "gemini", "opencode", "pi", "prime", "qwen"}
 
 
 def test_declaring_both_a_shared_read_and_a_native_route_is_allowed():
@@ -703,7 +703,7 @@ def test_declaring_both_a_shared_read_and_a_native_route_is_allowed():
 
     # Recorded so a change here is deliberate. Each of these reads the shared
     # root and can also place a native copy when asked or when blocked.
-    assert both == {"codex", "gemini", "pi", "qwen"}, both
+    assert both == {"codex", "gemini", "pi", "prime", "qwen"}, both
 
 
 def test_skill_placement_routes_cover_every_platform_and_mode():
@@ -781,6 +781,7 @@ _EXPECTED_OWN_SKILL_ROOTS = {
     "gemini": {".gemini/skills"},
     "qwen": {".qwen/skills"},
     "pi": {".pi/agent/skills"},
+    "prime": {".prime/agent/skills"},
     "opencode": {".config/opencode/skills", ".claude/skills"},
     "forgecode": {"forge/skills"},
     "antigravity": {".gemini/config/skills"},

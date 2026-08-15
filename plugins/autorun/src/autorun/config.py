@@ -836,6 +836,8 @@ CONFIG = {
         # fallback and bounds the whole call at its own 5s timer.
         "opencode": 4.0,
         "pi": 4.0,
+        # Prime Agent is Pi's runtime with a rebranded config dir; same bridge.
+        "prime": 4.0,
     },
     "hook_wrapper_timeouts_seconds": {
         # Gemini-family hooks are configured with a 5s outer timeout, so the
@@ -855,6 +857,8 @@ CONFIG = {
         "opencode": 4.5,
         # Pi uses the same bounded in-process bridge and fallback lifecycle.
         "pi": 4.5,
+        # Prime Agent shares Pi's bridge and fallback lifecycle.
+        "prime": 4.5,
     },
     # ─── Plan Acceptance ───────────────────────────────────────────────────
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool

@@ -138,9 +138,12 @@ def test_pi_development_install_uses_redirected_runtime_roots(tmp_path, monkeypa
     text = installed.read_text(encoding="utf-8")
 
     autorun_home = Path(os.environ["AUTORUN_HOME"])
-    assert str(autorun_home / "daemon.sock") in text
-    assert str(autorun_home / "daemon.port") in text
-    assert str(live_home / ".autorun") not in text
+    # The installer writes str(Path) through json.dumps, so compare the
+    # staged JSON form: on Windows the backslashes are escaped in the file
+    # and a raw str(Path) comparison never matches.
+    assert json.dumps(str(autorun_home / "daemon.sock")) in text
+    assert json.dumps(str(autorun_home / "daemon.port")) in text
+    assert json.dumps(str(live_home / ".autorun"))[1:-1] not in text
     after = {
         path.relative_to(live_extension): path.read_bytes()
         for path in live_extension.rglob("*")
@@ -216,6 +219,7 @@ def _run_pi_adapter_driver(tmp_path: Path, responses: list[dict], script: str) -
     source = source.replace("__AUTORUN_SOCKET__", json.dumps(str(socket_path)))
     source = source.replace("__AUTORUN_PORT_FILE__", json.dumps(str(tmp_path / "none.port")))
     source = source.replace("__AUTORUN_HOOK_ENTRY_COMMAND__", "[]")
+    source = source.replace("__AUTORUN_CLI_TYPE__", json.dumps("pi"))
     (extension_dir / "index.ts").write_text(source, encoding="utf-8")
     shutil.copy2(BRIDGE_SOURCE, extension_dir / "daemon-client.mjs")
     driver = tmp_path / "driver.mjs"
@@ -765,3 +769,132 @@ console.log(JSON.stringify(response));
     assert frames[0]["cli_type"] == "pi"
     assert frames[0]["protocol_version"] == 1
     assert frames[0]["session_id"] == "pi-session"
+
+
+# --- Prime Agent: Pi variant through the same pathway ------------------------
+#
+# prime-agent is PrimeIntellect's build of the Pi coding agent. The shipped
+# 0.7.1 bundle keeps Pi's runtime (its launcher is named __piBundleCreateRequire
+# and it still sets PI_CODING_AGENT=true in subprocesses) and rebrands only the
+# config dir through pkg.piConfig.configDir = ".prime/agent". autorun therefore
+# supports it as a registry entry over the existing Pi template, staging, and
+# extension step — no second template, step function, or protocol class.
+
+
+def test_prime_platform_is_a_pi_variant_with_its_own_identity():
+    from autorun.platforms import PLATFORMS
+
+    pi = PLATFORMS["pi"]
+    prime = PLATFORMS["prime"]
+    # Identity and discovery paths are Prime Agent's own.
+    assert prime.display_name == "Prime Agent"
+    assert prime.binary == "prime-agent"
+    assert prime.config_dir == "~/.prime/agent/"
+    assert prime.config_dir_env_vars == ("PRIME_AGENT_CODING_AGENT_DIR",)
+    assert prime.detect_path_hints == (".prime/agent",)
+    # The shipped Prime bundle sets PI_CODING_AGENT=true (Pi's spelling), so
+    # environment signals cannot tell the two harnesses apart. Prime claims
+    # none and relies on the extension's explicit cliType plus its transcript
+    # paths, which do carry .prime/agent.
+    assert prime.detect_env_vars == ()
+    assert prime.detect_session_keys == ()
+    assert prime.standalone_session_env_vars == ()
+    assert prime.hook_protocol.name == "prime"
+    assert prime.memory_sentinel_slug == "prime-agents-md"
+    assert prime.task_record_source == "prime_task_tool"
+    # Unified pathway: every behavioral contract is Pi's, verbatim.
+    assert prime.has_hooks is True
+    assert prime.tool_names == pi.tool_names
+    assert prime.task_management_style == pi.task_management_style
+    assert prime.task_create_tools == pi.task_create_tools
+    assert prime.autorun_to_harness_cli_events == pi.autorun_to_harness_cli_events
+    assert prime.native_hook_events == pi.native_hook_events
+    assert prime.installed_hook_events == pi.installed_hook_events
+    assert prime.command_display_prefix == pi.command_display_prefix
+    assert prime.memory_filename == pi.memory_filename
+    assert prime.memory_template == pi.memory_template
+    assert prime.skill_invocation_format == pi.skill_invocation_format
+    assert prime.loads_shared_agents_skills is True
+
+
+def test_prime_reuses_the_pi_extension_step_row():
+    from autorun.installer import steps
+
+    assert steps.STEPS["prime"] == steps.STEPS["pi"]
+    assert steps.pi_family_names() == ("pi", "prime")
+
+
+def test_staged_pi_family_extensions_carry_their_own_cli_type(tmp_path):
+    from autorun.installer import steps
+
+    plugins = {"ar": MARKETPLACE_ROOT / "plugins" / "autorun"}
+    for cli_type in ("pi", "prime"):
+        staged = steps.stage_pi_extension(
+            tmp_path / f"_{cli_type}",
+            plugins,
+            socket=str(tmp_path / "daemon.sock"),
+            port_file="",
+            command=("hook_entry.py", "--cli", cli_type),
+            cli_type=cli_type,
+        )
+        text = (staged["ar"] / "index.ts").read_text(encoding="utf-8")
+        assert f'cliType: "{cli_type}"' in text
+        assert f'"--cli", "{cli_type}"' in text
+        assert "__AUTORUN_CLI_TYPE__" not in text
+
+
+def _install_prime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Mirror ``_install_pi`` with only the prime-agent binary discoverable."""
+    from autorun.installer import entrypoint
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv(
+        "PRIME_AGENT_CODING_AGENT_DIR", str(home / ".prime" / "agent")
+    )
+    monkeypatch.setenv("AUTORUN_HOME", f"/tmp/aprh-{tmp_path.name[-8:]}")
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", f"/tmp/aprs-{tmp_path.name[-8:]}")
+    monkeypatch.setattr(entrypoint, "_marketplace_root", lambda: MARKETPLACE_ROOT)
+    monkeypatch.setattr(
+        entrypoint.shutil,
+        "which",
+        lambda name: (
+            "/opt/homebrew/bin/prime-agent" if name == "prime-agent" else None
+        ),
+    )
+    monkeypatch.setattr(
+        entrypoint,
+        "_run",
+        lambda argv: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    assert entrypoint.install_plugins("ar", conductor=False, tool=False) == 0
+    return home
+
+
+def test_prime_install_lands_in_the_prime_home_with_prime_cli_type(tmp_path, monkeypatch):
+    from autorun.installer import entrypoint
+
+    home = _install_prime(tmp_path, monkeypatch)
+    installed = home / ".prime" / "agent" / "extensions" / "ar"
+    assert (installed / "daemon-client.mjs").is_file()
+    assert (installed / ".autorun-owned").is_file()
+    text = (installed / "index.ts").read_text(encoding="utf-8")
+    assert 'cliType: "prime"' in text
+    assert '"--cli", "prime"' in text
+    # Nothing may land in Pi's home from a prime-only install.
+    assert not (home / ".pi").exists()
+
+    assert entrypoint.uninstall_plugins("ar") == 0
+    assert not installed.exists()
+
+
+def test_prime_backend_declares_an_e2e_contract():
+    from autorun.platforms import PLATFORMS
+    from e2e_support import BACKEND_E2E_CONTRACTS
+
+    assert "prime" in PLATFORMS
+    contract = BACKEND_E2E_CONTRACTS["prime"]
+    assert contract.hook_process is PLATFORMS["prime"].has_hooks
+    assert contract.isolation

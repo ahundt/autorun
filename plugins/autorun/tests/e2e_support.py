@@ -64,6 +64,7 @@ BACKEND_E2E_CONTRACTS = {
     "forgecode": BackendE2EContract("test_install_steps.py", False, False, "advisory install; no external hook API"),
     "opencode": BackendE2EContract("test_opencode_bridge.py", True, False, "in-process JS plugin carries events to the daemon socket; live deny dogfooded with a local model 2026-08-04"),
     "pi": BackendE2EContract("test_pi_e2e_real_money.py", True, True, "live installed extension and daemon, temporary cwd; recorded-frame and isolated-install coverage stays in test_pi_bridge.py"),
+    "prime": BackendE2EContract("test_pi_bridge.py", True, False, "Pi variant sharing the same staged adapter with cliType 'prime'; isolated-install and cliType-substitution coverage in test_pi_bridge.py; no live-model canary because Prime Agent provider auth is not provisioned"),
 }
 
 
