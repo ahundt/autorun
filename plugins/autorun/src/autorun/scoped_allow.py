@@ -19,14 +19,14 @@ from .config import CONFIG, SCOPED_ALLOW_DEFAULT_GRACE_SECONDS
 
 _PERMANENT_KEYWORDS = frozenset({"permanent", "perm", "p"})
 
-# Matches duration strings like "5m", "1h", "30s", "2h30m", "1h15m30s"
-_DURATION_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+# Matches duration strings like "5m", "1h", "30s", "2d", "1d12h", "2h30m"
+_DURATION_RE = re.compile(r"^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 
 
 def parse_duration(s: str) -> float | None:
     """Parse a duration string into seconds. Returns None if not a valid duration.
 
-    Supported formats: "30s", "5m", "1h", "2h30m", "1h15m30s"
+    Supported formats: "30s", "5m", "1h", "2d", "2h30m", "1d12h", "1d2h30m15s"
     """
     s = s.strip().lower()
     if not s or s.isdigit():
@@ -34,10 +34,11 @@ def parse_duration(s: str) -> float | None:
     m = _DURATION_RE.match(s)
     if not m or not any(m.groups()):
         return None
-    hours = int(m.group(1) or 0)
-    minutes = int(m.group(2) or 0)
-    seconds = int(m.group(3) or 0)
-    total = hours * 3600 + minutes * 60 + seconds
+    days = int(m.group(1) or 0)
+    hours = int(m.group(2) or 0)
+    minutes = int(m.group(3) or 0)
+    seconds = int(m.group(4) or 0)
+    total = days * 86400 + hours * 3600 + minutes * 60 + seconds
     return float(total) if total > 0 else None
 
 

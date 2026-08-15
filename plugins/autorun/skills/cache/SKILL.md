@@ -55,7 +55,7 @@ unknown slash commands before hooks see them, so use `ar:cache` or
 ```
 
 Units: tokens accept `50000`, `50,000`, `50_000`, `50k`, `.5M`, `1.5M`.
-Percent: `85%` or bare decimal `0.85`. Durations: `5m`, `1h`, `2h30m`, `perm`.
+Percent: `85%` or bare decimal `0.85`. Durations: `5m`, `1h`, `2h30m`, `2d`, `perm`.
 
 ## 3. Grammar decision: `/ar:cache ok` not `/ar:ok cache`
 

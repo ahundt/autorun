@@ -14,7 +14,7 @@ Allow a pattern globally (persists across sessions). Default: 1 use (auto-revoke
 **Scope options** (trailing args after pattern):
 - No args: **1 use** (safe default, auto-revokes)
 - Integer: use count (e.g. `3` = allow 3 times)
-- Duration: time limit (e.g. `5m`, `1h`, `30s`, `2h30m`)
+- Duration: time limit (e.g. `5m`, `1h`, `30s`, `2h30m`, `2d`, `1d12h`)
 - Both: whichever expires first (e.g. `3 5m`)
 - `permanent` / `perm` / `p`: unlimited across all sessions until explicitly cleared via `/ar:globalclear`
 

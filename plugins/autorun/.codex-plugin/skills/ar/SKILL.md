@@ -22,7 +22,7 @@ command.
 
 - `ar:no <pattern>` — block a command pattern in this session.
 - `ar:ok <pattern> [N|5m|perm]` — allow a blocked pattern: N uses, a
-  duration such as `5m` or `2h30m`, or `perm` for the rest of the session.
+  duration such as `5m`, `2h30m`, or `2d`, or `perm` for the rest of the session.
   Default is one use, then auto-revoke.
 - `ar:blocks` — show active session blocks and allows.
 - `ar:clear` — clear all session blocks and allows.
@@ -54,7 +54,7 @@ command.
 - `ar:cache` — show status. `ar:cache on|off [5m|1h|perm]` — toggle,
   optionally for a window.
 - `ar:cache set ratio|read|age|full <value>` — configure threshold axes.
-  Tokens `50k` or `.5M`, percents `85%`, durations `5m` or `2h30m`.
+  Tokens `50k` or `.5M`, percents `85%`, durations `5m`, `2h30m`, or `2d`.
 - `ar:cache ok [N|5m|perm]` — override the gate; `ar:cache no` — cancel
   outstanding overrides.
 

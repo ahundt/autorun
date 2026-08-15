@@ -32,7 +32,7 @@ cache-read tokens below floor, or cache age above ceiling), using the same
 
 Token units: `50000`, `50,000`, `50_000`, `50k`, `.5M`, `1.5M`, `2M`.
 Percent units: `85%`, `0.85`.
-Durations: `5s`, `5m`, `1h`, `2h30m`, `perm` (reuses `parse_scope_args`).
+Durations: `5s`, `5m`, `1h`, `2h30m`, `2d`, `perm` (reuses `parse_scope_args`).
 
 ## How it decides
 

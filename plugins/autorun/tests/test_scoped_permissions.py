@@ -370,10 +370,20 @@ class TestParseDuration:
     def test_full(self):
         assert parse_duration("1h15m30s") == 4530.0
 
+    def test_days(self):
+        assert parse_duration("1d") == 86400.0
+        assert parse_duration("2d") == 172800.0
+
+    def test_days_combined(self):
+        assert parse_duration("1d12h") == 129600.0
+        assert parse_duration("1d2h30m15s") == 95415.0
+
     def test_invalid(self):
         assert parse_duration("abc") is None
         assert parse_duration("") is None
         assert parse_duration("42") is None  # Bare int not a duration
+        assert parse_duration("h1d") is None  # units out of order
+        assert parse_duration("1d1d") is None  # repeated unit
 
     def test_zero(self):
         assert parse_duration("0s") is None
