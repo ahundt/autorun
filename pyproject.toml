@@ -50,6 +50,16 @@ Homepage = "https://github.com/ahundt/autorun"
 Repository = "https://github.com/ahundt/autorun.git"
 Issues = "https://github.com/ahundt/autorun/issues"
 
+[tool.uv]
+constraint-dependencies = [
+    # onnxruntime 1.24+ publishes no cp310 wheels while still declaring
+    # requires-python >=3.10, so an unconstrained lock selects an
+    # uninstallable version for the <3.11 fork (reached through the pdf
+    # extra: markitdown -> magika -> onnxruntime). 1.23.2 is the newest
+    # release with a cp310 wheel.
+    "onnxruntime<1.24; python_version < '3.11'",
+]
+
 [tool.uv.workspace]
 # plugins/pdf-extractor is deliberately absent: it is a Claude marketplace
 # plugin, not a Python distribution. Its code stays in that directory and
