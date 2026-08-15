@@ -79,6 +79,7 @@ from .task_status import (
     COMPLETED_TASK_STATUSES,
     NON_BLOCKING_TASK_STATUSES,
     PRUNABLE_TASK_STATUSES,
+    STATUS_POLICY,
     task_status_policy,
 )
 
@@ -1776,6 +1777,15 @@ class TaskLifecycle:
             for tid in to_remove:
                 tasks.pop(tid)
 
+            # Explicit ids win; index fallbacks (Gemini todos carry none) skip
+            # any id an explicit todo already claims, so two todos never fold
+            # into one record.
+            explicit_ids = {
+                str(todo.get("id"))
+                for todo in todos
+                if isinstance(todo, dict) and todo.get("id")
+            }
+            next_index = 1
             for i, todo in enumerate(todos, 1):
                 if not isinstance(todo, dict):
                     continue
@@ -1787,10 +1797,23 @@ class TaskLifecycle:
                     or todo.get("subject")
                     or f"Task {i}"
                 )
-                task_id = str(todo.get("id") or i)
+                if todo.get("id"):
+                    task_id = str(todo["id"])
+                else:
+                    while str(next_index) in explicit_ids or str(next_index) in tasks:
+                        next_index += 1
+                    task_id = str(next_index)
+                    next_index += 1
                 status = str(todo.get("status") or "pending").strip().lower()
-                if status == "cancelled":
+                # Both spellings of the harness's "cancelled" mean deleted;
+                # anything outside the shared status policy falls back to
+                # pending rather than raising out of persistence and dropping
+                # the whole sync (SQLite) or blocking Stop on a status no
+                # policy knows (JSON).
+                if status in ("cancelled", "canceled"):
                     status = "deleted"
+                elif status not in STATUS_POLICY:
+                    status = "pending"
                 tasks[task_id] = {
                     "id": task_id,
                     "subject": subject,
@@ -3793,7 +3816,10 @@ def register_hooks(app_instance) -> None:
                 # Gemini CLI uses write_todos for all task operations.
                 # Route based on content: todos in input → bulk create, else taskId → update.
                 tool_input = ctx.tool_input or {}
-                if tool_input.get("todos"):
+                # An empty list is a full-state write ("no todos left") and
+                # must clear this source's records, so route on presence of
+                # a list, not on truthiness.
+                if isinstance(tool_input.get("todos"), list):
                     manager.handle_bulk_todos(ctx)
                 elif tool_input.get("taskId"):
                     manager.handle_task_update(ctx)

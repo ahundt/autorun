@@ -258,6 +258,79 @@ def test_opencode_todos_replace_only_their_own_tasks(sqlite_lifecycle):
     assert set(lifecycle.tasks) == {"claude-1"}
 
 
+def _dispatch_opencode_todos(session_id: str, todos: list, store: ThreadSafeDB) -> None:
+    """Drive the registered PostToolUse task handler, not handle_bulk_todos."""
+    from autorun import plugins
+
+    plugins.app.dispatch(
+        EventContext(
+            session_id=session_id,
+            event="PostToolUse",
+            tool_name="todowrite",
+            tool_input={"todos": todos},
+            tool_result=json.dumps({"todos": todos}),
+            session_transcript=[],
+            store=store,
+            cli_type="opencode",
+        )
+    )
+
+
+def test_empty_todo_list_clears_opencode_tasks_through_the_registered_handler(
+    sqlite_lifecycle,
+):
+    """The live path is the dispatcher, and it must route ``todos: []``.
+
+    A truthiness gate there means clearing the OpenCode todo list leaves the
+    stale in_progress task behind while a direct handle_bulk_todos call (the
+    only thing the earlier test exercised) clears it.
+    """
+    store = ThreadSafeDB()
+    sid = sqlite_lifecycle.session_id
+    _dispatch_opencode_todos(sid, [{"id": "oc-1", "content": "Live", "status": "in_progress"}], store)
+    assert "oc-1" in TaskLifecycle(session_id=sid, config=sqlite_lifecycle.config).tasks
+
+    _dispatch_opencode_todos(sid, [], store)
+    assert "oc-1" not in TaskLifecycle(session_id=sid, config=sqlite_lifecycle.config).tasks
+
+
+def test_opencode_todo_statuses_are_normalized_before_persistence(sqlite_lifecycle):
+    """Both ``cancelled`` spellings mean deleted; anything else falls back to
+    pending instead of raising out of the SQLite status policy and dropping
+    the whole sync (or, on JSON, blocking Stop forever on an unknown status).
+    """
+    store = ThreadSafeDB()
+    sid = sqlite_lifecycle.session_id
+    _dispatch_opencode_todos(
+        sid,
+        [
+            {"id": "a", "content": "uk", "status": "cancelled"},
+            {"id": "b", "content": "us", "status": "canceled"},
+            {"id": "c", "content": "typo", "status": "done"},
+            {"id": "d", "content": "ok", "status": "completed"},
+        ],
+        store,
+    )
+    tasks = TaskLifecycle(session_id=sid, config=sqlite_lifecycle.config).tasks
+    assert {k: tasks[k]["status"] for k in ("a", "b", "c", "d")} == {
+        "a": "deleted", "b": "deleted", "c": "pending", "d": "completed",
+    }
+
+
+def test_todos_without_ids_never_collide_with_explicit_ids(sqlite_lifecycle):
+    """Index fallback ids must not overwrite a todo that carries that id."""
+    store = ThreadSafeDB()
+    sid = sqlite_lifecycle.session_id
+    _dispatch_opencode_todos(
+        sid,
+        [{"id": "2", "content": "explicit two"}, {"content": "no id at position two"}],
+        store,
+    )
+    tasks = TaskLifecycle(session_id=sid, config=sqlite_lifecycle.config).tasks
+    subjects = sorted(t["subject"] for t in tasks.values() if t["session_id"] == sid)
+    assert subjects == ["explicit two", "no id at position two"]
+
+
 def test_concurrent_bulk_dependency_edits_preserve_every_edge(sqlite_lifecycle):
     lifecycle = sqlite_lifecycle
     lifecycle.create_task("shared", {"subject": "Shared"}, "created")
