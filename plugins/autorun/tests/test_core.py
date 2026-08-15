@@ -1499,6 +1499,96 @@ class TestAutorunDaemon:
         assert final["_autorun_bridge"]["tasks"][0]["status"] == "completed"
 
     @pytest.mark.asyncio
+    async def test_pi_bulk_task_update_projects_all_snapshots_atomically(self):
+        from autorun import plugins as _plugins  # noqa: F401
+
+        daemon = AutorunDaemon(app)
+        session_id = "pi-task-bulk"
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def invoke(payload):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps({
+                "session_id": session_id,
+                "cli_type": "pi",
+                "inprocess_capabilities": ["task_operations_v1"],
+                **payload,
+            }).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        for task_id in ("one", "two"):
+            await invoke({
+                "hook_event_name": "PostToolUse",
+                "tool_name": "TaskCreate",
+                "tool_input": {"subject": task_id, "description": task_id},
+                "tool_result": {"task": {"id": task_id}},
+            })
+
+        updated = await invoke({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskUpdates": [
+                {"taskId": "one", "status": "in_progress"},
+                {"taskId": "two", "addBlockedBy": ["one"], "status": "pending"},
+            ]},
+            "tool_result": {"taskUpdates": [{"taskId": "one"}, {"taskId": "two"}]},
+        })
+
+        snapshots = updated["_autorun_bridge"]["task_snapshots"]
+        assert [task["id"] for task in snapshots] == ["one", "two"]
+        assert snapshots[0]["status"] == "in_progress"
+        assert snapshots[1]["blockedBy"] == ["one"]
+
+    @pytest.mark.asyncio
+    async def test_pi_task_get_operation_reads_authoritative_projection(self):
+        from autorun import plugins as _plugins  # noqa: F401
+
+        daemon = AutorunDaemon(app)
+        session_id = "pi-task-get"
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def invoke(payload):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps({
+                "session_id": session_id,
+                "cli_type": "pi",
+                "inprocess_capabilities": ["task_operations_v1"],
+                **payload,
+            }).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        await invoke({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "TaskCreate",
+            "tool_input": {"subject": "Read me", "description": "Inspect"},
+            "tool_result": {"task": {"id": "get-me"}},
+        })
+        response = await invoke({
+            "hook_event_name": "AutorunOperation",
+            "inprocess_operation": "task_get_v1",
+            "task_id": "get-me",
+        })
+
+        assert response["_autorun_bridge"]["operation"] == "task_get_v1"
+        assert response["_autorun_bridge"]["task"]["id"] == "get-me"
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("same_session", [True, False])
     async def test_simultaneous_pi_daemon_clients_preserve_session_boundaries(
         self, same_session

@@ -395,8 +395,8 @@ Python daemon used by the other harnesses. A denied tool returns Pi's native
 `{ block: true, reason }` result. When autorun rejects the settle boundary, the
 adapter sends a hidden `autorun-continuation` custom message that starts the
 next turn without attributing extension text to the user. Pi also receives
-sequential `TaskCreate`, `TaskUpdate`, and `TaskList` tools backed by the same
-Python task lifecycle and session state as other harnesses.
+sequential `TaskCreate`, `TaskUpdate`, `TaskList`, and `TaskGet` tools backed by
+the same Python task lifecycle and session state as other harnesses.
 
 ```bash
 autorun --install --pi --force
@@ -408,6 +408,11 @@ Pi also accepts `ar:st`, `ar-st`, and `/ar:st`. Skills use Pi's native
 `/skill:<name>` command and the shared `~/.agents/skills/` installation.
 Development tests must redirect `HOME`, `PI_CODING_AGENT_DIR`, `AUTORUN_HOME`,
 and `AUTORUN_TEST_STATE_DIR` before importing or installing autorun.
+
+Pi task tools use the same Python-owned lifecycle as Claude: `TaskCreate`,
+`TaskList`, and `TaskGet` provide create/read operations; `TaskUpdate` accepts
+one `taskId` or an atomic `taskUpdates` array, including `addBlockedBy` and
+`addBlocks`; `status="deleted"` is the delete operation.
 
 #### Qwen Code Support
 

@@ -2,6 +2,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { createDaemonBridge, denialReason, responseMessage } from "./daemon-client.mjs";
 
 const TASK_STATUSES = ["pending", "in_progress", "completed", "deleted"];
+const TASK_ID_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  description: "Non-empty ID returned by TaskCreate",
+};
 const TaskCreateParameters = {
   type: "object",
   properties: {
@@ -12,23 +17,60 @@ const TaskCreateParameters = {
   required: ["subject", "description", "activeForm"],
   additionalProperties: false,
 };
+const TaskUpdateFields = {
+  subject: { type: "string" },
+  description: { type: "string" },
+  activeForm: { type: "string" },
+  status: { type: "string", enum: TASK_STATUSES, description: "Replacement status; deleted is the delete operation." },
+  addBlockedBy: {
+    type: "array",
+    items: { type: "string", minLength: 1 },
+    description: "Additional blocker IDs to append; [] makes no change.",
+  },
+  addBlocks: {
+    type: "array",
+    items: { type: "string", minLength: 1 },
+    description: "Additional dependent IDs to append; [] makes no change.",
+  },
+};
 const TaskUpdateParameters = {
   type: "object",
   properties: {
-    taskId: { type: "string", description: "ID returned by TaskCreate" },
-    subject: { type: "string" },
-    description: { type: "string" },
-    activeForm: { type: "string" },
-    status: { type: "string", enum: TASK_STATUSES },
-    addBlockedBy: { type: "array", items: { type: "string" } },
-    addBlocks: { type: "array", items: { type: "string" } },
+    taskId: TASK_ID_SCHEMA,
+    ...TaskUpdateFields,
+    taskUpdates: {
+      type: "array",
+      minItems: 1,
+      description: "Atomic per-task updates; use this instead of taskId. Each taskId must be unique.",
+      items: {
+        type: "object",
+        properties: {
+          taskId: TASK_ID_SCHEMA,
+          ...TaskUpdateFields,
+        },
+        required: ["taskId"],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ["taskId"],
+  anyOf: [
+    { required: ["taskId"], not: { required: ["taskUpdates"] } },
+    { required: ["taskUpdates"], not: { required: ["taskId"] } },
+  ],
+  required: [],
   additionalProperties: false,
 };
 const TaskListParameters = {
   type: "object",
   properties: {},
+  additionalProperties: false,
+};
+const TaskGetParameters = {
+  type: "object",
+  properties: {
+    taskId: TASK_ID_SCHEMA,
+  },
+  required: ["taskId"],
   additionalProperties: false,
 };
 
@@ -100,6 +142,12 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
       if (message.toolName !== "TaskCreate" && message.toolName !== "TaskUpdate") continue;
       const snapshot = message.details?.taskSnapshot;
       if (snapshot && typeof snapshot === "object") taskRecords.push(snapshot);
+      const snapshots = message.details?.taskSnapshots;
+      if (Array.isArray(snapshots)) {
+        for (const item of snapshots) {
+          if (item && typeof item === "object") taskRecords.push(item);
+        }
+      }
     }
     await bridge.askDaemon({
       ...frame(ctx, "AutorunOperation"),
@@ -145,6 +193,10 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_callId, params: any, signal) {
       throwIfAborted(signal);
+      if (Array.isArray(params.taskUpdates)) {
+        const ids = params.taskUpdates.map((item: any) => item.taskId).join(", ");
+        return textResult(`Updated tasks ${ids}`, { taskUpdates: params.taskUpdates });
+      }
       return textResult(`Updated task ${params.taskId}`, {
         taskId: params.taskId,
         updates: { ...params },
@@ -175,6 +227,30 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
         (task: any) => `${task.id} [${task.status}] ${task.subject}`,
       );
       return textResult(lines.join("\n") || "No tracked tasks", operation);
+    },
+  });
+
+  pi.registerTool({
+    name: "TaskGet",
+    label: "Get task",
+    description: "Read one tracked autorun task from the current Pi session.",
+    parameters: TaskGetParameters as any,
+    executionMode: "sequential",
+    async execute(_callId, params: any, signal, _onUpdate, ctx) {
+      throwIfAborted(signal);
+      const response = await bridge.askDaemon({
+        ...frame(ctx, "AutorunOperation"),
+        inprocess_operation: "task_get_v1",
+        task_id: params.taskId,
+      });
+      throwIfAborted(signal);
+      const operation = response?._autorun_bridge;
+      if (operation?.operation !== "task_get_v1" || !operation.task) {
+        return textResult(`Task ${params.taskId} was not found`, {
+          taskId: params.taskId, task: null, error: "task not found",
+        });
+      }
+      return textResult(confirmedTaskText(operation.task), operation);
     },
   });
 
@@ -237,7 +313,10 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     });
     const content = responseMessage(response);
     const taskSnapshot = response?._autorun_bridge?.task_snapshot;
-    if (taskResult && !taskSnapshot) {
+    const taskSnapshots = response?._autorun_bridge?.task_snapshots;
+    const confirmedSnapshots = Array.isArray(taskSnapshots) ? taskSnapshots : [];
+    const hasConfirmation = Boolean(taskSnapshot) || confirmedSnapshots.length > 0;
+    if (taskResult && !hasConfirmation) {
       return {
         content: [
           ...event.content,
@@ -253,15 +332,24 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
         usage: event.usage,
       };
     }
-    if (!content && !taskSnapshot) return undefined;
-    const confirmedContent = taskSnapshot
-      ? [{ type: "text" as const, text: confirmedTaskText(taskSnapshot) }]
+    if (!content && !hasConfirmation) return undefined;
+    const confirmedContent = hasConfirmation
+      ? (taskSnapshot
+        ? [{ type: "text" as const, text: confirmedTaskText(taskSnapshot) }]
+        : confirmedSnapshots.map((item: any) => ({
+          type: "text" as const,
+          text: confirmedTaskText(item),
+        })))
       : event.content;
     return {
       content: content
         ? [...confirmedContent, { type: "text", text: content }]
         : confirmedContent,
-      details: taskSnapshot ? { ...event.details, taskSnapshot } : event.details,
+      details: taskSnapshot
+        ? { ...event.details, taskSnapshot }
+        : confirmedSnapshots.length > 0
+          ? { ...event.details, taskSnapshots: confirmedSnapshots }
+          : event.details,
       isError: event.isError,
       usage: event.usage,
     };

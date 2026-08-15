@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -118,6 +119,164 @@ def test_legacy_task_blob_moves_to_rows_once_and_is_removed(sqlite_lifecycle):
     with session_state(lifecycle.global_key) as state:
         assert "tasks" not in state
         assert state["task_rows_migrated"] is True
+
+
+def test_bulk_task_update_applies_fields_and_dependencies_atomically(sqlite_lifecycle):
+    lifecycle = sqlite_lifecycle
+    lifecycle.create_task("one", {"subject": "One"}, "created")
+    lifecycle.create_task("two", {"subject": "Two"}, "created")
+
+    lifecycle.update_tasks(
+        [
+            {"taskId": "one", "status": "in_progress"},
+            {
+                "taskId": "two",
+                "status": "pending",
+                "addBlockedBy": ["one"],
+                "addBlocks": ["three"],
+            },
+        ],
+        "bulk update",
+    )
+
+    tasks = lifecycle.tasks
+    assert tasks["one"]["status"] == "in_progress"
+    assert tasks["two"]["blockedBy"] == ["one"]
+    assert tasks["two"]["blocks"] == ["three"]
+    assert tasks["one"]["tool_outputs"][-1] == "bulk update"
+    assert tasks["two"]["tool_outputs"][-1] == "bulk update"
+
+
+def test_bulk_task_update_rejects_duplicate_ids_before_writing(sqlite_lifecycle):
+    lifecycle = sqlite_lifecycle
+    lifecycle.create_task("one", {"subject": "One"}, "created")
+
+    with pytest.raises(ValueError, match="duplicate taskId"):
+        lifecycle.update_tasks(
+            [
+                {"taskId": "one", "status": "in_progress"},
+                {"taskId": "one", "status": "completed"},
+            ],
+            "invalid bulk update",
+        )
+
+    assert lifecycle.tasks["one"]["status"] == "pending"
+    assert lifecycle.tasks["one"]["tool_outputs"] == ["created"]
+
+
+def test_task_update_rejects_conflicting_single_and_bulk_shapes(sqlite_lifecycle):
+    ctx = EventContext(
+        session_id=sqlite_lifecycle.session_id,
+        event="PostToolUse",
+        tool_name="TaskUpdate",
+        tool_input={
+            "taskId": "one",
+            "taskUpdates": [{"taskId": "two", "status": "completed"}],
+        },
+        tool_result="invalid shape",
+        session_transcript=[],
+        store=ThreadSafeDB(),
+        cli_type="claude",
+    )
+
+    with pytest.raises(ValueError, match="exactly one of taskId or taskUpdates"):
+        sqlite_lifecycle.__class__(ctx=ctx, config=sqlite_lifecycle.config).handle_task_update(ctx)
+
+
+def test_opencode_todos_replace_only_their_own_tasks(sqlite_lifecycle):
+    lifecycle = sqlite_lifecycle.__class__(
+        ctx=EventContext(
+            session_id=sqlite_lifecycle.session_id,
+            event="PostToolUse",
+            tool_name="todowrite",
+            tool_input={
+                "todos": [
+                    {
+                        "id": "oc-1",
+                        "content": "Ship parity",
+                        "status": "in_progress",
+                        "priority": "high",
+                    }
+                ]
+            },
+            tool_result="todo.updated",
+            session_transcript=[],
+            store=ThreadSafeDB(),
+            cli_type="opencode",
+        ),
+        config=sqlite_lifecycle.config,
+    )
+    lifecycle.create_task("claude-1", {"subject": "Keep me"}, "created")
+    lifecycle.handle_bulk_todos(lifecycle.ctx)
+
+    assert set(lifecycle.tasks) == {"claude-1", "oc-1"}
+    assert lifecycle.tasks["oc-1"]["subject"] == "Ship parity"
+    assert lifecycle.tasks["oc-1"]["metadata"]["source"] == "opencode_todo"
+
+    second_ctx = EventContext(
+        session_id=lifecycle.session_id,
+        event="PostToolUse",
+        tool_name="todowrite",
+        tool_input={
+            "todos": [{"id": "oc-2", "content": "New todo", "status": "pending"}]
+        },
+        tool_result="todo.updated",
+        session_transcript=[],
+        store=ThreadSafeDB(),
+        cli_type="opencode",
+    )
+    lifecycle.handle_bulk_todos(second_ctx)
+    assert set(lifecycle.tasks) == {"claude-1", "oc-2"}
+
+    cancelled_ctx = EventContext(
+        session_id=lifecycle.session_id,
+        event="PostToolUse",
+        tool_name="todowrite",
+        tool_input={
+            "todos": [{"id": "oc-3", "content": "Cancelled", "status": "cancelled"}]
+        },
+        tool_result="todo.updated",
+        session_transcript=[],
+        store=ThreadSafeDB(),
+        cli_type="opencode",
+    )
+    lifecycle.handle_bulk_todos(cancelled_ctx)
+    assert set(lifecycle.tasks) == {"claude-1", "oc-3"}
+    assert lifecycle.tasks["oc-3"]["status"] == "deleted"
+
+    clear_ctx = EventContext(
+        session_id=lifecycle.session_id,
+        event="PostToolUse",
+        tool_name="todowrite",
+        tool_input={"todos": []},
+        tool_result="todo.updated",
+        session_transcript=[],
+        store=ThreadSafeDB(),
+        cli_type="opencode",
+    )
+    lifecycle.handle_bulk_todos(clear_ctx)
+    assert set(lifecycle.tasks) == {"claude-1"}
+
+
+def test_concurrent_bulk_dependency_edits_preserve_every_edge(sqlite_lifecycle):
+    lifecycle = sqlite_lifecycle
+    lifecycle.create_task("shared", {"subject": "Shared"}, "created")
+
+    def apply(index):
+        TaskLifecycle(
+            session_id=lifecycle.session_id,
+            config=lifecycle.config,
+        ).update_tasks(
+            [{"taskId": "shared", "addBlockedBy": [f"dep-{index}"]}],
+            f"bulk-{index}",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(apply, range(24)))
+
+    assert set(lifecycle.tasks["shared"]["blockedBy"]) == {
+        f"dep-{index}" for index in range(24)
+    }
 
 
 def test_subagent_stop_returns_row_backed_delegation(sqlite_lifecycle):

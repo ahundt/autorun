@@ -35,6 +35,21 @@ export const AutorunPlugin = async ({ serverUrl, directory }) => {
       if (reason) throw new Error(reason)
     },
 
+    event: async ({ event }) => {
+      if (event?.type !== "todo.updated") return
+      const properties = event.properties ?? {}
+      const todos = properties.todos
+      if (!Array.isArray(todos)) return
+      await bridge.askDaemon({
+        hook_event_name: "PostToolUse",
+        session_id: String(properties.sessionID ?? ""),
+        tool_name: "todowrite",
+        tool_input: { todos },
+        tool_result: JSON.stringify({ todos }),
+        cwd: String(directory ?? ""),
+      })
+    },
+
     dispose: async () => {
       await bridge.askDaemon({
         hook_event_name: "OpenCodeDetach",

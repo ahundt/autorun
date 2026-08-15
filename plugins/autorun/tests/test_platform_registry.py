@@ -603,6 +603,8 @@ def test_task_tool_role_uses_platform_native_surfaces():
     assert task_tool_role("claude", "TaskCreate") == "create"
     assert task_tool_role("claude", "update_plan") is None
     assert task_tool_role("gemini", "write_todos") == "bulk"
+    assert task_tool_role("opencode", "todowrite") == "bulk"
+    assert task_tool_role("opencode", "todoread") == "review"
     assert task_tool_role("codex", "update_plan") == "plan"
     assert is_task_progress_tool("codex", "update_plan") is True
     assert is_task_tool("codex", "TaskCreate") is False

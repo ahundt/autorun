@@ -53,6 +53,9 @@ def test_capability_snapshot_records_multi_harness_task_surfaces():
     assert platforms["codex"]["task_management_style"] == "plan_checklist"
     assert platforms["gemini"]["task_management_style"] == "bulk_todos"
     assert platforms["qwen"]["task_management_style"] == "bulk_todos"
+    assert platforms["opencode"]["task_management_style"] == "bulk_todos"
+    assert platforms["opencode"]["task_bulk_tools"] == ["todowrite"]
+    assert platforms["opencode"]["task_review_tools"] == ["todoread"]
     assert platforms["antigravity"]["task_management_style"] == "none"
     assert platforms["antigravity"]["task_create_tools"] == []
 

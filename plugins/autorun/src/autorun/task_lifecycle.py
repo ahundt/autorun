@@ -1326,7 +1326,15 @@ class TaskLifecycle:
         self._atomic_update_task(task_id, updater)
         self.log_event("CREATE", task_id, input_data.get("subject", ""), "pending")
 
-    def update_task(self, task_id: str, updates: Dict, result: str) -> Optional[str]:
+    def update_task(
+        self,
+        task_id: str,
+        updates: Dict,
+        result: str,
+        *,
+        _tasks: Dict[str, Dict] | None = None,
+        _reset_metadata: bool = True,
+    ) -> Optional[str]:
         """Update task metadata (handles all fields).
 
         Returns:
@@ -1437,14 +1445,59 @@ class TaskLifecycle:
             task["updated_at"] = time.time()
             task["tool_outputs"].append(result)
 
-        self._atomic_update_task(task_id, updater)
+        if _tasks is None:
+            self._atomic_update_task(task_id, updater)
+        else:
+            updater(_tasks)
 
         # Fix 4: Reset stop_block_count when task reaches terminal status.
         # Placed OUTSIDE updater closure to avoid nonlocal scoping issues.
-        if "status" in updates and updates["status"] in self.NON_BLOCKING_STATUSES and not ghost_state[0]:
+        if _reset_metadata and "status" in updates and updates["status"] in self.NON_BLOCKING_STATUSES and not ghost_state[0]:
             self.atomic_update_metadata(_reset_stop_block_sequence)
 
         return "ghost_skip" if ghost_state[0] else None
+
+    def update_tasks(self, updates: List[Dict], result: str) -> Optional[str]:
+        """Atomically update multiple tasks with one shared tool result."""
+        if not isinstance(updates, list) or not updates:
+            raise ValueError("taskUpdates must be a non-empty list")
+
+        normalized: list[tuple[str, Dict]] = []
+        seen: set[str] = set()
+        for raw in updates:
+            if not isinstance(raw, dict):
+                raise TypeError("taskUpdates entries must be mappings")
+            task_id = str(raw.get("taskId") or raw.get("id") or "").strip()
+            if not task_id:
+                raise ValueError("taskUpdates entries require taskId")
+            if task_id in seen:
+                raise ValueError(f"taskUpdates contains duplicate taskId: {task_id}")
+            seen.add(task_id)
+            normalized.append((task_id, dict(raw)))
+
+        ghost_skipped = False
+        terminal_update = False
+
+        def updater(tasks):
+            nonlocal ghost_skipped, terminal_update
+            for task_id, task_update in normalized:
+                result_code = self.update_task(
+                    task_id,
+                    task_update,
+                    result,
+                    _tasks=tasks,
+                    _reset_metadata=False,
+                )
+                ghost_skipped = ghost_skipped or result_code == "ghost_skip"
+                terminal_update = terminal_update or (
+                    task_update.get("status") in self.NON_BLOCKING_STATUSES
+                    and result_code != "ghost_skip"
+                )
+
+        self.atomic_update_tasks(updater)
+        if terminal_update:
+            self.atomic_update_metadata(_reset_stop_block_sequence)
+        return "ghost_skip" if ghost_skipped else None
 
     def ignore_task(self, task_id: str, reason: str = "User ignored") -> bool:
         """Mark task as ignored (user override to unblock stop).
@@ -1649,24 +1702,45 @@ class TaskLifecycle:
         Returns:
             'ghost_skip' if ghost task protection triggered, None otherwise.
         """
-        task_id = ctx.tool_input.get("taskId") or ctx.tool_input.get("id")
-        if not task_id:
-            return None  # Skip if no task ID
-
         # Attach native provenance at the Python authority boundary. This also
         # tags ghost-protected unknown updates so branch reprojection can remove
         # them when their Pi receipt is no longer on the active branch.
-        updates = dict(ctx.tool_input)
         task_source = platform_for(self._cli_type).task_record_source
-        if task_source:
-            metadata = dict(updates.get("metadata") or {})
-            metadata["source"] = task_source
-            updates["metadata"] = metadata
-
         # Update task with all metadata
         # Use raw tool_result directly if string (Gemini/test mocks), else tool_result_str
         raw_result = ctx.tool_result
         result_str = raw_result if isinstance(raw_result, str) else ctx.tool_result_str
+
+        if "taskUpdates" in ctx.tool_input and (
+            "taskId" in ctx.tool_input or "id" in ctx.tool_input
+        ):
+            raise ValueError("TaskUpdate requires exactly one of taskId or taskUpdates")
+
+        bulk_updates = ctx.tool_input.get("taskUpdates")
+        if bulk_updates is not None:
+            if not isinstance(bulk_updates, list) or not bulk_updates:
+                raise ValueError("taskUpdates must be a non-empty list")
+            updates = []
+            for raw_update in bulk_updates:
+                if not isinstance(raw_update, dict):
+                    raise TypeError("taskUpdates entries must be mappings")
+                update = dict(raw_update)
+                if task_source:
+                    metadata = dict(update.get("metadata") or {})
+                    metadata["source"] = task_source
+                    update["metadata"] = metadata
+                updates.append(update)
+            return self.update_tasks(updates, result_str)
+
+        task_id = ctx.tool_input.get("taskId") or ctx.tool_input.get("id")
+        if not task_id:
+            return None  # Skip if no task ID
+
+        updates = dict(ctx.tool_input)
+        if task_source:
+            metadata = dict(updates.get("metadata") or {})
+            metadata["source"] = task_source
+            updates["metadata"] = metadata
         return self.update_task(task_id, updates, result_str)
 
     def handle_bulk_todos(self, ctx: EventContext) -> None:
@@ -1679,18 +1753,26 @@ class TaskLifecycle:
             logger.warning(f"handle_bulk_todos: tool_input is not a dict: {type(ctx.tool_input)}")
             return
 
-        todos = ctx.tool_input.get("todos", [])
-        if not isinstance(todos, list) or not todos:
+        todos = ctx.tool_input.get("todos")
+        if not isinstance(todos, list):
             logger.debug("handle_bulk_todos: no todos list found in input")
             return
 
         now = time.time()
+        task_source = platform_for(self._cli_type).task_record_source or "planner"
 
         def updater(tasks):
-            # Clear only previous planner-sourced tasks for this session. The
+            # Clear only previous bulk-sourced tasks for this session. The
             # daemon may also track explicit TaskCreate records in the same
-            # session; a bulk planner refresh must not erase them.
-            to_remove = [tid for tid, t in tasks.items() if (t.get("session_id") == self.session_id and t.get("metadata", {}).get("source") == "planner")]
+            # session; a bulk refresh must not erase them.
+            to_remove = [
+                tid
+                for tid, t in tasks.items()
+                if (
+                    t.get("session_id") == self.session_id
+                    and t.get("metadata", {}).get("source") == task_source
+                )
+            ]
             for tid in to_remove:
                 tasks.pop(tid)
 
@@ -1698,22 +1780,30 @@ class TaskLifecycle:
                 if not isinstance(todo, dict):
                     continue
 
-                # Gemini tool uses 'description', fall back to 'subject' for cross-platform robustness
-                subject = todo.get("description") or todo.get("subject") or f"Task {i}"
-                task_id = str(i)
+                # OpenCode uses 'content'; Gemini uses 'description'.
+                subject = (
+                    todo.get("content")
+                    or todo.get("description")
+                    or todo.get("subject")
+                    or f"Task {i}"
+                )
+                task_id = str(todo.get("id") or i)
+                status = str(todo.get("status") or "pending").strip().lower()
+                if status == "cancelled":
+                    status = "deleted"
                 tasks[task_id] = {
                     "id": task_id,
                     "subject": subject,
                     "description": "",
                     "activeForm": "",
-                    "status": todo.get("status", "pending"),
+                    "status": status,
                     "created_at": now,
                     "updated_at": now,
                     "session_id": self.session_id,
                     "owner": None,
                     "blockedBy": [],
                     "blocks": [],
-                    "metadata": {"source": "planner"},
+                    "metadata": {"source": task_source},
                     "tool_outputs": [],
                 }
 

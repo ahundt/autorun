@@ -1570,7 +1570,7 @@ PI = register(
         task_management_style="task_tools",
         task_create_tools=frozenset({"TaskCreate"}),
         task_update_tools=frozenset({"TaskUpdate"}),
-        task_review_tools=frozenset({"TaskList"}),
+        task_review_tools=frozenset({"TaskList", "TaskGet"}),
         task_record_source="pi_task_tool",
         task_dependency_syntax="{task_update}({task_id_param}=N, addBlockedBy=[M])",
         native_task_statuses=frozenset(
@@ -1759,6 +1759,12 @@ OPENCODE = register(
         ),
         # OpenCode also reaches skills through its native `skill` tool.
         skill_invocation_format="the {name} skill",
+        task_management_style="bulk_todos",
+        task_bulk_tools=frozenset({"todowrite"}),
+        task_review_tools=frozenset({"todoread"}),
+        task_record_source="opencode_todo",
+        native_task_statuses=frozenset({"pending", "in_progress", "completed", "deleted"}),
+        supports_additional_context_events=frozenset({"PostToolUse"}),
     )
 )
 

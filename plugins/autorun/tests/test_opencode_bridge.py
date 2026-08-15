@@ -64,6 +64,7 @@ class TestShimSourceIsSelfContained:
     def test_shim_registers_the_veto_hook_and_the_command_tool(self):
         text = SHIM_SOURCE.read_text(encoding="utf-8")
         assert "tool.execute.before" in text
+        assert 'event?.type !== "todo.updated"' in text
         assert "OpenCodeAttach" in text, "attach hands the daemon the serverUrl"
         assert "runArCommand" in text, "the command tool's executor must exist"
         assert '@opencode-ai/plugin' in text, "the tool registers through the plugin helper"
@@ -370,6 +371,29 @@ class TestDaemonSocketFrames:
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
+    def test_todo_updated_event_reaches_post_tool_use(self, tmp_path, short_socket_dir):
+        """OpenCode's native todo event must feed the shared task lifecycle."""
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {"OpenCodeAttach": {}, "PostToolUse": {}},
+            connections=2,
+        )
+        result = _run_shim(tmp_path, socket_path, "todo")
+        thread.join(timeout=25)
+
+        assert result.returncode == 0, result.stderr
+        assert [frame["hook_event_name"] for frame in frames] == [
+            "OpenCodeAttach",
+            "PostToolUse",
+        ], frames
+        post_tool = frames[1]
+        assert post_tool["session_id"] == "todo-session"
+        assert post_tool["tool_name"] == "todowrite"
+        assert post_tool["tool_input"]["todos"][0]["id"] == "todo-1"
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
     def test_wedged_hook_entry_fallback_times_out_and_blocks(self, tmp_path):
         """A fallback interpreter that never answers must not hang the tool call.
 
@@ -483,6 +507,18 @@ if (process.argv[2] === "command") {
   // The executor stands alone: no plugin init, so no attach frame precedes
   // the command frame and the stub server sees exactly one connection.
   console.log(await runArCommand("/ar:st", process.cwd()))
+  process.exit(0)
+}
+
+if (process.argv[2] === "todo") {
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd() })
+  await hooks.event({ event: {
+    type: "todo.updated",
+    properties: {
+      sessionID: "todo-session",
+      todos: [{ id: "todo-1", content: "Ship parity", status: "in_progress", priority: "high" }],
+    },
+  } })
   process.exit(0)
 }
 

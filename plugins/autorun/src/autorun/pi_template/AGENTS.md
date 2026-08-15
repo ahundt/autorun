@@ -11,7 +11,7 @@ the same command dispatcher.
 - `/ar st` — show the current AutoFile policy.
 - `/ar allow`, `/ar justify`, `/ar find` — select file-creation policy.
 - `/ar task` — show tracked tasks or control task lifecycle enforcement.
-- `TaskCreate`, `TaskUpdate`, `TaskList` — model-callable tools backed by autorun's Python task state.
+- `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` — model-callable tools backed by autorun's Python task state. `TaskUpdate` accepts either one `taskId` or an atomic `taskUpdates` array; `status="deleted"` is the delete operation.
 - `/ar sos` — emergency stop.
 - `/ar help` — list the complete command surface.
 

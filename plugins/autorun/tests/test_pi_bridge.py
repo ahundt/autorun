@@ -38,7 +38,7 @@ def test_pi_platform_declares_native_runtime_contract():
     assert pi.task_management_style == "task_tools"
     assert pi.task_create_tools == frozenset({"TaskCreate"})
     assert pi.task_update_tools == frozenset({"TaskUpdate"})
-    assert pi.task_review_tools == frozenset({"TaskList"})
+    assert pi.task_review_tools == frozenset({"TaskList", "TaskGet"})
 
 
 def test_pi_has_one_installer_step_row_and_dedicated_extension_step():
@@ -529,8 +529,8 @@ console.log(JSON.stringify({
 ''',
     )
 
-    assert result["names"] == ["TaskCreate", "TaskUpdate", "TaskList"]
-    assert result["modes"] == ["sequential", "sequential", "sequential"]
+    assert result["names"] == ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
+    assert result["modes"] == ["sequential", "sequential", "sequential", "sequential"]
     assert result["createRequired"] == ["subject", "description", "activeForm"]
     assert result["created"]["details"]["task"]["id"].startswith("pi-")
     assert len(result["created"]["details"]["task"]["id"]) >= 20
@@ -542,6 +542,102 @@ console.log(JSON.stringify({
     assert frames[0]["tool_result"]["task"]["id"] == result["created"]["details"]["task"]["id"]
     assert frames[1]["inprocess_operation"] == "task_list_v1"
     assert "task_operations_v1" in frames[1]["inprocess_capabilities"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_pi_task_get_reads_one_authoritative_task(tmp_path):
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{"_autorun_bridge": {
+            "operation": "task_get_v1",
+            "task": {"id": "one", "subject": "One", "status": "completed"},
+        }}],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map(), tools = new Map();
+const pi = {
+  registerCommand() {}, on(name, handler) { handlers.set(name, handler); },
+  registerTool(tool) { tools.set(tool.name, tool); },
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "rpc",
+  sessionManager: {
+    getSessionId: () => "pi-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }),
+  },
+};
+const result = await tools.get("TaskGet").execute(
+  "get-one", { taskId: "one" }, new AbortController().signal, undefined, ctx,
+);
+console.log(JSON.stringify({ result, properties: tools.get("TaskGet").parameters.properties }));
+''',
+    )
+
+    assert result["result"]["details"]["task"]["id"] == "one"
+    assert result["result"]["content"] == [{"type": "text", "text": "Task one [completed] One"}]
+    assert result["properties"]["taskId"]["type"] == "string"
+    assert frames[0]["inprocess_operation"] == "task_get_v1"
+    assert frames[0]["task_id"] == "one"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_pi_task_update_declares_and_formats_atomic_bulk_updates(tmp_path):
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{"_autorun_bridge": {"task_snapshots": [
+            {"id": "one", "subject": "One", "status": "in_progress"},
+            {"id": "two", "subject": "Two", "status": "pending", "blockedBy": ["one"]},
+        ]}}],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map(), tools = new Map();
+const pi = {
+  registerCommand() {}, on(name, handler) { handlers.set(name, handler); },
+  registerTool(tool) { tools.set(tool.name, tool); },
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "rpc",
+  sessionManager: {
+    getSessionId: () => "pi-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }),
+  },
+};
+const input = { taskUpdates: [
+  { taskId: "one", status: "in_progress" },
+  { taskId: "two", status: "pending", addBlockedBy: ["one"] },
+] };
+const created = await tools.get("TaskUpdate").execute(
+  "call-bulk", input, new AbortController().signal, undefined, ctx,
+);
+const receipt = await handlers.get("tool_result")({
+  toolName: "TaskUpdate", input, content: created.content,
+  details: created.details, isError: false,
+}, ctx);
+console.log(JSON.stringify({
+  required: tools.get("TaskUpdate").parameters.required,
+  hasTaskUpdates: tools.get("TaskUpdate").parameters.properties.taskUpdates,
+  created, receipt,
+}));
+''',
+    )
+
+    assert result["required"] == []
+    assert result["hasTaskUpdates"]["type"] == "array"
+    assert result["hasTaskUpdates"]["minItems"] == 1
+    assert result["hasTaskUpdates"]["items"]["properties"]["taskId"]["minLength"] == 1
+    assert "append" in result["hasTaskUpdates"]["items"]["properties"]["addBlockedBy"]["description"]
+    assert result["created"]["details"]["taskUpdates"] == [
+        {"taskId": "one", "status": "in_progress"},
+        {"taskId": "two", "status": "pending", "addBlockedBy": ["one"]},
+    ]
+    assert [
+        item["text"] for item in result["receipt"]["content"]
+    ] == [
+        "Task one [in_progress] One",
+        "Task two [pending] Two",
+    ]
+    assert result["receipt"]["details"]["taskSnapshots"][1]["blockedBy"] == ["one"]
+    assert frames[0]["tool_input"]["taskUpdates"][0]["taskId"] == "one"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
