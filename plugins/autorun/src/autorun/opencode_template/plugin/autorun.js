@@ -39,10 +39,12 @@ export const AutorunPlugin = async ({ serverUrl, directory }) => {
       if (event?.type !== "todo.updated") return
       const properties = event.properties ?? {}
       const todos = properties.todos
-      if (!Array.isArray(todos)) return
+      // No session id means no session to attribute the list to; sending ""
+      // would file it under a per-process key every session shares.
+      if (!properties.sessionID || !Array.isArray(todos)) return
       await bridge.askDaemon({
         hook_event_name: "PostToolUse",
-        session_id: String(properties.sessionID ?? ""),
+        session_id: String(properties.sessionID),
         tool_name: "todowrite",
         tool_input: { todos },
         tool_result: JSON.stringify({ todos }),

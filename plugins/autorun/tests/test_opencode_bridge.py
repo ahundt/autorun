@@ -65,6 +65,11 @@ class TestShimSourceIsSelfContained:
         text = SHIM_SOURCE.read_text(encoding="utf-8")
         assert "tool.execute.before" in text
         assert 'event?.type !== "todo.updated"' in text
+        assert "if (!properties.sessionID" in text, (
+            "a todo frame without a session id must be dropped, not sent as "
+            "'' — the daemon would file those todos under a per-process key "
+            "shared by every session in the OpenCode server"
+        )
         assert "OpenCodeAttach" in text, "attach hands the daemon the serverUrl"
         assert "runArCommand" in text, "the command tool's executor must exist"
         assert '@opencode-ai/plugin' in text, "the tool registers through the plugin helper"

@@ -886,6 +886,66 @@ console.log(JSON.stringify(response));
     assert frames[0]["session_id"] == "pi-session"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+def test_shared_daemon_client_maps_every_bare_ar_spelling_to_the_help_prompt(tmp_path):
+    """``/ar`` with no arguments (Pi's registered command, empty args), ``ar:``,
+    ``/ar:``, ``ar-`` and ``/ar `` must all reach the daemon as the ``ar:``
+    prompt, which the dispatcher answers with help. A regex that requires a
+    separator after ``ar`` sends ``/ar`` through as the prompt ``ar:/ar`` and
+    the user sees nothing."""
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("synthetic server uses AF_UNIX")
+
+    spellings = ["/ar", "ar:", "/ar:", "ar-", "/ar ", "/ar st", "ar:st", "ar-st", "AR:ST"]
+    socket_path = Path("/tmp") / f"arpi-{os.getpid()}-{tmp_path.name[-5:]}.sock"
+    socket_path.unlink(missing_ok=True)
+    frames: list[dict] = []
+
+    def serve():
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(socket_path))
+        server.listen(8)
+        try:
+            for _ in spellings:
+                conn, _ = server.accept()
+                with conn:
+                    data = b""
+                    while not data.endswith(b"\n"):
+                        data += conn.recv(4096)
+                    frames.append(json.loads(data))
+                    conn.sendall(b'{"systemMessage": "ok"}\n')
+        finally:
+            server.close()
+            socket_path.unlink(missing_ok=True)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    driver = tmp_path / "driver.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: "pi",
+  socketPath: {json.dumps(str(socket_path))},
+  portFile: {json.dumps(str(tmp_path / "none.port"))},
+  hookEntryCommand: [],
+  timeoutMs: 2000,
+}});
+for (const spelling of {json.dumps(spellings)}) {{
+  await bridge.runCommandResponse(spelling, "/work", "pi-session");
+}}
+''',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["node", str(driver)], capture_output=True, text=True, timeout=20, check=False
+    )
+    thread.join(timeout=10)
+
+    assert result.returncode == 0, result.stderr
+    prompts = [frame["prompt"] for frame in frames]
+    assert prompts == ["ar:", "ar:", "ar:", "ar:", "ar:", "ar:st", "ar:st", "ar:st", "ar:ST"], prompts
+
+
 # --- Prime Agent: Pi variant through the same pathway ------------------------
 #
 # prime-agent is PrimeIntellect's build of the Pi coding agent. The shipped

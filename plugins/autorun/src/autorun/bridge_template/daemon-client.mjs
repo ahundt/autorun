@@ -156,7 +156,10 @@ export function createDaemonBridge({
   }
 
   async function runCommandResponse(command, cwd, sessionId) {
-    const name = String(command ?? "").trim().replace(/^\/?ar[:\- ]\s*/i, "");
+    // Strip any spelling of the ar prefix, including a bare "/ar" (Pi's
+    // registered command with no arguments), so every form reaches the
+    // dispatcher as "ar:<name>" and an empty name gets help, not silence.
+    const name = String(command ?? "").trim().replace(/^\/?ar(?:[:\- ]\s*|$)/i, "");
     const response = await askDaemon({
       hook_event_name: "UserPromptSubmit",
       session_id: sessionId,
