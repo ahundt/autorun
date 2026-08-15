@@ -173,7 +173,9 @@ def test_a_visible_user_skill_suppresses_the_native_fallback_for_shared_readers(
     autorun withholds its copy and reports the preserved conflict instead."""
     shared.mkdir(parents=True)
     (shared / "commit").mkdir()
-    (shared / "commit" / "SKILL.md").write_text("mine\n", encoding="utf-8")
+    (shared / "commit" / "SKILL.md").write_text(
+        "---\ndescription: my own commit skill\n---\nmine\n", encoding="utf-8"
+    )
 
     reader = FakePlatform("reader", True, native_skills=Route("skills"))
     intents, placement = skill_plan(reader, ctx, {"ar": plugin}, shared_root_override=shared)
@@ -184,6 +186,50 @@ def test_a_visible_user_skill_suppresses_the_native_fallback_for_shared_readers(
     assert placement.refused == ("ar:commit",), "the withheld copy is reported, not silent"
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "",  # zero bytes
+        "mine\n",  # no frontmatter at all
+        "---\nname: commit\n---\nbody\n",  # frontmatter without a description
+        "---\ndescription:\n---\nbody\n",  # empty description
+    ],
+    ids=["empty", "no-frontmatter", "no-description", "blank-description"],
+)
+def test_a_user_file_the_harness_cannot_load_does_not_suppress_the_fallback(
+    plugin, shared, ctx, content
+):
+    """"Loadable" means what the harness means: Pi's loader returns no skill
+    when the frontmatter ``description`` is missing or blank
+    (packages/coding-agent/src/core/skills.ts validateDescription). Such a
+    file still blocks the shared route (it is the user's path), but withholding
+    the native fallback too would leave the name reachable from nowhere."""
+    shared.mkdir(parents=True)
+    (shared / "commit").mkdir()
+    (shared / "commit" / "SKILL.md").write_text(content, encoding="utf-8")
+
+    reader = FakePlatform("reader", True, native_skills=Route("skills"))
+    intents, placement = skill_plan(reader, ctx, {"ar": plugin}, shared_root_override=shared)
+    by_name = {i.target.name: i.target for i in intents}
+
+    assert by_name["commit"].parent != shared, "the unloadable blocker keeps the native fallback"
+    assert placement.refused == ()
+
+
+def test_a_block_scalar_description_counts_as_loadable(plugin, shared, ctx):
+    """``description: |`` followed by indented text is the common authored form."""
+    shared.mkdir(parents=True)
+    (shared / "commit").mkdir()
+    (shared / "commit" / "SKILL.md").write_text(
+        "---\nname: commit\ndescription: |\n  Use when committing.\n  Two lines.\n---\nbody\n",
+        encoding="utf-8",
+    )
+    reader = FakePlatform("reader", True, native_skills=Route("skills"))
+    intents, placement = skill_plan(reader, ctx, {"ar": plugin}, shared_root_override=shared)
+    assert "commit" not in {i.target.name for i in intents}
+    assert placement.refused == ("ar:commit",)
+
+
 def test_a_visible_user_skill_still_falls_back_when_the_harness_cannot_read_shared(plugin, shared, ctx):
     """A harness that does not read ~/.agents/skills never sees the user's
     shared copy, so withholding the native fallback there would drop the name
@@ -191,7 +237,9 @@ def test_a_visible_user_skill_still_falls_back_when_the_harness_cannot_read_shar
     fallback."""
     shared.mkdir(parents=True)
     (shared / "commit").mkdir()
-    (shared / "commit" / "SKILL.md").write_text("mine\n", encoding="utf-8")
+    (shared / "commit" / "SKILL.md").write_text(
+        "---\ndescription: my own commit skill\n---\nmine\n", encoding="utf-8"
+    )
 
     non_reader = FakePlatform("nonreader", False, native_skills=Route("skills"))
     intents, placement = skill_plan(

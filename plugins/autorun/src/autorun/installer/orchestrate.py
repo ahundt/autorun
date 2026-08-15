@@ -312,6 +312,17 @@ def perform(
             claimed.extend(
                 steps.extension_materialization_targets(selected, staged)
             )
+            # Every skill a selected plugin ships is claimed at the shared
+            # root even when no selected harness routes there (a Claude-only
+            # run publishes nothing to ~/.agents/skills). The sweep below
+            # would otherwise read those trees as "no longer shipped" and
+            # retire the copies every other harness reads.
+            shared_root = discovery.shared_root(home=staged.home)
+            claimed.extend(
+                shared_root / name
+                for plugin_dir in named.values()
+                for name in skills.shippable_skills(plugin_dir)
+            )
         stale = retirements(
             _config_roots(selected, staged),
             () if mode is Mode.UNINSTALL else claimed,
@@ -753,8 +764,16 @@ def _companions_wanted(ctx: Context) -> list[str]:
 
 
 def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
-    """Every config directory this run touched, for the lock sweep."""
+    """Every config directory this run touched, for the lock sweep.
+
+    Only roots this selection can fully re-claim are swept: a tree the sweep
+    finds unclaimed is retired as "no longer shipped", so a root that other,
+    unselected harnesses still populate must stay out of the list. An empty
+    selection touches nothing and sweeps nothing.
+    """
     harnesses = tuple(harnesses)  # iterated twice: config dirs, then staging
+    if not harnesses:
+        return []
     found = []
     for harness in harnesses:
         platform = getattr(harness, "platform", harness)
@@ -766,6 +785,14 @@ def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
             or getattr(platform, "name", "")
         ) == "codex":
             found.append(discovery.codex_plugin_source(home=ctx.home).parent)
+    selected_names = {
+        getattr(harness, "name", "") for harness in harnesses
+    } - {""}
+    # The shared ~/.agents/skills root is populated by every harness that
+    # reads it. It is swept on every run so a skill autorun stopped shipping
+    # retires, but ``perform`` claims every shipped skill there regardless of
+    # selection, so a Claude-only run cannot retire the trees Codex, Qwen, Pi,
+    # Prime, ForgeCode, or OpenCode still load.
     found.append(discovery.shared_root(home=ctx.home).parent)
     source_root = ctx.settings.get("_extension_source_root")
     staging = (
@@ -780,11 +807,6 @@ def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
     # sweep to the selected harnesses' subtrees, and keep the upgrade path by
     # also sweeping any subtree whose name no registered platform claims — a
     # harness removed from the registry must not leak its staging forever.
-    from ..platforms import PLATFORMS
-
-    selected_names = {
-        getattr(harness, "name", "") for harness in harnesses
-    } - {""}
     found.extend(staging / name for name in sorted(selected_names))
     try:
         found.extend(

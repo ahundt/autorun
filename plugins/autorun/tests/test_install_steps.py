@@ -512,6 +512,9 @@ def test_upgrade_retires_only_unchanged_legacy_claude_skill_copy(sandbox, edited
         assert (legacy / "SKILL.md").read_text(encoding="utf-8") == "user edit\n"
 
 
+USER_COPY = "---\ndescription: the user's own commit skill\n---\nuser copy\n"
+
+
 def test_a_loadable_user_skill_is_not_duplicated_into_the_extension(sandbox):
     """Qwen reads ~/.agents/skills beside its extension skills, so a native
     copy of a name the user already provides lists that name twice. The
@@ -521,7 +524,7 @@ def test_a_loadable_user_skill_is_not_duplicated_into_the_extension(sandbox):
 
     user_skill = sandbox / ".agents" / "skills" / "commit"
     user_skill.mkdir(parents=True)
-    (user_skill / "SKILL.md").write_text("user copy", encoding="utf-8")
+    (user_skill / "SKILL.md").write_text(USER_COPY, encoding="utf-8")
 
     result = install(
         marketplace_root=REPO,
@@ -537,7 +540,7 @@ def test_a_loadable_user_skill_is_not_duplicated_into_the_extension(sandbox):
     assert result.ok is True
     assert not (native / "commit").exists(), "a native copy would list the name twice"
     assert not (native / "philosophy").exists(), "unblocked names stay on the shared route"
-    assert (user_skill / "SKILL.md").read_text(encoding="utf-8") == "user copy"
+    assert (user_skill / "SKILL.md").read_text(encoding="utf-8") == USER_COPY
 
 
 def test_blocked_shared_skill_falls_back_inside_only_the_extension(sandbox):
@@ -595,6 +598,59 @@ def test_targeted_install_preserves_other_harnesses_staged_sources(sandbox):
     assert staged.is_dir(), (
         "a Claude-only install swept another harness's staged source"
     )
+
+
+def test_targeted_install_preserves_shared_skills_other_harnesses_read(sandbox):
+    """A Claude-only run must not retire the shared ``~/.agents/skills`` trees.
+
+    Claude reads only its own plugin skills, so a Claude-only walk claims
+    nothing under the shared root — but Codex, Qwen, Pi, Prime, ForgeCode and
+    OpenCode load their skills from exactly there. Retiring them as "no longer
+    shipped" would be the staging-sweep bug again, one directory over.
+    """
+    from autorun.installer import discovery
+    from autorun.installer.orchestrate import install
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+    assert install(harnesses=(PLATFORMS["qwen"],), **common).ok is True
+    shared_commit = discovery.shared_root(home=sandbox) / "commit"
+    assert (shared_commit / "SKILL.md").is_file(), "qwen publishes to the shared root"
+
+    second = install(harnesses=(PLATFORMS["claude"],), **common)
+    assert second.ok is True
+    assert (shared_commit / "SKILL.md").is_file(), (
+        "a Claude-only install retired the shared skills other harnesses read"
+    )
+
+
+def test_install_with_no_harness_selected_retires_nothing(sandbox):
+    """An empty selection is a no-op, never a sweep of every owned tree."""
+    from autorun.installer import discovery
+    from autorun.installer.orchestrate import install
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+    assert install(harnesses=(PLATFORMS["qwen"],), **common).ok is True
+    shared_commit = discovery.shared_root(home=sandbox) / "commit"
+    staged = sandbox / ".autorun" / "installer" / "extension-sources" / "qwen" / "ar"
+    assert (shared_commit / "SKILL.md").is_file() and staged.is_dir()
+
+    install(harnesses=(), **common)
+    assert (shared_commit / "SKILL.md").is_file(), "empty selection retired shared skills"
+    assert staged.is_dir(), "empty selection retired a staged extension source"
 
 
 def test_staging_for_an_unregistered_harness_still_retires(sandbox):

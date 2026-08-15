@@ -73,6 +73,44 @@ def is_shippable(path: Path) -> bool:
     return path.is_dir() and (path / "SKILL.md").is_file()
 
 
+def is_loadable(path: Path) -> bool:
+    """A skill the harness will actually list: ``SKILL.md`` with a non-empty
+    frontmatter ``description``.
+
+    This is the Agent Skills rule Pi's loader enforces (a missing or blank
+    description yields no skill), and it decides whether a user's tree at the
+    shared root is *visible* to the harness — a zero-byte or frontmatter-less
+    file blocks our shared route but does not reach the harness, so it must
+    not also suppress the native fallback. Bounded read; never raises.
+    """
+    try:
+        head = (path / "SKILL.md").read_text(encoding="utf-8", errors="replace")[:65536]
+    except OSError:
+        return False
+    lines = head.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return False
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return False  # closing fence reached: no description key
+        key, sep, value = line.partition(":")
+        if not sep or key.strip() != "description" or line[:1].isspace():
+            continue
+        value = value.strip()
+        if value and value not in ("|", ">", "|-", ">-", "|+", ">+"):
+            return True
+        # Block scalar: loadable when an indented, non-blank continuation follows.
+        for continuation in lines[index + 1 :]:
+            if continuation.strip() == "---":
+                break
+            if continuation[:1].isspace() and continuation.strip():
+                return True
+            if continuation.strip():
+                break  # next top-level key
+        return False
+    return False
+
+
 def shippable_skills(plugin_dir: Path) -> dict[str, Path]:
     """Every skill a plugin ships, by name.
 
@@ -305,7 +343,7 @@ def skill_plan(
                 want_shared
                 and not reached_shared
                 and bool(getattr(platform, "loads_shared_agents_skills", False))
-                and (shared_dir / name / "SKILL.md").is_file()
+                and is_loadable(shared_dir / name)
             )
             # The native route runs when the user asked for it, and as the
             # per-name fallback when only this name lost the shared route. An
