@@ -512,7 +512,11 @@ def test_upgrade_retires_only_unchanged_legacy_claude_skill_copy(sandbox, edited
         assert (legacy / "SKILL.md").read_text(encoding="utf-8") == "user edit\n"
 
 
-def test_blocked_shared_skill_falls_back_inside_only_the_extension(sandbox):
+def test_a_loadable_user_skill_is_not_duplicated_into_the_extension(sandbox):
+    """Qwen reads ~/.agents/skills beside its extension skills, so a native
+    copy of a name the user already provides lists that name twice. The
+    user's loadable copy IS the route; autorun withholds its own and keeps
+    the user's file untouched."""
     from autorun.installer.orchestrate import install
 
     user_skill = sandbox / ".agents" / "skills" / "commit"
@@ -531,9 +535,36 @@ def test_blocked_shared_skill_falls_back_inside_only_the_extension(sandbox):
 
     native = sandbox / ".qwen" / "extensions" / "ar" / "skills"
     assert result.ok is True
+    assert not (native / "commit").exists(), "a native copy would list the name twice"
+    assert not (native / "philosophy").exists(), "unblocked names stay on the shared route"
+    assert (user_skill / "SKILL.md").read_text(encoding="utf-8") == "user copy"
+
+
+def test_blocked_shared_skill_falls_back_inside_only_the_extension(sandbox):
+    """A blocker that is not a loadable skill leaves the name reaching Qwen by
+    no route at all, so only then does the name fall back into the extension —
+    and only that name."""
+    from autorun.installer.orchestrate import install
+
+    stray = sandbox / ".agents" / "skills" / "commit"
+    stray.mkdir(parents=True)
+    (stray / "notes.txt").write_text("not a skill", encoding="utf-8")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["qwen"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    native = sandbox / ".qwen" / "extensions" / "ar" / "skills"
+    assert result.ok is True
     assert (native / "commit" / "SKILL.md").is_file()
     assert not (native / "philosophy").exists(), "only the blocked name falls back"
-    assert (user_skill / "SKILL.md").read_text(encoding="utf-8") == "user copy"
+    assert (stray / "notes.txt").read_text(encoding="utf-8") == "not a skill"
 
 
 def test_codex_personal_package_and_marketplace_resolve_to_the_same_tree(sandbox):

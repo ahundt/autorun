@@ -22,6 +22,7 @@ from autorun.installer.skills import (  # noqa: E402
     routes_for,
     shippable_skills,
     skill_intents,
+    skill_plan,
 )
 from autorun.installer.traversal import Context  # noqa: E402
 
@@ -144,14 +145,16 @@ def test_codex_native_route_is_inside_the_plugin_skills_directory(ctx):
 # ─── A blocked name is a fact about the name ─────────────────────────────────
 
 
-def test_a_user_authored_name_blocks_only_itself(plugin, shared, ctx):
+def test_a_blocking_non_skill_falls_back_natively_for_only_that_name(plugin, shared, ctx):
     """The old installer computed a global conflict list and then republished
     every skill of every plugin natively if it was non-empty. One collision on
     `streamline-text` put all 17 skills in the extension as well as the shared
-    root."""
+    root. A stray directory that is not a loadable skill still blocks the
+    shared route, and only then does the name fall back natively: the harness
+    would otherwise see it by no route at all."""
     shared.mkdir(parents=True)
     (shared / "commit").mkdir()
-    (shared / "commit" / "SKILL.md").write_text("mine\n", encoding="utf-8")
+    (shared / "commit" / "notes.txt").write_text("not a skill\n", encoding="utf-8")
 
     reader = FakePlatform("reader", True, native_skills=Route("skills"))
     intents = list(skill_intents(reader, ctx, {"ar": plugin}, shared_root_override=shared))
@@ -160,6 +163,44 @@ def test_a_user_authored_name_blocks_only_itself(plugin, shared, ctx):
     assert by_name["philosophy"].parent == shared, "unblocked name keeps the shared route"
     assert by_name["commit"].parent != shared, "only the blocked name falls back"
     assert len(intents) == 2, "no skill lost, none published twice"
+
+
+def test_a_visible_user_skill_suppresses_the_native_fallback_for_shared_readers(plugin, shared, ctx):
+    """Pi lists ~/.pi/agent/skills and ~/.agents/skills side by side. When the
+    user's own loadable `commit` occupies the shared root, a native fallback
+    copy lists the name twice in the harness — the duplicate this file's
+    docstring forbids. The user's skill IS the name reaching the harness;
+    autorun withholds its copy and reports the preserved conflict instead."""
+    shared.mkdir(parents=True)
+    (shared / "commit").mkdir()
+    (shared / "commit" / "SKILL.md").write_text("mine\n", encoding="utf-8")
+
+    reader = FakePlatform("reader", True, native_skills=Route("skills"))
+    intents, placement = skill_plan(reader, ctx, {"ar": plugin}, shared_root_override=shared)
+    by_name = {i.target.name: i.target for i in intents}
+
+    assert by_name["philosophy"].parent == shared, "unblocked name keeps the shared route"
+    assert "commit" not in by_name, "a native copy would list the name twice"
+    assert placement.refused == ("ar:commit",), "the withheld copy is reported, not silent"
+
+
+def test_a_visible_user_skill_still_falls_back_when_the_harness_cannot_read_shared(plugin, shared, ctx):
+    """A harness that does not read ~/.agents/skills never sees the user's
+    shared copy, so withholding the native fallback there would drop the name
+    by every route — the regression that reverted the last retirement of the
+    fallback."""
+    shared.mkdir(parents=True)
+    (shared / "commit").mkdir()
+    (shared / "commit" / "SKILL.md").write_text("mine\n", encoding="utf-8")
+
+    non_reader = FakePlatform("nonreader", False, native_skills=Route("skills"))
+    intents, placement = skill_plan(
+        non_reader, ctx, {"ar": plugin}, shared_root_override=shared
+    )
+    by_name = {i.target.name: i.target for i in intents}
+
+    assert by_name["commit"].parent != shared, "native is this harness's only route"
+    assert placement.refused == ()
 
 
 def test_both_places_a_skill_on_both_routes(plugin, shared, ctx):

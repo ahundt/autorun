@@ -292,13 +292,28 @@ def skill_plan(
             if reached_shared:
                 intents.append(Intent(target=shared_dir / name, source=source, plugin=plugin))
                 shared.append(name)
+            # A loadable skill already occupying the shared root reaches this
+            # harness whenever the harness reads that root: Pi and Prime list
+            # ~/.agents/skills beside their native directory, so a native
+            # fallback copy would list the name twice — the duplicate the
+            # one-route rule exists to prevent. The name therefore lands in
+            # ``refused`` ("preserved conflicting user paths") instead. Only
+            # a blocker that is NOT a loadable skill, or a harness that does
+            # not read the shared root, leaves the name unreachable and keeps
+            # the fallback.
+            visible_via_shared = (
+                want_shared
+                and not reached_shared
+                and bool(getattr(platform, "loads_shared_agents_skills", False))
+                and (shared_dir / name / "SKILL.md").is_file()
+            )
             # The native route runs when the user asked for it, and as the
             # per-name fallback when only this name lost the shared route. An
             # unconditional `continue` after the shared yield made `both`
             # identical to `auto`, though `both` exists precisely to place a
             # skill on both routes.
             reached_native = False
-            if want_native or not reached_shared:
+            if want_native or (not reached_shared and not visible_via_shared):
                 if packaged_native:
                     reached_native = True
                 elif include_native:
