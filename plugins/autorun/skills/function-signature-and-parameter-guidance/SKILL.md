@@ -1,18 +1,18 @@
 ---
 name: function-signature-and-parameter-guidance
 description: |
-  Design and review caller-facing signatures: tool, function, and parameter names, plus
-  the descriptions, help text, docstrings, and error messages read when a call goes wrong.
-  Catches parameters accepted then ignored, unstated defaults, undeclared output, silent
-  mutation.
-  Use this when: "name this parameter", "name this tool", "improve this error message",
-  "audit the CLI help", "check the MCP tool schemas", "one tool or two", "should these
-  arguments be an options object", "bool or enum here", "what should this return on
-  failure", "rename this without breaking callers", "red team these descriptions", "why
-  did the caller pass the wrong argument", "why did this parameter do nothing".
-  For: CLI flags, MCP/JSON-Schema tools, kwargs, config keys, env vars — any surface
-  someone else calls.
-  Do NOT use for local variable names, prose docs, README copy, release notes, commits.
+  Design and review caller-facing names and contracts: functions, tools, commands, CLI flags,
+  parameters, options objects, config keys, env vars, profiles, event types, and machine-readable
+  node/edge identifiers. Check names, descriptions, help, schemas, defaults, bounds, units,
+  errors, outputs, mutation, and whether values reach behavior.
+  Use when asked to "name a parameter", "parameter naming", "name this tool or command",
+  "choose a flag, option, or config key", "design an options object", "one tool or two",
+  "bool or enum here", "name a profile, field, event, node, or edge",
+  "make names clear and unambiguous", "check standardized, ISO, platform, or language naming",
+  "audit CLI/MCP/JSON-Schema help", "define accepted values or defaults",
+  "what should this return on failure", "rename this without breaking callers",
+  "improve an error message", "why did this parameter do nothing", or "red-team these descriptions".
+  Do NOT use for private local variables, general prose, README copy, release notes, or commits.
 ---
 
 # Function Signature and Parameter Guidance
