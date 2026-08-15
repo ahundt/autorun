@@ -1388,7 +1388,15 @@ class TestAutorunDaemon:
         assert completed.get("decision") != "block"
 
     @pytest.mark.asyncio
-    async def test_pi_task_receipts_create_list_update_and_release_stop(self):
+    @pytest.mark.parametrize("cli_type", ["pi", "prime"])
+    async def test_pi_task_receipts_create_list_update_and_release_stop(self, cli_type):
+        """Every Pi-family harness gets in-process task operations.
+
+        The staged extension is one template shared by ``pi`` and ``prime``
+        (``__AUTORUN_CLI_TYPE__`` substitution), and both declare
+        ``task_operations_v1``; the daemon must key on that capability, not on
+        one harness name, or a variant silently loses task confirmations.
+        """
         from autorun import plugins as _plugins  # noqa: F401
 
         daemon = AutorunDaemon(app)
@@ -1403,8 +1411,8 @@ class TestAutorunDaemon:
         async def invoke(payload):
             reader = Mock()
             reader.readuntil = AsyncMock(return_value=json.dumps({
-                "session_id": "pi-task-sequence",
-                "cli_type": "pi",
+                "session_id": f"{cli_type}-task-sequence",
+                "cli_type": cli_type,
                 "inprocess_capabilities": ["task_operations_v1"],
                 **payload,
             }).encode() + b"\n")

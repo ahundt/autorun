@@ -150,6 +150,58 @@ def test_bare_task_pause_is_five_minutes_through_real_hook_process(
     assert find_task_recovery_marker(result.stdout), result.stdout
 
 
+@pytest.mark.parametrize("cli", ["claude", "gemini", "qwen", "codex", "pi", "prime"])
+def test_remote_write_commands_are_denied_through_real_hook_process(cli, tmp_path):
+    """Every hook backend, including the Pi family, gates pushes and releases.
+
+    A local ``git tag`` is deliberately allowed: it reaches a server only through
+    ``git push``, which is the gated step. Pi and Prime run the same
+    ``hook_entry.py --cli`` fallback the installed extension spawns when the
+    daemon is unreachable, so this is the exact process boundary a Pi session
+    crosses before a tool executes.
+    """
+    plugin_root = TEST_ROOT.parent
+    tool_name = PLATFORMS[cli].tool_names["bash"]
+    expectations = {
+        "git push origin main": "deny",
+        "git tag -a v9.9.9 -m x && git push origin v9.9.9": "deny",
+        "gh release create v9.9.9 --notes x": "deny",
+        "git tag v9.9.9": "allow",
+    }
+    for command, expected in expectations.items():
+        result = run_isolated_hook(
+            plugin_root=plugin_root,
+            hook_script=plugin_root / "hooks" / "hook_entry.py",
+            cli=cli,
+            cwd=tmp_path,
+            payload={
+                "hook_event_name": "PreToolUse",
+                "session_id": f"remote-write-{cli}-{uuid.uuid4().hex}",
+                "cwd": str(tmp_path),
+                "tool_name": tool_name,
+                "tool_input": {"command": command},
+            },
+        )
+        response = json.loads(result.stdout) if result.stdout.strip() else {}
+        specific = response.get("hookSpecificOutput", {})
+        decision = specific.get("permissionDecision") or response.get("decision")
+        reason = specific.get("permissionDecisionReason") or response.get("reason") or ""
+        # Claude Code's deny is exit 2 with the reason on stderr (bug #4669
+        # workaround, see config.should_use_exit2_workaround); every other
+        # backend answers with exit 0 and a JSON veto on stdout.
+        if result.returncode == 2:
+            decision, reason = "deny", result.stderr
+        else:
+            assert result.returncode == 0, (cli, command, result.stderr)
+        if expected == "deny":
+            assert decision in ("deny", "block"), (cli, command, response, result.stderr)
+            assert "permission" in reason, (cli, command, reason)
+        else:
+            # An allowed call may carry advisory context but never a veto;
+            # harnesses differ on whether they spell out "allow" at all.
+            assert decision not in ("deny", "block"), (cli, command, response)
+
+
 def test_antigravity_does_not_claim_a_prompt_hook_or_task_command(tmp_path):
     """The official Agy hook list has no user-prompt event or checklist API."""
     plugin_root = TEST_ROOT.parent

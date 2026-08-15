@@ -2851,15 +2851,12 @@ class AutorunDaemon:
         }
 
     @staticmethod
-    def _pi_task_snapshot(ctx: EventContext, task_id: str) -> dict | None:
-        """Read one Pi task projection outside the asyncio event loop."""
-        from .task_lifecycle import TaskLifecycle
-
-        return TaskLifecycle(ctx=ctx).tasks.get(task_id)
-
-    @staticmethod
     def _pi_task_snapshots(ctx: EventContext, task_ids: list[str]) -> list[dict]:
-        """Read a bulk Pi task projection in one lifecycle snapshot."""
+        """Read Pi-family task projections in one lifecycle snapshot.
+
+        Runs outside the asyncio event loop (thread pool); the single-receipt
+        path is the one-element case, so there is one reader for both.
+        """
         from .task_lifecycle import TaskLifecycle
 
         tasks = TaskLifecycle(ctx=ctx).tasks
@@ -2971,10 +2968,15 @@ class AutorunDaemon:
             # Synchronous/blocking work in handlers (file I/O, locks) runs in a thread.
             capabilities = payload.get("inprocess_capabilities")
             operation = payload.get("inprocess_operation")
+            # In-process task operations are a negotiated capability, not a
+            # harness name: the shared Pi-family extension (pi, prime, ...)
+            # declares task_operations_v1, and any adapter that declares it
+            # gets the same Python-owned task projection.
+            task_operations = (
+                isinstance(capabilities, list) and "task_operations_v1" in capabilities
+            )
             if (
-                cli_type == "pi"
-                and isinstance(capabilities, list)
-                and "task_operations_v1" in capabilities
+                task_operations
                 and operation in {"task_get_v1", "task_list_v1", "task_reproject_v1"}
             ):
                 loop = asyncio.get_running_loop()
@@ -2991,11 +2993,9 @@ class AutorunDaemon:
             else:
                 response = await self._dispatch_with_timeout(ctx, cli_type)
             if (
-                cli_type == "pi"
+                task_operations
                 and event == "PostToolUse"
                 and ctx.tool_name in {"TaskCreate", "TaskUpdate"}
-                and isinstance(capabilities, list)
-                and "task_operations_v1" in capabilities
             ):
                 task_updates = ctx.tool_input.get("taskUpdates")
                 task_ids = []
@@ -3012,31 +3012,23 @@ class AutorunDaemon:
                     task = ctx.tool_result.get("task")
                     if isinstance(task, dict):
                         task_ids = [str(task.get("id"))] if task.get("id") else []
+                snapshots = await asyncio.wait_for(
+                    asyncio.get_running_loop().run_in_executor(
+                        None,
+                        self._pi_task_snapshots,
+                        ctx,
+                        task_ids,
+                    ),
+                    timeout=dispatch_timeout_for_event(event),
+                )
                 if isinstance(task_updates, list):
-                    snapshots = await asyncio.wait_for(
-                        asyncio.get_running_loop().run_in_executor(
-                            None,
-                            self._pi_task_snapshots,
-                            ctx,
-                            task_ids,
-                        ),
-                        timeout=dispatch_timeout_for_event(event),
-                    )
+                    # Bulk receipts always confirm as a list, even an empty one:
+                    # the extension treats a missing list as "unconfirmed".
                     response = dict(response or {})
                     response["_autorun_bridge"] = {"task_snapshots": snapshots}
-                else:
-                    snapshot = await asyncio.wait_for(
-                        asyncio.get_running_loop().run_in_executor(
-                            None,
-                            self._pi_task_snapshot,
-                            ctx,
-                            str(task_ids[0] if task_ids else ""),
-                        ),
-                        timeout=dispatch_timeout_for_event(event),
-                    )
-                    if snapshot is not None:
-                        response = dict(response or {})
-                        response["_autorun_bridge"] = {"task_snapshot": snapshot}
+                elif snapshots:
+                    response = dict(response or {})
+                    response["_autorun_bridge"] = {"task_snapshot": snapshots[0]}
             if (
                 response is not None
                 and event == "UserPromptSubmit"

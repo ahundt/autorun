@@ -801,6 +801,25 @@ def test_pi_extension_uses_native_events_without_duplicating_policy():
     assert "rm -rf" not in source, "the adapter must not become a second policy engine"
 
 
+def test_pi_extension_task_status_enum_matches_the_registry():
+    """The TS tool schema cannot import Python, so pin the one copy it keeps.
+
+    ``TASK_STATUSES`` is what the model is offered for ``TaskUpdate.status``;
+    ``Platform.native_task_statuses`` is what the lifecycle accepts. Both Pi
+    variants share the template, so one registry entry is the authority.
+    """
+    import re
+
+    from autorun.platforms import PLATFORMS
+
+    source = (PI_TEMPLATE / "extensions" / "autorun" / "index.ts").read_text(encoding="utf-8")
+    match = re.search(r"const TASK_STATUSES = \[(.*?)\];", source, re.S)
+    assert match, "index.ts must declare TASK_STATUSES"
+    declared = set(re.findall(r'"([a-z_]+)"', match.group(1)))
+    assert declared == set(PLATFORMS["pi"].native_task_statuses)
+    assert declared == set(PLATFORMS["prime"].native_task_statuses)
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
 def test_shared_daemon_client_sends_pi_identity_and_reads_a_deny(tmp_path):
     if not hasattr(socket, "AF_UNIX"):

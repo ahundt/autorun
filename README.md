@@ -409,6 +409,15 @@ Pi also accepts `ar:st`, `ar-st`, and `/ar:st`. Skills use Pi's native
 Development tests must redirect `HOME`, `PI_CODING_AGENT_DIR`, `AUTORUN_HOME`,
 and `AUTORUN_TEST_STATE_DIR` before importing or installing autorun.
 
+The gate covers model tool calls only. Two Pi paths run without it: a `!`
+shell line you type yourself is not a tool call, and a Pi process started with
+`--no-extensions` never loads the adapter. `pi-subagents` passes
+`--no-extensions` to a child `pi` when the agent definition declares its own
+`extensions:` list (or a capability ceiling denies extensions), so add
+`~/.pi/agent/extensions/ar/index.ts` (`~/.prime/agent/extensions/ar/index.ts`
+under Prime Agent) to that list to keep the guard in the child. Agents without
+an `extensions:` key inherit it automatically.
+
 Pi task tools use the same Python-owned lifecycle as Claude: `TaskCreate`,
 `TaskList`, and `TaskGet` provide create/read operations; `TaskUpdate` accepts
 one `taskId` or an atomic `taskUpdates` array, including `addBlockedBy` and
