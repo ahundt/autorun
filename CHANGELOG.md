@@ -24,10 +24,19 @@ marketplace itself carries a separate `version` field.
   `--cli prime` hook fallback, and `~/.prime/agent/AGENTS.md` guidance block.
   One template, one installer step, and one wire protocol serve both
   harnesses; `--prime` selects it alone.
-- **Day units in scope durations.** `/ar:ok`, `/ar:no`, `/ar:globalok`,
-  `/ar:cache`, and `/ar:task pause` durations accept `d` alongside `h`, `m`,
-  and `s` — for example `2d` or `1d12h` — through the one shared
-  `parse_duration` grammar.
+- **Day units in scope durations.** `/ar:ok`, `/ar:globalok`, `/ar:cache`,
+  and `/ar:task pause` durations accept `d` alongside `h`, `m`, and `s` — for
+  example `2d` or `1d12h` — through the one shared `parse_duration` grammar.
+  A zero count (`/ar:ok rm 0`, `/ar:cache ok 0`) is rejected with an error
+  instead of granting an allow that could never activate.
+- **OpenCode todo state enters the task lifecycle.** The OpenCode plugin
+  forwards `todo.updated` events as `todowrite` receipts, so OpenCode's native
+  todo list is mirrored into autorun's task status with its own ids and content;
+  `cancelled` maps to `deleted`, an empty list clears only OpenCode-sourced
+  records, and explicit task records are untouched.
+- **Pi `TaskGet` and atomic `TaskUpdate` batches.** Pi and Prime gain a
+  `TaskGet` tool, and `TaskUpdate` accepts a `taskUpdates` array applied in one
+  lifecycle transaction with per-task confirmations.
 
 ### Fixed
 

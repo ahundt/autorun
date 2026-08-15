@@ -712,8 +712,9 @@ on Claude, "Unknown command" on Qwen — verified in both harnesses' source, so
 you always see an immediate error rather than a silent drop), and ForgeCode
 sends autorun no hook events. ForgeCode's installed guards are
 advice to the agent. OpenCode does not expose prompt or Stop hooks, but its
-in-process JavaScript bridge sends tool calls to autorun and vetoes denied
-commands. On both harnesses the installed files `ar-go`, `ar-st`, `ar-allow`,
+in-process JavaScript bridge sends tool calls to autorun, vetoes denied
+commands, and mirrors OpenCode's native todo list (`todo.updated`) into
+autorun's task status. On both harnesses the installed files `ar-go`, `ar-st`, `ar-allow`,
 `ar-find`, `ar-commit`, and `ar-ph` are the command surface.
 
 Autorun prints the local spelling everywhere: `/ar:` on Claude Code and the

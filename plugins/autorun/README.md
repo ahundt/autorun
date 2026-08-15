@@ -42,8 +42,9 @@ assets; session state, task history, and logs are retained intentionally.
 | Codex | Native hooks | Yes | Codex-native plugin and skills |
 | Qwen Code | Native hooks | Yes | Native extension |
 | Antigravity | Native hooks | Installed native event subset | Native extension |
-| OpenCode | In-process tool veto | No | Command files and skills |
+| OpenCode | In-process tool veto | No stop event; native `todo.updated` state is mirrored into task status | Command files and skills |
 | Pi | In-process tool veto | `agent_settled` continuation plus daemon-backed task tools | Native extension and shared skills |
+| Prime Agent | In-process tool veto (same Pi extension, `cliType: "prime"`) | `agent_settled` continuation plus daemon-backed task tools | Native extension and shared skills |
 | ForgeCode | Advisory guidance only | No | Command files and skills |
 | Legacy Gemini CLI | Native hooks | Yes | Native extension |
 
