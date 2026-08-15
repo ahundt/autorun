@@ -2992,10 +2992,12 @@ class AutorunDaemon:
                 )
             else:
                 response = await self._dispatch_with_timeout(ctx, cli_type)
+            task_platform = platform_for(cli_type)
             if (
                 task_operations
                 and event == "PostToolUse"
-                and ctx.tool_name in {"TaskCreate", "TaskUpdate"}
+                and ctx.tool_name
+                in (task_platform.task_create_tools | task_platform.task_update_tools)
             ):
                 task_updates = ctx.tool_input.get("taskUpdates")
                 task_ids = []
@@ -3022,8 +3024,11 @@ class AutorunDaemon:
                     timeout=dispatch_timeout_for_event(event),
                 )
                 if isinstance(task_updates, list):
-                    # Bulk receipts always confirm as a list, even an empty one:
-                    # the extension treats a missing list as "unconfirmed".
+                    # Bulk receipts confirm with the list shape. Unknown ids
+                    # were materialized as ghosts by the handler above, so a
+                    # healthy dispatch always yields one snapshot per id; an
+                    # empty list means the handler recorded nothing, and the
+                    # extension rightly reports that as unconfirmed.
                     response = dict(response or {})
                     response["_autorun_bridge"] = {"task_snapshots": snapshots}
                 elif snapshots:

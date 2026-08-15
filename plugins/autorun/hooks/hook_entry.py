@@ -530,16 +530,21 @@ def fail_closed_tool_gate(
         print(json.dumps({"decision": "deny", "reason": reason}))
         sys.exit(0)
 
-    schema_type = "permissive" if cli_type == "gemini" else "strict"
-    decision = "deny" if schema_type == "permissive" else "block"
+    # Base dual-shape response (platforms.HookProtocol.pretool_response):
+    # legacy Gemini keeps root decision "deny"; everyone else says "block".
+    # Only Claude blanks the root reason/systemMessage — its deny is honored
+    # via stderr + exit 2 (bug #4669), so the root text would print twice.
+    # OpenCode, Pi, and Prime read this JSON in-process over a socket and keep
+    # the populated shape (platforms.OPENCODE_HOOKS / PI_HOOKS comments).
+    root_reason = "" if cli_type == "claude" else reason
     response = {
-        "decision": decision,
+        "decision": "deny" if cli_type == "gemini" else "block",
         "permissionDecision": "deny",
-        "reason": reason if schema_type == "permissive" else "",
+        "reason": root_reason,
         "continue": True,
         "stopReason": "",
         "suppressOutput": False,
-        "systemMessage": reason if schema_type == "permissive" else "",
+        "systemMessage": root_reason,
         "hookSpecificOutput": hook_specific,
     }
     if cli_type == "gemini":

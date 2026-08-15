@@ -713,7 +713,7 @@ def stage_pi_extension(
     socket: str,
     port_file: str,
     command: object,
-    cli_type: str = "pi",
+    cli_type: str,
 ) -> Mapping[str, Path]:
     """Stage the Pi-family adapter and the shared daemon transport it imports.
 

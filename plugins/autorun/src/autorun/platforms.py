@@ -1630,7 +1630,10 @@ PI = register(
 )
 
 
-PRIME_HOOKS = HookProtocol("prime")
+# Prime's wire contract is Pi's; ``replace`` (not a fresh HookProtocol) so any
+# future non-default PI_HOOKS field reaches Prime the way every other PI field
+# does through ``PRIME = replace(PI, ...)`` below.
+PRIME_HOOKS = replace(PI_HOOKS, name="prime")
 
 # Prime Agent is PrimeIntellect's build of the Pi coding agent: the shipped
 # 0.7.1 bundle keeps Pi's runtime (its launcher's helper is named

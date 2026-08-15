@@ -317,6 +317,33 @@ class TestIsBootstrapDisabled:
 class TestCLIArgumentParsing:
     """Tests for CLI argument parsing in __main__.py."""
 
+    def test_bare_autorun_on_a_terminal_prints_usage_instead_of_silence(self, capsys):
+        """``autorun`` with no arguments is the hook entry when JSON arrives on
+        stdin; a person at a terminal gets usage, the same answer bare
+        ``/ar`` gets from the dispatcher (help), never an empty exit 0."""
+        from autorun.__main__ import main
+
+        with mock.patch("sys.stdin") as stdin:
+            stdin.isatty.return_value = True
+            result = main([])
+
+        out = capsys.readouterr().out
+        assert result == 0
+        assert "usage:" in out.lower()
+        assert "--install" in out
+
+    def test_bare_autorun_with_piped_stdin_stays_the_hook_handler(self):
+        """A pipe is a hook payload, so no help text may leak into the
+        response the harness parses."""
+        from autorun import __main__ as entry
+
+        with mock.patch("sys.stdin") as stdin, mock.patch.object(
+            entry, "run_hook_handler", return_value=0
+        ) as handler:
+            stdin.isatty.return_value = False
+            assert entry.main([]) == 0
+        handler.assert_called_once_with()
+
     def test_force_install_flag_parsed(self):
         """Test that --force flag is parsed correctly."""
         from autorun.__main__ import create_parser
@@ -695,6 +722,34 @@ class TestMainFunctionRouting:
         assert result == 0
         assert mock_install.call_args.kwargs["prime_only"] is True
         assert mock_install.call_args.kwargs["pi_only"] is False
+
+    def test_per_harness_install_flags_are_registered_platforms_and_cover_the_pi_family(self):
+        """The ``--<harness>`` booleans are a hand table; pin it to the registry.
+
+        Every flag must name a registered platform (no typo can ship), and every
+        Pi-family member must have one, because a variant is added as a
+        registry entry plus a STEPS row and this flag is the CLI half of that
+        row (``--prime`` is the worked example). Harnesses without a flag
+        (OpenCode, ForgeCode) are installed by the default selection.
+        """
+        from autorun.__main__ import create_parser
+        from autorun.installer.steps import pi_family_names
+        from autorun.platforms import PLATFORMS
+
+        parser = create_parser()
+        flagged = {
+            action.dest
+            for action in parser._actions
+            if action.dest in PLATFORMS
+            and any(opt == f"--{action.dest}" for opt in action.option_strings)
+        }
+        assert flagged <= set(PLATFORMS)
+        assert set(pi_family_names()) <= flagged, (
+            "every Pi-family harness needs a --<name> install flag"
+        )
+        for name in sorted(flagged):
+            args = parser.parse_args(["--install", f"--{name}"])
+            assert getattr(args, name) is True
 
     def test_install_with_antigravity_passes_antigravity_only_flag(self):
         """Test that --install --antigravity targets Antigravity CLI installation."""

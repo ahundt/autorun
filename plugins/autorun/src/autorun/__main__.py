@@ -1230,7 +1230,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 current_session_id=session_id,
             )
 
-    # Default: run as hook handler
+    # Default: run as hook handler. Hooks arrive as JSON on a pipe; a person
+    # at a terminal typed a bare `autorun`, and the useful answer there is
+    # usage — the same answer the dispatcher gives a bare `/ar` — not a
+    # daemon round-trip on an empty payload that exits 0 in silence.
+    try:
+        interactive = sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        interactive = False
+    if interactive:
+        parser.print_help()
+        return 0
     return run_hook_handler()
 
 

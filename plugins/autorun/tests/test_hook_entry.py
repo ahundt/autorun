@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from autorun.platforms import hook_platforms as _hook_platforms
+
 
 # =============================================================================
 # Paths
@@ -385,20 +387,25 @@ class TestHookEntryExecutionPriority:
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "invalid response" in response["reason"]
 
-    @pytest.mark.parametrize(
-        ("cli_type", "expected"),
-        [
-            ("claude", {"continue": True}),
-            ("gemini", {"continue": True}),
-            ("qwen", {"continue": True}),
-            ("codex", {}),
-            ("antigravity", {}),
-        ],
-    )
+    @pytest.mark.parametrize("cli_type", sorted(p.name for p in _hook_platforms()))
     def test_connected_daemon_invalid_lifecycle_response_uses_native_noop(
-        self, tmp_path, monkeypatch, capsys, cli_type, expected
+        self, tmp_path, monkeypatch, capsys, cli_type
     ):
-        """Malformed lifecycle replies never leak Claude fields to other CLIs."""
+        """Malformed lifecycle replies never leak Claude fields to other CLIs.
+
+        Pinned over every hook platform against the registry's
+        ``response_for_unhandled_hook`` so a Pi variant or OpenCode cannot
+        silently inherit another harness's no-op. Claude is the one explicit
+        exception: its fail-open path emits ``{"continue": true}``, which
+        Claude Code accepts alongside the empty object.
+        """
+        from autorun.platforms import platform_for
+
+        expected = (
+            {"continue": True}
+            if cli_type == "claude"
+            else platform_for(cli_type).hook_protocol.response_for_unhandled_hook()
+        )
         hook_entry = load_hook_entry_module()
         stage_daemon_endpoint(tmp_path)
 
@@ -645,21 +652,20 @@ class TestHookEntryExecutionPriority:
             f"detector: {missing}"
         )
 
-    @pytest.mark.parametrize(
-        ("cli_type", "event_name"),
-        [
-            ("gemini", "BeforeTool"),
-            ("qwen", "PreToolUse"),
-            ("antigravity", "PreToolUse"),
-            ("codex", "PreToolUse"),
-        ],
-    )
+    @pytest.mark.parametrize("cli_type", sorted(p.name for p in _hook_platforms()))
     def test_tool_gate_fail_closed_matches_canonical_platform_schema(
-        self, capsys, cli_type, event_name
+        self, capsys, cli_type
     ):
-        from autorun.platforms import platform_for
+        """Every hook backend's fail-closed veto is its registry-owned shape.
+
+        hook_entry.py is a stdlib hand copy, so the only way a Pi variant or
+        OpenCode keeps the canonical populated reason (rather than inheriting
+        Claude's exit-2 blanking) is a pin over ``hook_platforms()``.
+        """
+        from autorun.platforms import platform_for, to_harness_cli_event
 
         hook_entry = load_hook_entry_module()
+        event_name = to_harness_cli_event("PreToolUse", cli_type)
 
         with pytest.raises(SystemExit) as exc:
             hook_entry.fail_closed_tool_gate(
@@ -668,8 +674,15 @@ class TestHookEntryExecutionPriority:
                 event_name=event_name,
             )
 
-        assert exc.value.code == 0
-        output = json.loads(capsys.readouterr().out)
+        captured = capsys.readouterr()
+        if cli_type == "claude":
+            # Bug #4669 workaround: Claude honors deny only via stderr + exit 2.
+            assert exc.value.code == 2
+            assert "broken hook path" in captured.err
+        else:
+            assert exc.value.code == 0
+            assert captured.err == ""
+        output = json.loads(captured.out)
         # Unrecoverable guidance: no "then retry". A gate that cannot clear
         # must not advise retrying, or every attached session loops on it.
         # See tests/test_hook_bootstrap_deadlock.py for the split.
