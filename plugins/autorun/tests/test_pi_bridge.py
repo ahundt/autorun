@@ -475,10 +475,11 @@ def test_pi_registers_sequential_task_tools_and_routes_mutations_through_posttoo
     result, frames = _run_pi_adapter_driver(
         tmp_path,
         [
+            {"_autorun_bridge": {"operation": "task_next_id_v1", "task_id": "7"}},
             {
                 "_autorun_bridge": {
                     "task_snapshot": {
-                        "id": "pi-created", "subject": "Build", "status": "pending",
+                        "id": "7", "subject": "Build", "status": "pending",
                         "metadata": {"source": "pi_task_tool"},
                     }
                 }
@@ -532,16 +533,50 @@ console.log(JSON.stringify({
     assert result["names"] == ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
     assert result["modes"] == ["sequential", "sequential", "sequential", "sequential"]
     assert result["createRequired"] == ["subject", "description", "activeForm"]
-    assert result["created"]["details"]["task"]["id"].startswith("pi-")
-    assert len(result["created"]["details"]["task"]["id"]) >= 20
+    # The daemon mints the id, so it is the session's next sequential integer
+    # (Claude Code shape: TaskUpdate(taskId=7)), not a 35-character random string.
+    assert result["created"]["details"]["task"]["id"] == "7"
+    assert result["created"]["content"] == [{"type": "text", "text": "Created task 7: Build"}]
     assert "addBlockedBy" in result["updateProperties"]
-    assert result["created"]["details"]["task"]["id"]
-    assert result["receipt"]["details"]["taskSnapshot"]["id"] == "pi-created"
+    assert result["receipt"]["details"]["taskSnapshot"]["id"] == "7"
     assert result["listed"]["details"]["tasks"][0]["id"] == "existing"
-    assert frames[0]["hook_event_name"] == "PostToolUse"
-    assert frames[0]["tool_result"]["task"]["id"] == result["created"]["details"]["task"]["id"]
-    assert frames[1]["inprocess_operation"] == "task_list_v1"
-    assert "task_operations_v1" in frames[1]["inprocess_capabilities"]
+    assert frames[0]["inprocess_operation"] == "task_next_id_v1"
+    assert "task_operations_v1" in frames[0]["inprocess_capabilities"]
+    assert frames[1]["hook_event_name"] == "PostToolUse"
+    assert frames[1]["tool_result"]["task"]["id"] == "7"
+    assert frames[2]["inprocess_operation"] == "task_list_v1"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_pi_task_create_falls_back_to_a_prefixed_random_id_without_a_daemon_mint(tmp_path):
+    """A daemon that returns no id must not stop task creation: the extension
+    falls back to a harness-prefixed random id that the PostToolUse receipt
+    then confirms or flags, exactly as before the daemon minted ids."""
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{"systemMessage": "no mint here"}],
+        '''import extension from "__EXTENSION__";
+const tools = new Map();
+const pi = { registerCommand() {}, on() {}, registerTool(tool) { tools.set(tool.name, tool); }, sendMessage() {} };
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "rpc",
+  sessionManager: {
+    getSessionId: () => "pi-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }),
+  },
+};
+const created = await tools.get("TaskCreate").execute(
+  "call-create", { subject: "Build", description: "Do it", activeForm: "Building" },
+  new AbortController().signal, undefined, ctx,
+);
+console.log(JSON.stringify({ created }));
+''',
+    )
+
+    task_id = result["created"]["details"]["task"]["id"]
+    assert task_id.startswith("pi-") and len(task_id) >= 20
+    assert frames[0]["inprocess_operation"] == "task_next_id_v1"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")

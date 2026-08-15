@@ -1232,12 +1232,42 @@ class TaskLifecycle:
         else:
             return [t for t in tasks.values() if t["status"] not in self.COMPLETED_STATUSES]
 
+    @staticmethod
+    def _creation_order_key(task: Dict) -> tuple:
+        """Sort key: creation time, then the id read numerically when it is one.
+
+        Ids are stored as strings, and the SQLite repository lists them in string
+        order, so without this "10" sorts before "9". Sequential ids from Claude
+        Code and the daemon-minted Pi-family ids are plain integers; ids from
+        other sources ("plan-2", OpenCode todo ids) sort after them by text.
+        """
+        raw = str(task.get("id", ""))
+        return (
+            float(task.get("created_at") or 0),
+            (0, int(raw)) if raw.isdigit() else (1, raw),
+        )
+
+    def next_task_id(self) -> str:
+        """Mint the session's next task id: one above every numeric id recorded.
+
+        Deleted and completed tasks stay in the snapshot, so a number is never
+        reused; non-numeric ids do not move the sequence. O(T) over the session
+        task count. This is the one owner of id shape for adapters whose tools
+        autorun implements (the Pi-family extension asks for it through
+        ``task_next_id_v1``); harnesses with native task tools mint their own.
+        """
+        numeric = [int(task_id) for task_id in self.tasks if str(task_id).isdigit()]
+        return str(max(numeric) + 1 if numeric else 1)
+
     def _prioritize_task_snapshot(self, tasks: Dict[str, Dict]) -> List[Dict]:
         """Order blocking tasks from one authoritative task snapshot."""
-        incomplete = [
-            task for task in tasks.values()
-            if task["status"] not in self.NON_BLOCKING_STATUSES
-        ]
+        incomplete = sorted(
+            (
+                task for task in tasks.values()
+                if task["status"] not in self.NON_BLOCKING_STATUSES
+            ),
+            key=self._creation_order_key,
+        )
         ready = []
         waiting = []
         blocked = []
@@ -1277,10 +1307,7 @@ class TaskLifecycle:
                 task for task in tasks.values()
                 if str(task.get("id", "")) not in prioritized_ids
             ),
-            key=lambda task: (
-                float(task.get("created_at") or 0),
-                str(task.get("id", "")),
-            ),
+            key=self._creation_order_key,
         )
         rows = [*prioritized, *history]
         return {

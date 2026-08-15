@@ -27,6 +27,7 @@ Tests for:
 
 import pytest
 import json
+import uuid
 import threading
 import asyncio
 import tempfile
@@ -1746,6 +1747,27 @@ class TestAutorunDaemon:
         assert operation["total"] == 3
         assert operation["truncated"] is False
 
+    def test_pi_task_next_id_operation_asks_the_lifecycle_for_the_session_sequence(self, monkeypatch):
+        """The extension asks the daemon for the next id, so the sequence has one
+        owner (Python) and one shape (Claude Code's integers), not a random string
+        minted in TypeScript."""
+        from autorun import task_lifecycle
+
+        class FakeLifecycle:
+            def __init__(self, ctx):
+                assert ctx.cli_type == "prime"
+            def next_task_id(self):
+                return "12"
+
+        monkeypatch.setattr(task_lifecycle, "TaskLifecycle", FakeLifecycle)
+        operation = AutorunDaemon(AutorunApp())._run_pi_task_operation(
+            EventContext(session_id="mint", event="AutorunOperation", cli_type="prime"),
+            "task_next_id_v1",
+            {},
+        )["_autorun_bridge"]
+
+        assert operation == {"operation": "task_next_id_v1", "task_id": "12"}
+
     @pytest.mark.asyncio
     async def test_handle_client_returns_bounded_task_projection_for_pi_operation(self, monkeypatch):
         from autorun import task_lifecycle
@@ -1796,6 +1818,82 @@ class TestAutorunDaemon:
         assert operation["total"] == 105
         assert operation["truncated"] is True
         assert len(operation["tasks"]) == 100
+
+    @pytest.mark.asyncio
+    async def test_handle_client_dispatches_task_next_id_for_a_task_operations_adapter(self, monkeypatch):
+        from autorun import task_lifecycle
+
+        class FakeLifecycle:
+            def __init__(self, ctx):
+                assert ctx.cli_type == "pi"
+            def next_task_id(self):
+                return "3"
+
+        monkeypatch.setattr(task_lifecycle, "TaskLifecycle", FakeLifecycle)
+        daemon = AutorunDaemon(AutorunApp())
+        payload = {
+            "hook_event_name": "AutorunOperation",
+            "session_id": "mint",
+            "cli_type": "pi",
+            "inprocess_capabilities": ["task_operations_v1"],
+            "inprocess_operation": "task_next_id_v1",
+        }
+        reader = Mock()
+        reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        writer = FakeWriter()
+        await daemon.handle_client(reader, writer)
+
+        assert json.loads(writer.writes[0])["_autorun_bridge"] == {
+            "operation": "task_next_id_v1", "task_id": "3",
+        }
+
+    @pytest.mark.asyncio
+    async def test_pi_task_ids_are_minted_in_sequence_through_the_real_lifecycle(self):
+        """End to end through handle_client with the real TaskLifecycle in the
+        isolated test state: a mint, the PostToolUse receipt that records the
+        created task under that id, then a second mint that moves on. No fake
+        lifecycle, no live daemon, no shared state."""
+        session = f"pi-mint-{uuid.uuid4().hex[:8]}"
+        daemon = AutorunDaemon(AutorunApp())
+        daemon._dispatch_with_timeout = AsyncMock(return_value=None)
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def send(payload):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        base = {"session_id": session, "cli_type": "pi", "inprocess_capabilities": ["task_operations_v1"]}
+        first = await send({**base, "hook_event_name": "AutorunOperation", "inprocess_operation": "task_next_id_v1"})
+        assert first["_autorun_bridge"] == {"operation": "task_next_id_v1", "task_id": "1"}
+
+        # The extension records the task under the minted id on PostToolUse.
+        from autorun.task_lifecycle import TaskLifecycle
+        TaskLifecycle(ctx=EventContext(session_id=session, event="PostToolUse", cli_type="pi")).create_task(
+            "1", {"subject": "Build", "description": "", "activeForm": ""}, "created"
+        )
+
+        second = await send({**base, "hook_event_name": "AutorunOperation", "inprocess_operation": "task_next_id_v1"})
+        assert second["_autorun_bridge"]["task_id"] == "2"
+
+        listed = await send({**base, "hook_event_name": "AutorunOperation", "inprocess_operation": "task_list_v1"})
+        assert [row["id"] for row in listed["_autorun_bridge"]["tasks"]] == ["1"]
 
     @pytest.mark.asyncio
     async def test_handle_client_projects_python_task_snapshot_after_pi_update(self, monkeypatch):

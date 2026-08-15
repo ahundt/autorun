@@ -82,9 +82,26 @@ const bridge = createDaemonBridge({
   inprocessCapabilities: ["response_projection_v2", "task_operations_v1"],
 });
 
+// Fallback only. The daemon mints task ids (task_next_id_v1) so they are the
+// session's sequential integers, the same shape Claude Code uses; this
+// harness-prefixed random id is used only when no daemon answers, and the
+// PostToolUse receipt then confirms or flags it as before.
 export function createTaskId(): string {
   const random = globalThis.crypto?.randomUUID?.().replaceAll("-", "");
-  return random ? `pi-${random}` : `pi-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const prefix = __AUTORUN_CLI_TYPE__;
+  return random
+    ? `${prefix}-${random}`
+    : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function mintTaskId(ctx: ExtensionContext): Promise<string> {
+  const response = await bridge.askDaemon({
+    ...frame(ctx, "AutorunOperation"),
+    inprocess_operation: "task_next_id_v1",
+  });
+  const operation = response?._autorun_bridge;
+  const minted = operation?.operation === "task_next_id_v1" ? operation.task_id : undefined;
+  return typeof minted === "string" && minted.trim() ? minted : createTaskId();
 }
 
 function textResult(text: string, details: Record<string, unknown>) {
@@ -178,9 +195,11 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     description: "Create one tracked autorun task and return its stable ID.",
     parameters: TaskCreateParameters as any,
     executionMode: "sequential",
-    async execute(_callId, params: any, signal) {
+    async execute(_callId, params: any, signal, _onUpdate, ctx) {
       throwIfAborted(signal);
-      const task = { id: createTaskId(), ...params, status: "pending" };
+      const id = await mintTaskId(ctx);
+      throwIfAborted(signal);
+      const task = { id, ...params, status: "pending" };
       return textResult(`Created task ${task.id}: ${task.subject}`, { task });
     },
   });

@@ -37,6 +37,15 @@ marketplace itself carries a separate `version` field.
 - **Pi `TaskGet` and atomic `TaskUpdate` batches.** Pi and Prime gain a
   `TaskGet` tool, and `TaskUpdate` accepts a `taskUpdates` array applied in one
   lifecycle transaction with per-task confirmations.
+- **Sequential Pi and Prime task ids, minted by the daemon.** `TaskCreate` in
+  the Pi-family extension asks the daemon for the session's next id
+  (`task_next_id_v1`, one above every numeric id recorded, never reused), so
+  ids read `1`, `2`, `3` in tool results, `TaskList`, and
+  `TaskUpdate(taskId=…)` — the same shape Claude Code's task tools use —
+  instead of a 35-character `pi-<uuid>` string per call. When no daemon
+  answers, the extension falls back to a `<cli>-<random>` id that the receipt
+  then confirms or flags. `TaskList` and `/ar:task` list tasks in creation
+  order rather than id-string order, so `10` no longer sorts before `9`.
 - **Semantic XML regions in every shipped skill.** All 17 plugin skills, the
   Codex `$ar` catalog skill, the pdf-extractor skill, and the repo-internal
   maintainer skill wrap each major section in balanced, descriptive tags

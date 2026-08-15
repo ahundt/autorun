@@ -2832,6 +2832,17 @@ class AutorunDaemon:
                 }
             }
 
+        if operation == "task_next_id_v1":
+            # The extension's TaskCreate asks before it returns, so the id the
+            # model sees is the session's next integer, minted by the state
+            # owner, not a random string minted in TypeScript.
+            return {
+                "_autorun_bridge": {
+                    "operation": "task_next_id_v1",
+                    "task_id": manager.next_task_id(),
+                }
+            }
+
         if operation == "task_get_v1":
             task_id = str(payload.get("task_id") or "").strip()
             if not task_id:
@@ -2977,7 +2988,9 @@ class AutorunDaemon:
             )
             if (
                 task_operations
-                and operation in {"task_get_v1", "task_list_v1", "task_reproject_v1"}
+                and operation in {
+                    "task_next_id_v1", "task_get_v1", "task_list_v1", "task_reproject_v1",
+                }
             ):
                 loop = asyncio.get_running_loop()
                 response = await asyncio.wait_for(

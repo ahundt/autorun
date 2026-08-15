@@ -834,3 +834,34 @@ def test_nonblocking_recovery_does_not_arm_pretool_denial(
 
     assert lifecycle.handle_session_start(ctx) is not None
     assert ctx.task_staleness_enforce_next is False
+
+
+def test_next_task_id_is_the_session_sequence_and_never_reuses_a_number(sqlite_lifecycle):
+    """The daemon mints Pi-family ids, so the sequence has one owner and one shape:
+    the smallest integer above every numeric id already recorded, whatever the
+    status, so a deleted "3" is never handed out again; non-numeric ids from
+    other sources (plan-2, opencode ids) do not shift the sequence."""
+    lifecycle = sqlite_lifecycle
+    assert lifecycle.next_task_id() == "1"
+    lifecycle.create_task("1", {"subject": "One"}, "created")
+    lifecycle.create_task("2", {"subject": "Two"}, "created")
+    lifecycle.create_task("plan-9", {"subject": "Plan"}, "created")
+    assert lifecycle.next_task_id() == "3"
+    lifecycle.create_task("3", {"subject": "Three"}, "created")
+    lifecycle.update_task("3", {"status": "deleted"}, "gone")
+    assert lifecycle.next_task_id() == "4"
+    lifecycle.create_task("10", {"subject": "Ten"}, "created")
+    assert lifecycle.next_task_id() == "11"
+
+
+def test_task_projection_lists_in_creation_order_not_id_string_order(sqlite_lifecycle):
+    """Sequential ids are strings in storage; "10" must not sort before "9"."""
+    lifecycle = sqlite_lifecycle
+    for task_id in ("9", "10", "11"):
+        lifecycle.create_task(task_id, {"subject": f"Task {task_id}"}, "created")
+    lifecycle.update_task("10", {"addBlockedBy": ["11"]}, "blocked")
+
+    rows = lifecycle.task_projection(limit=100)["tasks"]
+
+    # ready tasks in creation order, then the blocked one
+    assert [row["id"] for row in rows] == ["9", "11", "10"]
