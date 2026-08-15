@@ -281,17 +281,9 @@ console.log(JSON.stringify({ sent, users, notices }));
     ]
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
-def test_pi_tool_call_returns_native_block_without_executing_tool(tmp_path):
-    result, frames = _run_pi_adapter_driver(
-        tmp_path,
-        [{
-            "hookSpecificOutput": {
-                "permissionDecision": "deny",
-                "permissionDecisionReason": "blocked safely",
-            }
-        }],
-        '''import extension from "__EXTENSION__";
+def _tool_call_driver(command: str) -> str:
+    """Drive one ``tool_call`` callback through the staged adapter."""
+    return '''import extension from "__EXTENSION__";
 const handlers = new Map();
 const pi = { registerCommand() {}, registerTool() {}, on(name, handler) { handlers.set(name, handler); } };
 extension(pi);
@@ -302,13 +294,87 @@ const ctx = {
     buildSessionContext: () => ({ messages: [] }),
   },
 };
-const decision = await handlers.get("tool_call")({ toolName: "bash", input: { command: "rm sample" } }, ctx);
+const decision = await handlers.get("tool_call")({ toolName: "bash", input: { command: __COMMAND__ } }, ctx);
 console.log(JSON.stringify({ decision }));
-''',
+'''.replace("__COMMAND__", json.dumps(command))
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_pi_tool_call_returns_native_block_without_executing_tool(tmp_path):
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{
+            "hookSpecificOutput": {
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "blocked safely",
+            }
+        }],
+        _tool_call_driver("rm sample"),
     )
 
     assert result["decision"] == {"block": True, "reason": "blocked safely"}
     assert frames[0]["tool_input"] == {"command": "rm sample"}
+
+
+def _recorded_pi_deny(cwd: Path, command: str) -> dict:
+    """Record autorun's own PreToolUse answer for Pi from a real hook process.
+
+    The test above hands the adapter a deny this file wrote by hand, so it can
+    only prove the adapter reshapes whatever it is given. autorun is the party
+    that actually produces that deny, and it costs nothing to ask: one
+    ``hook_entry.py --cli pi`` process, no daemon, no model. Recording the tape
+    from the real producer at test time is what keeps it from drifting the way
+    a pasted literal does.
+    """
+    from autorun.platforms import PLATFORMS
+    from e2e_support import run_isolated_hook
+
+    completed = run_isolated_hook(
+        plugin_root=PLUGIN_ROOT,
+        hook_script=PLUGIN_ROOT / "hooks" / "hook_entry.py",
+        cli="pi",
+        payload={
+            "hook_event_name": "PreToolUse",
+            "session_id": f"pi-recorded-deny-{os.getpid()}-{cwd.name[-8:]}",
+            "cwd": str(cwd),
+            "tool_name": PLATFORMS["pi"].tool_names["bash"],
+            "tool_input": {"command": command},
+        },
+        cwd=cwd,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_pi_adapter_blocks_with_the_reason_autorun_actually_emits(tmp_path):
+    """Replay autorun's recorded deny, not an invented one, through the adapter.
+
+    This is the free half of Pi's ``rm`` guard. It joins the two halves nothing
+    else connects: the Python side really denies ``rm`` for ``cli_type=pi``, and
+    the TypeScript side really turns that exact payload into Pi's native
+    ``{ block, reason }``. What it cannot show is that Pi hands the adapter the
+    ``toolName``/``input`` shape assumed here — only a live Pi can, which is
+    ``test_pi_e2e_real_money.py``'s job.
+    """
+    probe = tmp_path / "probe.txt"
+    probe.write_text("probe\n", encoding="utf-8")
+    command = f"rm {probe}"
+
+    recorded = _recorded_pi_deny(tmp_path, command)
+    reason = recorded["hookSpecificOutput"]["permissionDecisionReason"]
+    assert recorded["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "trash" in reason
+    # Pi spells its commands "/ar ok rm"; Claude's "/ar:ok rm" here would mean
+    # the deny was rendered for the wrong harness.
+    assert "/ar ok rm" in reason, reason
+
+    result, frames = _run_pi_adapter_driver(tmp_path, [recorded], _tool_call_driver(command))
+
+    assert result["decision"] == {"block": True, "reason": reason}
+    assert frames[0]["tool_input"] == {"command": command}
+    assert probe.is_file(), "a blocked tool_call must never reach the shell"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")

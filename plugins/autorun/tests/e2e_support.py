@@ -63,7 +63,7 @@ BACKEND_E2E_CONTRACTS = {
     "codex": BackendE2EContract("test_codex_e2e_real_money.py", True, True, "read-only sandbox and temporary cwd"),
     "forgecode": BackendE2EContract("test_install_steps.py", False, False, "advisory install; no external hook API"),
     "opencode": BackendE2EContract("test_opencode_bridge.py", True, False, "in-process JS plugin carries events to the daemon socket; live deny dogfooded with a local model 2026-08-04"),
-    "pi": BackendE2EContract("test_pi_bridge.py", True, False, "redirected HOME and config roots; in-process TypeScript extension and synthetic daemon"),
+    "pi": BackendE2EContract("test_pi_e2e_real_money.py", True, True, "live installed extension and daemon, temporary cwd; recorded-frame and isolated-install coverage stays in test_pi_bridge.py"),
 }
 
 
