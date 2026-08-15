@@ -567,6 +567,64 @@ def test_blocked_shared_skill_falls_back_inside_only_the_extension(sandbox):
     assert (stray / "notes.txt").read_text(encoding="utf-8") == "not a skill"
 
 
+def test_targeted_install_preserves_other_harnesses_staged_sources(sandbox):
+    """A Claude-only run must not sweep another harness's staged extension
+    source. Nothing in a targeted walk claims extension-sources/qwen/ar, and
+    the retirement sweep read that absence as "no longer shipped" — which
+    broke the installed Qwen extension's refresh source until a full or
+    --gemini install re-staged it."""
+    from autorun.installer.orchestrate import install
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+    first = install(harnesses=(PLATFORMS["qwen"],), **common)
+    staged = (
+        sandbox / ".autorun" / "installer" / "extension-sources" / "qwen" / "ar"
+    )
+    assert first.ok is True
+    assert staged.is_dir(), "the qwen install must stage its extension source"
+
+    second = install(harnesses=(PLATFORMS["claude"],), **common)
+    assert second.ok is True
+    assert staged.is_dir(), (
+        "a Claude-only install swept another harness's staged source"
+    )
+
+
+def test_staging_for_an_unregistered_harness_still_retires(sandbox):
+    """The whole-root sweep existed for the upgrade path: a harness removed
+    from the registry must not leak its staged tree forever. Scoping the
+    sweep to selected harnesses keeps that promise only if unregistered
+    names remain sweepable."""
+    import shutil
+
+    from autorun.installer.orchestrate import install
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+    assert install(harnesses=(PLATFORMS["qwen"],), **common).ok is True
+    sources = sandbox / ".autorun" / "installer" / "extension-sources"
+    legacy = sources / "legacyharness" / "ar"
+    shutil.copytree(sources / "qwen" / "ar", legacy)
+
+    assert install(harnesses=(PLATFORMS["claude"],), **common).ok is True
+    assert not legacy.exists(), (
+        "a staged tree under a name no platform claims must retire"
+    )
+
+
 def test_codex_personal_package_and_marketplace_resolve_to_the_same_tree(sandbox):
     import json
 

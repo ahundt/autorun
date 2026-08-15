@@ -754,6 +754,7 @@ def _companions_wanted(ctx: Context) -> list[str]:
 
 def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
     """Every config directory this run touched, for the lock sweep."""
+    harnesses = tuple(harnesses)  # iterated twice: config dirs, then staging
     found = []
     for harness in harnesses:
         platform = getattr(harness, "platform", harness)
@@ -767,11 +768,34 @@ def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
             found.append(discovery.codex_plugin_source(home=ctx.home).parent)
     found.append(discovery.shared_root(home=ctx.home).parent)
     source_root = ctx.settings.get("_extension_source_root")
-    found.append(
+    staging = (
         Path(str(source_root))
         if source_root
         else ctx.home / ".autorun" / "installer" / "extension-sources"
     )
+    # The staging root holds one subtree per harness. Sweeping the whole root
+    # retired Gemini's staged source during a --claude-only install: no
+    # gemini step ran, nothing claimed extension-sources/gemini/ar, and the
+    # retirement sweep read that absence as "no longer shipped". Scope the
+    # sweep to the selected harnesses' subtrees, and keep the upgrade path by
+    # also sweeping any subtree whose name no registered platform claims — a
+    # harness removed from the registry must not leak its staging forever.
+    from ..platforms import PLATFORMS
+
+    selected_names = {
+        getattr(harness, "name", "") for harness in harnesses
+    } - {""}
+    found.extend(staging / name for name in sorted(selected_names))
+    try:
+        found.extend(
+            child
+            for child in staging.iterdir()
+            if child.is_dir()
+            and child.name not in PLATFORMS
+            and child.name not in selected_names
+        )
+    except OSError:
+        pass
     return found
 
 
