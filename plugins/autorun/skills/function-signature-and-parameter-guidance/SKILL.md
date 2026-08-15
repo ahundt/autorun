@@ -2,17 +2,18 @@
 name: function-signature-and-parameter-guidance
 description: |
   Design and review caller-facing names and contracts: functions, tools, commands, CLI flags,
-  parameters, options objects, config keys, env vars, profiles, event types, and machine-readable
-  node/edge identifiers. Check names, descriptions, help, schemas, defaults, bounds, units,
-  errors, outputs, mutation, and whether values reach behavior.
+  parameters, config keys, env vars, profiles, event types, and node/edge identifiers.
+  Check names, descriptions, help, docstrings, schemas, defaults, bounds, units, errors,
+  outputs, mutation, and whether values reach behavior.
   Use when asked to "name a parameter", "parameter naming", "name this tool or command",
   "choose a flag, option, or config key", "design an options object", "one tool or two",
   "bool or enum here", "name a profile, field, event, node, or edge",
-  "make names clear and unambiguous", "check standardized, ISO, platform, or language naming",
+  "make names clear and unambiguous", "check ISO, platform, or language naming",
   "audit CLI/MCP/JSON-Schema help", "define accepted values or defaults",
   "what should this return on failure", "rename this without breaking callers",
-  "improve an error message", "why did this parameter do nothing", or "red-team these descriptions".
-  Do NOT use for private local variables, general prose, README copy, release notes, or commits.
+  "improve an error message", "why did the caller pass the wrong argument",
+  "why did this parameter do nothing", or "red-team these descriptions".
+  Not for local variables, general prose, README copy, release notes, or commits.
 ---
 
 # Function Signature and Parameter Guidance
