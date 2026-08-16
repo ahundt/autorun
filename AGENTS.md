@@ -1,5 +1,56 @@
 # autorun Marketplace - Claude Code
 
+`CLAUDE.md` and `GEMINI.md` here are symlinks to this file. Edit `AGENTS.md`.
+
+## Development isolation is MANDATORY
+
+This machine runs many harness sessions at once, and they all share the live
+daemon, `~/.autorun`, and the installed trees under `~/.agents`, `~/.claude`,
+`~/.codex`, `~/.gemini`, `~/.qwen`, `~/.pi`, `~/.prime`, `~/.config/opencode`.
+An install, uninstall, or daemon restart against the live machine reaches every
+one of those sessions. It has happened: a self-check that redirected only
+`$HOME` uninstalled 16 skills from the live machine, and a live `--install
+--force` in the middle of other sessions left them looping and burned about
+12% of a week's token budget (2026-08-15).
+
+**Rules, for every AI and human working in this repository:**
+
+1. **Every install, uninstall, dry run, status probe, self-check, test, and
+   dogfood run happens in a sandbox** — `HOME`/`USERPROFILE`, `AUTORUN_HOME`,
+   and `AUTORUN_TEST_STATE_DIR` redirected to a short scratch path — or in
+   Docker. `pytest` does this itself through `plugins/autorun/conftest.py`;
+   everything else you must do by hand, every time. Keep the sandbox working:
+   a change that breaks it blocks the change, not the sandbox.
+2. **NEVER touch the live installation without explicit written instruction
+   from the user in the current conversation naming that action.** That
+   covers `autorun --install` (with or without `--force`), `--uninstall`,
+   `--restart-daemon`, `--restart-all-daemons`, `claude plugin install/update`,
+   `uv tool install` of autorun, and any hand edit, link, move, or deletion
+   under the live harness config directories. A task you wrote for yourself,
+   a `/ar:ok` grant for some other command, "so live copies match", or "to
+   verify the fix" is not that instruction. Report what a live install would
+   change (a sandboxed `--install-dry-run` shows it) and stop there.
+3. **Prove isolation instead of assuming it**: snapshot the live trees before
+   and after (recipe in the isolation doc), and if a sandboxed hook reports
+   `autorun CLI timed out`, check the sandbox socket path length before
+   anything else.
+
+Recipe (short path — the daemon socket has almost no `sun_path` headroom):
+
+```bash
+SB=/tmp/arsb; mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"
+env HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" \
+    AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" \
+    UV_CACHE_DIR="$(uv cache dir)" \
+    uv run --project plugins/autorun python -m autorun --install --force
+```
+
+Isolated tests, probes, and Docker for Linux contention runs use the same
+three variables: [`plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md`](plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md).
+Installer-specific traps (a `Context.home` that disagrees with `$HOME`, an
+in-process self-check whose `$HOME` redirect does not move the daemon):
+[`plugins/autorun/src/autorun/installer/AGENTS.md`](plugins/autorun/src/autorun/installer/AGENTS.md).
+
 ## Critical Runtime Isolation
 
 - Tests must set both `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` before any
@@ -13,8 +64,7 @@
 - Before committing, read `plugins/autorun/skills/commit/SKILL.md`; use a concrete
   `<files>:` subject for few/grouped files or `type(scope):` for many files.
   Cover previous behavior, exact changes, rationale, files, and verification.
-- Full invariants, regression checks, and recovery guidance:
-  [`plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md`](plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md).
+  Read the full staged diff before every commit.
 
 UV workspace containing 2 Claude Code plugins: **autorun**, **pdf-extractor**.
 
@@ -24,6 +74,10 @@ gemini-cli is retired, 'gemini' represents the qwen code agy harness families.
 [README.md — Legacy Gemini CLI Installation](README.md#legacy-gemini-cli-installation).
 
 ## Installation (Claude Code)
+
+These are end-user instructions for installing autorun on a machine you own.
+Inside a development session they fall under the isolation rules above: run
+them in the sandbox, or on the live machine only when the user has told you to.
 
 ### From GitHub (Production - Recommended)
 
@@ -175,7 +229,7 @@ Built-in protections for: `rm` → `trash`, `git reset --hard` → `git stash`, 
 | `/ar:globalstatus` | Show global blocks and allows |
 | `/ar:globalclear` | Clear all global blocks and allows |
 
-See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS list.
+See `DEFAULT_INTEGRATIONS` in `plugins/autorun/src/autorun/config.py` for the list.
 
 **Hook Error Prevention**: See `plugins/autorun/AGENTS.md` "Hook error prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
 
@@ -240,7 +294,8 @@ Feature lives in `plugins/autorun/src/autorun/cache_guard.py`. Reuses `ScopedAll
 | File | Purpose |
 |------|---------|
 | `plugins/autorun/src/autorun/config.py` | Single source of truth for CONFIG (stages, policies, templates) |
-| `plugins/autorun/src/autorun/main.py` | Hook handler and CLI entry point |
+| `plugins/autorun/src/autorun/__main__.py` | CLI entry point (`autorun`) and hook handler routing (`run_hook_handler`) |
+| `plugins/autorun/src/autorun/main.py` | Pattern matching, hook response building, and the legacy `main()` shim |
 | `plugins/autorun/src/autorun/plugins.py` | Command handlers and dispatch logic |
 | `plugins/autorun/src/autorun/plan_export.py` | Plan export logic, PlanExport class, daemon handlers |
 | `plugins/autorun/src/autorun/integrations.py` | Unified command integrations (superset of hookify) |
@@ -278,10 +333,11 @@ extract-pdfs doc.pdf --backends marker # Use specific backend (GPU OCR)
 | `plugins/pdf-extractor/src/pdf_extraction/cli.py` | CLI entry point |
 | `plugins/pdf-extractor/CLAUDE.md` | Full documentation |
 
-The code lives under `plugins/autorun/src/` because this is a harness plugin,
-not a Python distribution: `extract-pdfs` and `pdf_extraction` ship inside the
-`autorun` package behind the `pdf` extra. `plugins/pdf-extractor/` holds the
-plugin manifest, commands, and skill.
+This is a harness plugin, not a Python distribution: `plugins/pdf-extractor/`
+holds the manifests, commands, skill, and the `src/pdf_extraction` source, and
+`plugins/autorun/src/pdf_extraction` is a symlink to that source so
+`extract-pdfs` and `pdf_extraction` ship inside the `autorun` distribution
+(every backend beyond `pdftotext` sits behind the `pdf` extra).
 
 ---
 

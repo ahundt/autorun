@@ -8,6 +8,16 @@ Repository-level guidance (commands, installation, three-stage verification,
 plugin overview) lives in the root [`AGENTS.md`](../../AGENTS.md). This file
 covers developing the plugin itself.
 
+## Development isolation is MANDATORY
+
+The rules and the sandbox recipe are in the root
+[`AGENTS.md`](../../AGENTS.md#development-isolation-is-mandatory) and are not
+repeated here; in one line: every install, uninstall, dry run, status probe,
+self-check, and test runs with `HOME`/`USERPROFILE`, `AUTORUN_HOME`, and
+`AUTORUN_TEST_STATE_DIR` redirected (or in Docker), and the live machine is
+touched only on the user's explicit written instruction in the current
+conversation. `pytest` isolates itself through `conftest.py`; nothing else does.
+
 ## Hook error prevention (CRITICAL)
 
 Claude Code treats ANY stderr output from a hook as a hook error and discards
@@ -17,7 +27,7 @@ policies) silently stops working while the session still looks healthy.
 1. **`pyproject.toml [tool.uv]`**: never add deprecated UV fields. UV removes fields silently across versions and prints a stderr warning for unknown ones, which breaks all hooks. `default-extras` was removed in UV 0.9+; put default extras in `[project] dependencies` instead.
 2. **Slash commands**: every bash command in a `.md` file must use `uv run --project ${CLAUDE_PLUGIN_ROOT} python`, never bare `python3`. `allowed-tools` frontmatter must say `Bash(uv *)`, not `Bash(python3:*)`. This covers `!`-prefixed dynamic output too, for example ``!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "from autorun.config import CONFIG; print(CONFIG['key'])"` ``.
 3. **Hook stderr**: `hook_entry.py` must never write to stderr. Route all error handling through `fail_open()`, which writes JSON to stdout.
-4. **Cache sync**: after fixing `pyproject.toml` or `hooks.json` in the source, run `uv run --project plugins/autorun python -m autorun --install --force`. Hand-copying files into `~/.claude/plugins/cache/` is fragile and is overwritten on the next install.
+4. **Cache sync**: a fix to `pyproject.toml` or `hooks.json` reaches a harness only through the installer (`autorun --install --force`, sandboxed during development, live only on the user's written instruction). Hand-copying files into `~/.claude/plugins/cache/` is fragile and is overwritten on the next install.
 5. **Session restart**: hook configuration is read once at session start, so `hooks.json` and `pyproject.toml` fixes take effect only in the NEXT session.
 
 Regression tests: `test_hook_entry.py::TestUVCompatibility` and
@@ -47,17 +57,16 @@ and run the tests there, commit from the git root, then reinstall with
 ## Feature implementation lessons
 
 Tests set `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` before any autorun import
-or they reach the live daemon. Rules: root [`AGENTS.md`](../../AGENTS.md)
-§ Critical Runtime Isolation; full spec:
+or they reach the live daemon; full spec:
 [`docs/RUNTIME_STATE_ISOLATION.md`](docs/RUNTIME_STATE_ISOLATION.md).
 
 Follow these when adding any new gated feature.
 
-1. **Reuse `ScopedAllow` and `parse_scope_args` for every override grant.** Never write a second TTL/count parser: the `5m | 5 | perm | 2h30m | 2d` grammar is `scoped_allow.py:parse_scope_args` (line 44), and `_PARALLEL_GRACE_SECONDS` (line 187) already absorbs rtk's double-hook. See `cache_guard.grant_override`.
+1. **Reuse `ScopedAllow` and `parse_scope_args` for every override grant.** Never write a second TTL/count parser: the `5m | 5 | perm | 2h30m | 2d` grammar is `scoped_allow.py:parse_scope_args`, and `scoped_allow._PARALLEL_GRACE_SECONDS` already absorbs rtk's double-hook. See `cache_guard.grant_override`.
 2. **Use `state_get`, `state_set`, and `state_update` in daemon paths, never `session_state()`.** They keep `ThreadSafeDB` coherent; wrap legacy direct-persistence helpers in `state_synchronize`. `session_state()` is for standalone administration and persistence internals only.
 3. **A new Claude event needs its Gemini analog wired in the same change, in three places:** `plugins.py:@app.on(...)`, `core.py:GEMINI_EVENT_MAP`, and BOTH `hooks/hooks.json` and `src/autorun/gemini_template/hooks/hooks.json`. `PreCompact` maps to `PreCompress`, which is advisory and cannot block; no `PostCompress` exists.
 4. **New hook-stdin data needs a slot, a property, an `__init__` kwarg, and every `EventContext(...)` call site updated.** Never `getattr(ctx, "field", None)`: it returns None when the plumbing is broken instead of failing. `transcript_path` is the case that taught this.
-5. **Features that may block tools slot AFTER TIER 1 (`/ar:ok` allows) and BEFORE TIER 2 (pattern blocks),** or an explicit allow cannot bypass the new gate. Site: `plugins.check_blocked_commands` → `CacheGuard.from_ctx(ctx).check(ctx)` (`plugins.py:1126`).
+5. **Features that may block tools slot AFTER TIER 1 (`/ar:ok` allows) and BEFORE TIER 2 (pattern blocks),** or an explicit allow cannot bypass the new gate. Site: `plugins.check_blocked_commands` → `CacheGuard.from_ctx(ctx).check(ctx)`.
 6. **Keep full persistent-state reads off warm hooks.** Hydrate through `ThreadSafeDB` once per session and use atomic updates for shared fields. Coalescing file locks alone does not fix this; it still reparses the full durable state.
 7. **Fail open when data is unknown.** A gate that errors or denies on missing fields is worse than one that allows, so CacheGuard returns `HookDecision.allow()` whenever its axis data is None. Cross-CLI robustness falls out of this for free.
 8. **Default off.** A new gate defaults `False` in its `FeatureToggle`; users opt in with `/ar:<feature> on`.
@@ -122,10 +131,14 @@ the `hooks/hooks.json` convention this already targets. Three of the four were
 closed without a fix, so a closed issue is not permission to delete a
 workaround. Verify the behavior first.
 
-## Quick install/update command
+## Trying a change end to end
 
-Run from the repository root after editing anything under `src/autorun/` or
-`hooks/`, after changing plugin configuration, and when testing a fix:
+Default: the sandboxed install from the root `AGENTS.md`, then read the
+sandbox's trees and hooks. `--install-dry-run` inside the same sandbox
+previews without writing.
+
+Live machine — **only when the user has written the instruction in the
+current conversation** — from the repository root:
 
 ```bash
 (uv run --project plugins/autorun python -m autorun --install --force && \
@@ -135,10 +148,10 @@ Run from the repository root after editing anything under `src/autorun/` or
   autorun --restart-daemon) 2>&1 | tee "install-$(date +%Y%m%d-%H%M%S).log"
 ```
 
-It syncs the plugin to both the Claude Code and Gemini caches, installs the
-`autorun` and `aise` commands globally, and restarts the daemon so code changes
-take effect. Allow a 3-minute timeout through the Bash tool: the UV tool step
-takes 1-2 minutes on a first run or a dependency change.
+That publishes to every detected harness, installs the `autorun`,
+`autorun-install`, and `extract-pdfs` commands globally, and restarts the
+daemon that every running session shares. Allow a 3-minute timeout: the UV
+tool step takes 1-2 minutes on a first run or a dependency change.
 
 ## Gemini-family harnesses
 

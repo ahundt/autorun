@@ -129,8 +129,11 @@ that need it. No disk access: stage generated content to a temp dir and point th
 
 ## Isolation
 
-Never install against your own machine. It rewrites `hooks.json`, replaces
-plugin caches, and restarts the daemon.
+Never install, uninstall, preview, or self-check against the live machine: it
+rewrites `hooks.json`, replaces plugin caches, and restarts the daemon every
+running session shares. The rule and its history are in the root `AGENTS.md`
+(§ Development isolation is MANDATORY); a live run happens only on the user's
+written instruction.
 
 Unit tests set `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` **before any autorun
 import**. A real install also needs `HOME`:
