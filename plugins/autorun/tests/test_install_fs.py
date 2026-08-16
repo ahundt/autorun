@@ -612,6 +612,60 @@ def test_force_never_overrides_a_recorded_user_edit(tmp_path, source):
     assert not (tmp_path / "b").exists()
 
 
+def _publish_in_child(source: str, target: str, rounds: int) -> int:
+    """Subprocess body: publish ``source`` over ``target`` ``rounds`` times."""
+    import sys as child_sys
+    from pathlib import Path as ChildPath
+
+    child_sys.path.insert(0, str(ChildPath(__file__).resolve().parents[1] / "src"))
+    from autorun.installer.fs import publish_tree as child_publish
+
+    done = 0
+    for _ in range(rounds):
+        child_publish(ChildPath(source), ChildPath(target), plugin="ar")
+        done += 1
+    return done
+
+
+def test_two_processes_publishing_one_target_leave_a_consistent_tree(tmp_path):
+    """Two installs from two sessions (or a reinstall racing a daemon-triggered
+    bootstrap) may publish the same tree at once. The parent-directory lock
+    serializes the swap, so afterwards the target is exactly one of the two
+    sources, its marker's hashes match its files, and no staging directory is
+    left behind. A partial or mixed tree here is the data-loss shape the
+    stage-and-rename dance exists to prevent."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    from autorun.installer.fs import scan_tree
+
+    sources = []
+    for tag in ("one", "two"):
+        root = tmp_path / "src" / tag
+        root.mkdir(parents=True)
+        (root / "SKILL.md").write_text(f"version {tag}\n", encoding="utf-8")
+        (root / f"only-{tag}.md").write_text(tag, encoding="utf-8")
+        sources.append(root)
+    target = tmp_path / "dest" / "demo"
+
+    with ProcessPoolExecutor(
+        max_workers=2, mp_context=multiprocessing.get_context("spawn")
+    ) as pool:
+        rounds = list(pool.map(
+            _publish_in_child, [str(s) for s in sources], [str(target)] * 2, [15, 15]
+        ))
+    assert rounds == [15, 15]
+
+    manifest = read_marker(target)
+    assert manifest is not None and manifest.plugin == "ar"
+    files = {p for p in scan_tree(target)}
+    assert files in ({"SKILL.md", "only-one.md"}, {"SKILL.md", "only-two.md"}), files
+    assert dict(manifest.files) == scan_tree(target), "marker describes the tree it sits in"
+    assert compare(target, manifest) == ((), (), ()), "no partial or mixed contents"
+    leftovers = [p.name for p in target.parent.iterdir() if p.name.startswith(".autorun-publish-")]
+    assert leftovers == [], leftovers
+
+
 # ─── Registry documents ──────────────────────────────────────────────────────
 
 

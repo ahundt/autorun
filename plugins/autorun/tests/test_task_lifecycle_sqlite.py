@@ -854,6 +854,84 @@ def test_next_task_id_is_the_session_sequence_and_never_reuses_a_number(sqlite_l
     assert lifecycle.next_task_id() == "11"
 
 
+def test_next_task_id_under_parallel_minters_is_unique_and_gapless(sqlite_lifecycle):
+    """Parallel tool calls in one turn mint from several daemon threads at once.
+    Every mint takes the session lock, so N threads x M mints yield N*M distinct
+    numbers with no gap: the sequence is a persisted counter, not a recount."""
+    lifecycle = sqlite_lifecycle
+    threads, per_thread = 8, 25
+
+    def mint(_):
+        return [int(lifecycle.next_task_id()) for _ in range(per_thread)]
+
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        minted = [n for chunk in pool.map(mint, range(threads)) for n in chunk]
+
+    assert len(minted) == threads * per_thread
+    assert sorted(minted) == list(range(1, threads * per_thread + 1)), "duplicate or gap"
+
+
+def _mint_in_child(state_dir: str, storage_dir: str, session_id: str, count: int) -> list[int]:
+    """Subprocess body: mint ``count`` ids for ``session_id`` in a fresh interpreter."""
+    import os
+    import sys
+
+    os.environ["AUTORUN_TEST_STATE_DIR"] = state_dir
+    os.environ.setdefault("AUTORUN_HOME", os.path.join(state_dir, "home"))
+    sys.path.insert(0, str(SRC_DIR))
+    from autorun import session_manager as child_sm
+    from autorun.task_lifecycle import TaskLifecycle as ChildLifecycle, TaskLifecycleConfig as ChildConfig
+
+    child_sm._CONFIG["state_backend"] = "sqlite"
+    child_sm._reset_for_testing()
+    lifecycle = ChildLifecycle(session_id=session_id, config=ChildConfig(storage_dir=Path(storage_dir)))
+    return [int(lifecycle.next_task_id()) for _ in range(count)]
+
+
+def test_next_task_id_across_two_processes_never_collides(tmp_path, monkeypatch):
+    """Two interpreters minting for the same session — a restarted daemon and a
+    straggler, or two installs sharing one state dir — share the file lock the
+    session state takes, so their numbers interleave without a duplicate."""
+    from concurrent.futures import ProcessPoolExecutor
+    import multiprocessing
+
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(state_dir))
+    monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+    sm._reset_for_testing()
+    per_process, workers = 30, 2
+    with ProcessPoolExecutor(
+        max_workers=workers, mp_context=multiprocessing.get_context("spawn")
+    ) as pool:
+        results = list(pool.map(
+            _mint_in_child,
+            [str(state_dir)] * workers,
+            [str(tmp_path / "logs")] * workers,
+            ["shared-session"] * workers,
+            [per_process] * workers,
+        ))
+    minted = [n for chunk in results for n in chunk]
+    assert len(minted) == workers * per_process
+    assert len(set(minted)) == len(minted), "two processes handed out the same id"
+    assert max(minted) == workers * per_process, "a number was skipped"
+
+
+def test_sequences_are_per_session_even_in_the_same_working_directory(tmp_path, monkeypatch):
+    """Two harness sessions open on one repository each count from 1, the way
+    Claude Code's own task ids do; one session's mints never move the other's."""
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(state_dir))
+    monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+    sm._reset_for_testing()
+    config = TaskLifecycleConfig(storage_dir=tmp_path / "task-logs")
+    first = TaskLifecycle(session_id="session-a", config=config)
+    second = TaskLifecycle(session_id="session-b", config=config)
+    assert [first.next_task_id() for _ in range(3)] == ["1", "2", "3"]
+    assert second.next_task_id() == "1"
+    assert first.next_task_id() == "4"
+    sm._reset_for_testing()
+
+
 def test_task_projection_lists_in_creation_order_not_id_string_order(sqlite_lifecycle):
     """Sequential ids are strings in storage; "10" must not sort before "9"."""
     lifecycle = sqlite_lifecycle
