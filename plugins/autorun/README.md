@@ -1,10 +1,11 @@
 # autorun
 
 `autorun` supplies task-lifecycle checks, command safety guards, skills, and
-native integration assets for AI coding harnesses. The Python distribution
-contains the complete `ar` plugin and the `autorun` and `autorun-install`
-entry points. The companion `pdf-extractor` distribution is released and
-installed separately; a source checkout can manage both repository plugins.
+native integration assets for AI coding harnesses. It is the only Python
+distribution here, and it contains the complete `ar` plugin plus the `autorun`
+and `autorun-install` entry points. `pdf-extractor` remains a separate harness
+plugin, but not a separate package: its extraction code ships inside this
+distribution, so install it with `uv tool install 'autorun[pdf]'`.
 
 ## Install
 

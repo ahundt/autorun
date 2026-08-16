@@ -216,7 +216,12 @@ test -z "$(git status --porcelain=v1)"
 
 # Run from the plugin directories, matching CI discovery/configuration.
 (cd plugins/autorun && uv run --project . pytest tests/ -m "not tmux and not e2e and not release" -v)
-(cd plugins/pdf-extractor && uv run --project . --locked --extra dev pytest tests/ -v)
+# The PDF tests stay with their plugin, but the code they import ships in the
+# autorun distribution and `plugins/pdf-extractor` deliberately has no
+# pyproject.toml — so the environment must come from the autorun project, with
+# `--extra pdf` for the backends. Running it as its own project resolves the
+# workspace root instead and collects four `ModuleNotFoundError: pdf_extraction`.
+uv run --project plugins/autorun --extra pdf --extra dev pytest plugins/pdf-extractor/tests/ -v
 (cd plugins/autorun && uv run --project . pytest tests/test_release_artifacts.py -m release -v)
 (cd plugins/autorun && AUTORUN_ENABLE_STATE_BENCHMARK=1 uv run --project . pytest tests/test_state_store_benchmark.py -m benchmark -v)
 

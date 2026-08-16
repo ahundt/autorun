@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 from pathlib import Path
+
+import pytest
 
 try:
     import tomllib
@@ -279,6 +282,45 @@ def test_release_checklist_names_only_files_that_exist():
     )
 
 
+_UV_PROJECT_RE = re.compile(r"uv run --project (\S+)")
+_CD_RE = re.compile(r"\(cd (\S+) &&")
+
+
+def test_every_checklist_uv_command_names_a_real_project():
+    """A runbook command has to *work*, not merely name files that exist.
+
+    `(cd plugins/pdf-extractor && uv run --project . ...)` read fine and passed
+    every prose check, but that directory deliberately has no `pyproject.toml`:
+    UV resolved the workspace root instead, the autorun distribution was never
+    installed, and the documented command failed in a clean environment with
+    four `ModuleNotFoundError: pdf_extraction` errors. The release gate ran
+    something else entirely, so nothing noticed.
+
+    Checking the project argument against a real `pyproject.toml` is the
+    smallest structural property that would have caught it.
+    """
+    text = _CHECKLIST.read_text(encoding="utf-8")
+    broken = []
+    for line in text.splitlines():
+        match = _UV_PROJECT_RE.search(line)
+        if not match:
+            continue
+        project = match.group(1)
+        base = REPO_ROOT
+        entered = _CD_RE.search(line)
+        if entered:
+            base = REPO_ROOT / entered.group(1)
+        resolved = (base / project).resolve()
+        if not (resolved / "pyproject.toml").is_file():
+            broken.append(line.strip())
+    assert not broken, (
+        "docs/version_update_checklist.md runs `uv run --project` against a "
+        "directory with no pyproject.toml, so UV resolves some other project "
+        "and the command does not test what the runbook claims:\n  "
+        + "\n  ".join(broken)
+    )
+
+
 def test_release_runbook_rehearses_testpypi_before_tagging():
     """A linear release run must prove OIDC publication before creating the tag."""
     runbook = _CHECKLIST.read_text(encoding="utf-8")
@@ -309,7 +351,98 @@ def test_release_notes_name_upgrade_actions_date_and_diff():
     assert release_heading
     assert f"Date: {release_heading.group(1)}" in notes
     assert "## Upgrade notes" in notes
-    assert f"compare/v0.12.0...v{version}" in notes
+    assert re.search(rf"compare/v\S+\.\.\.v{re.escape(version)}", notes), (
+        "the release body must carry a comparison link readers can follow"
+    )
+
+
+def _tags_published_on_origin() -> set[str] | None:
+    """Tags that exist on the remote, or None when the remote is unreachable."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--tags", "origin"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return {
+        line.rsplit("refs/tags/", 1)[-1].removesuffix("^{}")
+        for line in result.stdout.splitlines()
+        if "refs/tags/" in line
+    }
+
+
+def test_release_notes_compare_link_names_a_tag_that_exists_publicly():
+    """A dead verification link is worse than no link.
+
+    The body compared from `v0.12.0`, a tag that exists only locally: the URL
+    returns 404 for every reader who is not the maintainer, and tagging the
+    release later would not repair the *base*. The
+    old assertion hardcoded the same wrong string, so it agreed with the defect
+    instead of catching it — it checked the sentence, not the claim.
+
+    Only the base is checked here. The release's own tag is created by a later
+    authorized publication step and is expected to be absent until then.
+    """
+    version = _declared_version("plugins/autorun/pyproject.toml", "version")
+    notes = (REPO_ROOT / "docs" / "releases" / f"{version}.md").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(rf"compare/(v\S+?)\.\.\.v{re.escape(version)}", notes)
+    assert match, "no comparison link found in the release body"
+
+    published = _tags_published_on_origin()
+    if published is None:
+        pytest.skip("origin is unreachable, so publication cannot be verified")
+    assert match.group(1) in published, (
+        f"the release body compares from {match.group(1)}, which is not a tag "
+        f"on origin, so the published link 404s. Published tags: "
+        f"{sorted(published)}"
+    )
+
+
+def test_readme_documents_every_harness_skill_placement_accepts():
+    """The documented vocabulary is what a user can discover; the parser's is
+    what actually works. When they disagree, the difference is invisible.
+
+    `settings.harness_names()` reads the registry so the parser cannot drift,
+    but the README's list was typed by hand and omitted `prime`. Prime Agent
+    users could not learn from any document that `--skill-placement
+    prime=native` is accepted, even though it always was.
+    """
+    from autorun.installer.settings import harness_names
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    sentence = re.search(r"Valid harness names are(.+?)\.", readme, re.DOTALL)
+    assert sentence, "README no longer states the valid harness names"
+    documented = set(re.findall(r"`([a-z]+)`", sentence.group(1)))
+
+    missing = sorted(set(harness_names()) - documented)
+    invented = sorted(documented - set(harness_names()))
+    assert not missing and not invented, (
+        f"README.md's harness list disagrees with the registry. "
+        f"Undocumented but accepted: {missing}. Documented but rejected: {invented}."
+    )
+
+
+def test_plugin_readme_describes_one_python_distribution():
+    """One distribution is the packaging contract; the plugin README denied it.
+
+    `pdf-extractor` is a harness plugin, not a Python package: `pyproject.toml`
+    ships its code inside `autorun` behind the `pdf` extra. A reader following
+    the old sentence searches an index for a distribution that does not exist.
+    """
+    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "autorun[pdf]" in readme, (
+        "the plugin README must name the extra that actually installs PDF support"
+    )
+    assert "distribution is released and installed separately" not in readme
 
 
 def test_root_readme_starts_with_published_install_and_no_generated_banner():

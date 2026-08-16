@@ -269,9 +269,9 @@ autorun --install --skill-placement native --skill-placement codex=both
 | `both` | Shared **and** native where the harness reads both. The only mode that can list one skill twice, after which the two copies can drift apart. |
 
 A bare mode applies to every selected harness; `HARNESS=MODE` overrides one, and
-the flag repeats. Valid harness names are `claude`, `codex`, `gemini`, `qwen`,
-`antigravity`, `forgecode`, `opencode`, and `pi`. An unknown harness or mode is rejected at parse
-time with the list of valid names.
+the flag repeats. Valid harness names are `antigravity`, `claude`, `codex`,
+`forgecode`, `gemini`, `opencode`, `pi`, `prime`, and `qwen`. An unknown harness
+or mode is rejected at parse time with the list of valid names.
 
 `AUTORUN_SKILL_PLACEMENT` accepts the same grammar, space- or comma-separated
 (`AUTORUN_SKILL_PLACEMENT="native codex=both"`), and the `skill_placement`
