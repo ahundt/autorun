@@ -507,16 +507,40 @@ class TestPlatformAwareShellFileInspection:
             "sed -Ei 's/old/new/g' README.md",
             "sed --in-place 's/old/new/g' README.md",
             "sudo sed -i 's/old/new/g' README.md",
+            # The in-place edit is not the first sed on the line. The predicate
+            # asked `command_tokens_for` for one segment, got the read-only one,
+            # and answered for the whole command — so the edit ran.
+            "sed -n '1,20p' README.md && sed -i 's/old/new/g' README.md",
+            "cat README.md | sed 's/a/b/' && sed -i 's/old/new/g' README.md",
+            "sed 's/a/b/' README.md; sed --in-place 's/old/new/g' NOTES.md",
+            # And an in-place edit inside a shell body, which the same lookup
+            # could not see at all: argv[0] is `sh`, so no segment named sed.
+            "sh -c \"sed -i 's/old/new/g' README.md\"",
+            "bash -c 'sed -Ei s/old/new/g README.md'",
         ],
     )
     def test_sed_in_place_still_blocks_with_codex_edit_guidance(self, command):
         """In-place sed remains an edit operation and should suggest Codex's edit path."""
         result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
-        assert result is not None
+        assert result is not None, f"in-place sed went unblocked: {command}"
         perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
         msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
         assert perm == "deny"
         assert "apply_patch" in msg
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "sed -n '1,20p' README.md && sed 's/a/b/' NOTES.md",
+            "cat README.md | sed 's/a/b/'",
+            # `-i` after the script is text, not an option, in every segment.
+            "sed 's/-i/x/' README.md && sed -n '1p' NOTES.md",
+        ],
+    )
+    def test_reading_sed_stays_allowed_however_many_segments(self, command):
+        """Looking at every segment must not start blocking read-only pipelines."""
+        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
+        assert result is None, f"read-only sed must not be blocked: {result!r}"
 
 
 class TestPredicateFunctions:

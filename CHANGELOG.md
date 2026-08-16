@@ -84,6 +84,23 @@ marketplace itself carries a separate `version` field.
   `--ignore-signal` are documented with a bracketed value, so consuming the next
   word ate the command; and `env -a <name>` did not consume its value. Each
   option's arity now matches the tool that owns it.
+- **A Windows executable suffix no longer bypasses every command block.**
+  `rm.exe -rf …`, `git.exe push` and `git.cmd checkout` matched no pattern,
+  because the command name was read from argv[0] literally. That is the real
+  filename on a platform this project tests in CI, so any block could be walked
+  past by spelling it out. The one basename helper now takes off `.exe`,
+  `.com`, `.bat` and `.cmd`, and splits on both path separators —
+  `os.path.basename` splits backslashes only when it is itself running on
+  Windows, and the hook parses the same command strings everywhere. The
+  destructive-git and read-command predicates share that helper now instead of
+  keeping their own copy.
+- **An in-place `sed` is caught after the first `sed` and inside `sh -c`.**
+  `_sed_modifies_files` asked for one segment's tokens, so
+  `sed -n '1,20p' README.md && sed -i 's/old/new/g' README.md` was judged by
+  the read-only invocation and the edit ran; `sh -c "sed -i …"`, whose argv[0]
+  is the shell, was not seen at all. It now reads every command the way the
+  Time Machine predicate beside it already did, which also recurses into shell
+  bodies.
 - **A destructive checkout or restore is caught wherever it sits in the line.**
   Both predicates read one segment — the first whose git subcommand is
   `checkout` or `restore` — and let it answer for the whole command. So

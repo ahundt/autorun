@@ -40,6 +40,7 @@ from typing import Final
 
 from .command_detection import (
     COMMAND_PREFIXES,
+    _get_basename,
     command_tokens_for,
     extract_commands,
     git_subcommand_index,
@@ -704,11 +705,12 @@ def _destructive_segments(cmd: str) -> list[list[str]]:
         except Exception:
             tokens = segment.split()
         tokens = strip_transparent_command_wrappers(tokens)
-        # Compare the basename, as every other layer does: the pattern that
-        # routes here already matched `/usr/bin/git checkout` by basename, so a
-        # raw-token comparison let the predicate answer "nothing would be lost"
-        # for exactly the commands the pattern had just flagged.
-        if not tokens or os.path.basename(tokens[0]) != "git":
+        # One basename authority, shared with the pattern layer: it already
+        # matched `/usr/bin/git checkout` this way, so a raw-token comparison
+        # here let the predicate answer "nothing would be lost" for exactly the
+        # commands the pattern had just flagged. `os.path.basename` was not that
+        # authority either — it splits backslashes only when run on Windows.
+        if not tokens or _get_basename(tokens[0]) != "git":
             continue
         sub_idx = git_subcommand_index(tokens)
         if sub_idx >= len(tokens):
@@ -932,20 +934,20 @@ def _tokens_from_read_command(tokens: list[str], pattern: str | None) -> list[st
     stripped = strip_transparent_command_wrappers(tokens)
     if not stripped:
         return []
-    first = os.path.basename(stripped[0])
+    first = _get_basename(stripped[0])
     if pattern is None:
         if first in _PIPE_AWARE_READ_COMMANDS:
             return stripped
         if first in COMMAND_PREFIXES:
             for i, token in enumerate(stripped[1:], start=1):
-                if os.path.basename(token) in _PIPE_AWARE_READ_COMMANDS:
+                if _get_basename(token) in _PIPE_AWARE_READ_COMMANDS:
                     return stripped[i:]
         return []
     if first == pattern:
         return stripped
     if first in COMMAND_PREFIXES:
         for i, token in enumerate(stripped[1:], start=1):
-            if os.path.basename(token) == pattern:
+            if _get_basename(token) == pattern:
                 return stripped[i:]
     return []
 
@@ -1016,7 +1018,7 @@ def _not_in_pipe(ctx: any) -> bool:
                     tokens = command_words(node)
                     stripped = _tokens_from_read_command(tokens, current_pattern)
                     if stripped:
-                        cmd_name = os.path.basename(stripped[0])
+                        cmd_name = _get_basename(stripped[0])
                         if (current_pattern is None and cmd_name in _PIPE_AWARE_READ_COMMANDS) or cmd_name == current_pattern:
                             matched_any = True
                             if not child_in_pipeline and _command_has_file_args(stripped, current_pattern):
@@ -1087,6 +1089,34 @@ def _not_in_pipe(ctx: any) -> bool:
         return False
 
 
+def _sed_tokens_edit_in_place(tokens: tuple[str, ...] | list[str]) -> bool:
+    """Return whether one sed invocation's argv edits its file in place."""
+    if not tokens:
+        return False
+    skip_next_script_arg = False
+    for token in tokens[1:]:
+        if skip_next_script_arg:
+            skip_next_script_arg = False
+            continue
+        if token == "--":
+            return False
+        if token in {"-e", "-f", "--expression", "--file"}:
+            skip_next_script_arg = True
+            continue
+        if token.startswith("--expression=") or token.startswith("--file="):
+            continue
+        if token == "--in-place" or token.startswith("--in-place="):
+            return True
+        if token.startswith("--"):
+            continue
+        if token.startswith("-") and token != "-":
+            # BSD/GNU sed accept `-i`, `-i.bak`, and combined flags like `-Ei`.
+            return "i" in token[1:]
+        # First non-option is the script; later `-i` text is not an option.
+        return False
+    return False
+
+
 def _sed_modifies_files(ctx: any) -> bool:
     """Return True only for sed invocations that edit files in place.
 
@@ -1096,32 +1126,19 @@ def _sed_modifies_files(ctx: any) -> bool:
     """
     try:
         cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
-        tokens = command_tokens_for(cmd, "sed")
-        if not tokens:
+        if not cmd:
             return False
-
-        skip_next_script_arg = False
-        for token in tokens[1:]:
-            if skip_next_script_arg:
-                skip_next_script_arg = False
-                continue
-            if token == "--":
-                return False
-            if token in {"-e", "-f", "--expression", "--file"}:
-                skip_next_script_arg = True
-                continue
-            if token.startswith("--expression=") or token.startswith("--file="):
-                continue
-            if token == "--in-place" or token.startswith("--in-place="):
-                return True
-            if token.startswith("--"):
-                continue
-            if token.startswith("-") and token != "-":
-                # BSD/GNU sed accept `-i`, `-i.bak`, and combined flags like `-Ei`.
-                return "i" in token[1:]
-            # First non-option is the script; later `-i` text is not an option.
-            return False
-        return False
+        # Every sed on the line, the way `_tmutil_mutates_backup_safety` reads
+        # every tmutil: `command_tokens_for` answers with one segment, so a
+        # read-only `sed -n` ahead of an in-place edit spoke for both, and a
+        # `sh -c "sed -i ..."` body — whose argv[0] is the shell — was not seen
+        # at all. `extract_commands` splits the segments and recurses into
+        # shell bodies.
+        _names, command_strings = extract_commands(cmd)
+        return any(
+            _sed_tokens_edit_in_place(command_tokens_for(one, "sed"))
+            for one in command_strings
+        )
     except Exception as e:
         logger.warning("_sed_modifies_files predicate error: %s", e)
         return False

@@ -78,6 +78,12 @@ SHELL_EXEC_COMMANDS: Final[frozenset[str]] = frozenset({
     "sh", "bash", "zsh", "dash", "ksh", "fish",
 })
 
+# What Windows will run when the name is typed without one. `.ps1` is absent:
+# PowerShell will not run it as a bare command name.
+_WINDOWS_EXECUTABLE_SUFFIXES: Final[frozenset[str]] = frozenset({
+    "exe", "com", "bat", "cmd",
+})
+
 _SHELL_OPERATORS: Final[re.Pattern[str]] = re.compile(r"\s*(?:&&|\|\||[|;&\n])\s*")
 _CMD_CACHE_SIZE: Final[int] = 512   # v8: Increased for hot path
 _PATTERN_CACHE_SIZE: Final[int] = 64
@@ -226,9 +232,20 @@ class ExtractedCommands:
 # ─── Extraction Helpers ───────────────────────────────────────────────────────
 
 def _get_basename(path: str) -> str:
-    """Extract basename: /bin/rm -> rm. Inlined for hot path."""
-    idx = path.rfind("/")
-    return path[idx + 1:] if idx >= 0 else path
+    """Extract the command name: `/bin/rm` -> `rm`, `C:\\...\\git.exe` -> `git`.
+
+    Both separators, because the hook parses the same command strings wherever
+    it runs and `os.path.basename` splits backslashes only on Windows. The
+    Windows executable suffixes come off for the same reason argv[0]'s
+    directory does: `rm.exe` is what the file is actually called, so reading it
+    literally let every command block be bypassed by spelling it out. A POSIX
+    file genuinely named `deploy.bat` is read as `deploy`, which only matters
+    if a pattern goes by that name.
+    """
+    idx = max(path.rfind("/"), path.rfind("\\"))
+    name = path[idx + 1:] if idx >= 0 else path
+    stem, dot, suffix = name.rpartition(".")
+    return stem if dot and suffix.lower() in _WINDOWS_EXECUTABLE_SUFFIXES else name
 
 
 def _add_flag_tokens(flags: set[str], token: str) -> None:

@@ -19,7 +19,6 @@ Tests for unified integrations system (superset of hookify).
 """
 
 import os
-import shutil
 import subprocess as _subprocess
 
 import pytest
@@ -2378,13 +2377,19 @@ class TestDestructiveGitCmdFlagBypass:
         assert p.verb == "checkout"
         assert p.files == ("file.ts",)
 
-    def test_git_by_absolute_path_blocks_a_real_overwrite(self, tmp_path):
-        """End to end, with a repo on disk: the guard must still say block."""
+    @pytest.mark.parametrize("git", ["/usr/bin/git", "/opt/homebrew/bin/git", "git.exe"])
+    def test_git_by_absolute_path_blocks_a_real_overwrite(self, git, tmp_path):
+        """End to end, with a repo on disk: the guard must still say block.
+
+        The spellings are written out rather than taken from `shutil.which`,
+        which on Windows returns a drive-letter path whose backslashes POSIX
+        `shlex` does not preserve — correct for the bash command strings the
+        hook is given, and not what this test is about.
+        """
         from autorun.integrations import _file_differs_from_ref
 
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("uncommitted-change\n")
-        git = shutil.which("git") or "/usr/bin/git"
 
         ctx = _make_ctx(f"{git} checkout HEAD -- seed.txt", tmp_path)
         assert _file_differs_from_ref(ctx) is True

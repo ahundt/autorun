@@ -338,6 +338,40 @@ class TestWrappedCommandDetection:
     def test_sudo_options_that_never_run_a_command_report_none(self, cmd: str) -> None:
         assert command_matches_pattern(cmd, "rm -rf") is False
 
+    @pytest.mark.parametrize(
+        "cmd, pattern",
+        [
+            # Windows spells an executable with its extension, and that is the
+            # real filename on disk, so it is a spelling a user or an agent can
+            # type. Reading argv[0] literally meant every command block was
+            # bypassable on a platform this project tests in CI.
+            ("rm.exe -rf /tmp/target", "rm -rf"),
+            ("rm.EXE -rf /tmp/target", "rm -rf"),
+            ("git.exe push origin main", "git push"),
+            ("git.cmd checkout -- file.ts", "git checkout"),
+            ("sudo -k rm.exe -rf /tmp/target", "rm -rf"),
+        ],
+    )
+    def test_a_windows_executable_suffix_does_not_hide_the_command(
+        self, cmd: str, pattern: str
+    ) -> None:
+        assert command_matches_pattern(cmd, pattern) is True
+
+    def test_a_backslash_path_resolves_to_its_last_component(self) -> None:
+        """`os.path.basename` splits backslashes only when running on Windows.
+
+        The hook parses the same command strings on every platform, so the
+        basename it uses cannot depend on where it happens to be running.
+        """
+        from autorun.command_detection import _get_basename
+
+        assert _get_basename(r"C:\Program Files\Git\cmd\git.exe") == "git"
+        assert _get_basename("/usr/bin/git") == "git"
+        assert _get_basename("git") == "git"
+        # A dot that is not an executable suffix stays put; so does a bare dot.
+        assert _get_basename("/usr/bin/python3.13") == "python3.13"
+        assert _get_basename("run.sh") == "run.sh"
+
 
 # ─── Edge Cases ───────────────────────────────────────────────────────────────
 
