@@ -386,7 +386,20 @@ def run(
     decision is the same object whether it is printed or acted on.
     """
     decisions = []
+    # Every harness that reads the shared ``~/.agents/skills`` root yields the
+    # same intent for each skill. Deciding it once per walk keeps the report
+    # honest (one line per path, not one per reading harness) and hashes each
+    # published tree once instead of once per harness; the second identical
+    # intent could only ever have concluded "already current".
+    decided: set[tuple] = set()
     for intent in chain(walk(harnesses, ctx), extra):
+        key = (
+            intent.kind, intent.target, intent.source, intent.plugin,
+            tuple(sorted(intent.settings.items())),
+        )
+        if key in decided:
+            continue
+        decided.add(key)
         source = None if mode.retiring else intent.source
         if intent.kind is Kind.LINK:
             # A link's ownership is its target, not a marker; `decide` reads a

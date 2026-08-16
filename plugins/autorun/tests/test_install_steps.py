@@ -630,6 +630,36 @@ def test_targeted_install_preserves_shared_skills_other_harnesses_read(sandbox):
     )
 
 
+def test_shared_root_skill_is_decided_once_across_shared_reading_harnesses(sandbox):
+    """One shared-root target, one decision, however many harnesses read it.
+
+    Pi and Prime both route skills to ``~/.agents/skills``. Before the walk
+    deduplicated identical intents, a preview listed every shared skill once
+    per reading harness (108 lines for 18 skills across six harnesses on a
+    default install) and an install hashed each published tree once per
+    harness only to conclude "already current". The write was already single;
+    the decision list and the I/O were not.
+    """
+    from autorun.installer import discovery
+    from autorun.installer.orchestrate import preview
+
+    result = preview(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS["pi"], PLATFORMS["prime"]),
+    )
+    shared = discovery.shared_root(home=sandbox)
+    targets = [d.target for d in result.decisions if d.target.parent == shared]
+    assert targets, "the shared route produced no decisions"
+    assert len(targets) == len(set(targets)), sorted(
+        str(t) for t in targets if targets.count(t) > 1
+    )
+
+
 def test_install_with_no_harness_selected_retires_nothing(sandbox):
     """An empty selection is a no-op, never a sweep of every owned tree."""
     from autorun.installer import discovery

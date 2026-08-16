@@ -69,6 +69,17 @@ marketplace itself carries a separate `version` field.
   name would otherwise reach the harness by no route at all; the withheld
   copy is reported as a preserved conflict, and reinstalling retires
   previously published duplicates.
+- **A harness-targeted install no longer retires the shared skills other
+  harnesses read.** `autorun --install --claude` (or an empty selection)
+  claimed nothing under `~/.agents/skills` because Claude loads its skills
+  from the plugin package, so the retirement sweep removed every autorun-owned
+  tree there as "no longer shipped" — the copies Codex, Qwen, Pi, Prime,
+  ForgeCode, and OpenCode load. Every shipped skill is now claimed at the
+  shared root on every install, and an empty selection sweeps nothing.
+- **Status and dry run list each shared skill once.** The walk decided the
+  same `~/.agents/skills/<name>` intent once per harness that reads the shared
+  root (six lines per skill on a default install) and re-hashed the published
+  tree each time; identical intents are now decided once per run.
 - **Python 3.10 installs resolve again.** The lock selected onnxruntime
   1.24.3 for the `<3.11` fork (via markitdown → magika in the `pdf` extra),
   a version that ships no cp310 wheels; a workspace constraint now holds
