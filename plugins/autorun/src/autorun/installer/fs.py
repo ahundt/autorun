@@ -1199,7 +1199,11 @@ def publish_link(
                         indent=2,
                     ) + "\n",
                 )
-            copied = True
+                # Inside the except, not beside the try: set unconditionally it
+                # made every successful link report "copied: this platform
+                # cannot create links", which told users their live bridge was
+                # a dead copy and left the real fallback indistinguishable.
+                copied = True
     except _PublicationRefused as refused:
         return refused.decision
     if copied:

@@ -434,6 +434,143 @@ def test_another_targets_abandoned_stage_is_left_for_its_own_publication(tmp_pat
     ) == "SOMEONE ELSE\n", "another target's interrupted swap was consumed"
 
 
+def test_a_rename_that_fails_puts_the_previous_tree_back(tmp_path, monkeypatch):
+    """The last step of a swap can fail, and the target must not vanish.
+
+    `_swapped` moves the target aside and then renames the stage over it. If
+    that second rename fails — a full disk, a permission change, an antivirus
+    hold on Windows — the target has already been moved and there is nothing at
+    its path. The rollback that restores the backup is the only thing standing
+    between that and the user's tree being gone, and every publication in the
+    installer runs through it.
+
+    The demo covers a caller raising *before* the swap. This covers the swap
+    itself failing, which is the branch with the user's bytes already in
+    motion.
+    """
+    from autorun.installer import fs
+
+    source = tmp_path / "src" / "demo"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("shipped\n", encoding="utf-8")
+
+    target = tmp_path / "dest" / "demo"
+    publish_tree(source, target, plugin="ar")
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "shipped\n"
+
+    real_replace = os.replace
+
+    def failing_replace(src, dst, *args, **kwargs):
+        # Fail exactly `os.replace(staged, target)` and nothing else. Counting
+        # calls instead matched the marker's own atomic_write, which raised
+        # inside the `with` body — the exception then travelled back through
+        # the yield and the swap never ran at all, so the test passed while
+        # proving nothing about the rollback.
+        if Path(src).name == "next" and Path(dst) == target:
+            raise OSError("no space left on device")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(fs.os, "replace", failing_replace)
+    (source / "SKILL.md").write_text("version two\n", encoding="utf-8")
+
+    with pytest.raises(OSError):
+        publish_tree(source, target, plugin="ar")
+
+    monkeypatch.undo()
+    assert target.is_dir(), "the target was left missing after a failed swap"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "shipped\n", (
+        "the previous tree was not restored"
+    )
+
+
+def test_a_link_that_was_actually_linked_does_not_claim_it_was_copied(tmp_path):
+    """The two outcomes of `publish_link` must be distinguishable.
+
+    A copy forks silently — the harness keeps showing old text and nothing says
+    why — so `publish_link` reports which one happened. If a real symlink is
+    reported as "copied: this platform cannot create links", the message is
+    exactly backwards: it tells a user their bridge is a dead copy when it is
+    live, and hides the real fallback when it does occur.
+    """
+    from autorun.installer import fs
+
+    source = tmp_path / "shared" / "commit"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("ours\n", encoding="utf-8")
+    target = tmp_path / "dest" / "commit"
+    target.parent.mkdir(parents=True)
+
+    decision = fs.publish_link(source, target, plugin="ar")
+
+    assert target.is_symlink(), "this platform should have made a real link"
+    assert "cannot create links" not in decision.reason, decision
+    assert str(source) in decision.reason, decision
+
+
+def test_a_platform_without_symlinks_copies_and_records_that_it_did(
+    tmp_path, monkeypatch
+):
+    """Windows without developer mode cannot create links; the copy must say so.
+
+    A copy forks silently: the harness keeps showing old text and nothing
+    indicates why. `publish_link` therefore records `bridge=copy` in the marker
+    so status and uninstall can tell a copy from a link, and reports the
+    fallback in its decision rather than claiming it linked.
+    """
+    from autorun.installer import fs
+
+    source = tmp_path / "shared" / "commit"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("ours\n", encoding="utf-8")
+    target = tmp_path / "dest" / "commit"
+    target.parent.mkdir(parents=True)
+
+    def no_symlinks(self, *args, **kwargs):
+        raise OSError("symlink privilege not held")
+
+    monkeypatch.setattr(Path, "symlink_to", no_symlinks)
+
+    decision = fs.publish_link(source, target, plugin="ar")
+
+    assert decision.verdict is Verdict.PUBLISH, decision
+    assert "cannot create links" in decision.reason, decision
+    assert not target.is_symlink(), "reported a copy but made a link"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "ours\n"
+    assert read_marker(target).settings["bridge"] == "copy", (
+        "a copy that records bridge=link is indistinguishable from a real link"
+    )
+
+
+def test_an_unreadable_parent_does_not_stop_a_publication(tmp_path, monkeypatch):
+    """Resuming an interrupted swap is best effort, never a new failure mode.
+
+    `_resume_interrupted` lists the target's parent to find abandoned stages.
+    That listing can fail on a directory the process cannot read, and a
+    cleanup pass must not turn a publication that would have worked into an
+    error.
+    """
+    from autorun.installer import fs
+
+    source = tmp_path / "src" / "demo"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("shipped\n", encoding="utf-8")
+    target = tmp_path / "dest" / "demo"
+    target.parent.mkdir(parents=True)
+
+    real_iterdir = Path.iterdir
+
+    def refuse_once(self):
+        if self == target.parent:
+            raise PermissionError("cannot list")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", refuse_once)
+
+    assert publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+    monkeypatch.undo()
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "shipped\n"
+
+
 # ─── The manifest describing something that changed shape ───────────────────
 
 
