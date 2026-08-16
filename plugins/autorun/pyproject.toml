@@ -131,6 +131,15 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
+    # conftest.py marks the shelve, daemon and tmux modules with `xdist_group`
+    # so each resource class lands on one worker. `-n N` alone would promote
+    # `--dist` from its "no" default to "load", which schedules by test and
+    # ignores those marks -- several workers then drove the one shared private
+    # tmux server at once and three tmux tests failed on send_keys. Pinned here
+    # rather than left to the caller because the grouping is a correctness
+    # property, not a tuning choice, and a forgotten flag disarms it silently.
+    # At zero workers pytest-xdist forces "no", so serial runs are unaffected.
+    "--dist=loadgroup",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

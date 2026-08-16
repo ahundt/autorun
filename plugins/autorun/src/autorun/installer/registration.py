@@ -589,11 +589,27 @@ def demo() -> None:
     failed = companions("gemini", ["conductor"], values, run=fails)
     assert not failed["conductor"][0].ok
 
-    # Every registration names a harness the registry knows.
+    # Every registration names a harness the registry knows. A variant key is
+    # "<harness>:<variant>" — orchestrate resolves one per harness and looks it
+    # up here — so the harness half is what has to resolve. Asserting on the
+    # whole key held only until the Codex marketplace variants arrived.
     from ..platforms import PLATFORMS
 
-    assert not set(REGISTRATIONS) - set(PLATFORMS)
-    assert not set(COMPANIONS) - set(PLATFORMS)
+    unknown = {key.split(":", 1)[0] for key in REGISTRATIONS} - set(PLATFORMS)
+    assert not unknown, sorted(unknown)
+    assert not set(COMPANIONS) - set(PLATFORMS), sorted(set(COMPANIONS) - set(PLATFORMS))
+
+    # Every marketplace a user may choose has a variant to register through.
+    # A missing one is silent: `register` returns no outcomes for an unknown
+    # key, so the install reports success and Codex never hears about autorun.
+    from .settings import CODEX_PLUGIN_MARKETPLACE
+
+    missing = [
+        f"codex:{choice}"
+        for choice in CODEX_PLUGIN_MARKETPLACE.choices
+        if f"codex:{choice}" not in REGISTRATIONS
+    ]
+    assert not missing, missing
 
     print("installer.registration: all self-checks passed")
 

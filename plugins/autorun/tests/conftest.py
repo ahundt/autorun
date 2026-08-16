@@ -89,15 +89,29 @@ def pytest_configure(config):
     for env_var in platform_env_vars:
         os.environ.pop(env_var, None)
 
-    # TMUX ISOLATION: tmux tests often shell out directly with ["tmux", ...].
-    # If pytest itself is launched from inside the user's live byobu/tmux
-    # server, redirect tests to a private tmux socket so test sessions and
-    # cleanup cannot touch the user's active windows. AUTORUN_TEST_USE_LIVE_TMUX=1
-    # opts out for manual diagnostics.
-    if os.environ.get("TMUX") and os.environ.get("AUTORUN_TEST_USE_LIVE_TMUX") != "1":
+    # TMUX ISOLATION: tmux is one server per user, so a test that creates,
+    # renames, or kills sessions in it is editing whatever the developer has
+    # open. Redirect every tmux call this suite makes to a private socket.
+    #
+    # Unconditional, where it used to require pytest to be running inside a
+    # live tmux. That condition made the isolation exactly backwards: a run
+    # started from an ordinary shell got no private server and drove the real
+    # one, and only a run started from inside tmux was protected.
+    #
+    # The wrapper goes first on PATH, not just into AUTORUN_TMUX_BIN, because
+    # 43 call sites across four test modules build ["tmux", ...] by hand and
+    # resolve it from PATH. Publishing the wrapper under both names is one
+    # mechanism reaching both kinds of caller, and it covers the call site
+    # somebody writes next without their having to know any of this.
+    #
+    # POSIX only: the wrapper is a /bin/sh script, and Windows has no tmux.
+    # AUTORUN_TEST_USE_LIVE_TMUX=1 opts out for manual diagnostics.
+    if os.name == "posix" and os.environ.get("AUTORUN_TEST_USE_LIVE_TMUX") != "1":
         from autorun.tmux_utils import resolve_tmux_binary
 
-        original_tmux = os.environ["TMUX"]
+        # Resolve the real client BEFORE the wrapper shadows `tmux` on PATH,
+        # or the wrapper would exec itself. On Apple Silicon this also prefers
+        # /opt/homebrew over an older /usr/local client.
         real_tmux = resolve_tmux_binary()
         socket_path = os.environ.get(
             "AUTORUN_TEST_TMUX_SOCKET",
@@ -115,31 +129,22 @@ def pytest_configure(config):
             encoding="utf-8",
         )
         wrapper.chmod(0o755)
+
+        original_tmux = os.environ.get("TMUX", "")
         config._autorun_original_tmux = original_tmux
         config._autorun_real_tmux_bin = real_tmux
         config._autorun_test_tmux_socket = socket_path
-        os.environ["AUTORUN_ORIGINAL_TMUX"] = original_tmux
+        if original_tmux:
+            os.environ["AUTORUN_ORIGINAL_TMUX"] = original_tmux
         os.environ["AUTORUN_TEST_TMUX_SOCKET"] = socket_path
         os.environ["AUTORUN_TMUX_BIN"] = str(wrapper)
         os.environ.pop("TMUX", None)
-        resolve_tmux_binary.cache_clear()
 
-    # Resolve the compatible tmux client once and put its directory first for
-    # this pytest process only. On Apple Silicon this prefers /opt/homebrew over
-    # an older /usr/local client.
-    try:
-        from autorun.tmux_utils import resolve_tmux_binary
-
-        tmux_bin = resolve_tmux_binary()
-        os.environ["AUTORUN_TMUX_BIN"] = tmux_bin
-        tmux_dir = str(Path(tmux_bin).parent)
         path_parts = os.environ.get("PATH", "").split(os.pathsep)
-        if tmux_dir and (not path_parts or path_parts[0] != tmux_dir):
-            os.environ["PATH"] = os.pathsep.join(
-                [tmux_dir] + [p for p in path_parts if p and p != tmux_dir]
-            )
-    except Exception:
-        pass
+        os.environ["PATH"] = os.pathsep.join(
+            [str(wrapper_dir)] + [p for p in path_parts if p and p != str(wrapper_dir)]
+        )
+        resolve_tmux_binary.cache_clear()
 
 
 # Test file groups for automatic serial/parallel assignment
@@ -155,7 +160,7 @@ _SERIAL_SHELVE_TESTS = {
 }
 
 _SERIAL_DAEMON_TESTS = {
-    "test_hook_entry", "test_dual_platform_hooks_install",
+    "test_hook_entry",
     "test_session_persistence_hooks", "test_gemini_e2e_improved",
     "test_gemini_e2e_real_money", "test_codex_e2e_real_money",
     "test_gemini_before_tool_hooks",
@@ -167,8 +172,12 @@ _SERIAL_TMUX_TESTS = {
     "test_tmux_automation_agents", "test_tmux_compliance",
     "test_tmux_utils_enhanced", "test_session_targeting_diagnostic",
     "test_session_targeting_regression", "test_bang_syntax",
-    "test_injection_monitoring", "test_injection_integration",
-    "test_session_start_handler", "test_edge_cases_comprehensive",
+    "test_session_start_handler",
+    # These create and kill sessions with fixed names in the one private tmux
+    # server, so two of them at once kill each other's sessions. Found by the
+    # guard in test_suite_harness.py, not by hand: `test_demo` is also in the
+    # daemon table, which is what the priority order below exists to settle.
+    "test_command_fixes_tmux_ttest", "test_tabs", "test_demo",
 }
 
 
@@ -228,6 +237,7 @@ def pytest_exception_interact(node, call, report):
         )
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     """Auto-assign serial/parallel markers based on test file dependencies.
 
@@ -243,11 +253,24 @@ def pytest_collection_modifyitems(config, items):
     singleton while the rest of the suite still spreads out. The three sets
     above stay the single declaration of what shares what; this only teaches
     them to xdist rather than restating them.
+
+    ``tryfirst`` is load-bearing. The worker-side hook that acts on these marks
+    (``xdist/remote.py``) appends ``@<group>`` to each nodeid, and the
+    controller's scheduler groups by that suffix — so it has to see the mark
+    already applied. Without ``tryfirst`` xdist's hook ran first, found no
+    ``xdist_group``, appended nothing, and the marks were decoration: the tmux
+    tests still spread over eight workers and raced the one tmux server.
     """
+    # Most restrictive resource first. A module may appear in more than one
+    # table -- `test_demo` drives both tmux and the daemon -- and exactly one
+    # group may win: xdist joins several `xdist_group` marks into a compound
+    # name (`daemon_tmux` in `remote.py`), which is a *third* bucket that runs
+    # concurrently with both of the ones it was supposed to be inside. Every
+    # matching table still contributes its markers; only the group is singular.
     groups = (
-        (_SERIAL_SHELVE_TESTS, "shelve", ()),
-        (_SERIAL_DAEMON_TESTS, "daemon", (pytest.mark.daemon,)),
         (_SERIAL_TMUX_TESTS, "tmux", ()),
+        (_SERIAL_DAEMON_TESTS, "daemon", (pytest.mark.daemon,)),
+        (_SERIAL_SHELVE_TESTS, "shelve", ()),
     )
     for item in items:
         # Extract test file stem from nodeid
@@ -256,14 +279,16 @@ def pytest_collection_modifyitems(config, items):
             continue
         file_stem = parts[0].rsplit("/", 1)[-1].replace(".py", "")
 
-        for names, group, extra in groups:
+        group = None
+        for names, candidate, extra in groups:
             if file_stem not in names:
                 continue
+            group = group or candidate
             for marker in extra:
                 item.add_marker(marker)
+        if group is not None:
             item.add_marker(pytest.mark.serial)
             item.add_marker(pytest.mark.xdist_group(f"autorun-{group}"))
-            break
 
 
 # Add src directory to Python path
@@ -482,6 +507,60 @@ def cleanup_test_sessions():
     _test_session_ids.clear()
     if cleaned > 0 and os.getenv("DEBUG", "").lower() in {"true", "1", "yes"}:
         print(f"\n[DEBUG] Cleaned up {cleaned} test session files")
+
+
+#: Session ids that more than one test writes, so no test owns what it finds
+#: there. `__global__` is the reserved id `ScopeAccessor(ctx, "global")` writes
+#: to, which a unique per-test session id cannot isolate; the rest are literals
+#: several modules happen to share -- `"test"` alone appears in 137 contexts
+#: across six files. All are reset between tests below, and
+#: `test_suite_harness.py` fails if a new one appears unlisted.
+SHARED_TEST_SESSIONS = ("__global__", "test", "test-session", "session-1", "session-a")
+
+
+@pytest.fixture(autouse=True)
+def reset_shared_sessions_between_tests():
+    """State written to a shared session id outlives the test that wrote it.
+
+    `/ar:globalok 'git push'` is global by design: it is stored against
+    `__global__`, not the caller's session, so every later test in the same
+    worker saw git push allowed. `test_globalok_adds_to_global_allowed_patterns`
+    left exactly that behind, and under `-n 8` it landed before
+    `test_scoped_allow_uses_shared_wrapper_detection`, whose first assertion is
+    that an ungranted `git push` is denied. The literal `"test"` did the same to
+    `test_redirect_shown_in_message`, which asserts `rm` is blocked *with* its
+    trash redirect and instead got a plain block from a leftover session block.
+
+    Serially both orders happened to be benign, so the suite was green and the
+    leaks invisible; only redistributing the tests exposed them.
+
+    Reset here rather than in each test that writes shared state, because the
+    tests that leak are the ones that forgot — a rule every test must remember
+    is the rule that produced this. The clear is skipped unless the session
+    actually holds something, which is the case for all but a handful.
+    """
+    yield
+
+    from autorun.session_manager import (
+        clear_test_session_states_batch,
+        get_session_manager,
+    )
+
+    # One index read, then one batched delete only when something is there.
+    # Opening each shared session in turn instead cost 7ms a test -- 43s over
+    # the suite, doubling the parallel run -- because every open takes the
+    # store's lock. Almost every test leaves all five untouched, so the common
+    # path has to be a single query that finds nothing.
+    try:
+        occupied = [
+            session
+            for session in get_session_manager().list_sessions()
+            if session in SHARED_TEST_SESSIONS
+        ]
+    except Exception:
+        return
+    if occupied:
+        clear_test_session_states_batch(occupied)
 
 
 @pytest.fixture

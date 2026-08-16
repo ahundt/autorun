@@ -1302,3 +1302,69 @@ def test_the_executable_bit_survives_a_republish(tmp_path):
     publish_tree(source, target, plugin="ar")
 
     assert os.stat(target / "hook_entry.py").st_mode & stat.S_IXUSR
+
+
+def _installer_modules_with_a_self_check() -> list[str]:
+    """Installer modules shipping a ``demo()``, discovered rather than listed.
+
+    A hardcoded list would cover only the modules that existed when it was
+    written, which is exactly the failure this guards: nothing ran the demos,
+    so `registration.demo()` asserted a stale invariant from 2026-08-05 through
+    every green CI run until it was executed by hand.
+    """
+    package = Path(__file__).resolve().parents[1] / "src" / "autorun" / "installer"
+    return sorted(
+        path.stem
+        for path in package.glob("*.py")
+        if "\ndef demo(" in path.read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize("module", _installer_modules_with_a_self_check())
+def test_every_installer_module_self_check_passes(module):
+    """`installer/AGENTS.md` ends with "Every module self-checks" and prints the
+    command. Nothing ran it, so the claim was unverified and one of the sixteen
+    was failing.
+
+    Run as the documented subprocess rather than by importing `demo` here: that
+    is the command a developer is told to run, several demos resolve paths at
+    import time, and `orchestrate.demo` reaches the daemon unless `AUTORUN_HOME`
+    is set before the first import — which only a fresh process can guarantee.
+
+    `HOME` is redirected because that is the installer's isolation seam, and the
+    runtime root comes from `AUTORUN_TEST_RUNTIME_DIR` (conftest.py) because the
+    daemon socket underneath it must stay inside `sun_path`'s 104 bytes; a
+    `tmp_path` under the platform temp directory does not.
+
+    Run from the repository root, as the documented command is: `plugins/autorun`
+    holds an `autorun.py` that shadows the package whenever it is the working
+    directory, and `import autorun` there fails with "not a package".
+    """
+    import subprocess
+
+    runtime = Path(os.environ["AUTORUN_TEST_RUNTIME_DIR"])
+    home = runtime / f"demo-{module}"
+    autorun_home = runtime / f"dh-{module}"
+    for directory in (home, autorun_home):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        [sys.executable, "-c", f"from autorun.installer.{module} import demo; demo()"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=str(Path(__file__).resolve().parents[3]),
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "PI_CODING_AGENT_DIR": str(home / ".pi" / "agent"),
+            "AUTORUN_HOME": str(autorun_home),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        },
+    )
+
+    assert result.returncode == 0, (
+        f"autorun.installer.{module}.demo() exited {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
