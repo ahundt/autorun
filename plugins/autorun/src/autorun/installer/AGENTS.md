@@ -118,51 +118,33 @@ that need it. No disk access: stage generated content to a temp dir and point th
   never by name.** Gemini and Qwen record the source path in
   `.<cli>-extension-install.json`. Agy records only `{"name": "ar", "source":
   "antigravity"}` in `~/.gemini/config/import_manifest.json`, so for Agy the
-  content half is one of: an exact match with today's generated source, every
-  hook command running our `hook_entry.py` (`extension.bundle_hooks_are_ours`),
-  or a copied skill inside the bundle carrying our marker (the hookless
-  pdf-extractor bundle). Exact match alone can only hold until the source next
-  changes; requiring it left a copy Agy made before `record_tree` stamped it
-  unrefreshable, and `_registrations` skipped it silently. A same-name plugin
-  that fails the proof is the user's, and the skip is a `FAIL` outcome naming
-  the path.
+  content half is an exact match with today's source, or every hook command
+  running our `hook_entry.py` (`extension.bundle_hooks_are_ours`), or a copied
+  skill carrying our marker (hookless pdf-extractor). Exact match alone holds
+  only until the source next changes; requiring it left Agy on its first
+  bundle forever, silently. A same-name plugin that fails the proof is the
+  user's and the skip is a `FAIL` outcome naming the path.
+- **A root `gemini-extension.json` is a template.** `steps.extension_template`
+  is the one owner: `gemini_template/` when present, else the plugin directory
+  when the manifest sits at its root (pdf-extractor), else no extension.
 
 ## Isolation
 
-Never install, uninstall, preview, or self-check against the live machine: it
-rewrites `hooks.json`, replaces plugin caches, and restarts the daemon every
-running session shares. The rule and its history are in the root `AGENTS.md`
-(§ Development isolation is MANDATORY); a live run happens only on the user's
-written instruction.
+The rule, the sandbox recipe, and the proof are in the root `AGENTS.md` and
+[`docs/RUNTIME_STATE_ISOLATION.md`](../../../docs/RUNTIME_STATE_ISOLATION.md).
+Installer specifics:
 
-Unit tests set `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` **before any autorun
-import**. A real install also needs `HOME`:
-
-```bash
-SB=/tmp/arsb; mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"
-env HOME="$SB/home" AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" \
-    UV_CACHE_DIR="$(uv cache dir)" \
-    uv run --project plugins/autorun python -m autorun --install --force
-```
-
-`HOME` is the seam. `Path.home()` honours it, so redirecting it moves every path
-together. `Context.home` must **agree** with it and is checked: setting the
-field while leaving `$HOME` alone reads a sandbox and writes the real home, and
-that uninstalled 16 skills from a live machine during a self-check that looked
-isolated. Use `discovery.redirected_home(path)` — a context manager — in any
-demo or test that needs an isolated home. `AUTORUN_HOME` must be short, because the
-daemon socket lives under it and `sun_path` is 104 bytes on macOS; overflow
-looks like a hook timeout. Prove isolation by diffing a full listing rather than
-a digest, since these trees also hold harness session logs.
-
-Redirecting `$HOME` does not move the daemon. `ipc.AUTORUN_CONFIG_DIR` is fixed
-at import from `AUTORUN_HOME` or the home of that moment, so an in-process
-self-check that redirects `$HOME` afterwards and then runs `uninstall()` with
-teardown on signals the developer's live daemon (`orchestrate.demo` did, and
-restarted it). Set `AUTORUN_HOME` before the first import, or stand in for
-`teardown.stop_daemon` as `orchestrate._exercise` and `teardown.demo` do.
-
-Details: [`docs/RUNTIME_STATE_ISOLATION.md`](../../../docs/RUNTIME_STATE_ISOLATION.md).
+- `HOME` is the seam; `Context.home` must **agree** with `$HOME` and is checked.
+  Setting the field alone reads a sandbox and writes the real home — that
+  uninstalled 16 live skills during a self-check that looked isolated. Use
+  `discovery.redirected_home(path)` in any demo or test that needs a home.
+- Redirecting `$HOME` does not move the daemon: `ipc.AUTORUN_CONFIG_DIR` is
+  fixed at import. An in-process self-check that later runs `uninstall()` with
+  teardown on signals the developer's live daemon (`orchestrate.demo` did).
+  Set `AUTORUN_HOME` before the first import, or stand in for
+  `teardown.stop_daemon` as `orchestrate._exercise` and `teardown.demo` do.
+- `AUTORUN_HOME` must be short: the daemon socket lives under it, `sun_path` is
+  104 bytes on macOS, and overflow looks like a hook timeout.
 
 ## Checks
 
