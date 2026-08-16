@@ -115,18 +115,16 @@ that need it. No disk access: stage generated content to a temp dir and point th
   `~/forge/skills` and writes nowhere. The bridge targets read routes.
 - **A native copy the harness made is proven ours by receipt plus content,
   never by name.** Gemini and Qwen record the source path in
-  `.<cli>-extension-install.json`; Agy records only `{"name": "ar", "source":
-  "antigravity"}` in `~/.gemini/config/import_manifest.json` and copies the
-  bundle into `~/.gemini/config/plugins/ar`. For Agy the content half is an
-  exact match with today's generated source, or a bundle whose every hook
-  command runs our `hook_entry.py` (`extension.bundle_hooks_are_ours`), or a
-  copied skill inside it carrying our marker for that plugin (the hookless
-  pdf-extractor bundle). Requiring the exact match alone left
-  a copy Agy made before `record_tree` stamped it unrefreshable the moment
-  the source changed, and `_registrations` skipped it without a word: that
-  harness ran the first bundle it ever imported while every install printed
-  success. A same-name plugin that fails the proof is the user's; the skip
-  is now a `FAIL` outcome naming the path.
+  `.<cli>-extension-install.json`. Agy records only `{"name": "ar", "source":
+  "antigravity"}` in `~/.gemini/config/import_manifest.json`, so for Agy the
+  content half is one of: an exact match with today's generated source, every
+  hook command running our `hook_entry.py` (`extension.bundle_hooks_are_ours`),
+  or a copied skill inside the bundle carrying our marker (the hookless
+  pdf-extractor bundle). Exact match alone can only hold until the source next
+  changes; requiring it left a copy Agy made before `record_tree` stamped it
+  unrefreshable, and `_registrations` skipped it silently. A same-name plugin
+  that fails the proof is the user's, and the skip is a `FAIL` outcome naming
+  the path.
 
 ## Isolation
 

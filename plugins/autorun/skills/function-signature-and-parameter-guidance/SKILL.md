@@ -46,8 +46,8 @@ Correctness before brevity, always — trimming a wrong sentence produces a shor
 sentence.
 
 1. **Survey the codebase's existing vocabulary, then applicable standards.** Grep the
-   schema and CLI, or use a code-graph tool when the session has one (a codebase-memory MCP's
-   `search_graph`, `kit symbols`); no such tool can be assumed. Two targets: **conventions** — sign, units, naming, what `0`
+   schema and CLI (a code-graph tool such as `search_graph` or `kit symbols` does the same
+   faster when the session has one). Two targets: **conventions** — sign, units, naming, what `0`
    already means, since a value's meaning comes from its siblings rather than first
    principles; and **semantic duplicates**, of a parameter (`limit` beside `max_results`) and
    of a whole tool — state each job in a sentence and look for matches, the tell being a

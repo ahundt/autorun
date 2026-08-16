@@ -85,31 +85,22 @@ marketplace itself carries a separate `version` field.
   `--force`; `--force` republishes it after copying the current tree to
   `~/.autorun/installer/backups/<name>-<stamp>/`. A recorded user edit is
   still kept by every path.
-- **Antigravity no longer stays on the first bundle it imported.** Agy
-  copies the plugin into `~/.gemini/config/plugins/ar` and its import manifest
-  names the plugin but no source path, so the only accepted proof that the
-  copy was autorun's was a byte-for-byte match with today's generated source
-  — true only until the source next changed. A copy made before autorun
-  stamped its marker then looked like a stranger's plugin: every later
-  `--install` skipped Antigravity in silence and reported success while it
-  ran skills, commands, and hooks from the day it was first imported. The
-  receipt plus content autorun produced — every hook command running
-  autorun's own hook entry, or a copied skill carrying autorun's marker for a
-  hookless bundle — now proves the copy is ours, so it is refreshed and stamped; a
-  same-name plugin that fails that proof is left alone and the install
-  reports it as a failure naming the path instead of saying nothing.
-- **pdf-extractor reaches Gemini, Qwen, and Antigravity again.** The staging
-  step built a Gemini-family extension only for a plugin with a
-  `gemini_template/` directory; pdf-extractor has no hooks and keeps its
-  `gemini-extension.json` at the plugin root, the layout the previous
-  installer accepted, so since the installer rewrite it silently reached no
-  Gemini-family harness while its earlier materializations sat unowned and
-  unrefreshed (one of them a full copy of the plugin checkout, `.venv`
-  included). A root manifest now makes the plugin directory the template; the
-  staged bundle carries commands, the manifest, and — for Antigravity — the
-  skill, with no empty `hooks/` tree and no `hooks` reference to a file that
-  does not exist. `steps.extension_template()` is the one place the template
-  location is derived, for staging, ownership proof, and refresh alike.
+- **Antigravity no longer stays on the first bundle it imported.** Agy's
+  import manifest names the plugin but no source path, so a copy under
+  `~/.gemini/config/plugins/ar` was accepted as autorun's only while it
+  matched the generated source byte for byte. Once the source changed, a copy
+  made before autorun stamped its marker was skipped on every install without
+  a message. The receipt plus autorun's own content in the copy (hook commands
+  running its hook entry, or a copied skill carrying its marker) now proves
+  ownership, so the copy is refreshed and stamped; a same-name plugin that
+  fails that proof is reported as a failed install step naming the path.
+- **pdf-extractor is staged for Gemini, Qwen, and Antigravity again.** The
+  staging step required a `gemini_template/` directory; pdf-extractor has no
+  hooks and keeps `gemini-extension.json` at its root, so since the installer
+  rewrite it reached no Gemini-family harness and its earlier
+  materializations were never refreshed. A root manifest now makes the plugin
+  directory the template, and a hookless bundle gets no `hooks/` tree and no
+  `hooks` manifest reference.
 - **Status and dry run list each shared skill once.** The walk decided the
   same `~/.agents/skills/<name>` intent once per harness that reads the shared
   root (six lines per skill on a default install) and re-hashed the published
