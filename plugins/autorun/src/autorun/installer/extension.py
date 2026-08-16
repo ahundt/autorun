@@ -48,6 +48,7 @@ __all__ = [
     "receipt_names_any_source",
     "native_receipt_names_source",
     "antigravity_receipt_names_plugin",
+    "bundle_hooks_are_ours",
     "extension_dir",
     "registration_source_dir",
     "extension_intents",
@@ -178,9 +179,16 @@ def native_receipt_names_source(
 
     Gemini and Qwen write the source path inside the materialized extension.
     Agy instead writes a shared import manifest beside ``plugins/`` and copies
-    only the bundle contents.  Its legacy adoption therefore needs both the
-    exact manifest entry and an exact content match; once adopted,
-    :func:`record_tree` supplies the ordinary edit-sensitive marker.
+    only the bundle contents, so its receipt names the plugin but never a
+    path. Adoption therefore needs the exact manifest entry plus evidence
+    inside the copy that the bundle is ours: either it still matches today's
+    source byte for byte, or every hook it declares runs autorun's own hook
+    entry. Content match alone was the whole test once, and it can only pass
+    until the source next changes — after that a copy Agy made before
+    :func:`record_tree` stamped it looked like a stranger's plugin, was
+    skipped on every install, and left that harness on the first bundle it
+    ever imported. Once adopted, :func:`record_tree` supplies the ordinary
+    edit-sensitive marker.
     """
     flavor = (
         getattr(platform, "install_flavor", "")
@@ -190,7 +198,44 @@ def native_receipt_names_source(
         return receipt_names_source(installed, source)
     if not antigravity_receipt_names_plugin(ctx, platform, plugin):
         return False
-    return bool(installed.is_dir() and scan_tree(installed) == scan_tree(source))
+    if not installed.is_dir():
+        return False
+    return scan_tree(installed) == scan_tree(source) or bundle_hooks_are_ours(installed)
+
+
+def bundle_hooks_are_ours(installed: Path) -> bool:
+    """Whether every hook command a materialized bundle declares is autorun's.
+
+    Reads the manifests a Gemini-family bundle can carry (``hooks.json`` at
+    the root, ``hooks/hooks.json`` beside the entry script) and requires at
+    least one command, all of which name the hook entry — the same mark
+    :func:`codex.is_ours` uses to recognise our entries in Codex's shared
+    ``hooks.json``. A bundle with no hooks, an unreadable manifest, or one
+    foreign command is not ours.
+    """
+    from .codex import COMMAND_MARK
+
+    commands: list[str] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, Mapping):
+            command = value.get("command")
+            if isinstance(command, str):
+                commands.append(command)
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    for candidate in (installed / "hooks.json", installed / "hooks" / "hooks.json"):
+        if not candidate.is_file():
+            continue
+        try:
+            collect(json.loads(candidate.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return False
+    return bool(commands) and all(COMMAND_MARK in command for command in commands)
 
 
 def antigravity_receipt_names_plugin(

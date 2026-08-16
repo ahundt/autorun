@@ -699,6 +699,89 @@ def test_antigravity_uses_native_config_receipt_and_uninstalls_only_its_entry(
     assert [row["name"] for row in rows] == ["foreign"]
 
 
+def _antigravity_installed_before_stamping(monkeypatch, isolated, calls):
+    """Install into Agy, then model a copy made before autorun stamped it.
+
+    Agy copies the bundle and records only ``{"name": "ar", "source":
+    "antigravity"}`` in its import manifest, so an older install left a tree
+    with no root marker whose contents no longer match today's source.
+    """
+    from autorun.installer import entrypoint
+    from autorun.installer.fs import OWNED_MARKER_NAME
+
+    monkeypatch.setattr(entrypoint, "_run", _agy_copy_runner(isolated, calls))
+    monkeypatch.setattr(
+        entrypoint.shutil,
+        "which",
+        lambda name: "/usr/bin/agy" if name == "agy" else None,
+    )
+    assert entrypoint.install_plugins(
+        "ar", antigravity_only=True, conductor=False, tool=False
+    ) == 0
+    installed = isolated / ".gemini" / "config" / "plugins" / "ar"
+    (installed / OWNED_MARKER_NAME).unlink()
+    (installed / "commands" / "retired-by-a-later-release.md").write_text(
+        "old command\n", encoding="utf-8"
+    )
+    calls.clear()
+    return installed
+
+
+def test_antigravity_copy_made_before_stamping_is_refreshed_when_its_hooks_are_ours(
+    monkeypatch, isolated
+):
+    """A stale, unmarked Agy copy of our bundle must not freeze that harness forever.
+
+    Before this pin the only proof accepted for such a tree was an exact
+    content match with today's source, which no copy of an older bundle can
+    pass, so every later ``--install`` skipped Antigravity in silence and it
+    kept running the first bundle it ever imported.
+    """
+    from autorun.installer import entrypoint, fs
+
+    calls: list[tuple[str, ...]] = []
+    installed = _antigravity_installed_before_stamping(monkeypatch, isolated, calls)
+    source = (
+        Path(os.environ["AUTORUN_HOME"]) / "installer" / "extension-sources"
+        / "antigravity" / "ar"
+    )
+    assert fs.scan_tree(installed) != fs.scan_tree(source)
+
+    assert entrypoint.install_plugins(
+        "ar", antigravity_only=True, conductor=False, tool=False
+    ) == 0
+    assert ("agy", "plugin", "uninstall", "ar") in calls
+    assert any(call[:3] == ("agy", "plugin", "install") for call in calls)
+    assert fs.scan_tree(installed) == fs.scan_tree(source)
+    assert not (installed / "commands" / "retired-by-a-later-release.md").exists()
+    marker = fs.read_marker(installed)
+    assert marker is not None and marker.files
+
+
+def test_antigravity_same_name_plugin_with_foreign_hooks_is_left_alone_and_reported(
+    monkeypatch, isolated, capsys
+):
+    """The receipt alone proves nothing: a user's own ``ar`` plugin stays theirs."""
+    from autorun.installer import entrypoint, fs
+
+    calls: list[tuple[str, ...]] = []
+    installed = _antigravity_installed_before_stamping(monkeypatch, isolated, calls)
+    (installed / "hooks.json").write_text(
+        json.dumps({"PreToolUse": [{"type": "command", "command": "python mine.py"}]}),
+        encoding="utf-8",
+    )
+    theirs = fs.scan_tree(installed)
+
+    assert entrypoint.install_plugins(
+        "ar", antigravity_only=True, conductor=False, tool=False
+    ) == 1
+    assert not any(call[:3] == ("agy", "plugin", "uninstall") for call in calls)
+    assert fs.scan_tree(installed) == theirs
+    assert fs.read_marker(installed) is None
+    out = capsys.readouterr().out
+    assert str(installed) in out and "not autorun's" in out
+
+
 def test_antigravity_import_fallback_requires_and_tracks_owned_gemini(
     monkeypatch, isolated
 ):

@@ -465,7 +465,17 @@ def _registrations(
                 continue
             if not removing and target_present and not registration_owned:
                 # A same-name native extension with no exact marker/receipt is
-                # the user's. Force never broadens ownership.
+                # the user's. Force never broadens ownership. Say so: a silent
+                # skip here left one harness on a stale bundle for months with
+                # every install reporting success.
+                done.append(Outcome(
+                    f"{name}: {plugin} native extension",
+                    False,
+                    f"{extension_target} is not autorun's (no marker, and no "
+                    "harness receipt naming our bundle), so it was left alone "
+                    f"and {name} keeps whatever it holds; move it aside or "
+                    "remove it with the harness's own uninstaller, then rerun",
+                ))
                 continue
             values = _values(
                 root,

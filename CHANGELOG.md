@@ -85,6 +85,18 @@ marketplace itself carries a separate `version` field.
   `--force`; `--force` republishes it after copying the current tree to
   `~/.autorun/installer/backups/<name>-<stamp>/`. A recorded user edit is
   still kept by every path.
+- **Antigravity no longer stays on the first bundle it imported.** Agy
+  copies the plugin into `~/.gemini/config/plugins/ar` and its import manifest
+  names the plugin but no source path, so the only accepted proof that the
+  copy was autorun's was a byte-for-byte match with today's generated source
+  — true only until the source next changed. A copy made before autorun
+  stamped its marker then looked like a stranger's plugin: every later
+  `--install` skipped Antigravity in silence and reported success while it
+  ran skills, commands, and hooks from the day it was first imported. The
+  receipt plus a bundle whose every hook command runs autorun's own hook
+  entry now proves the copy is ours, so it is refreshed and stamped; a
+  same-name plugin that fails that proof is left alone and the install
+  reports it as a failure naming the path instead of saying nothing.
 - **Status and dry run list each shared skill once.** The walk decided the
   same `~/.agents/skills/<name>` intent once per harness that reads the shared
   root (six lines per skill on a default install) and re-hashed the published
