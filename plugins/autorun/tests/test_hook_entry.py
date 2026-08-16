@@ -1212,7 +1212,7 @@ class TestTryCliRobustness:
         assert output.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
         assert "timed out" in captured.err
 
-    def test_hook_rm_blocked_no_stderr(self):
+    def test_hook_rm_blocked_no_stderr(self, ensure_single_daemon):
         """Full e2e: hook_entry.py blocks rm with exit code 2.
 
         Claude Code Bug #4669 Workaround:
@@ -1220,6 +1220,15 @@ class TestTryCliRobustness:
         This is the only way to ACTUALLY block tools in Claude Code.
         Exit code 2 + stderr message is shown to Claude, allowing it to
         understand why the command was blocked and try alternatives.
+
+        Takes `ensure_single_daemon` so a daemon is already listening. Without
+        it this spawns the hook cold, and under full-suite CPU contention the
+        daemon's own start-up exceeded the 5s wrapper budget: the hook then
+        denied for the right *shape* (exit 2) with the wrong reason, "autorun
+        CLI timed out after 5s" instead of the rm guard, and the reason
+        assertion below failed. That is a cold-start race in the test, not a
+        defect in the guard — the wrapper timeout is a contract with the
+        harness and must not be widened to paper over it.
         """
         env = os.environ.copy()
         env['CLAUDE_PLUGIN_ROOT'] = str(PLUGIN_ROOT)
