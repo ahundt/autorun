@@ -27,6 +27,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Sequence
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 __all__ = [
     "MARKETPLACE_MANIFEST",
@@ -127,6 +129,13 @@ def _from_editable_install(origin: Path) -> Iterator[Path]:
 
     The recorded URL may be the workspace root or the plugin directory, so both
     are offered and the caller's predicate picks.
+
+    It is a ``file://`` URL, not a path: a checkout under ``My Projects`` is
+    recorded as ``My%20Projects``, and Windows records ``file:///C:/src`` with
+    a leading slash the drive letter must not keep. Stripping the scheme alone
+    left both, so the resolver looked for a directory that does not exist and
+    silently fell through to the last-resort search. ``url2pathname`` is the
+    decoder for exactly this, on each platform's own terms.
     """
     for dist_info in origin.parent.parent.glob("autorun*.dist-info"):
         try:
@@ -135,7 +144,8 @@ def _from_editable_install(origin: Path) -> Iterator[Path]:
             continue
         if "editable" not in data.get("dir_info", {}):
             continue
-        source = Path(str(data.get("url", "")).removeprefix("file://"))
+        url = str(data.get("url", ""))
+        source = Path(url2pathname(urlparse(url).path) if url.startswith("file:") else url)
         yield from (source, source / "plugins" / "autorun")
 
 

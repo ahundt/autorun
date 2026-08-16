@@ -792,6 +792,18 @@ def fill_tree(source: Path, target: Path) -> Path | None:
     Autorun callers share the lock. A native installer does not, so publication
     also uses non-replacing ``rename``; if that installer wins the race, its
     result wins and is never replaced.
+
+    "Never replaced" is exact on Windows and approximate on POSIX, and the
+    difference is worth stating rather than discovering. ``os.rename`` onto an
+    existing path raises on Windows, and on POSIX raises for anything except an
+    *empty* directory, which it replaces silently. So the one state this loses
+    to is a native installer that has created the cache directory but not yet
+    filled it, in the window between our ``exists()`` check and the rename —
+    and what replaces it is a complete copy of the same bundle. No user content
+    exists in an empty directory, so nothing is lost; the harness simply finds
+    the cache already filled. Making this exact would need ``renameat2`` or a
+    ``mkdir``-based claim, neither portable, for a state whose worst outcome is
+    the outcome we wanted.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):

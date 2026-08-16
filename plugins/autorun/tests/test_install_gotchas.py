@@ -957,6 +957,64 @@ def test_uninstall_uses_receipts_when_the_marketplace_source_is_gone(tmp_path, m
     assert "echo user" in text and "hook_entry.py" not in text
 
 
+def test_every_tree_an_install_publishes_is_found_again_by_the_marker_sweep(
+    tmp_path, monkeypatch
+):
+    """`owned_trees(max_depth=5)` is an assumption about the routes we ship.
+
+    The retirement sweep is the only thing that finds what a *previous* version
+    installed, and it stops descending at five levels. Today's routes fit; a
+    future one that does not would leak a tree carrying our marker at a path no
+    decision names, silently and permanently — the exact failure the sweep was
+    added to fix, reintroduced by a bound nobody re-checked.
+
+    Comparing an unbounded marker walk against the bounded sweep makes the
+    assumption executable, so a route that outgrows it fails here rather than
+    on a user's machine.
+    """
+    from autorun.installer.fs import owned_trees
+    from autorun.installer.orchestrate import _config_roots, install
+    from autorun.installer.traversal import Context
+    from autorun.platforms import PLATFORMS
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / ".pi" / "agent"))
+    selected = tuple(PLATFORMS[name] for name in ("claude", "codex", "pi"))
+    install(
+        marketplace_root=Path(__file__).resolve().parents[3],
+        plugins=("ar",),
+        harnesses=selected,
+        home=tmp_path,
+        available=(),
+        state_dir=tmp_path / "state",
+    )
+
+    roots = _config_roots(
+        selected, Context(marketplace_root=tmp_path, home=tmp_path)
+    )
+    assert roots, "the sweep would visit nothing, so this proves nothing"
+    reachable = {tree for root in roots for tree in owned_trees(root, plugin="ar")}
+    planted = {
+        marker.parent
+        for root in roots
+        for marker in root.rglob(OWNED_MARKER_NAME)  # unbounded, on purpose
+        if not any(part.startswith(".autorun-") for part in marker.parent.parts)
+    }
+
+    unreachable = sorted(
+        str(tree.relative_to(tmp_path))
+        for tree in planted - reachable
+        # A nested marker inside an already-reported tree is correct to skip:
+        # an owned tree is removed whole.
+        if not any(tree != found and found in tree.parents for found in reachable)
+    )
+    assert not unreachable, (
+        f"published deeper than owned_trees() descends, so the retirement sweep "
+        f"can never find these again: {unreachable}"
+    )
+
+
 def test_a_link_replaced_after_the_preflight_is_not_removed(tmp_path, monkeypatch):
     """Resolving a link and unlinking a path are two operations.
 

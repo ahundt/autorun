@@ -409,6 +409,15 @@ def bridge_intents(
     (anthropics/claude-code#38051), so bridging into one would disable the very
     skills it is trying to deliver.
 
+    That refusal also skips the *retirement* of stale links inside that
+    directory, because both are yielded from here. It is the right trade — we
+    will not write into a directory whose shape already breaks the harness, and
+    a link we placed before the user made it a symlink is not worth reaching in
+    to remove — but it means a symlinked destination is refused, not cleaned.
+    Anything left there is retired the moment the directory is a real one
+    again, and until then nothing reports it, so this is written down rather
+    than mistaken for completed cleanup.
+
     The destination is where the harness *reads*, not where autorun natively
     *writes*. Those are different fields and they genuinely differ: Antigravity
     reads ``~/.gemini/config/skills`` while its native write route is its

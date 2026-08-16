@@ -79,6 +79,43 @@ def test_a_backup_copy_never_wins_unless_we_are_running_from_it(tmp_path):
     assert marketplace_root(backup / "src" / "x.py") == backup
 
 
+def test_an_editable_checkout_whose_path_has_a_space_still_resolves(tmp_path):
+    """`direct_url.json` records a URL, and a URL percent-encodes a space.
+
+    An editable install writes `file:///Users/me/My%20Projects/autorun`, and
+    stripping only the `file://` prefix leaves the `%20` in the path — so the
+    resolver looked for a directory named `My%20Projects` and found nothing.
+    Directory names with spaces are ordinary on macOS and Windows, and the
+    failure is silent: development installs there simply never resolve their
+    own source and fall through to the last-resort search.
+
+    `url2pathname` is the decoder for this, and it also fixes the Windows
+    shape, where `file:///C:/src` left a leading slash on the drive letter.
+    """
+    from autorun.installer.discovery import _from_editable_install
+
+    checkout = tmp_path / "My Projects" / "autorun"
+    (checkout / "plugins" / "autorun").mkdir(parents=True)
+    assert "%20" in checkout.as_uri(), "this platform did not encode the space"
+
+    # Where the strategy looks: two levels above the running file.
+    running = tmp_path / "site-packages" / "autorun" / "discovery.py"
+    # A synthetic version: the glob is `autorun*.dist-info`, and naming the
+    # real one here would make this file a release-checklist obligation.
+    dist_info = tmp_path / "site-packages" / "autorun-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    running.parent.mkdir(parents=True)
+    (dist_info / "direct_url.json").write_text(
+        json.dumps({"url": checkout.as_uri(), "dir_info": {"editable": True}}),
+        encoding="utf-8",
+    )
+
+    offered = list(_from_editable_install(running))
+
+    assert checkout in offered, offered
+    assert not any("%20" in str(path) for path in offered), offered
+
+
 def test_no_root_anywhere_returns_none_rather_than_guessing(tmp_path):
     stray = tmp_path / "nothing" / "x.py"
     stray.parent.mkdir(parents=True)
