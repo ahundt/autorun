@@ -16,6 +16,13 @@ from autorun.platforms import PLATFORMS, to_harness_cli_event
 
 
 REAL_MONEY_ENV = "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"
+LIVE_INSTALL_CHECKS_ENV = "AUTORUN_ENABLE_LIVE_INSTALL_CHECKS"
+LIVE_INSTALL_CHECKS_SKIP = (
+    f"Set {LIVE_INSTALL_CHECKS_ENV}=1 to assert on this machine's installed "
+    "copies. These compare the repository against live harness directories, so "
+    "an ordinary edit to a hook file fails them until you reinstall. "
+    "`autorun --status` answers the same question without a test run."
+)
 RETIRED_GEMINI_BACKEND_ENV = "AUTORUN_ALLOW_RETIRED_GEMINI_CLI_BACKEND_TESTS"
 GEMINI_CLI_CONSUMER_BACKEND_CUTOFF = date(2026, 6, 18)
 RETIRED_GEMINI_BACKEND_REASON = (
@@ -71,6 +78,28 @@ BACKEND_E2E_CONTRACTS = {
 def real_money_enabled() -> bool:
     """Return whether the caller explicitly opted into paid model calls."""
     return os.environ.get(REAL_MONEY_ENV, "0") == "1"
+
+
+def live_install_checks_enabled() -> bool:
+    """Return whether the caller opted into asserting on this machine's install.
+
+    A handful of checks compare the repository against the developer's *live*
+    harness directories -- the Claude plugin cache, the installed Gemini
+    extension. They guard a real trap: a fix to ``hooks/hook_entry.py`` or
+    ``hooks.json`` that never reaches the cache is invisible, because the
+    harness loads the cache and not the source.
+
+    As unconditional tests they were the wrong shape twice over. Every ordinary
+    edit to a hook file turns the suite red until the developer runs a live
+    install, which inverts TDD -- a correct working tree should be green -- and
+    as the only red in a 6,000-test run it teaches people to ignore a red run.
+    They also read ``~`` directly, which is what the rest of the suite is
+    forbidden to do.
+
+    So they become opt-in, like the benchmark and paid-model tests, and the
+    skip reason names the command that answers the question properly.
+    """
+    return os.environ.get(LIVE_INSTALL_CHECKS_ENV, "0") == "1"
 
 
 def retired_gemini_backend_enabled() -> bool:

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from e2e_support import LIVE_INSTALL_CHECKS_SKIP, live_install_checks_enabled
 from autorun.platforms import hook_platforms as _hook_platforms
 
 
@@ -1866,6 +1867,7 @@ class TestAllLocationsSync:
         )
 
     @pytest.mark.e2e
+    @pytest.mark.skipif(not live_install_checks_enabled(), reason=LIVE_INSTALL_CHECKS_SKIP)
     def test_cache_matches_source_hook_entry(self):
         """Location 4: the current Claude cache must match current source."""
         cache_root = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
@@ -1895,6 +1897,7 @@ class TestAllLocationsSync:
         assert "--editable" in argv
 
     @pytest.mark.e2e
+    @pytest.mark.skipif(not live_install_checks_enabled(), reason=LIVE_INSTALL_CHECKS_SKIP)
     def test_gemini_extension_hooks_match_source(self):
         """Installed Gemini hooks must match the generated registered source."""
         gemini_ext = Path.home() / ".gemini/extensions/ar"
