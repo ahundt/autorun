@@ -80,89 +80,26 @@ def _wait_for_pane_text(tmux, session_name, expected_text, timeout=10.0):
     return output
 
 
-def test_a_private_server_socket_keeps_sessions_off_the_users_tmux():
-    """Tests must not create and kill sessions on the server the user is using.
+def test_raw_tmux_calls_reach_the_same_server_as_tmux_utilities():
+    """A hand-built tmux command must not bypass the suite's isolation.
 
-    `TmuxUtilities` takes its server socket from the inherited `TMUX`
-    environment variable, so a suite run from inside tmux drives the very
-    server running the developer's own windows. That is how these tests came
-    to share window indices with live work, and why several of them fail
-    intermittently under `-n 8`: they are all talking to one server.
+    `pytest_configure` redirects tmux away from the user's live server by
+    publishing a wrapper as `AUTORUN_TMUX_BIN`, and `resolve_tmux_binary`
+    returns it, so `TmuxUtilities` is already isolated. Raw
+    `subprocess.run(["tmux", ...])` is not: it finds tmux on PATH and reaches
+    the default server, so a test that sends through one and reads through the
+    other silently observes nothing.
 
-    An explicit `server_socket` must win over the inherited one, so a test can
-    stand up a throwaway server and leave the user's alone.
+    `tmux_argv` closes that by reusing the very same wrapper. This asserts the
+    two agree rather than that either points anywhere in particular, because
+    the wrapper only exists when the suite was started from inside tmux.
     """
-    if not shutil.which("tmux"):
-        pytest.skip("tmux not available")
+    from autorun.tmux_utils import resolve_tmux_binary
 
-    # Deliberately NOT pytest's tmp_path. A tmux server socket is an AF_UNIX
-    # path, and sun_path is 104 bytes on macOS; pytest's temp root alone
-    # (/private/var/folders/<32 chars>/T/pytest-of-<user>/pytest-N/<testname>)
-    # already spends most of that, so tmux silently fails to bind and the
-    # server never appears. Same trap conftest.py documents for the test
-    # runtime's own daemon socket.
-    holder = tempfile.mkdtemp(prefix="ar-tmux-", dir="/tmp")
-    socket_path = Path(holder) / "s.sock"
-    session_name = f"private-{uuid.uuid4().hex[:8]}"
-    tmux = TmuxUtilities(session_name, server_socket=str(socket_path))
-    try:
-        assert tmux.execute_tmux_command(["new-session", "-d", "-s", session_name])
-        assert socket_path.exists(), "no server was started on the private socket"
-
-        # Raw `tmux`, not tmux_argv: this test is *about* comparing two
-        # specific servers, so it must name each socket itself. tmux_argv
-        # would add the ambient AUTORUN_TMUX_SERVER_SOCKET, which would both
-        # double the -S flag here and make the "default server" check below
-        # interrogate the private fixture server instead of the real default.
-        mine = subprocess.run(
-            ["tmux", "-S", str(socket_path), "has-session", "-t", session_name],
-            capture_output=True,
-        )
-        assert mine.returncode == 0, "the session is missing from its own server"
-
-        # ...and nowhere near the default one the user may be sitting in.
-        theirs = subprocess.run(
-            ["tmux", "has-session", "-t", session_name], capture_output=True
-        )
-        assert theirs.returncode != 0, (
-            "the session leaked onto the default tmux server, which is the "
-            "server the developer's own windows live on"
-        )
-    finally:
-        subprocess.run(
-            ["tmux", "-S", str(socket_path), "kill-server"], capture_output=True
-        )
-        shutil.rmtree(holder, ignore_errors=True)
-
-
-def test_the_environment_can_route_every_caller_onto_a_private_server(monkeypatch):
-    """One switch has to cover callers that never pass a socket.
-
-    Nine test modules reach tmux through `get_tmux_utilities()`, a module
-    global that constructs `TmuxUtilities(session_name)` and has nowhere to put
-    a socket. Threading a parameter through all of them would leave the next
-    caller to forget it. `AUTORUN_TMUX_SERVER_SOCKET` is the same shape autorun
-    already uses for `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR`: set it once
-    for a process and every construction in that process is redirected.
-
-    An explicit argument still wins, so a caller that knows its server is not
-    overridden by the environment.
-    """
-    from autorun import tmux_utils
-
-    monkeypatch.setenv("AUTORUN_TMUX_SERVER_SOCKET", "/tmp/ar-env.sock")
-    monkeypatch.setattr(tmux_utils, "_tmux_utils", None)
-
-    assert tmux_utils.get_tmux_utilities("some-session").server_socket == (
-        "/tmp/ar-env.sock"
+    assert tmux_argv("has-session")[0] == resolve_tmux_binary(), (
+        "raw tmux commands would reach a different server than TmuxUtilities"
     )
-    assert TmuxUtilities("s", server_socket="/tmp/explicit.sock").server_socket == (
-        "/tmp/explicit.sock"
-    ), "an explicit socket must beat the environment"
-
-    monkeypatch.delenv("AUTORUN_TMUX_SERVER_SOCKET")
-    monkeypatch.setattr(tmux_utils, "_tmux_utils", None)
-    assert tmux_utils.get_tmux_utilities("some-session").server_socket is None
+    assert tmux_argv("kill-session", "-t", "x")[1:] == ["kill-session", "-t", "x"]
 
 
 class TestSessionAutomationWorkflows:

@@ -175,71 +175,22 @@ _SERIAL_TMUX_TESTS = {
 def tmux_argv(*args):
     """A raw tmux command that reaches the same server TmuxUtilities does.
 
-    A test that builds `["tmux", ...]` by hand talks to the default server,
-    while its `TmuxUtilities` calls honour ``AUTORUN_TMUX_SERVER_SOCKET``. Mix
-    the two and the test sends on one server and reads on another, which is a
-    guaranteed miss that looks like a delivery bug. Route both through here.
+    ``pytest_configure`` above already redirects tmux when the suite runs from
+    inside the user's session: it writes a wrapper that unsets ``TMUX`` and
+    adds ``-S <private socket>``, and publishes it as ``AUTORUN_TMUX_BIN``.
+    ``resolve_tmux_binary`` returns that wrapper, so everything reaching tmux
+    through ``TmuxUtilities`` is already isolated.
+
+    A test that builds ``["tmux", ...]`` by hand bypasses it and talks to the
+    default server instead — so it sends on one server and reads on another,
+    which looks like a delivery bug and is really a split brain. Route raw
+    commands through here and both halves land on the same server.
+
+    Deliberately reuses ``AUTORUN_TMUX_BIN`` rather than adding a second
+    socket switch: two mechanisms for one question is how the ``-S`` flag ends
+    up applied twice.
     """
-    socket_path = os.environ.get("AUTORUN_TMUX_SERVER_SOCKET")
-    return ["tmux", *(["-S", socket_path] if socket_path else []), *args]
-
-
-@pytest.fixture(scope="session")
-def private_tmux_server():
-    """A private tmux server a test can use instead of the user's.
-
-    NOT autouse, and that is a finding rather than caution. Turning it on for
-    the whole suite fails seven tests in test_session_targeting_regression.py,
-    test_session_targeting_diagnostic.py and
-    test_tmux_workflows_integration.py, because those mix
-    `subprocess.run(["tmux", ...])` -- which talks to the *default* server --
-    with `TmuxUtilities` calls that this redirects. Sending on one server and
-    reading on the other is a split brain, and the failures are real: they show
-    those tests have been relying on the ambient server all along.
-
-    Adopting this therefore means routing each raw `tmux` invocation in those
-    files through the same socket, not flipping a flag. The seam and the
-    per-worker server are ready for that; see the task notes.
-
-    tmux keeps one server per socket, and session names, window indices and
-    existence all belong to that server. `TmuxUtilities` takes its socket from
-    the inherited `$TMUX`, which is right for autorun — acting inside the
-    user's session is the point — and wrong here: a suite started from inside
-    tmux creates and kills sessions on the very server holding the developer's
-    own windows, and its tests interleave with each other over that server's
-    state under `-n`.
-
-    `AUTORUN_TMUX_SERVER_SOCKET` redirects every construction in this process,
-    including the ones that go through the `get_tmux_utilities` singleton and
-    so have nowhere to pass a socket.
-
-    The socket path is deliberately short and NOT under pytest's tmp_path:
-    AF_UNIX sun_path is 104 bytes on macOS, and the platform temp root spends
-    most of it, so tmux would silently fail to bind and every tmux test would
-    fall back to... the user's server, which is the thing being avoided. Each
-    xdist worker gets its own, so workers cannot collide either.
-    """
-    if not shutil.which("tmux"):
-        yield
-        return
-    holder = tempfile.mkdtemp(
-        prefix=f"ar-tmux-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}-", dir="/tmp"
-    )
-    socket_path = os.path.join(holder, "s.sock")
-    previous = os.environ.get("AUTORUN_TMUX_SERVER_SOCKET")
-    os.environ["AUTORUN_TMUX_SERVER_SOCKET"] = socket_path
-    try:
-        yield socket_path
-    finally:
-        subprocess.run(
-            ["tmux", "-S", socket_path, "kill-server"],
-            capture_output=True, timeout=10,
-        )
-        if previous is None:
-            os.environ.pop("AUTORUN_TMUX_SERVER_SOCKET", None)
-        else:
-            os.environ["AUTORUN_TMUX_SERVER_SOCKET"] = previous
-        shutil.rmtree(holder, ignore_errors=True)
+    return [os.environ.get("AUTORUN_TMUX_BIN", "tmux"), *args]
 
 
 @pytest.hookimpl(tryfirst=True)

@@ -415,42 +415,19 @@ class TmuxUtilities:
         'break': 'break-pane',
     }
 
-    def __init__(
-        self,
-        session_name: Optional[str] = None,
-        server_socket: Optional[str] = None,
-    ):
+    def __init__(self, session_name: Optional[str] = None):
         """
         Initialize tmux utilities with session name enforcement
 
         Args:
             session_name: Override default session name (should rarely be used)
-            server_socket: Talk to the tmux server at this socket path instead
-                of the one inherited from ``$TMUX``. Default None keeps the
-                existing behaviour exactly.
 
-                tmux runs one server per socket, and everything about a session
-                -- its name, its window indices, whether it exists at all --
-                belongs to that server. Inheriting ``$TMUX`` is right for
-                autorun itself, which is meant to act inside the session the
-                user is running. It is wrong for a test suite: run from inside
-                tmux, the tests create and kill sessions on the very server
-                holding the developer's own windows, and several of them
-                interleave with each other over shared window indices under
-                parallel execution. Pointing them at a throwaway socket makes
-                each run its own world.
-
-                Falls back to ``$AUTORUN_TMUX_SERVER_SOCKET`` when not given,
-                which is how a whole process is redirected at once. Callers
-                that reach tmux through :func:`get_tmux_utilities` never pass
-                this argument -- that is a module-level singleton with nowhere
-                to put one -- so an environment switch is what covers them, the
-                same shape ``AUTORUN_HOME`` and ``AUTORUN_TEST_STATE_DIR``
-                already use. An explicit argument wins over the environment.
+        Which tmux *server* this talks to is decided by
+        :func:`resolve_tmux_binary`, not here. Tests redirect it by pointing
+        ``AUTORUN_TMUX_BIN`` at a wrapper that adds ``-S <private socket>``
+        (see ``tests/conftest.py::pytest_configure``), which keeps one owner
+        for that question instead of two competing ones.
         """
-        self.server_socket = (
-            server_socket or os.environ.get("AUTORUN_TMUX_SERVER_SOCKET") or None
-        )
         self.session_name = session_name or self.DEFAULT_SESSION_NAME
         self.control_state = TmuxControlState.NORMAL
         self.tmux_binary = resolve_tmux_binary()
@@ -591,18 +568,11 @@ class TmuxUtilities:
             # Name the server explicitly rather than letting the subprocess
             # inherit one. `-S <socket>` pins which tmux server every command
             # reaches, so a command cannot land in whatever session happens to
-            # be current.
-            #
-            # An explicit `server_socket` wins over the inherited `$TMUX`: that
-            # is what lets a caller (the test suite) work on a throwaway server
-            # instead of the one holding the user's own windows. With neither
-            # set, tmux picks its default socket, which is the behaviour
-            # outside a session.
-            socket_path = self.server_socket
-            if not socket_path:
-                # TMUX looks like /tmp/tmux-1000/default,4219,0
-                tmux_env = os.getenv('TMUX')
-                socket_path = tmux_env.split(',')[0] if tmux_env else None
+            # be current. With no TMUX in the environment, tmux picks its own
+            # default socket, which is the behaviour outside a session.
+            # TMUX looks like /tmp/tmux-1000/default,4219,0
+            tmux_env = os.getenv('TMUX')
+            socket_path = tmux_env.split(',')[0] if tmux_env else None
 
             prefix = (
                 [self.tmux_binary, '-S', socket_path] if socket_path
