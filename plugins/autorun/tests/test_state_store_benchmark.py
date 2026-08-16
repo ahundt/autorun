@@ -56,22 +56,45 @@ SMALL_CHANGE = "x" * 95
 REPEATS = 25
 
 
-def _time_repeatedly(operation, repeats: int = REPEATS) -> dict:
-    """Median and worst case of one operation, in milliseconds.
+# A hook's deadline. What a write must fit inside to leave room for the rest.
+HOOK_BUDGET_MS = 500.0
 
-    Median because a single sample on a shared machine is noise; the maximum
-    because a hook has a deadline and the worst case is what misses it.
+# What no amount of scheduling noise explains. A shared CI runner can park a
+# process for about a second — `state-benchmark` on run 31973891713 recorded a
+# single 1064ms write where this machine's slowest of fifty is 2.8ms and the
+# store this replaced peaks at 17.9ms. Above three seconds is the store, not
+# the scheduler.
+STALL_BACKSTOP_MS = 3000.0
+
+
+def _summarize(samples: list[float]) -> dict:
+    """Median, 95th percentile, and worst case, in milliseconds.
+
+    Separate from the timing loop so the choice of statistic can be tested on
+    known numbers instead of on a stopwatch.
+    """
+    return {
+        "median_ms": statistics.median(samples),
+        "p95_ms": sorted(samples)[int(len(samples) * 0.95) - 1],
+        "max_ms": max(samples),
+    }
+
+
+def _time_repeatedly(operation, repeats: int = REPEATS) -> dict:
+    """Median, p95 and worst case of one operation, in milliseconds.
+
+    Median because a single sample on a shared machine is noise. p95 because a
+    hook has a deadline and the near-worst case is what misses it, while the
+    single maximum on a shared runner reports how long the scheduler looked
+    away — the budget check reads p95 for that reason, and keeps the maximum
+    against a much coarser backstop.
     """
     samples = []
     for _ in range(repeats):
         start = time.perf_counter()
         operation()
         samples.append((time.perf_counter() - start) * 1000.0)
-    return {
-        "median_ms": statistics.median(samples),
-        "p95_ms": sorted(samples)[int(len(samples) * 0.95) - 1],
-        "max_ms": max(samples),
-    }
+    return _summarize(samples)
 
 
 def _fill_json(state_dir: Path, sessions: int, fields_per_session: int = 4) -> None:
@@ -108,6 +131,43 @@ def _peak_bytes(operation) -> int:
         return peak
     finally:
         tracemalloc.stop()
+
+
+@pytest.mark.parametrize(
+    "name, samples, budget_holds, backstop_holds",
+    [
+        # This machine, fifty writes against a 1600-session corpus.
+        ("healthy", [0.9] * 49 + [2.8], True, True),
+        # `state-benchmark` on run 31973891713: one sample parked for a second
+        # while the other forty-nine were ordinary. The old assertion read the
+        # maximum, so the runner's scheduler failed the build twice in twelve
+        # runs and the answer both times was to press rerun.
+        ("one stall", [0.9] * 49 + [1064.4], True, True),
+        # Noise does not arrive alone; two stalls must still pass.
+        ("two stalls", [0.9] * 48 + [980.0, 1064.4], True, True),
+        # A store that misses the deadline more often than not is the store.
+        # The budget catches it; the backstop is not the assertion that does.
+        ("slow store", [700.0] * 50, False, True),
+        # Above the backstop is not a scheduling story at any frequency.
+        ("pathological", [0.9] * 49 + [4200.0], True, False),
+    ],
+)
+def test_the_budget_reads_a_statistic_a_stalled_runner_cannot_move(
+    name, samples, budget_holds, backstop_holds
+):
+    """Which number the hook-budget check reads, tested on known numbers.
+
+    Written against the sample sets above rather than a stopwatch, because the
+    property under test is the choice of statistic, not the speed of a disk.
+    """
+    timing = _summarize(samples)
+
+    assert (timing["p95_ms"] < HOOK_BUDGET_MS) is budget_holds, (
+        f"{name}: p95 {timing['p95_ms']:.1f}ms against {HOOK_BUDGET_MS:.0f}ms"
+    )
+    assert (timing["max_ms"] < STALL_BACKSTOP_MS) is backstop_holds, (
+        f"{name}: max {timing['max_ms']:.1f}ms against {STALL_BACKSTOP_MS:.0f}ms"
+    )
 
 
 class TestWriteCostVersusCorpusSize:
@@ -157,7 +217,7 @@ class TestWriteCostVersusCorpusSize:
         )
 
     def test_a_write_stays_inside_the_hook_budget(self, tmp_path):
-        """A half second is the budget; the worst case is what misses it."""
+        """A half second is the budget; the near-worst case is what misses it."""
         store = SQLiteStore(tmp_path / "budget" / "state.sqlite3")
         store.initialize()
         _fill_sqlite(store, 1600)
@@ -168,9 +228,15 @@ class TestWriteCostVersusCorpusSize:
 
         timing = _time_repeatedly(write, repeats=50)
         _report("SQLite store: hook budget", [(1600, timing)])
-        assert timing["max_ms"] < 500.0, (
-            f"The slowest of 50 writes took {timing['max_ms']:.1f}ms against a "
-            "500ms hook budget, leaving no room for the rest of the hook."
+        assert timing["p95_ms"] < HOOK_BUDGET_MS, (
+            f"The 95th percentile of 50 writes was {timing['p95_ms']:.1f}ms "
+            f"against a {HOOK_BUDGET_MS:.0f}ms hook budget, leaving no room "
+            "for the rest of the hook."
+        )
+        assert timing["max_ms"] < STALL_BACKSTOP_MS, (
+            f"The slowest of 50 writes took {timing['max_ms']:.1f}ms. Two or "
+            "three samples above the budget would be scheduling noise, but "
+            f"{STALL_BACKSTOP_MS:.0f}ms is past what a stall explains."
         )
 
 
