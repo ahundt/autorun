@@ -612,6 +612,41 @@ def test_force_never_overrides_a_recorded_user_edit(tmp_path, source):
     assert not (tmp_path / "b").exists()
 
 
+def test_a_scan_tolerates_entries_vanishing_under_a_concurrent_swap(tmp_path, source, monkeypatch):
+    """A status pass scanning a tree while another installer swaps it must not
+    crash: on Windows the walk's second listing raised FileNotFoundError when
+    the target had just been renamed away (CI run 31918535943). The scan is a
+    snapshot — every write re-decides under the publication lock — so a
+    vanished entry is simply absent from it."""
+    from autorun.installer import fs as module
+
+    target = tmp_path / "dest" / "demo"
+    publish_tree(source, target, plugin="ar")
+    real = module._fingerprint
+    survivor: list[str] = []
+
+    def vanishing(path):
+        # On the first read, another process's swap takes every sibling away
+        # (walk order is filesystem order, so the survivor is whichever the
+        # walk reached first).
+        if not survivor:
+            survivor.append(path.name)
+            for sibling in list(target.iterdir()):
+                if sibling.name not in (path.name, OWNED_MARKER_NAME):
+                    sibling.unlink()
+        return real(path)
+
+    monkeypatch.setattr(module, "_fingerprint", vanishing)
+    scanned = module.scan_tree(target)
+    assert sorted(scanned) == survivor, (sorted(scanned), survivor)
+
+    manifest = read_marker(target)
+    assert manifest is not None
+    edited, missing, extra = compare(target, manifest)
+    assert set(missing) == set(manifest.files) - set(survivor)
+    assert edited == () and extra == ()
+
+
 def _publish_in_child(source: str, target: str, rounds: int) -> int:
     """Subprocess body: publish ``source`` over ``target`` ``rounds`` times."""
     import sys as child_sys

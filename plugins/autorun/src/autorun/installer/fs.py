@@ -243,16 +243,34 @@ def scan_tree(root: Path) -> dict[str, str]:
     manifest: dict[str, str] = {}
     for directory, subdirs, names in os.walk(root):
         here = Path(directory)
+        # ``os.walk`` lists a symlink to a directory under ``subdirs`` and does
+        # not descend it (followlinks=False). Read the links from that listing
+        # rather than re-listing the directory: the second listing was one
+        # more window in which a concurrent installer's swap could move the
+        # tree away, and on Windows that surfaced as FileNotFoundError from
+        # a status pass that had done nothing wrong.
+        links = [d for d in subdirs if (here / d).is_symlink() and (here / d).is_dir()]
         subdirs[:] = [d for d in subdirs if not _ignored(d) and not (here / d).is_symlink()]
-        for link in (d for d in os.listdir(directory) if (here / d).is_symlink() and (here / d).is_dir()):
+        for link in links:
             # Receipt keys are persisted and compared across hosts; keep their
             # separators stable instead of encoding the host's ``Path`` style.
-            manifest[(here / link).relative_to(root).as_posix()] = _LINK + os.readlink(here / link)
+            try:
+                manifest[(here / link).relative_to(root).as_posix()] = _LINK + os.readlink(here / link)
+            except FileNotFoundError:
+                continue  # moved away between the listing and the read
         for name in names:
             if name == OWNED_MARKER_NAME or _ignored(name):
                 continue
             path = here / name
-            manifest[path.relative_to(root).as_posix()] = _fingerprint(path)
+            try:
+                manifest[path.relative_to(root).as_posix()] = _fingerprint(path)
+            except FileNotFoundError:
+                # A tree being swapped by another installer vanishes under a
+                # concurrent scan. The scan is a snapshot, never an authority:
+                # every write re-decides under the publication lock, so an
+                # entry missing here can cost a wrong preview line, not a wrong
+                # write. Raising instead crashed status and preview.
+                continue
     return manifest
 
 
@@ -305,7 +323,11 @@ class TreeManifest:
             return FileState.MISSING
         if not path.is_symlink() and not path.is_file():
             return FileState.MISSING
-        return FileState.UNCHANGED if _fingerprint(path) == recorded else FileState.EDITED
+        try:
+            current = _fingerprint(path)
+        except FileNotFoundError:
+            return FileState.MISSING  # swapped away between the check and the read
+        return FileState.UNCHANGED if current == recorded else FileState.EDITED
 
 
 def read_marker(directory: Path) -> TreeManifest | None:
