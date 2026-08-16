@@ -409,7 +409,9 @@ if lines and lines[0].strip() == "---":
             break
 open_re = re.compile(r"^<([a-z][a-z0-9_-]*)>\s*$")
 close_re = re.compile(r"^</([a-z][a-z0-9_-]*)>\s*$")
-fence_re = re.compile(r"^(`{3,})(\s*\S+)?\s*$")
+# \x60 is a backtick: bash 3.2 (macOS /bin/bash) mis-parses an odd number of
+# literal backticks inside a $( ... ) heredoc, so none may appear here.
+fence_re = re.compile(r"^(\x60{3,})(\s*\S+)?\s*$")
 stack, regions, fails, warns = [], [], [], []
 h2_outside, prose_outside, seen_h1 = [], [], False
 inside_fence, opener_len = False, 0

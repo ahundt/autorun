@@ -283,6 +283,22 @@ def test_audit_script_exits_nonzero_when_a_structural_check_fails(tmp_path):
 
 
 @pytest.mark.skipif(
+    not POSIX_AUDIT_AVAILABLE or not Path("/bin/bash").exists(),
+    reason="checks the system /bin/bash, which is bash 3.2 on macOS",
+)
+def test_audit_script_parses_under_the_system_bash():
+    """macOS ships bash 3.2, which mis-parses an odd number of literal
+    backticks inside a $( ... ) heredoc: the whole script then exits 2 with
+    empty stdout and every skill "fails" the audit on macOS CI while passing
+    everywhere else. `bash -n` under /bin/bash catches it before push."""
+    result = subprocess.run(
+        ["/bin/bash", "-n", str(AUDIT_SCRIPT)], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(
     not POSIX_AUDIT_AVAILABLE,
     reason="audit-skill.sh requires a POSIX shell; Windows CI has no WSL distribution",
 )
