@@ -72,6 +72,7 @@ BOOTSTRAP_SOURCE = (
     "#subdirectory=plugins/autorun"
 )
 BOOTSTRAP_RETRY_SECONDS = 300
+BOOTSTRAP_RETRY_CEILING_SECONDS = 3600
 DEBUG_LOG_MAX_BYTES = 1_000_000
 DEBUG_VALUE_MAX_CHARS = 4_000
 
@@ -482,10 +483,16 @@ def _peek_event_name(default: str = "unknown") -> str:
 # arbitrary package build code. Disabling a broken safety gate is a human's
 # decision, and AUTORUN_DISABLE is how a human makes it.
 _RETRY_GUIDANCE = "This clears on its own; retry shortly."
+#: Kept ASCII on purpose. The exit-2 deny path prints this reason to stderr as
+#: raw text, and stderr's encoding belongs to whatever launched the harness.
+#: `_tolerate_stderr_encoding` sets errors="replace", so a stray character would
+#: degrade rather than crash, but a mangled character in the one message telling
+#: a user how to recover is a poor trade for typography.
 _INTERVENTION_GUIDANCE = (
-    "This does not clear on its own and retrying will not help. In a terminal, "
-    "run the repair command in the error or `autorun --status` for diagnosis; "
-    "set AUTORUN_DISABLE=1 to stand autorun down."
+    "Retrying will not help: the same install fails the same way. Repair it in "
+    "a terminal (run the repair command in the error, or `autorun --status` "
+    "for diagnosis) and the next hook recovers on its own. Set "
+    "AUTORUN_DISABLE=1 to stand autorun down."
 )
 
 
@@ -1010,17 +1017,96 @@ def _bootstrap_path(name: str) -> Path:
     return root / name
 
 
-def _bootstrap_failure() -> str:
-    """Return a recent worker failure, preventing an invisible retry loop."""
+def _bootstrap_fingerprint(plugin_root: Path) -> str:
+    """Identify the inputs a bootstrap's outcome depends on.
+
+    A bootstrap installs ``plugin_root`` into ``sys.executable``. Given the same
+    interpreter and the same bytes it fails the same way every time, so the only
+    honest reason to retry is that one of them changed. File count, total size
+    and the newest nanosecond mtime see an edit, a checkout, or a reinstall;
+    hashing every file would claim more than this needs and is paid on a path
+    that has already failed.
+
+    Complexity: one walk of ``plugin_root/src`` — about 130 files here — with a
+    stat each, reached only after an import has already failed.
+    """
+    files = total = newest = 0
+    for directory, subdirs, names in os.walk(plugin_root / "src"):
+        subdirs[:] = [d for d in subdirs if d not in ("__pycache__", ".venv")]
+        for name in names:
+            if not name.endswith(".py"):
+                continue
+            try:
+                info = os.stat(os.path.join(directory, name))
+            except OSError:
+                continue
+            files += 1
+            total += info.st_size
+            newest = max(newest, info.st_mtime_ns)
+    try:
+        info = (plugin_root / "pyproject.toml").stat()
+        files += 1
+        total += info.st_size
+        newest = max(newest, info.st_mtime_ns)
+    except OSError:
+        pass
+    return f"{sys.executable}|{files}|{total}|{newest}"
+
+
+def _bootstrap_retry_wait(receipt: dict) -> float:
+    """How long a repeat of the same failure waits before being tried again.
+
+    The first window is the transient allowance: a network blip during the
+    install deserves one more attempt. After that the wait doubles, because an
+    install that failed twice on identical inputs is reporting a cause time does
+    not fix — and every session attached to that installation pays for every
+    attempt. The ceiling keeps a genuinely transient cause from latching
+    forever.
+    """
+    try:
+        attempts = max(1, int(receipt.get("attempts", 1)))
+    except (TypeError, ValueError):
+        attempts = 1
+    return float(
+        min(
+            BOOTSTRAP_RETRY_SECONDS * (2 ** (attempts - 1)),
+            BOOTSTRAP_RETRY_CEILING_SECONDS,
+        )
+    )
+
+
+def _bootstrap_failure(plugin_root: Path | None = None) -> str:
+    """Return a recent worker failure, preventing an invisible retry loop.
+
+    Two things end the suppression. The inputs changed, so the recorded failure
+    describes a source that no longer exists and says nothing about what would
+    happen now — that clears at once, because the user has just repaired it and
+    should not wait out a timer. Or the backoff for this many repeats elapsed,
+    which is what keeps a transient cause from latching permanently.
+
+    Retrying on a timer alone was the defect: the window expired, the next hook
+    reinstalled the same bytes, it failed identically, and the window was armed
+    again, so the gate never opened and every attached session paid one install
+    per window for a result that could not change.
+    """
     receipt = _bootstrap_path("bootstrap.json")
     try:
         payload = json.loads(receipt.read_text(encoding="utf-8"))
         age = time.time() - float(payload.get("timestamp", 0))
     except (OSError, TypeError, ValueError):
         return ""
-    if payload.get("ok") is False and age < BOOTSTRAP_RETRY_SECONDS:
-        return str(payload.get("detail", "bootstrap failed"))
-    return ""
+    if payload.get("ok") is not False:
+        return ""
+    recorded = payload.get("fingerprint")
+    if (
+        plugin_root is not None
+        and recorded
+        and recorded != _bootstrap_fingerprint(plugin_root)
+    ):
+        return ""
+    if age >= _bootstrap_retry_wait(payload):
+        return ""
+    return str(payload.get("detail", "bootstrap failed"))
 
 
 def can_bootstrap() -> tuple[bool, str]:
@@ -1044,24 +1130,53 @@ def can_bootstrap() -> tuple[bool, str]:
         return False, "Neither uv nor pip found in PATH"
 
     # Check plugin root is set (either AUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)
-    if not os.environ.get("AUTORUN_PLUGIN_ROOT") and not os.environ.get("CLAUDE_PLUGIN_ROOT"):
+    plugin_root = os.environ.get("AUTORUN_PLUGIN_ROOT") or os.environ.get(
+        "CLAUDE_PLUGIN_ROOT"
+    )
+    if not plugin_root:
         return False, "Plugin root not set (need AUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)"
 
-    if failure := _bootstrap_failure():
+    if failure := _bootstrap_failure(Path(plugin_root)):
         return False, f"previous bootstrap failed: {failure}"
 
     return True, "uv" if has_uv else "pip"
 
 
-def _write_bootstrap_receipt(*, ok: bool, detail: str) -> None:
-    """Atomically publish the worker result for the next hook invocation."""
+def _write_bootstrap_receipt(
+    *, ok: bool, detail: str, plugin_root: Path | None = None
+) -> None:
+    """Atomically publish the worker result for the next hook invocation.
+
+    The fingerprint and the repeat count are what let the next hook tell "this
+    will fail the same way" from "the user repaired it", instead of reinstalling
+    on a timer. A repeat only counts when the fingerprint matches: a failure on
+    different bytes is a new failure, and starting its backoff at the previous
+    one's depth would make an unrelated first attempt wait an hour.
+    """
     receipt = _bootstrap_path("bootstrap.json")
     receipt.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fingerprint = _bootstrap_fingerprint(plugin_root) if plugin_root else None
+    attempts = 1
+    if not ok and fingerprint:
+        try:
+            previous = json.loads(receipt.read_text(encoding="utf-8"))
+            if (
+                previous.get("ok") is False
+                and previous.get("fingerprint") == fingerprint
+            ):
+                attempts = max(1, int(previous.get("attempts", 1))) + 1
+        except (OSError, TypeError, ValueError):
+            pass
+    payload = {
+        "ok": ok,
+        "detail": detail,
+        "timestamp": time.time(),
+        "attempts": attempts,
+    }
+    if fingerprint:
+        payload["fingerprint"] = fingerprint
     temporary = receipt.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps({"ok": ok, "detail": detail, "timestamp": time.time()}) + "\n",
-        encoding="utf-8",
-    )
+    temporary.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     os.replace(temporary, receipt)
 
 
@@ -1104,7 +1219,7 @@ def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
                 (line.strip() for line in (installed.stderr or installed.stdout).splitlines() if line.strip()),
                 "package installation failed",
             )
-            _write_bootstrap_receipt(ok=False, detail=detail)
+            _write_bootstrap_receipt(ok=False, detail=detail, plugin_root=plugin_root)
             return 1
         published = subprocess.run(
             (sys.executable, "-m", "autorun", "--install", "--force"),
@@ -1116,10 +1231,16 @@ def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
             (line.strip() for line in (published.stderr or published.stdout).splitlines() if line.strip()),
             "native assets installed" if published.returncode == 0 else "native asset installation failed",
         )
-        _write_bootstrap_receipt(ok=published.returncode == 0, detail=detail)
+        _write_bootstrap_receipt(
+            ok=published.returncode == 0, detail=detail, plugin_root=plugin_root
+        )
         return 0 if published.returncode == 0 else 1
     except (OSError, subprocess.SubprocessError) as error:
-        _write_bootstrap_receipt(ok=False, detail=f"{type(error).__name__}: {error}")
+        _write_bootstrap_receipt(
+            ok=False,
+            detail=f"{type(error).__name__}: {error}",
+            plugin_root=plugin_root,
+        )
         return 1
     finally:
         lockfile.unlink(missing_ok=True)

@@ -688,10 +688,14 @@ class TestHookEntryExecutionPriority:
         # See tests/test_hook_bootstrap_deadlock.py for the split.
         reason = (
             "[autorun] broken hook path. Blocking tool use to avoid fail-open. "
-            "This does not clear on its own and retrying will not help. In a "
-            "terminal, run the repair command in the error or `autorun --status` "
-            "for diagnosis; set AUTORUN_DISABLE=1 to stand autorun down."
+            + hook_entry._INTERVENTION_GUIDANCE
         )
+        # Composed from the module's own guidance rather than a second copy of
+        # the sentence: this test is about the per-harness response *shape*, and
+        # a duplicated paragraph made an edit to the wording fail seven backend
+        # assertions that had nothing to say about it. The wording itself is
+        # pinned in test_hook_bootstrap_deadlock.py, where it is the subject.
+        assert "will not help" in reason and "AUTORUN_DISABLE" in reason
         expected = platform_for(cli_type).hook_protocol.fail_closed_pretool_response(
             reason, event_name
         )

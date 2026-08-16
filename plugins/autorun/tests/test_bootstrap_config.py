@@ -971,13 +971,17 @@ class TestBootstrapWorker:
 
         argv = hook_entry._bootstrap_install_argv("uv", plugin)
 
+        # Not --editable. The hook runtime is a snapshot: an editable install
+        # makes the live safety hook follow a developer checkout, so an
+        # in-progress source edit breaks every session attached to it. A plain
+        # forced reinstall into this exact interpreter is the repair.
         assert argv == (
             "uv",
             "pip",
             "install",
             "--python",
             hook_entry.sys.executable,
-            "--editable",
+            "--reinstall",
             str(plugin),
         )
 

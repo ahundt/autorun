@@ -312,6 +312,128 @@ def test_the_escape_hatch_is_read_before_any_autorun_import(monkeypatch, capsys)
     assert json.loads(capsys.readouterr().out).get("permissionDecision") != "deny"
 
 
+# --- 4. the latch clears on evidence, not on a timer -------------------------
+#
+# The observed loop: a bootstrap fails, `_bootstrap_failure` suppresses retries
+# for BOOTSTRAP_RETRY_SECONDS, the window expires, the next hook spawns the same
+# install against the same bytes, it fails identically, and the window is armed
+# again. Every attached session paid one `uv pip install` every five minutes for
+# a result that could not change, and the gate stayed shut the whole time.
+
+
+def _plugin_source(root: Path, body: str = "x = 1\n") -> Path:
+    """A plugin root shaped like the one a bootstrap would install."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text("[project]\nname='autorun'\n", encoding="utf-8")
+    package = root / "src" / "autorun"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "__init__.py").write_text(body, encoding="utf-8")
+    return root
+
+
+def _record_failure(hook_entry, plugin_root: Path, *, age: float, attempts: int = 1):
+    """Write the receipt a failed worker leaves behind, aged into the past."""
+    hook_entry._write_bootstrap_receipt(
+        ok=False, detail="No module named autorun", plugin_root=plugin_root
+    )
+    receipt = hook_entry._bootstrap_path("bootstrap.json")
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["timestamp"] = payload["timestamp"] - age
+    payload["attempts"] = attempts
+    receipt.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+@pytest.fixture
+def bootstrappable(tmp_path, monkeypatch):
+    """A hook_entry whose only obstacle to bootstrapping is the receipt."""
+    hook_entry = load_hook_entry_module()
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "home"))
+    plugin_root = _plugin_source(tmp_path / "plugin")
+    monkeypatch.setenv("AUTORUN_PLUGIN_ROOT", str(plugin_root))
+    monkeypatch.delenv("AUTORUN_NO_BOOTSTRAP", raising=False)
+    monkeypatch.setattr(hook_entry.shutil, "which", lambda name: "/bin/uv")
+    monkeypatch.setattr(hook_entry, "BOOTSTRAP_LOCKFILE", None)
+    return hook_entry, plugin_root
+
+
+def test_a_repaired_plugin_source_clears_the_latch_at_once(bootstrappable):
+    """The user fixed the source. Waiting out a timer is the wrong gate.
+
+    A bootstrap's result depends on the interpreter and the bytes it installs.
+    When those bytes change, the recorded failure describes a source that no
+    longer exists, so it says nothing about what would happen now and must stop
+    suppressing the retry — immediately, not in five minutes.
+    """
+    hook_entry, plugin_root = bootstrappable
+    _record_failure(hook_entry, plugin_root, age=1.0)
+
+    assert hook_entry.can_bootstrap()[0] is False, "an unchanged source retries too soon"
+
+    (plugin_root / "src" / "autorun" / "__init__.py").write_text(
+        "x = 2  # the user repaired it\n", encoding="utf-8"
+    )
+
+    can_run, reason = hook_entry.can_bootstrap()
+    assert can_run is True, f"a repaired source stayed latched: {reason}"
+
+
+def test_an_unchanged_source_is_not_reinstalled_every_window(bootstrappable):
+    """Retrying identical inputs cannot produce a different result.
+
+    The first window is the transient allowance — a network blip during the
+    install deserves one more try. What must not happen is the same failing
+    install every window forever, which is what each attached session was
+    paying for.
+    """
+    hook_entry, plugin_root = bootstrappable
+    past_the_first_window = hook_entry.BOOTSTRAP_RETRY_SECONDS + 1
+
+    _record_failure(hook_entry, plugin_root, age=past_the_first_window, attempts=1)
+    assert hook_entry.can_bootstrap()[0] is True, "one transient retry is allowed"
+
+    _record_failure(hook_entry, plugin_root, age=past_the_first_window, attempts=4)
+    can_run, reason = hook_entry.can_bootstrap()
+    assert can_run is False, "the same failing install ran again on the same bytes"
+    assert "previous bootstrap failed" in reason
+
+
+def test_each_repeat_of_the_same_failure_waits_longer(bootstrappable):
+    """Back off rather than latch permanently: a transient cause still clears."""
+    hook_entry, plugin_root = bootstrappable
+
+    waits = []
+    for attempts in (1, 2, 3):
+        _record_failure(hook_entry, plugin_root, age=0.0, attempts=attempts)
+        receipt = json.loads(
+            hook_entry._bootstrap_path("bootstrap.json").read_text(encoding="utf-8")
+        )
+        waits.append(hook_entry._bootstrap_retry_wait(receipt))
+
+    assert waits == sorted(waits) and waits[0] < waits[-1], waits
+    assert waits[-1] <= hook_entry.BOOTSTRAP_RETRY_CEILING_SECONDS
+
+
+def test_the_worker_records_what_it_installed(bootstrappable, monkeypatch):
+    """A receipt without the fingerprint cannot answer "did this change?"."""
+    hook_entry, plugin_root = bootstrappable
+
+    class Failed:
+        returncode = 1
+        stderr = "No module named autorun"
+        stdout = ""
+
+    monkeypatch.setattr(hook_entry.subprocess, "run", lambda *a, **k: Failed())
+
+    assert hook_entry.run_bootstrap_worker("uv", plugin_root) == 1
+
+    receipt = json.loads(
+        hook_entry._bootstrap_path("bootstrap.json").read_text(encoding="utf-8")
+    )
+    assert receipt["ok"] is False
+    assert receipt["fingerprint"] == hook_entry._bootstrap_fingerprint(plugin_root)
+    assert receipt["attempts"] == 1
+
+
 @pytest.mark.parametrize("value", ["", "0", "no", "false", "maybe"])
 def test_the_hatch_is_opt_in(value, monkeypatch, capsys):
     """Absent, empty, or unrecognised is not permission to fail open."""
