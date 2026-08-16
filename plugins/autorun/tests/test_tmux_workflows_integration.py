@@ -8,6 +8,7 @@ CLI testing, and interactive management scenarios.
 
 import pytest
 import time
+import uuid
 import os
 import subprocess
 
@@ -80,7 +81,7 @@ class TestSessionAutomationWorkflows:
     @pytest.mark.integration
     def test_complete_session_lifecycle_automation(self):
         """Test complete session lifecycle automation workflow"""
-        session_name = f"lifecycle-test-{int(time.time())}"
+        session_name = f"lifecycle-test-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
         # Clean up any existing session with this name first
@@ -142,7 +143,7 @@ class TestSessionAutomationWorkflows:
     @pytest.mark.integration
     def test_multi_window_automation_workflow(self):
         """Test multi-window automation workflow"""
-        session_name = f"multi-window-test-{int(time.time())}"
+        session_name = f"multi-window-test-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
         # Create base session
@@ -181,7 +182,7 @@ class TestSessionAutomationWorkflows:
     @pytest.mark.integration
     def test_error_recovery_automation_workflow(self):
         """Test error recovery automation workflow"""
-        session_name = f"recovery-test-{int(time.time())}"
+        session_name = f"recovery-test-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
         # Create session
@@ -237,7 +238,7 @@ class TestSessionAutomationWorkflows:
     @pytest.mark.integration
     def test_session_backup_and_restore_workflow(self):
         """Test session backup and restore workflow"""
-        session_name = f"backup-test-{int(time.time())}"
+        session_name = f"backup-test-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
         # Create and configure session
@@ -294,7 +295,7 @@ class TestCLITestingWorkflows:
     @pytest.mark.integration
     def test_cli_discovery_and_analysis_workflow(self):
         """Test CLI discovery and analysis workflow using real subprocess calls"""
-        test_session = f"cli-discovery-{int(time.time())}"
+        test_session = f"cli-discovery-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(test_session)
 
         # Create test session
@@ -333,7 +334,7 @@ class TestCLITestingWorkflows:
     @pytest.mark.integration
     def test_error_condition_testing_workflow(self):
         """Test error condition testing workflow using subprocess for shell commands"""
-        test_session = f"error-testing-{int(time.time())}"
+        test_session = f"error-testing-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(test_session)
 
         # Create test session
@@ -397,7 +398,7 @@ class TestCLITestingWorkflows:
     @pytest.mark.integration
     def test_performance_monitoring_workflow(self):
         """Test performance monitoring workflow using subprocess for shell commands"""
-        test_session = f"perf-monitoring-{int(time.time())}"
+        test_session = f"perf-monitoring-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(test_session)
 
         # Create test session
@@ -491,7 +492,7 @@ class TestInteractiveManagementWorkflows:
         ]
 
         for template in templates:
-            session_name = f"template-{template['name']}-{int(time.time())}"
+            session_name = f"template-{template['name']}-{uuid.uuid4().hex[:8]}"
             tmux = get_tmux_utilities(session_name)
 
             # Clean up any existing session, then let auto-creation handle it
@@ -529,7 +530,7 @@ class TestInteractiveManagementWorkflows:
     @pytest.mark.integration
     def test_health_monitoring_integration(self):
         """Test health monitoring integration using subprocess for shell commands"""
-        session_name = f"health-monitor-{int(time.time())}"
+        session_name = f"health-monitor-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
         # Clean up any existing session, then let auto-creation handle it
@@ -605,7 +606,7 @@ class TestInteractiveManagementWorkflows:
     def test_batch_operations_workflow(self):
         """Test batch operations workflow"""
         # Create multiple sessions
-        session_base = f"batch-test-{int(time.time())}"
+        session_base = f"batch-test-{uuid.uuid4().hex[:8]}"
         sessions = []
 
         for i in range(3):
@@ -648,7 +649,7 @@ class TestCrossSystemIntegration:
     @pytest.mark.integration
     def test_byobu_compatibility(self):
         """Test byobu/tmux compatibility"""
-        session_name = f"byobu-test-{int(time.time())}"
+        session_name = f"byobu-test-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
         # Test byobu-compatible operations
@@ -683,7 +684,7 @@ class TestCrossSystemIntegration:
     @pytest.mark.integration
     def test_environment_variable_handling(self):
         """Test environment variable handling via tmux send-keys"""
-        session_name = f"env-test-{int(time.time())}"
+        session_name = f"env-test-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
         # Clean up any existing session, then let auto-creation handle it

@@ -9,6 +9,7 @@ When users resume dormant sessions (even after months), they expect:
 This tests the lifecycle contract that history is preserved.
 """
 import time
+import uuid
 from pathlib import Path
 import pytest
 
@@ -42,7 +43,7 @@ class TestDormantSessionResume:
 
         VIOLATION: If completed tasks auto-deleted, user loses work history.
         """
-        session_id = f'dormant-{int(time.time())}'
+        session_id = f'dormant-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         # Simulate productive session: create and complete 100 tasks
@@ -91,7 +92,7 @@ class TestDormantSessionResume:
 
     def test_paused_tasks_preserved_after_40_days(self, isolated_config):
         """TEST: Paused tasks preserved indefinitely (user resume intent)."""
-        session_id = f'paused-dormant-{int(time.time())}'
+        session_id = f'paused-dormant-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         # Create paused tasks (explicit user intent to resume later)
@@ -119,7 +120,7 @@ class TestDormantSessionResume:
 
     def test_mixed_status_history_preserved(self, isolated_config):
         """TEST: Mixed status tasks (completed + paused + pending) all preserved."""
-        session_id = f'mixed-{int(time.time())}'
+        session_id = f'mixed-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         # Completed tasks (history)

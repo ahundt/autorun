@@ -554,7 +554,14 @@ class TestEnforcementCountDecrement:
 
 class TestEnforcementTTLExpiry:
     def test_ttl_expires(self):
-        """Allow with short TTL: allowed before, blocked after expiry."""
+        """Allow with short TTL: allowed before, blocked after expiry.
+
+        ELAPSED TIME IS THE ASSERTION — do not shorten to speed up the suite.
+        A grant that outlives its own TTL is a permission widened past what the
+        user agreed to, so the wait has to be real wall time against the same
+        clock the grant reads. Freezing or faking the clock here would test the
+        stub instead of the expiry.
+        """
         sid = f"test-ttl-{time.time()}"
         store = ThreadSafeDB()
 

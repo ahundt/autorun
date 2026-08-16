@@ -20,7 +20,7 @@ Simulates actual hook behavior using EventContext.
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
-import time
+import uuid
 
 # Add src to path
 plugin_root = Path(__file__).parent.parent
@@ -69,7 +69,7 @@ class TestTaskLifecycleIntegration:
 
     def setup_method(self):
         """Setup for each test."""
-        self.session_id = f'test-integration-{int(time.time())}'
+        self.session_id = f'test-integration-{uuid.uuid4().hex[:8]}'
         self.manager = TaskLifecycle(session_id=self.session_id)
 
     def teardown_method(self):

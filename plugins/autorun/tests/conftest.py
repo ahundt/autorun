@@ -173,7 +173,26 @@ _SERIAL_TMUX_TESTS = {
 
 
 def pytest_collection_modifyitems(config, items):
-    """Auto-assign serial/parallel markers based on test file dependencies."""
+    """Auto-assign serial/parallel markers based on test file dependencies.
+
+    ``serial`` alone means nothing to pytest-xdist, which distributes by test,
+    so each of these files was free to land on a different worker and race the
+    others for the same singleton. tmux is one server per user: two workers
+    creating windows and running ``select-layout`` in it interleave, and
+    `test_multi_window_automation_workflow` failed intermittently under ``-n 8``
+    because of it.
+
+    Giving each resource class its own xdist group makes ``--dist loadgroup``
+    put all of its tests on one worker, which serializes access to the
+    singleton while the rest of the suite still spreads out. The three sets
+    above stay the single declaration of what shares what; this only teaches
+    them to xdist rather than restating them.
+    """
+    groups = (
+        (_SERIAL_SHELVE_TESTS, "shelve", ()),
+        (_SERIAL_DAEMON_TESTS, "daemon", (pytest.mark.daemon,)),
+        (_SERIAL_TMUX_TESTS, "tmux", ()),
+    )
     for item in items:
         # Extract test file stem from nodeid
         parts = item.nodeid.split("::")
@@ -181,13 +200,14 @@ def pytest_collection_modifyitems(config, items):
             continue
         file_stem = parts[0].rsplit("/", 1)[-1].replace(".py", "")
 
-        if file_stem in _SERIAL_SHELVE_TESTS:
+        for names, group, extra in groups:
+            if file_stem not in names:
+                continue
+            for marker in extra:
+                item.add_marker(marker)
             item.add_marker(pytest.mark.serial)
-        elif file_stem in _SERIAL_DAEMON_TESTS:
-            item.add_marker(pytest.mark.daemon)
-            item.add_marker(pytest.mark.serial)
-        elif file_stem in _SERIAL_TMUX_TESTS:
-            item.add_marker(pytest.mark.serial)
+            item.add_marker(pytest.mark.xdist_group(f"autorun-{group}"))
+            break
 
 
 # Add src directory to Python path

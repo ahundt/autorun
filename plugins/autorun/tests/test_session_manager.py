@@ -175,7 +175,15 @@ class TestFilelockJSONBackend:
             assert s.get("key") == "b-value"
 
     def test_timeout_raises_session_timeout_error(self, tmp_path):
-        """FileLock timeout raises SessionTimeoutError."""
+        """FileLock timeout raises SessionTimeoutError.
+
+        ELAPSED TIME IS THE ASSERTION — do not shorten to speed up the suite.
+        The holder sleeps 2s so the waiter's own timeout genuinely expires
+        while the lock is genuinely held. Shrinking either number turns a real
+        contention test into one that passes because nothing overlapped, and
+        the failure it guards (a hook giving up on a lock it could have won)
+        reappears with the suite still green.
+        """
         barrier = threading.Event()
 
         def hold_lock():

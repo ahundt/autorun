@@ -412,6 +412,78 @@ class TestSecurityFunctions:
             assert is_safe_regex_pattern(pattern) is False, f"Invalid pattern should be rejected: {pattern}"
 
 
+#: Tests whose *duration* is the thing being asserted, and the marker that says
+#: so. A speed-up sweep reads a durations list and sees only expensive tests; it
+#: cannot see that shortening one of these deletes the assertion instead of
+#: making it faster. Each entry earned its place in the 2026-08-16 profile, and
+#: the marker is checked below so removing it is a deliberate act.
+TIME_IS_THE_ASSERTION = {
+    "test_session_manager.py": "ELAPSED TIME IS THE ASSERTION",
+    "test_race_condition_fix.py": "ELAPSED TIME IS THE ASSERTION",
+    "test_scoped_permissions.py": "ELAPSED TIME IS THE ASSERTION",
+    "test_opencode_bridge.py": "ELAPSED TIME IS THE ASSERTION",
+    "test_task_state_writes_survive_concurrency.py": "REAL CONTENTION IS THE ASSERTION",
+    "test_thread_process_safety.py": "REAL CONTENTION IS THE ASSERTION",
+}
+
+
+class TestIdentitiesAreActuallyUnique:
+    """A one-second timestamp is not a unique id.
+
+    Sixty test ids were built as f"...-{int(time.time())}" — session ids, tmux
+    session names, state keys. Two tests entering the same second get the same
+    id, and then share persisted state or a tmux session. It stayed invisible
+    while the suite ran serially and one test per second; running eight workers
+    made `test_multi_window_automation_workflow` fail outright, because two of
+    them created the same tmux session name.
+
+    That is a real defect, not a parallelism artifact: the collision was always
+    reachable, parallelism just made it likely. `uuid4().hex[:8]` is what the
+    rest of the suite already uses.
+    """
+
+    def test_no_test_builds_an_identity_from_a_one_second_timestamp(self):
+        # This file is skipped because it necessarily contains the pattern it
+        # searches for, in the check itself and in the docstring explaining it.
+        here = Path(__file__)
+        offenders = []
+        for path in sorted(here.parent.glob("test_*.py")):
+            if path == here:
+                continue
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), 1
+            ):
+                if "int(time.time())" in line and "{" in line:
+                    offenders.append(f"{path.name}:{number}: {line.strip()}")
+        assert not offenders, (
+            "identity strings built from a whole-second timestamp collide when "
+            "two tests start in the same second, which shares session state or "
+            "a tmux session between them. Use uuid.uuid4().hex[:8]:\n"
+            + "\n".join(offenders)
+        )
+
+
+class TestSlowOnPurposeStaysSlow:
+    """Guard the tests that must not be sped up.
+
+    Prose alone does not survive an optimisation pass: the comment goes out
+    with the sleep it was explaining. This makes the convention checkable, so a
+    change that removes the warning has to remove this expectation too and say
+    why in the diff.
+    """
+
+    @pytest.mark.parametrize("filename,marker", sorted(TIME_IS_THE_ASSERTION.items()))
+    def test_the_slow_on_purpose_marker_is_still_there(self, filename, marker):
+        path = Path(__file__).parent / filename
+        assert path.is_file(), f"{filename} moved; update TIME_IS_THE_ASSERTION"
+        assert marker in path.read_text(encoding="utf-8"), (
+            f"{filename} lost its {marker!r} marker. If a timing or contention "
+            "test there was made faster, check it still fails when the "
+            "behaviour it guards regresses — a shorter timeout usually means "
+            "the writers no longer overlap and the test proves nothing."
+        )
+
+
 class TestCodeQuality:
     """Test code quality requirements - no stderr/stdout pollution"""
 

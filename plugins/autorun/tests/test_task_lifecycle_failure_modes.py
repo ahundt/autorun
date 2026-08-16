@@ -16,6 +16,7 @@ Tests all 8 pre-mortem problems from the plan:
 import sys
 from pathlib import Path
 import time
+import uuid
 import shutil
 
 # Add src to path
@@ -45,7 +46,7 @@ class TestFailureModes:
         """Problem 1: Task explosion (100+ tasks) - cap injection."""
         print("\n=== Problem 1: Task explosion (100+ tasks) ===")
 
-        session_id = f'test-explosion-{int(time.time())}'
+        session_id = f'test-explosion-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Create 150 tasks
@@ -91,7 +92,7 @@ class TestFailureModes:
         """Problem 2: a stuck Stop sequence yields but retains the real task."""
         print("\n=== Problem 2: Stuck Stop sequence yields without task loss ===")
 
-        session_id = f'test-stuck-{int(time.time())}'
+        session_id = f'test-stuck-{uuid.uuid4().hex[:8]}'
         config = TaskLifecycleConfig(stop_block_max_count=3)
         manager = TaskLifecycle(session_id=session_id, config=config)
 
@@ -149,7 +150,7 @@ class TestFailureModes:
         """Problem 3: Format change - multiple regex patterns handle it."""
         print("\n=== Problem 3: Format change with fallback patterns ===")
 
-        session_id = f'test-format-{int(time.time())}'
+        session_id = f'test-format-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Test different result formats
@@ -192,7 +193,7 @@ class TestFailureModes:
         """Problem 4: Unbounded growth - pruning removes old completed tasks."""
         print("\n=== Problem 4: Unbounded growth with pruning ===")
 
-        session_id = f'test-pruning-{int(time.time())}'
+        session_id = f'test-pruning-{uuid.uuid4().hex[:8]}'
         config = TaskLifecycleConfig.load()
         config.task_ttl_days = 0  # Set to 0 for immediate pruning
         manager = TaskLifecycle(session_id=session_id, config=config)
@@ -240,7 +241,7 @@ class TestFailureModes:
         """Problem 5: Race conditions - atomic operations prevent corruption."""
         print("\n=== Problem 5: Race conditions with atomic operations ===")
 
-        session_id = f'test-race-{int(time.time())}'
+        session_id = f'test-race-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Create initial task
@@ -287,7 +288,7 @@ class TestFailureModes:
         """Problem 5b: Deduplication prevents duplicate task IDs."""
         print("\n=== Problem 5b: Deduplication ===")
 
-        session_id = f'test-dedup-{int(time.time())}'
+        session_id = f'test-dedup-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Try to create same task ID twice
@@ -309,7 +310,7 @@ class TestFailureModes:
         """Problem 7: Log file growth - should not interfere with operations."""
         print("\n=== Problem 7: Log file growth ===")
 
-        session_id = f'test-log-{int(time.time())}'
+        session_id = f'test-log-{uuid.uuid4().hex[:8]}'
         config = TaskLifecycleConfig.load()
         config.debug_logging = True
         manager = TaskLifecycle(session_id=session_id, config=config)
@@ -340,8 +341,8 @@ class TestFailureModes:
         """Problem 8: Session isolation - separate sessions don't interfere."""
         print("\n=== Problem 8: Session isolation ===")
 
-        session1 = f'test-iso1-{int(time.time())}'
-        session2 = f'test-iso2-{int(time.time())}'
+        session1 = f'test-iso1-{uuid.uuid4().hex[:8]}'
+        session2 = f'test-iso2-{uuid.uuid4().hex[:8]}'
 
         manager1 = TaskLifecycle(session_id=session1)
         manager2 = TaskLifecycle(session_id=session2)

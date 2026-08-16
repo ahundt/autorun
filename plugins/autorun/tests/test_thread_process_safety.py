@@ -18,7 +18,14 @@ def _session_id(prefix: str) -> str:
 
 
 def test_thread_safety():
-    """Multiple threads can update one session without losing their own writes."""
+    """Multiple threads can update one session without losing their own writes.
+
+    REAL CONTENTION IS THE ASSERTION — do not serialize to speed this up.
+    The threads must genuinely run at once; a version that starts them in turn
+    passes without ever exercising the lock it exists to verify. The same holds
+    for `test_multiprocess_safety` below, which needs separate processes rather
+    than threads because the file lock is a cross-process contract.
+    """
     from autorun import session_state
 
     session_id = _session_id("thread")

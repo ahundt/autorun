@@ -111,6 +111,16 @@ def _ctx(session_id: str, store: ThreadSafeDB, *, tool_name: str = "",
 # ── 1. Parallel writes for one session must all land ─────────────────────────
 
 class TestConcurrentTaskWritesAllPersist:
+    """REAL CONTENTION IS THE ASSERTION — do not serialize to speed these up.
+
+    Every test here uses the `slow_persistence` fixture to widen the window in
+    which two writers actually overlap. That deliberate slowness is the
+    experiment: the defect these guard is a write silently lost to a peer, and
+    it cannot occur if the writers never meet. Running them one at a time, or
+    shrinking the delay until they no longer interleave, leaves the suite green
+    and the bug reachable.
+    """
+
     def test_parallel_updates_from_one_session_are_not_dropped(
         self, isolated_session, cfg, slow_persistence
     ):

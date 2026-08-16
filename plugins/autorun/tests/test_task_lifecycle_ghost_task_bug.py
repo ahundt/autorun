@@ -23,6 +23,7 @@ import contextlib
 import os
 import shutil
 import time
+import uuid
 from pathlib import Path
 import pytest
 import tempfile
@@ -69,7 +70,7 @@ class TestGhostTaskBugReplication:
 
     def test_ghost_task_stays_ignored_with_v2_fix(self, isolated_config):
         """TEST BUG FIX: Ghost task with in_progress request stays ignored (v2)."""
-        session_id = f'bug-replication-{int(time.time())}'
+        session_id = f'bug-replication-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         # Create normal tracked task
@@ -91,7 +92,7 @@ class TestGhostTaskBugReplication:
 
     def test_v1_migration_fixes_blocking_ghost(self, isolated_config):
         """TEST MIGRATION: v1 ghost with in_progress gets fixed to ignored."""
-        session_id = f'v1-mig-{int(time.time())}'
+        session_id = f'v1-mig-{uuid.uuid4().hex[:8]}'
         global_key = f"__task_lifecycle__{session_id}"
 
         # Create v1 data (ghost with blocking status)
@@ -123,7 +124,7 @@ class TestGhostTaskBugReplication:
 
     def test_migration_idempotent(self, isolated_config):
         """TEST ROBUSTNESS: Migration safe to run multiple times."""
-        session_id = f'idempotent-{int(time.time())}'
+        session_id = f'idempotent-{uuid.uuid4().hex[:8]}'
         global_key = f"__task_lifecycle__{session_id}"
 
         with session_state(global_key) as state:
@@ -154,7 +155,7 @@ class TestGhostTaskBugReplication:
 
     def test_ghost_accepts_terminal_status(self, isolated_config):
         """TEST: Ghost task CAN transition to completed/deleted."""
-        session_id = f'terminal-{int(time.time())}'
+        session_id = f'terminal-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         manager.update_task('88', {'status': 'in_progress'}, 'Ghost')
@@ -165,8 +166,8 @@ class TestGhostTaskBugReplication:
 
     def test_multiple_ghosts_across_sessions(self, isolated_config):
         """TEST: Multiple ghost tasks in different sessions."""
-        sid1 = f'ghost1-{int(time.time())}'
-        sid2 = f'ghost2-{int(time.time())}'
+        sid1 = f'ghost1-{uuid.uuid4().hex[:8]}'
+        sid2 = f'ghost2-{uuid.uuid4().hex[:8]}'
 
         mgr1 = TaskLifecycle(session_id=sid1, config=isolated_config)
         mgr2 = TaskLifecycle(session_id=sid2, config=isolated_config)
@@ -183,7 +184,7 @@ class TestSchemaMigration:
 
     def test_missing_metadata_field(self, isolated_config):
         """TEST: v1 data without metadata dict handled safely."""
-        session_id = f'no-meta-{int(time.time())}'
+        session_id = f'no-meta-{uuid.uuid4().hex[:8]}'
         global_key = f"__task_lifecycle__{session_id}"
 
         with session_state(global_key) as state:
@@ -208,7 +209,7 @@ class TestSchemaMigration:
 
     def test_preserves_non_ghost_tasks(self, isolated_config):
         """TEST: Normal tasks with in_progress stay untouched."""
-        session_id = f'normal-{int(time.time())}'
+        session_id = f'normal-{uuid.uuid4().hex[:8]}'
         global_key = f"__task_lifecycle__{session_id}"
 
         with session_state(global_key) as state:
@@ -233,7 +234,7 @@ class TestSchemaMigration:
 
     def test_v2_to_v2_noop(self, isolated_config):
         """TEST: v2 data not modified by migration."""
-        session_id = f'v2-{int(time.time())}'
+        session_id = f'v2-{uuid.uuid4().hex[:8]}'
         global_key = f"__task_lifecycle__{session_id}"
 
         original = {
@@ -265,7 +266,7 @@ class TestPruning:
         config = isolated_config
         config.task_ttl_days = 0  # Prune immediately
 
-        session_id = f'prune-ign-{int(time.time())}'
+        session_id = f'prune-ign-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=config)
 
         manager.update_task('77', {'status': 'in_progress'}, 'Ghost')
@@ -281,7 +282,7 @@ class TestPruning:
 
     def test_keeps_recent_ignored(self, isolated_config):
         """TEST: Recent ignored tasks NOT pruned."""
-        session_id = f'recent-{int(time.time())}'
+        session_id = f'recent-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         manager.update_task('66', {'status': 'in_progress'}, 'Ghost')
@@ -293,7 +294,7 @@ class TestPruning:
         config = isolated_config
         config.task_ttl_days = 0
 
-        session_id = f'active-{int(time.time())}'
+        session_id = f'active-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=config)
 
         manager.create_task('1', {'subject': 'Active', 'description': 'Working'}, 'Created')
@@ -316,7 +317,7 @@ class TestPruning:
         config = isolated_config
         config.task_ttl_days = 0  # Zero TTL - would prune everything IF paused were prunable
 
-        session_id = f'paused-{int(time.time())}'
+        session_id = f'paused-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=config)
 
         # Create task and pause it (user intent: resume later)
@@ -340,7 +341,7 @@ class TestCrossSessionPersistence:
 
     def test_ghost_survives_restart_then_migrates(self, isolated_config):
         """TEST: Ghost task persists across daemon restart, migration fixes it."""
-        session_id = f'restart-{int(time.time())}'
+        session_id = f'restart-{uuid.uuid4().hex[:8]}'
         global_key = f"__task_lifecycle__{session_id}"
 
         # Pre-restart: v1 ghost task
@@ -370,7 +371,7 @@ class TestCrossSessionPersistence:
 
     def test_session_resume_inherits_fixed_ghosts(self, isolated_config):
         """TEST: Resumed session sees migrated ghosts as ignored."""
-        session_id = f'resume-{int(time.time())}'
+        session_id = f'resume-{uuid.uuid4().hex[:8]}'
         global_key = f"__task_lifecycle__{session_id}"
 
         with session_state(global_key) as state:
@@ -402,7 +403,7 @@ class TestGhostTaskLogging:
 
     def test_ghost_skip_logged(self, isolated_config):
         """TEST: GHOST_SKIP logged when blocking status requested."""
-        session_id = f'log-{int(time.time())}'
+        session_id = f'log-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         manager.update_task('55', {'status': 'in_progress'}, 'Try blocking')
@@ -483,7 +484,7 @@ class TestGarbageCollection:
 
     def test_gc_protects_current_session(self, isolated_config, isolated_session_manager):
         """TEST: GC never deletes current active session."""
-        session_id = f'gc-active-{int(time.time())}'
+        session_id = f'gc-active-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
         _ = manager.tasks  # Create shelve
 
@@ -506,7 +507,7 @@ class TestGarbageCollection:
 
     def test_gc_skips_incomplete_tasks(self, isolated_config, isolated_session_manager):
         """TEST: GC never deletes sessions with incomplete tasks."""
-        session_id = f'gc-incomplete-{int(time.time())}'
+        session_id = f'gc-incomplete-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         manager.create_task('1', {'subject': 'Active', 'description': 'Working'}, 'Created')
@@ -521,7 +522,7 @@ class TestGarbageCollection:
 
     def test_gc_archives_before_delete(self, isolated_config, isolated_session_manager):
         """TEST: GC archives non-empty data to JSON."""
-        session_id = f'gc-archive-{int(time.time())}'
+        session_id = f'gc-archive-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         manager.create_task('1', {'subject': 'Task 1', 'description': 'Done'}, 'Created')
@@ -542,7 +543,7 @@ class TestGarbageCollection:
 
     def test_gc_bulk_clears_many_completed_sessions(self, isolated_config, isolated_session_manager):
         """TEST: GC removes many task-lifecycle prefixes in one maintenance run."""
-        session_ids = [f"gc-bulk-{i}-{int(time.time())}" for i in range(5)]
+        session_ids = [f"gc-bulk-{i}-{uuid.uuid4().hex[:8]}" for i in range(5)]
         for session_id in session_ids:
             manager = TaskLifecycle(session_id=session_id, config=isolated_config)
             manager.create_task('1', {'subject': 'Task', 'description': 'Done'}, 'Created')
@@ -566,7 +567,7 @@ class TestGarbageCollection:
 
     def test_gc_dry_run_never_modifies(self, isolated_config, isolated_session_manager):
         """TEST: dry_run=True doesn't modify data."""
-        session_id = f'gc-dry-{int(time.time())}'
+        session_id = f'gc-dry-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         manager.create_task('1', {'subject': 'Task', 'description': 'Done'}, 'Created')
@@ -587,7 +588,7 @@ class TestGarbageCollection:
 
     def test_gc_no_archive_option(self, isolated_config, isolated_session_manager):
         """TEST: archive=False deletes without JSON backup."""
-        session_id = f'gc-noarch-{int(time.time())}'
+        session_id = f'gc-noarch-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
 
         manager.create_task('1', {'subject': 'Task', 'description': 'Done'}, 'Created')
@@ -609,7 +610,7 @@ class TestGCLocking:
         """TEST: GC acquires SessionLock via session_state()."""
         import threading, queue
 
-        session_id = f'gc-lock-{int(time.time())}'
+        session_id = f'gc-lock-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)
         manager.create_task('1', {'subject': 'Task', 'description': 'Done'}, 'Created')
         manager.update_task('1', {'status': 'completed'}, 'Done')

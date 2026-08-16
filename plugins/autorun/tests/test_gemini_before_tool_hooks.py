@@ -16,6 +16,7 @@ import json
 import subprocess
 import tempfile
 import time
+import uuid
 import os
 import sys
 from pathlib import Path
@@ -254,7 +255,7 @@ def test_gemini_before_tool_hook_fires_on_write_file(
     shutil.copy2(hook_entry, hook_backup)
 
     # Create unique tmux session
-    session_name = f"gemini-hook-test-{int(time.time())}"
+    session_name = f"gemini-hook-test-{uuid.uuid4().hex[:8]}"
     tmux = get_tmux_utilities(session_name)
 
     try:
@@ -537,7 +538,7 @@ def test_before_tool_hook_input_structure_has_required_fields(
     shutil.copy2(hook_entry, hook_backup)
 
     # Create unique tmux session
-    session_name = f"gemini-hook-input-test-{int(time.time())}"
+    session_name = f"gemini-hook-input-test-{uuid.uuid4().hex[:8]}"
     tmux = get_tmux_utilities(session_name)
 
     try:

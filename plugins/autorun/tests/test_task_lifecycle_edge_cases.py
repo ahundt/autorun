@@ -18,6 +18,7 @@ Tests unusual scenarios and boundary conditions:
 import sys
 from pathlib import Path
 import time
+import uuid
 import shutil
 
 # Add src to path
@@ -35,7 +36,7 @@ class TestEdgeCases:
         """Edge 1: Create task with minimal/empty fields."""
         print("\n=== Edge 1: Empty task creation ===")
 
-        session_id = f'test-empty-{int(time.time())}'
+        session_id = f'test-empty-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Create task with empty strings
@@ -63,7 +64,7 @@ class TestEdgeCases:
         """Edge 2: Very long subject/description (stress test)."""
         print("\n=== Edge 2: Very long task fields ===")
 
-        session_id = f'test-long-{int(time.time())}'
+        session_id = f'test-long-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Create task with very long strings
@@ -94,7 +95,7 @@ class TestEdgeCases:
         """Edge 3: Special characters in task IDs."""
         print("\n=== Edge 3: Special characters in task ID ===")
 
-        session_id = f'test-special-{int(time.time())}'
+        session_id = f'test-special-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Task IDs with special characters (should work - strings are valid)
@@ -122,7 +123,7 @@ class TestEdgeCases:
         """Edge 4: Circular dependencies (A blocks B, B blocks A)."""
         print("\n=== Edge 4: Circular dependencies ===")
 
-        session_id = f'test-circular-{int(time.time())}'
+        session_id = f'test-circular-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Create two tasks
@@ -153,7 +154,7 @@ class TestEdgeCases:
         """Edge 5: Self-blocking task (A blocks A)."""
         print("\n=== Edge 5: Self-blocking task ===")
 
-        session_id = f'test-self-{int(time.time())}'
+        session_id = f'test-self-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Create task that blocks itself
@@ -183,7 +184,7 @@ class TestEdgeCases:
         """
         print("\n=== Edge 6: Update non-existent task ===")
 
-        session_id = f'test-nonexist-{int(time.time())}'
+        session_id = f'test-nonexist-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Update task that doesn't exist with in_progress - should be BLOCKED
@@ -224,7 +225,7 @@ class TestEdgeCases:
         """Edge 7: Ignore already-ignored task (idempotent)."""
         print("\n=== Edge 7: Ignore already-ignored task ===")
 
-        session_id = f'test-idempotent-{int(time.time())}'
+        session_id = f'test-idempotent-{uuid.uuid4().hex[:8]}'
         manager = TaskLifecycle(session_id=session_id)
 
         # Create and ignore task
@@ -250,7 +251,7 @@ class TestEdgeCases:
         """Edge 8: Prune with zero TTL (immediate pruning)."""
         print("\n=== Edge 8: Prune with zero TTL ===")
 
-        session_id = f'test-zero-ttl-{int(time.time())}'
+        session_id = f'test-zero-ttl-{uuid.uuid4().hex[:8]}'
         config = TaskLifecycleConfig.load()
         config.task_ttl_days = 0  # Zero TTL
         manager = TaskLifecycle(session_id=session_id, config=config)
@@ -288,7 +289,7 @@ class TestEdgeCases:
             'with_underscores',
             'with.dots',
             '12345678-1234-1234-1234-123456789012',  # UUID format
-            f'timestamp-{int(time.time())}',
+            f'timestamp-{uuid.uuid4().hex[:8]}',
             'mixed-123_test.session'
         ]
 
@@ -310,7 +311,7 @@ class TestEdgeCases:
         """Edge 10: Config override validation."""
         print("\n=== Edge 10: Config override validation ===")
 
-        session_id = f'test-config-{int(time.time())}'
+        session_id = f'test-config-{uuid.uuid4().hex[:8]}'
 
         # Create custom config
         config = TaskLifecycleConfig()

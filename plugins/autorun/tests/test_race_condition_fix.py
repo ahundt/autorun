@@ -334,6 +334,10 @@ class TestConcurrentSameSession:
         - First export holds lock for extended period
         - Second export times out gracefully
         - No deadlock occurs
+
+        ELAPSED TIME IS THE ASSERTION — do not shorten to speed up the suite.
+        The first holder must still hold the lock when the second attempt gives
+        up, or the test proves only that two sequential exports both work.
         """
         session_id = f"timeout_session_{uuid.uuid4().hex[:8]}"
         test_session = TestSession(session_id, test_temp_dir["test_state_dir"], test_temp_dir["test_plans_dir"])

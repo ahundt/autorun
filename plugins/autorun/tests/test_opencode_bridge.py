@@ -407,6 +407,11 @@ class TestDaemonSocketFrames:
         timeout the way Claude's hooks.json "timeout": 10 does. The shim owns
         the bound: TIMEOUT_MS, then a fail-closed deny, and the child is
         killed so a wedged interpreter cannot outlive the call it served.
+
+        ELAPSED TIME IS THE ASSERTION — do not shorten to speed up the suite.
+        This test waits out TIMEOUT_MS on purpose; that wait is the bound being
+        verified. Lowering it to save the ~5s would leave the shim's real
+        timeout untested and a wedged interpreter free to hang a tool call.
         """
         result = _run_shim(
             tmp_path,
