@@ -83,8 +83,11 @@ marketplace itself carries a separate `version` field.
   stale bodies indefinitely. A plain install now keeps it, names only the
   files that differ from what autorun ships, and says to rerun with
   `--force`; `--force` republishes it after copying the current tree to
-  `~/.autorun/installer/backups/<name>-<stamp>/`. A recorded user edit is
-  still kept by every path.
+  `~/.autorun/installer/backups/<name>-<stamp>/`. The same tree on a route
+  autorun no longer uses (or under `--uninstall`) had the same problem with
+  no way out; it is now kept with the same explanation and retired by
+  `--force` after the same backup. A recorded user edit is still kept by
+  every path.
 - **Antigravity no longer stays on the first bundle it imported.** Agy's
   import manifest names the plugin but no source path, so a copy under
   `~/.gemini/config/plugins/ar` was accepted as autorun's only while it

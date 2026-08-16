@@ -811,6 +811,58 @@ def test_force_republishes_a_hashless_legacy_shared_skill_and_keeps_a_backup(san
     assert sorted(backups.iterdir()) == parked
 
 
+def test_force_uninstall_retires_a_hashless_legacy_shared_skill_and_keeps_a_backup(sandbox):
+    """The retirement twin: a hashless tree that is no longer shipped is kept
+    by a plain uninstall (and by every install's sweep) with a reason that
+    says why and how, and removed by ``--force`` after a backup — instead of
+    the previous "you edited files we installed" naming every file, which no
+    rerun could clear.
+
+    Three such trees sat on a live machine on routes older releases used
+    (``~/.gemini/antigravity-cli/plugins/ar``, ``~/plugins/autorun``) and kept
+    ``autorun --status`` at exit 1 indefinitely.
+    """
+    import json
+
+    from autorun.installer import discovery
+    from autorun.installer.fs import OWNED_MARKER_NAME
+    from autorun.installer.orchestrate import install, uninstall
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS["pi"],),
+        teardown_enabled=False,
+    )
+    assert install(**common).ok is True
+    shared = discovery.shared_root(home=sandbox)
+    commit = shared / "commit"
+    (commit / OWNED_MARKER_NAME).write_text(
+        json.dumps({"plugin": "ar", "files": []}), encoding="utf-8"
+    )
+    (commit / "SKILL.md").write_text("an older release\n", encoding="utf-8")
+
+    plain = uninstall(**common)
+    kept = [d for d in plain.decisions if d.target == commit]
+    assert kept and kept[0].verdict.value == "keep", kept
+    assert "--force" in kept[0].reason and "you edited" not in kept[0].reason, kept[0].reason
+    assert (commit / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
+
+    forced = uninstall(force=True, **common)
+    retired = [d for d in forced.decisions if d.target == commit]
+    assert retired and retired[0].verdict.value == "retire", retired
+    assert not commit.exists()
+    backups = sandbox / ".autorun" / "installer" / "backups"
+    parked = sorted(backups.iterdir())
+    assert len(parked) == 1 and parked[0].name.startswith("commit-"), parked
+    assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
+    assert not (parked[0] / OWNED_MARKER_NAME).exists(), "a backup is not an owned tree"
+
+
 def test_install_with_no_harness_selected_retires_nothing(sandbox):
     """An empty selection is a no-op, never a sweep of every owned tree."""
     from autorun.installer import discovery

@@ -300,12 +300,16 @@ def _perform(
                     intent.target,
                     plugin=intent.plugin,
                     ownership_proof=intent.ownership_proof,
+                    force=force,
+                    backup_root=backups,
                 )
         else:
             removed = withdrawn(
                 intent.target,
                 plugin=intent.plugin,
                 ownership_proof=intent.ownership_proof,
+                force=force,
+                backup_root=backups,
             )
         # Report what happened. `withdrawn` returns False for a symlink, a
         # foreign marker or a failed delete, and discarding that made a refused

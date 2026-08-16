@@ -450,6 +450,13 @@ LEGACY_REPUBLISH = (
     "the previous copy is backed up"
 )
 
+#: Its RETIRE twin: a hashless tree on a route no longer shipped is removed
+#: only under ``--force``, and ``withdrawn`` backs it up first.
+LEGACY_RETIRE = (
+    "retiring a tree installed before file hashes were recorded and no "
+    "longer shipped; the previous copy is backed up"
+)
+
 
 def decide(
     target: Path,
@@ -532,6 +539,19 @@ def decide(
                 "cannot be told from a stale copy; rerun with --force to "
                 "republish it and keep the current copy as a backup",
                 drifted,
+            )
+        # The retirement question has the same blind spot and no source to
+        # name a difference against: nothing here is known to be an edit. An
+        # empty tree has nothing to lose and takes the ordinary path below.
+        if current:
+            if force:
+                return Decision(Verdict.RETIRE, target, LEGACY_RETIRE)
+            return Decision(
+                Verdict.KEEP,
+                target,
+                "installed before file hashes were recorded and no longer "
+                "shipped, so your edits cannot be told from a stale copy; rerun "
+                "with --force to retire it and keep the current copy as a backup",
             )
     edited, missing, extra = compare(target, manifest)
     if changed := tuple(sorted((*edited, *missing, *extra))):
@@ -732,6 +752,8 @@ def withdrawn(
     *,
     plugin: str | None = None,
     ownership_proof: Callable[[Path], bool] | None = None,
+    force: bool = False,
+    backup_root: Path | None = None,
 ) -> bool:
     """Delete a directory autorun owns, restoring it if the delete fails.
 
@@ -739,6 +761,13 @@ def withdrawn(
     transaction. An unmarked directory is the user's whatever its name, and a
     marker naming another plugin belongs to that plugin, so both are refused
     rather than removed.
+
+    ``force`` with ``backup_root`` removes a hashless legacy tree (marker
+    present, ``files`` empty, no harness receipt) after copying it to
+    ``backup_root/<name>-<stamp>``, mirroring :func:`publish_tree`. Without a
+    ``backup_root`` that tree is refused, so a caller cannot discard an
+    unrecorded copy by omission; a hashed tree with an edit is refused
+    whatever ``force`` says.
 
     Returns True only when the directory is actually gone. The variant this
     replaces used ``shutil.rmtree(ignore_errors=True)`` and reported success
@@ -758,16 +787,22 @@ def withdrawn(
                 proven_legacy = ownership_proof(target)
             except (OSError, RuntimeError, ValueError):
                 proven_legacy = False
+        park = False
         if manifest is None:
             if not proven_legacy:
                 return False
         else:
             if plugin is not None and not owns(manifest, plugin):
                 return False
-            if any(compare(target, manifest)) and not (
-                not manifest.files and proven_legacy
-            ):
-                return False
+            if any(compare(target, manifest)):
+                if manifest.files or not (
+                    proven_legacy or (force and backup_root is not None)
+                ):
+                    return False
+                park = not proven_legacy
+        if park:
+            assert backup_root is not None
+            _park_backup(target, backup_root)
         with tempfile.TemporaryDirectory(
             prefix=f".autorun-withdraw-{target.name}-", dir=target.parent
         ) as tmp:
@@ -1225,21 +1260,30 @@ def publish_tree(
                 # replacement, and a failed swap leaves the original in place
                 # with the backup as a harmless extra.
                 assert backup_root is not None
-                backup_root.mkdir(parents=True, exist_ok=True)
-                kept = backup_root / f"{target.name}-{_stamp()}"
-                counter = 1
-                while kept.exists():
-                    kept = backup_root / f"{target.name}-{_stamp()}.{counter}"
-                    counter += 1
-                shutil.copytree(target, kept, symlinks=True)
-                # The backup is the user's to keep or discard; it must not
-                # carry our marker, or the retirement sweep would treat it as
-                # an owned tree that is "no longer shipped" and remove it.
-                (kept / OWNED_MARKER_NAME).unlink(missing_ok=True)
+                _park_backup(target, backup_root)
             shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
     except _PublicationRefused as refused:
         return refused.decision
     return decision
+
+
+def _park_backup(target: Path, backup_root: Path) -> Path:
+    """Copy ``target`` to ``backup_root/<name>-<stamp>`` and return the copy.
+
+    Shared by the forced republish and the forced retirement of a hashless
+    legacy tree. The backup is the user's to keep or discard, so it must not
+    carry our marker: the retirement sweep would otherwise treat it as an
+    owned tree that is "no longer shipped" and remove it.
+    """
+    backup_root.mkdir(parents=True, exist_ok=True)
+    kept = backup_root / f"{target.name}-{_stamp()}"
+    counter = 1
+    while kept.exists():
+        kept = backup_root / f"{target.name}-{_stamp()}.{counter}"
+        counter += 1
+    shutil.copytree(target, kept, symlinks=True)
+    (kept / OWNED_MARKER_NAME).unlink(missing_ok=True)
+    return kept
 
 
 def _stamp() -> str:

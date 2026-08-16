@@ -362,6 +362,27 @@ def test_uninstall_keeps_stable_publication_lock_files(tmp_path):
     assert not any("lock" in line.lower() for line in result.describe())
 
 
+def test_uninstall_force_reaches_the_walk(monkeypatch, isolated):
+    """``--uninstall --force`` widens removal the way ``--install --force``
+    widens publication; without the flag the walk runs unforced."""
+    from autorun.installer import entrypoint, orchestrate
+    from autorun.installer.traversal import Mode
+
+    seen: list[bool] = []
+
+    def fake_uninstall(**kwargs):
+        seen.append(bool(kwargs.get("force")))
+        return orchestrate.Result(Mode.UNINSTALL)
+
+    monkeypatch.setattr(orchestrate, "uninstall", fake_uninstall)
+    monkeypatch.setattr(entrypoint, "_runtime_settings", lambda *args, **kwargs: None)
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda _name: None)
+
+    assert entrypoint.uninstall_plugins("ar") == 0
+    assert entrypoint.uninstall_plugins("ar", force=True) == 0
+    assert seen == [False, True]
+
+
 def test_release_lookup_includes_rcs_only_for_an_installed_prerelease(monkeypatch):
     from autorun.installer import entrypoint
 

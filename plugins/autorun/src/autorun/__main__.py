@@ -338,7 +338,8 @@ For more information: https://github.com/ahundt/autorun
         action="store_true",
         help=(
             "Force reinstall even if same version (for development). Also "
-            "republishes an owned tree installed before file hashes were "
+            "republishes — or, with --uninstall or when the route is no longer "
+            "shipped, retires — an owned tree installed before file hashes were "
             "recorded, after backing the current copy up under "
             "~/.autorun/installer/backups/; a recorded user edit is still kept."
         ),
@@ -1078,7 +1079,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.uninstall is not None:
         from autorun.install import uninstall_plugins
 
-        return uninstall_plugins(args.uninstall)
+        return uninstall_plugins(args.uninstall, force=args.force)
 
     # Update mode
     if args.update:

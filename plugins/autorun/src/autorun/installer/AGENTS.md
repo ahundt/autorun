@@ -74,10 +74,11 @@ that need it. No disk access: stage generated content to a temp dir and point th
 
 - **A user edit in an owned tree is kept.** `decide()` returns `KEEP` and names
   the files. No force path may ignore it. The one thing `--force` widens is a
-  tree whose marker predates file hashes (`files: []`) and no longer matches the
-  source: without hashes an edit and a stale copy are indistinguishable, so a
-  plain install keeps it and says so, and `--force` republishes it after
-  `publish_tree` copies the current tree to `~/.autorun/installer/backups/`
+  tree whose marker predates file hashes (`files: []`): without hashes an edit
+  and a stale copy are indistinguishable, so a plain install or uninstall keeps
+  it and says so, and `--force` republishes it (source still shipped) or
+  retires it (route no longer shipped, or `--uninstall`) after the current
+  tree is copied to `~/.autorun/installer/backups/` by `fs._park_backup`
   (never beside the skill — a harness would list the backup as a skill).
 - **Shared dirs are owned per file.** For `commands/` use
   `publish_files`/`withdraw_files`. `publish_tree` there either refuses or

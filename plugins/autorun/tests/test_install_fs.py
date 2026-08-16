@@ -612,6 +612,65 @@ def test_force_never_overrides_a_recorded_user_edit(tmp_path, source):
     assert not (tmp_path / "b").exists()
 
 
+def test_a_hashless_legacy_tree_no_longer_shipped_is_kept_and_says_how_to_retire(
+    tmp_path, source
+):
+    """The retirement question for a hashless tree has the same blind spot as
+    the publish one: no receipt says whether its contents are ours or edited.
+    It fell through to the hashed comparison, which called every file an
+    edit, so a tree an older release left on a route it no longer uses was
+    reported as "you edited files we installed" on every status and install,
+    with no way to clear it."""
+    target = tmp_path / "dest" / "demo"
+    _legacy_hashless_tree(source, target)
+
+    decision = decide(target, None, plugin="ar")
+    assert decision.verdict is Verdict.KEEP
+    assert "--force" in decision.reason and "hash" in decision.reason, decision.reason
+    assert "you edited" not in decision.reason
+    assert decision.edited == (), "nothing to compare against, so nothing is called an edit"
+
+
+def test_force_retires_a_hashless_legacy_tree_after_backing_it_up(tmp_path, source):
+    """``--force`` retires it the way it republishes: the previous copy moves
+    to the backup root first, marker stripped, because a hashless tree may
+    carry an edit nobody recorded."""
+    target = tmp_path / "dest" / "demo"
+    _legacy_hashless_tree(source, target)
+    backups = tmp_path / "backups"
+
+    decision = decide(target, None, plugin="ar", force=True)
+    assert decision.verdict is Verdict.RETIRE, decision
+    assert withdrawn(target, plugin="ar", force=True, backup_root=backups) is True
+    assert not target.exists()
+    kept = list(backups.iterdir())
+    assert len(kept) == 1 and kept[0].name.startswith("demo"), kept
+    assert (kept[0] / "SKILL.md").read_text(encoding="utf-8") == "version one\n"
+    assert not (kept[0] / OWNED_MARKER_NAME).exists()
+
+
+def test_force_without_a_backup_root_does_not_retire_a_hashless_legacy_tree(tmp_path, source):
+    """No backup root, no widening: the caller must have somewhere to park it."""
+    target = tmp_path / "dest" / "demo"
+    _legacy_hashless_tree(source, target)
+
+    assert decide(target, None, plugin="ar", force=True).verdict is Verdict.RETIRE
+    assert withdrawn(target, plugin="ar", force=True) is False
+    assert (target / "SKILL.md").is_file()
+
+
+def test_force_never_retires_a_recorded_user_edit(tmp_path, source):
+    """A hashed tree with an edit is kept by every path, ``--force`` included."""
+    target = tmp_path / "dest" / "demo"
+    publish_tree(source, target, plugin="ar")
+    (target / "SKILL.md").write_text("mine\n", encoding="utf-8")
+
+    assert decide(target, None, plugin="ar", force=True).verdict is Verdict.KEEP
+    assert withdrawn(target, plugin="ar", force=True, backup_root=tmp_path / "b") is False
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "mine\n"
+    assert not (tmp_path / "b").exists()
+
+
 def test_a_scan_tolerates_entries_vanishing_under_a_concurrent_swap(tmp_path, source, monkeypatch):
     """A status pass scanning a tree while another installer swaps it must not
     crash: on Windows the walk's second listing raised FileNotFoundError when

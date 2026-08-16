@@ -549,8 +549,13 @@ def install_plugins(
     return 0 if ok else 1
 
 
-def uninstall_plugins(selection: str = "all") -> int:
-    """Remove exactly the selected plugins, even when their source is gone."""
+def uninstall_plugins(selection: str = "all", *, force: bool = False) -> int:
+    """Remove exactly the selected plugins, even when their source is gone.
+
+    ``force`` widens removal exactly as it widens installation: an owned tree
+    whose marker predates file hashes is retired after a backup instead of
+    being kept as a possible edit. A recorded edit is kept either way.
+    """
     root = _marketplace_root()
     try:
         plugins = parse_selection(root, selection)
@@ -570,6 +575,7 @@ def uninstall_plugins(selection: str = "all") -> int:
         state_dir=_state_dir(),
         step_table=table,
         teardown_enabled="ar" in plugins,
+        force=force,
     )
     _print_result(result)
     ok = result.ok
