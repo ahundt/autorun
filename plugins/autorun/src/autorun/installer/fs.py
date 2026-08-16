@@ -837,6 +837,33 @@ def backup_path(path: Path) -> Path:
     return candidate
 
 
+def _occupied_by_a_non_directory(directory: Path) -> Decision | None:
+    """KEEP when a shared-directory route holds something that is not one.
+
+    `commands/` is a directory contract, and the per-file pair has no answer for
+    a *file* sitting at it. Publishing would have to replace the whole path, and
+    there is no replacement that keeps the user's bytes: `_swapped` moves the
+    target into a staging directory that is deleted on the way out, so the file
+    left no copy anywhere while the install reported PUBLISH.
+
+    Moving it aside is not the answer either. `publish_files` resolves a linked
+    target, so `~/.codex/commands -> ~/notes.txt` would put both our directory
+    and any backup in a location autorun has no business writing to. Nothing
+    here is ours; both the decision and the publication say so and write
+    nothing, which is what makes them impossible to disagree.
+
+    A symlink *to a directory* stays supported — `is_dir()` follows it, and
+    writing through the link is pinned behaviour.
+    """
+    if directory.is_dir():
+        return None
+    if not directory.exists() and not directory.is_symlink():
+        return None  # absent: publication creates it
+    return Decision(
+        Verdict.KEEP, directory, "you have a file here, not a directory"
+    )
+
+
 def decide_files(
     source: Path, directory: Path, *, plugin: str = "", backup: bool = True
 ) -> Decision:
@@ -847,6 +874,9 @@ def decide_files(
     so a first install into it would be refused outright instead of adding our
     files beside theirs. Ownership in a shared directory is per file.
     """
+    occupied = _occupied_by_a_non_directory(directory)
+    if occupied is not None:
+        return occupied
     marker = read_marker(directory)
     ours = dict(marker.files) if owns(marker, plugin) else {}
     shipped = sorted(p.name for p in source.iterdir() if p.is_file()) if source.is_dir() else []
@@ -917,6 +947,9 @@ def publish_files(
     file.
     """
     kept, written, backed_up = [], {}, []
+    occupied = _occupied_by_a_non_directory(directory)
+    if occupied is not None:
+        return occupied
     actual = directory.resolve() if directory.is_symlink() else directory
     with _swapped(actual) as staged:
         if actual.is_dir():
@@ -1063,40 +1096,59 @@ def publish_link(
     developer mode, some network filesystems) and records ``bridge=copy`` in the
     marker, so the fallback is visible rather than assumed.
     """
-    if target.is_symlink():
-        decision = decide_link(
-            source,
-            target,
-            source.parent,
-            plugin=plugin,
-            ownership_proof=ownership_proof,
-            exact_target=exact_target,
-        )
-        if decision.verdict in (Verdict.KEEP, Verdict.SKIP):
-            return decision
-    elif target.exists():
-        decision = decide(
-            target,
-            source,
-            plugin=plugin,
-            ownership_proof=ownership_proof,
-        )
-        if decision.verdict is not Verdict.PUBLISH:
-            return Decision(Verdict.KEEP, target, "user-authored")
-    copied = False
-    with _swapped(target) as staged:
-        try:
-            staged.symlink_to(source, target_is_directory=source.is_dir())
-        except (OSError, NotImplementedError):
-            shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
-            atomic_write(
-                staged / OWNED_MARKER_NAME,
-                json.dumps(
-                    TreeManifest.of(staged, plugin, **{**settings, "bridge": "copy"}).as_payload(),
-                    indent=2,
-                ) + "\n",
+    def judge() -> Decision:
+        """May we replace what is at ``target`` *right now*?
+
+        Asked twice: once to skip the lock when there is nothing to do, and
+        again under it, immediately before the swap. Deciding only up front
+        left a window in which a directory the user created was replaced by our
+        link — the same window :func:`publish_tree` already closes by passing
+        this to ``published(authorize=...)``.
+        """
+        if target.is_symlink():
+            return decide_link(
+                source,
+                target,
+                source.parent,
+                plugin=plugin,
+                ownership_proof=ownership_proof,
+                exact_target=exact_target,
             )
+        if target.exists():
+            decision = decide(
+                target,
+                source,
+                plugin=plugin,
+                ownership_proof=ownership_proof,
+            )
+            if decision.verdict is not Verdict.PUBLISH:
+                return Decision(Verdict.KEEP, target, "user-authored")
+            return decision
+        return Decision(Verdict.PUBLISH, target, "new link")
+
+    preflight = judge()
+    if preflight.verdict in (Verdict.KEEP, Verdict.SKIP):
+        return preflight
+    copied = False
+    try:
+        with _swapped(target) as staged:
+            authorized = judge()
+            if authorized.verdict is not Verdict.PUBLISH:
+                raise _PublicationRefused(authorized)
+            try:
+                staged.symlink_to(source, target_is_directory=source.is_dir())
+            except (OSError, NotImplementedError):
+                shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
+                atomic_write(
+                    staged / OWNED_MARKER_NAME,
+                    json.dumps(
+                        TreeManifest.of(staged, plugin, **{**settings, "bridge": "copy"}).as_payload(),
+                        indent=2,
+                    ) + "\n",
+                )
             copied = True
+    except _PublicationRefused as refused:
+        return refused.decision
     if copied:
         return Decision(Verdict.PUBLISH, target, "copied: this platform cannot create links")
     return Decision(Verdict.PUBLISH, target, f"linked to {source}")

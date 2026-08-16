@@ -38,6 +38,15 @@ Details, Docker recipe, socket-length trap, snapshot recipe:
 [`plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md`](plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md);
 installer-specific traps: [`plugins/autorun/src/autorun/installer/AGENTS.md`](plugins/autorun/src/autorun/installer/AGENTS.md).
 
+### Operational one-liners
+
+- **Configure an isolated run:** `SB=$(mktemp -d /tmp/arsb.XXXXXX) && mkdir -p "$SB/home" "$SB/ar-home" "$SB/state" "$SB/uv-cache" && env HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" UV_CACHE_DIR="$SB/uv-cache"`
+- **Launch the checkout CLI:** `uv run --project plugins/autorun python -m autorun --status`; restart only its daemon with `uv run --project plugins/autorun python -m autorun --restart-daemon`.
+- **Install a local development CLI:** `uv tool install --force --editable plugins/autorun && autorun --install`; the editable install is for the developer CLI/daemon, not the live hook venv.
+- **Install a published release:** `uv tool install --force autorun && autorun --install` (use the git or marketplace commands below when the release is not on PyPI).
+- **Repair the live Claude cache after refreshing assets:** `CACHE="$HOME/.claude/plugins/cache/autorun/ar/1.0.0rc1" && uv run --project plugins/autorun python -m autorun --install --force && uv venv --clear --python 3.13 "$CACHE/.venv" && uv pip install --python "$CACHE/.venv/bin/python" --reinstall "$PWD/plugins/autorun" && uv run --project plugins/autorun python -m autorun --restart-daemon`. Use this only after explicit current-turn approval; refresh first, repair the cache venv second, and restart last.
+- **Cache invariant:** the hook interpreter must import from `"$CACHE/.venv/lib/python*/site-packages"`; install it with `uv pip install --python "$CACHE/.venv/bin/python" --reinstall ...`, never `--editable`, so checkout edits cannot change the live hook between repairs.
+
 ## 2. Rules that hold everywhere
 
 - Tests set `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` before any autorun
@@ -87,9 +96,9 @@ uv run --project plugins/autorun pytest plugins/autorun/tests/ -q               
 every detected harness's native assets. In priority order:
 
 ```bash
-uv tool install autorun && autorun --install                                            # PyPI release
-uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun' && autorun --install   # git
-git clone https://github.com/ahundt/autorun.git && cd autorun && uv tool install --editable plugins/autorun && autorun --install   # local clone
+uv tool install --force autorun && autorun --install                                      # PyPI release
+uv tool install --force 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun' && autorun --install   # git
+git clone https://github.com/ahundt/autorun.git && cd autorun && uv tool install --force --editable plugins/autorun && autorun --install   # local clone
 ```
 
 Claude Code alone can instead use the marketplace: `claude plugin marketplace

@@ -1066,15 +1066,20 @@ def _write_bootstrap_receipt(*, ok: bool, detail: str) -> None:
 
 
 def _bootstrap_install_argv(tool: str, plugin_root: Path) -> tuple[str, ...]:
-    """Install this exact source into the hook interpreter."""
+    """Install a private copy of this exact source into the hook interpreter.
+
+    The hook runtime is a snapshot. An editable install makes it follow a
+    developer checkout (or a mutable plugin cache) after the repair succeeds,
+    so an in-progress source edit can break the live safety hook again. Force a
+    regular reinstall into the exact interpreter instead.
+    """
     source = str(plugin_root) if (plugin_root / "pyproject.toml").is_file() else BOOTSTRAP_SOURCE
-    editable = ("--editable",) if source == str(plugin_root) else ()
     if tool == "uv":
         return (
             "uv", "pip", "install", "--python", sys.executable,
-            *editable, source,
+            "--reinstall", source,
         )
-    return (sys.executable, "-m", "pip", "install", *editable, source)
+    return (sys.executable, "-m", "pip", "install", "--force-reinstall", source)
 
 
 def _manual_bootstrap_command(plugin_root: Path) -> str:

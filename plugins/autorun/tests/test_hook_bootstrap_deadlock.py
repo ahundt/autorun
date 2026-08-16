@@ -161,7 +161,8 @@ def test_manual_repair_targets_the_hook_interpreter_and_exact_source(
     assert "uv pip install --python" in command
     assert hook_entry.sys.executable in command
     assert str(plugin_root) in command
-    assert "--editable" in command
+    assert "--editable" not in command
+    assert "--reinstall" in command
     assert "uv pip install autorun" not in command
 
 
