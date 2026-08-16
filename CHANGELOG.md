@@ -88,6 +88,15 @@ marketplace itself carries a separate `version` field.
   no way out; it is now kept with the same explanation and retired by
   `--force` after the same backup. A recorded user edit is still kept by
   every path.
+- **Trees on Antigravity's old write root are decided at last.** Installs
+  between 2026-07-09 and 2026-08-08 also materialized the bundle under
+  `~/.gemini/antigravity-cli/plugins/<plugin>`; today's Antigravity entry
+  keeps its config under `~/.gemini/config`, and the retirement sweep visited
+  only current config roots, so those trees were never listed by status,
+  never kept with a reason, and never retired. A harness now declares roots
+  it used to write to (`Platform.retired_config_dirs`), the sweep reads them,
+  and such trees follow the rule above: kept with the `--force`
+  explanation by a plain install, retired with a backup by `--force`.
 - **Antigravity no longer stays on the first bundle it imported.** Agy's
   import manifest names the plugin but no source path, so a copy under
   `~/.gemini/config/plugins/ar` was accepted as autorun's only while it

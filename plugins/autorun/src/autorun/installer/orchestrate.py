@@ -790,6 +790,13 @@ def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
         base = discovery.config_dir(platform, home=ctx.home)
         if base is not None:
             found.append(base)
+        # Roots an earlier release wrote to. No step targets them, so every
+        # owned tree found there is stale by construction; without this they
+        # sit outside every swept root and are never even reported.
+        found.extend(
+            discovery.expand_home(retired, home=ctx.home)
+            for retired in getattr(platform, "retired_config_dirs", ()) or ()
+        )
         if (
             getattr(platform, "install_flavor", "")
             or getattr(platform, "name", "")

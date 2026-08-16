@@ -863,6 +863,52 @@ def test_force_uninstall_retires_a_hashless_legacy_shared_skill_and_keeps_a_back
     assert not (parked[0] / OWNED_MARKER_NAME).exists(), "a backup is not an owned tree"
 
 
+@pytest.mark.parametrize("plugin", ["ar", "pdf-extractor"])
+def test_a_retired_write_root_is_swept_for_hashless_legacy_trees(sandbox, plugin):
+    """``~/.gemini/antigravity-cli/plugins/<plugin>`` was a write route of an
+    older release; today's Antigravity entry keeps its config under
+    ``~/.gemini/config`` and no step targets the old root. The sweep only
+    visited selected harnesses' config roots, so two hashless trees sat there
+    on a live machine with no decision at all — never kept with a reason,
+    never retired — while every rerun reported success. A retired root is
+    Platform data, and the sweep reads it.
+    """
+    import json
+
+    from autorun.installer.fs import OWNED_MARKER_NAME
+    from autorun.installer.orchestrate import install, preview
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar", "pdf-extractor"),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS["antigravity"],),
+    )
+    legacy = sandbox / ".gemini" / "antigravity-cli" / "plugins" / plugin
+    legacy.mkdir(parents=True)
+    (legacy / OWNED_MARKER_NAME).write_text(
+        json.dumps({"plugin": plugin, "files": []}), encoding="utf-8"
+    )
+    (legacy / "plugin.json").write_text("an older release\n", encoding="utf-8")
+
+    kept = [d for d in preview(**common).decisions if d.target == legacy]
+    assert kept and kept[0].verdict.value == "keep" and "--force" in kept[0].reason, kept
+    assert install(**common).ok is True
+    assert (legacy / "plugin.json").read_text(encoding="utf-8") == "an older release\n"
+
+    forced = install(force=True, **common)
+    assert forced.ok is True
+    retired = [d for d in forced.decisions if d.target == legacy]
+    assert retired and retired[0].verdict.value == "retire", retired
+    assert not legacy.exists()
+    parked = sorted((sandbox / ".autorun" / "installer" / "backups").iterdir())
+    assert len(parked) == 1 and parked[0].name.startswith(f"{plugin}-"), parked
+    assert (parked[0] / "plugin.json").read_text(encoding="utf-8") == "an older release\n"
+
+
 def test_install_with_no_harness_selected_retires_nothing(sandbox):
     """An empty selection is a no-op, never a sweep of every owned tree."""
     from autorun.installer import discovery

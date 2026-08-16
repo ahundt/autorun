@@ -94,8 +94,12 @@ that need it. No disk access: stage generated content to a temp dir and point th
   extension gave shared-root harnesses two unmarked, unprunable copies.
 - **Markers say `ar` everywhere.** A tree recorded as `autorun` was unremovable
   under `ar`, which leaked 362 files.
-- **A step knows only today's paths.** Retiring a route means adding it to
-  `traversal.retirements`, or its trees leak forever carrying our marker.
+- **A step knows only today's paths.** The sweep (`traversal.retirements`)
+  visits selected harnesses' config roots, so a retired route *inside* one is
+  found by its marker. A retired route *outside* every root is not: declare
+  it in `Platform.retired_config_dirs` (Antigravity's
+  `~/.gemini/antigravity-cli/`), or its trees leak forever carrying our
+  marker and no decision names them.
 - **Versioned harness caches belong to the harness.**
   `<config>/plugins/cache/<market>/<plugin>/<version>/` may copy an ownership
   marker from the registered source tree. The retirement sweep ignores that

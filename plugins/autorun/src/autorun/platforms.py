@@ -964,6 +964,11 @@ class Platform:
     # the config dir itself, as XDG_CONFIG_HOME does. Empty means the variable
     # already holds the config dir (CODEX_HOME, CLAUDE_CONFIG_DIR, ...).
     config_dir_env_var_subdir: str = ""
+    # Roots an earlier release wrote to that no current step targets. The
+    # installer never writes here; the retirement sweep reads them so an owned
+    # tree left on an old route is decided (kept with a reason, or retired)
+    # instead of sitting outside every swept root forever.
+    retired_config_dirs: tuple[str, ...] = ()
     template_dir: str | None = None
     hooks_path_var: str = ""
     extension_manifest_name: str = "gemini-extension.json"
@@ -1383,8 +1388,12 @@ ANTIGRAVITY = register(
         drops_additional_context=False,
         # Agy 1.1.7 materializes native plugins and its import receipt under
         # ~/.gemini/config.  ~/.gemini/antigravity-cli remains a runtime/log
-        # location and therefore stays only in detection hints.
+        # location and therefore stays only in detection hints — and in the
+        # retirement sweep, because the install.py lifecycle (2026-07-09 to
+        # 2026-08-08) also materialized the bundle under
+        # ~/.gemini/antigravity-cli/plugins/<plugin>.
         config_dir="~/.gemini/config/",
+        retired_config_dirs=("~/.gemini/antigravity-cli/",),
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
         extension_manifest_name="plugin.json",
