@@ -153,6 +153,13 @@ daemon socket lives under it and `sun_path` is 104 bytes on macOS; overflow
 looks like a hook timeout. Prove isolation by diffing a full listing rather than
 a digest, since these trees also hold harness session logs.
 
+Redirecting `$HOME` does not move the daemon. `ipc.AUTORUN_CONFIG_DIR` is fixed
+at import from `AUTORUN_HOME` or the home of that moment, so an in-process
+self-check that redirects `$HOME` afterwards and then runs `uninstall()` with
+teardown on signals the developer's live daemon (`orchestrate.demo` did, and
+restarted it). Set `AUTORUN_HOME` before the first import, or stand in for
+`teardown.stop_daemon` as `orchestrate._exercise` and `teardown.demo` do.
+
 Details: [`docs/RUNTIME_STATE_ISOLATION.md`](../../../docs/RUNTIME_STATE_ISOLATION.md).
 
 ## Checks

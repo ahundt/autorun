@@ -379,27 +379,35 @@ def stage_extension(
         shutil.copytree(source, staging / "skills" / name, symlinks=True, dirs_exist_ok=True)
 
     # BUG #14449: the manifest's `hooks` field is ignored, so the real files go
-    # where the harness hardcodes its lookup.
+    # where the harness hardcodes its lookup. A plugin with no hook manifest
+    # (pdf-extractor) gets no ``hooks/`` tree and no ``hooks`` reference: an
+    # empty directory is noise and a reference to a missing file is a broken
+    # bundle.
     hooks = staging / "hooks"
-    hooks.mkdir(exist_ok=True)
-    serialized_hooks = json.dumps(hook_manifest) if hook_manifest is not None else "hook_entry.py"
-    if "hook_entry.py" in serialized_hooks:
-        entry = plugin_dir / "hooks" / "hook_entry.py"
-        if not entry.is_file():
-            entry = template / "hooks" / "hook_entry.py"
-        if entry.is_file():
-            shutil.copy2(entry, hooks / "hook_entry.py")
-    if hook_manifest is not None:
-        (hooks / "hooks.json").write_text(
-            json.dumps(hook_manifest, indent=2) + "\n", encoding="utf-8"
-        )
-    elif (source_manifest := template / "hooks" / "hooks.json").is_file():
-        shutil.copy2(source_manifest, hooks / "hooks.json")
+    source_manifest = template / "hooks" / "hooks.json"
+    if hook_manifest is not None or source_manifest.is_file():
+        hooks.mkdir(exist_ok=True)
+        serialized_hooks = json.dumps(hook_manifest) if hook_manifest is not None else "hook_entry.py"
+        if "hook_entry.py" in serialized_hooks:
+            entry = plugin_dir / "hooks" / "hook_entry.py"
+            if not entry.is_file():
+                entry = template / "hooks" / "hook_entry.py"
+            if entry.is_file():
+                shutil.copy2(entry, hooks / "hook_entry.py")
+        if hook_manifest is not None:
+            (hooks / "hooks.json").write_text(
+                json.dumps(hook_manifest, indent=2) + "\n", encoding="utf-8"
+            )
+        else:
+            shutil.copy2(source_manifest, hooks / "hooks.json")
 
     document = manifest.as_document()
+    if not (hooks / "hooks.json").is_file():
+        document.pop("hooks", None)
     if manifest_name == "plugin.json":
         document.pop("contextFileName", None)
-        document["hooks"] = "./hooks.json" if hooks_at_root else "./hooks/hooks.json"
+        if (hooks / "hooks.json").is_file():
+            document["hooks"] = "./hooks.json" if hooks_at_root else "./hooks/hooks.json"
     (staging / manifest_name).write_text(
         json.dumps(document, indent=2) + "\n", encoding="utf-8"
     )

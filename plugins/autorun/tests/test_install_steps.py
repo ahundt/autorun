@@ -432,6 +432,46 @@ def test_antigravity_staging_uses_its_native_manifest_and_hook_events(walk, sand
         assert all("name" not in handler for handler in handlers)
 
 
+@pytest.mark.parametrize("harness", ["gemini", "qwen", "antigravity"])
+def test_a_plugin_with_a_root_manifest_and_no_template_is_still_staged_as_an_extension(
+    sandbox, harness
+):
+    """pdf-extractor ships ``gemini-extension.json`` at its root and no
+    ``gemini_template/`` (it has no hooks to translate). The staging step
+    only looked for the template, so since the installer rewrite this plugin
+    silently reached no Gemini-family harness, and copies an earlier release
+    had materialized were left unowned and unrefreshed."""
+    import json
+
+    dirs, missing = discovery.resolve_plugins(REPO, ["ar", "pdf-extractor"])
+    assert not missing, missing
+    ctx = Context(
+        marketplace_root=REPO,
+        plugin_dirs=dirs,
+        home=sandbox,
+        settings={"skill_placement": {"": "auto"}, "shared_skills_bridge": "none"},
+    )
+    named = {discovery.plugin_name(d): d for d in dirs}
+    with steps.prepared(ctx, plugins=named) as staged_ctx:
+        staged = staged_ctx.settings["_staged_extensions"][harness]
+        assert set(staged) == {"ar", "pdf-extractor"}, sorted(staged)
+        bundle = staged["pdf-extractor"]
+        assert (bundle / "commands" / "extract.md").is_file()
+        platform = PLATFORMS[harness]
+        manifest_name = getattr(platform, "extension_manifest_name", "gemini-extension.json")
+        document = json.loads((bundle / manifest_name).read_text(encoding="utf-8"))
+        assert document["name"] == "pdf-extractor"
+        # No hooks to declare: no dangling reference and no empty hooks tree.
+        assert "hooks" not in document
+        assert not (bundle / "hooks").exists()
+        assert not (bundle / "hooks.json").exists()
+        if harness == "antigravity":
+            # Agy reads skills from inside the plugin; the others read the shared root.
+            assert (bundle / "skills" / "pdf-extractor" / "SKILL.md").is_file()
+        else:
+            assert not (bundle / "skills").exists()
+
+
 def test_qwen_staging_rewrites_hook_identity_without_deprecated_toml(walk, sandbox):
     paired, ctx = walk
     qwen = [target for target in paired if target.name == "qwen"]

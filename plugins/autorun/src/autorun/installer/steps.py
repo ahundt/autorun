@@ -225,9 +225,9 @@ def _extension_materializations(harnesses: Iterable[object], ctx: Context):
             if target is None:
                 continue
             source = extension.registration_source_dir(ctx, name, plugin)
-            template = (
-                discovery.plugin_runtime_root(plugin_dir) / GEMINI_TEMPLATE_SUBDIR
-            )
+            template = extension_template(plugin_dir)
+            if template is None:
+                continue  # ships no extension, so nothing to claim or refresh
             yield platform, plugin, target, source, template
 
 
@@ -525,6 +525,25 @@ def apply_marketplaces(entries: Iterable[Marketplace], mode: Mode) -> list[str]:
 GEMINI_TEMPLATE_SUBDIR = Path("gemini_template")
 
 
+def extension_template(plugin_dir: Path) -> Path | None:
+    """The directory a plugin's Gemini-family extension is built from, or None.
+
+    One owner for a question three callers used to answer separately: a
+    plugin with hooks keeps its template under the runtime root
+    (``src/autorun/gemini_template``, out of Claude's scan); a plugin with no
+    hooks (pdf-extractor) keeps ``gemini-extension.json`` at its root and the
+    plugin directory is the whole template — the layout the pre-manifest
+    installer accepted and every receipt it wrote names as ``source``. A
+    plugin with neither ships no extension.
+    """
+    template = discovery.plugin_runtime_root(plugin_dir) / GEMINI_TEMPLATE_SUBDIR
+    if template.is_dir():
+        return template
+    if (plugin_dir / extension.MANIFEST_NAME).is_file():
+        return plugin_dir
+    return None
+
+
 @contextmanager
 def prepared(
     ctx: Context,
@@ -561,8 +580,8 @@ def prepared(
             platform = getattr(harness, "platform", harness)
             staged[name] = {}
             for plugin, plugin_dir in plugins.items():
-                template = discovery.plugin_runtime_root(plugin_dir) / GEMINI_TEMPLATE_SUBDIR
-                if not template.is_dir():
+                template = extension_template(plugin_dir)
+                if template is None:
                     continue  # not a plugin that ships an extension; not an error
                 manifest = extension.Manifest(
                     name=plugin,

@@ -744,9 +744,9 @@ def _registration_owned(
         durable = extension.registration_source_dir(
             ctx, getattr(platform, "name", ""), plugin
         )
-        template = (
-            discovery.plugin_runtime_root(source) / steps.GEMINI_TEMPLATE_SUBDIR
-        )
+        template = steps.extension_template(source)
+        if template is None:
+            return False
         return extension.materialization_unchanged(
             base / plugin,
             durable,
@@ -903,7 +903,19 @@ def _exercise(root: Path, home: Path, record: Runner, calls: list) -> None:
     # state directory exists by the time uninstall is asked to keep it.
     state = home / ".autorun"
     state.mkdir(exist_ok=True)
-    gone = uninstall(**common, state_dir=state)
+    # Redirecting $HOME does not move the daemon: ``ipc.AUTORUN_CONFIG_DIR`` is
+    # fixed at import from AUTORUN_HOME or the *original* home, so the real
+    # ``stop_daemon`` here would signal the developer's live daemon (observed:
+    # this self-check restarted it). Stand in for it exactly as teardown's
+    # own self-check does; the retained-state half is what this exercises.
+    from . import teardown as _teardown
+
+    real_stop = _teardown.stop_daemon
+    _teardown.stop_daemon = lambda **_daemon: None
+    try:
+        gone = uninstall(**common, state_dir=state)
+    finally:
+        _teardown.stop_daemon = real_stop
     assert any(d.verdict is Verdict.RETIRE for d in gone.decisions)
     assert gone.torn_down is not None and gone.torn_down.kept == state
     assert any("session state" in line for line in gone.lines())

@@ -149,10 +149,11 @@ def _refreshable(platform: object, root: Path, plugins: Sequence[str]) -> bool:
     return any(
         extension.refreshable(
             base / discovery.plugin_name(plugin_dir),
-            discovery.plugin_runtime_root(plugin_dir) / steps.GEMINI_TEMPLATE_SUBDIR,
+            template,
             plugin=discovery.plugin_name(plugin_dir),
         )
         for plugin_dir in directories
+        if (template := steps.extension_template(plugin_dir)) is not None
     )
 
 
