@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
 from . import discovery
-from .fs import compare, owns, read_marker, scan_tree
+from .fs import compare, owned_trees, owns, read_marker, scan_tree
 from .traversal import Context, Intent
 
 __all__ = [
@@ -181,9 +181,11 @@ def native_receipt_names_source(
     Agy instead writes a shared import manifest beside ``plugins/`` and copies
     only the bundle contents, so its receipt names the plugin but never a
     path. Adoption therefore needs the exact manifest entry plus evidence
-    inside the copy that the bundle is ours: either it still matches today's
-    source byte for byte, or every hook it declares runs autorun's own hook
-    entry. Content match alone was the whole test once, and it can only pass
+    inside the copy that the bundle is ours: it still matches today's source
+    byte for byte, or every hook it declares runs autorun's own hook entry, or
+    a tree inside it (a copied native skill) carries autorun's marker for this
+    plugin — the last is what a hookless bundle such as pdf-extractor's
+    leaves. Content match alone was the whole test once, and it can only pass
     until the source next changes — after that a copy Agy made before
     :func:`record_tree` stamped it looked like a stranger's plugin, was
     skipped on every install, and left that harness on the first bundle it
@@ -200,7 +202,11 @@ def native_receipt_names_source(
         return False
     if not installed.is_dir():
         return False
-    return scan_tree(installed) == scan_tree(source) or bundle_hooks_are_ours(installed)
+    return (
+        scan_tree(installed) == scan_tree(source)
+        or bundle_hooks_are_ours(installed)
+        or any(owned_trees(installed, plugin=plugin, max_depth=3))
+    )
 
 
 def bundle_hooks_are_ours(installed: Path) -> bool:

@@ -321,6 +321,63 @@ def test_gemini_extension_uses_the_installed_cli_without_a_fake_project(walk, sa
     assert not (extension / "hooks" / "hook_entry.py").exists()
 
 
+@pytest.mark.parametrize(
+    "hooks_document, nested_marker, expected",
+    [
+        # Our hook entry in every command: ours even though the copy is stale.
+        ({"autorun": {"PreToolUse": [{"matcher": "*", "hooks": [
+            {"type": "command", "command": "uv run x hooks/hook_entry.py --cli antigravity"}]}]}},
+         False, True),
+        # A hookless bundle (pdf-extractor's shape) whose skill carries our marker.
+        (None, True, True),
+        # One foreign command among ours: a plugin autorun did not build.
+        ({"PreToolUse": [
+            {"type": "command", "command": "python hooks/hook_entry.py --cli antigravity"},
+            {"type": "command", "command": "python mine.py"}]},
+         False, False),
+        # Nothing but the receipt: a same-name plugin the user made.
+        (None, False, False),
+    ],
+    ids=["our-hooks", "nested-marker-only", "one-foreign-command", "receipt-only"],
+)
+def test_antigravity_receipt_needs_content_evidence_that_the_copy_is_ours(
+    sandbox, hooks_document, nested_marker, expected
+):
+    """Agy's import manifest names the plugin, never a path, so the copied
+    bundle must itself show autorun built it. Exact content match was the only
+    accepted sign, which no copy of an older bundle can give."""
+    import json
+
+    from autorun.installer import extension
+    from autorun.installer.fs import publish_tree
+
+    ctx = Context(marketplace_root=REPO, home=sandbox)
+    platform = PLATFORMS["antigravity"]
+    (sandbox / ".gemini" / "config").mkdir(parents=True)
+    (sandbox / ".gemini" / "config" / "import_manifest.json").write_text(
+        json.dumps({"imports": [{"name": "ar", "source": "antigravity",
+                                 "components": ["skills", "commands", "hooks"]}]}),
+        encoding="utf-8",
+    )
+    source = sandbox / "source" / "ar"
+    (source / "commands").mkdir(parents=True)
+    (source / "commands" / "go.md").write_text("today\n", encoding="utf-8")
+    installed = sandbox / ".gemini" / "config" / "plugins" / "ar"
+    (installed / "commands").mkdir(parents=True)
+    (installed / "commands" / "go.md").write_text("an older bundle\n", encoding="utf-8")
+    if hooks_document is not None:
+        (installed / "hooks.json").write_text(json.dumps(hooks_document), encoding="utf-8")
+    if nested_marker:
+        skill = sandbox / "skill-src"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("# s\n", encoding="utf-8")
+        publish_tree(skill, installed / "skills" / "pdf-extractor", plugin="ar")
+
+    assert extension.native_receipt_names_source(
+        ctx, platform, "ar", installed, source
+    ) is expected
+
+
 def test_antigravity_native_skills_are_inside_the_staged_plugin(walk, sandbox):
     paired, ctx = walk
     antigravity = [target for target in paired if target.name == "antigravity"]

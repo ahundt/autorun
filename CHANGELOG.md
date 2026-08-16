@@ -93,8 +93,9 @@ marketplace itself carries a separate `version` field.
   stamped its marker then looked like a stranger's plugin: every later
   `--install` skipped Antigravity in silence and reported success while it
   ran skills, commands, and hooks from the day it was first imported. The
-  receipt plus a bundle whose every hook command runs autorun's own hook
-  entry now proves the copy is ours, so it is refreshed and stamped; a
+  receipt plus content autorun produced — every hook command running
+  autorun's own hook entry, or a copied skill carrying autorun's marker for a
+  hookless bundle — now proves the copy is ours, so it is refreshed and stamped; a
   same-name plugin that fails that proof is left alone and the install
   reports it as a failure naming the path instead of saying nothing.
 - **Status and dry run list each shared skill once.** The walk decided the
