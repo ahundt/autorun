@@ -84,6 +84,17 @@ marketplace itself carries a separate `version` field.
   `--ignore-signal` are documented with a bracketed value, so consuming the next
   word ate the command; and `env -a <name>` did not consume its value. Each
   option's arity now matches the tool that owns it.
+- **`git stash drop` is judged against the session's repository.** The guard
+  that asks whether a stash exists ran `git stash list` in the hook process's
+  own working directory — and the daemon serves every session on this machine
+  from one process, started wherever it was started. So it answered for a
+  repository the user was not in, both ways: a drop went through in a session
+  whose stash was full because that other directory had none, and was blocked
+  in a session with nothing to lose because it did. The first of those destroys
+  work with no way back. It reads `ctx.cwd` now, with the same scrubbed
+  environment and work-tree probe `_file_differs_from_ref` uses, and a probe
+  that cannot answer blocks rather than permits — the rule the Time Machine
+  predicate beside it already followed.
 - **A Windows executable suffix no longer bypasses every command block.**
   `rm.exe -rf …`, `git.exe push` and `git.cmd checkout` matched no pattern,
   because the command name was read from argv[0] literally. That is the real

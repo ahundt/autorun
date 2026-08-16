@@ -911,23 +911,61 @@ class TestWhenPredicateEdgeCases:
 
         assert result is False
 
-    @patch("subprocess.run")
-    def test_stash_exists_predicate(self, mock_run):
-        """_stash_exists returns True when stash has entries."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="stash@{0}: WIP on main: abc1234 commit msg\n")
+    def test_stash_exists_predicate(self, tmp_path):
+        """_stash_exists returns True when the session's repo has entries."""
+        repo = _repo_with_a_stash(tmp_path / "has")
 
-        result = check_when_predicate("_stash_exists", None)
+        result = check_when_predicate("_stash_exists", _make_ctx("git stash drop", repo))
 
         assert result is True
 
-    @patch("subprocess.run")
-    def test_stash_exists_predicate_empty(self, mock_run):
-        """_stash_exists returns False when stash is empty."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="")
+    def test_stash_exists_predicate_empty(self, tmp_path):
+        """_stash_exists returns False when that repo's stash is empty."""
+        repo = _init_git_repo(tmp_path / "none")
 
-        result = check_when_predicate("_stash_exists", None)
+        result = check_when_predicate("_stash_exists", _make_ctx("git stash drop", repo))
 
         assert result is False
+
+    def test_stash_exists_reads_the_session_repo_not_the_hook_process_cwd(
+        self, tmp_path, monkeypatch
+    ):
+        """`git stash drop` deletes work permanently; ask the right repository.
+
+        The daemon serves every session on this machine from one process, so
+        its working directory is wherever it was started — one repository, for
+        all of them. Running `git stash list` there answered for a repository
+        the user was not in, both ways: a drop went through in a session whose
+        stash was full because the daemon's directory had none, and was blocked
+        in a session with nothing to lose because the daemon's directory did.
+        """
+        with_stash = _repo_with_a_stash(tmp_path / "session")
+        without = _init_git_repo(tmp_path / "elsewhere")
+
+        monkeypatch.chdir(without)
+        assert check_when_predicate("_stash_exists", _make_ctx("git stash drop", with_stash)) is True
+
+        monkeypatch.chdir(with_stash)
+        assert check_when_predicate("_stash_exists", _make_ctx("git stash drop", without)) is False
+
+    def test_stash_exists_is_inapplicable_without_a_repository(self, tmp_path):
+        assert check_when_predicate("_stash_exists", _make_ctx("git stash drop", None)) is False
+        assert check_when_predicate("_stash_exists", _make_ctx("git stash drop", tmp_path)) is False
+
+    def test_stash_exists_blocks_when_it_cannot_tell(self, tmp_path):
+        """An irreversible delete is not permitted by a broken probe.
+
+        The Time Machine predicate beside this one already reasons this way:
+        reaching the predicate means the pattern matched, so a failure to
+        answer must not become permission.
+        """
+        repo = _repo_with_a_stash(tmp_path / "has")
+        ctx = _make_ctx("git stash drop", repo)
+
+        # Patched after the repo exists: `autorun.integrations.subprocess` is
+        # the module object, so patching its `run` reaches every caller.
+        with patch("autorun.integrations.subprocess.run", side_effect=OSError("git is gone")):
+            assert check_when_predicate("_stash_exists", ctx) is True
 
     @patch("subprocess.run")
     def test_bash_predicate_with_complex_command(self, mock_run):
@@ -1487,6 +1525,18 @@ def _init_git_repo(path, committed_content="original\n"):
     (path / "seed.txt").write_text(committed_content)
     _subprocess.run(["git", "-C", str(path), "add", "seed.txt"], check=True, env=env)
     _subprocess.run(["git", "-C", str(path), "commit", "-qm", "init"], check=True, env=env)
+    return path
+
+
+def _repo_with_a_stash(path, message="precious work"):
+    """A repo holding one stash entry, so a drop there would destroy work."""
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    _init_git_repo(path)
+    (path / "seed.txt").write_text("work in progress\n")
+    _subprocess.run(
+        ["git", "-C", str(path), "stash", "push", "-m", message],
+        check=True, env=env, capture_output=True,
+    )
     return path
 
 

@@ -643,12 +643,49 @@ def _has_unstaged_changes(ctx: any) -> bool:
 
 
 def _stash_exists(ctx: any) -> bool:
-    """Check if git stash exists."""
-    try:
-        result = subprocess.run("git stash list", shell=True, capture_output=True, timeout=2, text=True)
-        return bool(result.stdout.strip())
-    except Exception:
+    """Return whether the session's repository holds a stash entry.
+
+    Contract, matching `_git_diff_quiet`:
+      * cwd unknown or not a git work tree → False (predicate inapplicable;
+        `git stash drop` there fails on its own)
+      * a stash entry exists → True
+      * none → False
+      * subprocess error or timeout → True (fail-safe block)
+
+    `ctx.cwd`, not the process's own directory: the daemon serves every session
+    on this machine from one process, whose working directory is wherever it
+    was started. Running `git stash list` there answered for a repository the
+    user was not in, both ways — permitting a drop in a session whose stash was
+    full, and blocking one in a session with nothing to lose. The failure mode
+    that matters is the first: a dropped stash cannot be recovered.
+    """
+    cwd = getattr(ctx, "cwd", None)
+    if not cwd:
         return False
+    env = _scrubbed_env()
+    try:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            timeout=_PREDICATE_TIMEOUT,
+            cwd=cwd,
+            env=env,
+        )
+        if probe.returncode != 0 or probe.stdout.strip() != b"true":
+            return False
+        listing = subprocess.run(
+            ["git", "stash", "list"],
+            capture_output=True,
+            timeout=_PREDICATE_TIMEOUT,
+            cwd=cwd,
+            env=env,
+        )
+        if listing.returncode != 0:
+            return True
+        return bool(listing.stdout.strip())
+    except Exception as e:
+        logger.warning("_stash_exists fail-safe block: %s", e)
+        return True
 
 
 # ---- Pure parser for destructive-git commands (no I/O, fully unit-testable) --
