@@ -43,6 +43,7 @@ reintroducing it.
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -375,6 +376,32 @@ def test_a_repaired_plugin_source_clears_the_latch_at_once(bootstrappable):
 
     can_run, reason = hook_entry.can_bootstrap()
     assert can_run is True, f"a repaired source stayed latched: {reason}"
+
+
+def test_a_failure_at_one_source_root_does_not_latch_another(bootstrappable, monkeypatch):
+    """Two roots are two questions, even when their bytes weigh the same.
+
+    The fingerprint is what decides whether a recorded failure still describes
+    the install that would run now, and it named the interpreter, the file
+    count, the total size and the newest mtime — everything about the bytes and
+    nothing about *which tree* they came from. So a machine carrying a broken
+    checkout and a good one had the broken tree's failure answer for both: the
+    good root was refused a bootstrap it had never been tried on, with a reason
+    quoting a failure from somewhere else. Two empty roots collide outright.
+    """
+    hook_entry, broken_root = bootstrappable
+    other_root = _plugin_source(broken_root.parent / "other")
+    for path in (broken_root, other_root):
+        for name in ("pyproject.toml", "src/autorun/__init__.py"):
+            os.utime(path / name, (1_700_000_000, 1_700_000_000))
+
+    _record_failure(hook_entry, broken_root, age=1.0)
+    assert hook_entry.can_bootstrap()[0] is False, "the broken root should stay latched"
+
+    monkeypatch.setenv("AUTORUN_PLUGIN_ROOT", str(other_root))
+    can_run, reason = hook_entry.can_bootstrap()
+
+    assert can_run is True, f"another root inherited a failure it never caused: {reason}"
 
 
 def test_an_unchanged_source_is_not_reinstalled_every_window(bootstrappable):

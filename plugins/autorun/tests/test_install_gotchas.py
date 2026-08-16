@@ -267,6 +267,77 @@ def test_publish_files_into_a_symlinked_directory(tmp_path, source):
     assert not (real / "go.md").exists()
 
 
+def test_a_symlinked_shipped_file_publishes_once_and_then_says_so(tmp_path):
+    """The shared-file route copies content, so it must compare content.
+
+    `publish_files` writes through a symlinked source — `copy2` follows one —
+    and records the regular file it landed. `decide_files` fingerprinted the
+    *source* instead, and `_fingerprint` records a symlink by its target, so
+    the two could never agree: every install reported PUBLISH and rewrote a
+    directory nothing had changed. Whole-tree publication keeps links
+    (`copytree(symlinks=True)`) and `scan_tree` compares them as links; the
+    routes differ because what they write differs, and each has to be compared
+    the way it writes.
+    """
+    source, destination = tmp_path / "src", tmp_path / "dest"
+    source.mkdir()
+    destination.mkdir()
+    (tmp_path / "real.md").write_text("shipped\n", encoding="utf-8")
+    try:
+        (source / "ar-go.md").symlink_to(tmp_path / "real.md")
+    except (OSError, NotImplementedError) as unsupported:
+        pytest.skip(f"this platform cannot create symlinks: {unsupported}")
+
+    assert publish_files(source, destination, plugin="ar").verdict is Verdict.PUBLISH
+    assert (destination / "ar-go.md").read_text(encoding="utf-8") == "shipped\n"
+    assert not (destination / "ar-go.md").is_symlink(), "a link escaped into the user's dir"
+
+    # `decide_files` is the decider — `publish_files` is the writer and has no
+    # SKIP of its own — so this is the answer `_perform` acts on, and PUBLISH
+    # here is what made every install rewrite the directory.
+    assert decide_files(source, destination, plugin="ar").verdict is Verdict.SKIP
+
+
+def test_a_file_deleted_between_the_check_and_the_hash_does_not_fail_the_install(
+    tmp_path, monkeypatch
+):
+    """The user's own directory keeps changing while we publish in it.
+
+    `commands/` belongs to the user as much as to us, and the install lock only
+    excludes other autorun processes. Both `decide_files` and `publish_files`
+    asked `exists()` and then hashed, so a deletion landing in that window
+    raised `FileNotFoundError` out of the installer. The transaction rolls back
+    safely, but a file the user deleted is the least surprising thing that can
+    happen to a file, and the answer for it already exists: `scan_tree` treats
+    an entry that vanishes mid-walk as absent.
+    """
+    import autorun.installer.fs as fs
+
+    source, destination = tmp_path / "src", tmp_path / "dest"
+    source.mkdir()
+    destination.mkdir()
+    (source / "ar-go.md").write_text("shipped\n", encoding="utf-8")
+    publish_files(source, destination, plugin="ar")  # now recorded as ours
+
+    real_fingerprint = fs._fingerprint
+    vanished = []
+
+    def deleting(path):
+        if path == destination / "ar-go.md" and not vanished:
+            vanished.append(path)
+            path.unlink()
+        return real_fingerprint(path)
+
+    monkeypatch.setattr(fs, "_fingerprint", deleting)
+    (source / "ar-go.md").write_text("shipped v2\n", encoding="utf-8")
+
+    decision = publish_files(source, destination, plugin="ar")
+
+    assert vanished, "the race never happened; the test proves nothing"
+    assert decision.verdict is Verdict.PUBLISH, decision
+    assert (destination / "ar-go.md").read_text(encoding="utf-8") == "shipped v2\n"
+
+
 @pytest.mark.parametrize("shape", ["file", "link_to_file", "broken_link"])
 def test_a_shared_directory_route_occupied_by_a_file_is_never_replaced(
     tmp_path, shape
@@ -382,6 +453,50 @@ def test_a_swap_a_kill_interrupted_puts_the_users_tree_back(tmp_path):
 
     assert (target / "SKILL.md").read_text(encoding="utf-8") == "THEIRS\n", decision
     assert decision.verdict is Verdict.KEEP, decision
+    assert not list(target.parent.glob(".autorun-publish-*")), "stage left behind"
+
+
+def test_a_recreated_target_does_not_cost_the_user_the_tree_in_the_stage(
+    tmp_path, monkeypatch
+):
+    """The kill above, then anything puts a directory back at the target.
+
+    `_resume_interrupted` restores `previous` only when the target is absent,
+    which is the state the kill leaves. But nothing holds that state: the user
+    can recreate the directory, restore it from a backup, or let another tool
+    write it, and the next install then finds `previous` unrestorable and
+    deleted the whole stage with it. That tree is the *only* remaining copy of
+    what the user had — the swap moved it out of the target and the replacement
+    never landed — so sweeping it is the same data loss the restore exists to
+    prevent, reached by a state the restore did not anticipate.
+
+    Parking it under `~/.autorun/installer/backups/` is where `--force` already
+    puts a tree it may not simply discard. It is outside every harness's config
+    root, so nothing lists it as a skill or sweeps it as an owned tree, and the
+    stage still leaves the scanned directory.
+    """
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+
+    source = tmp_path / "src" / "demo"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("shipped\n", encoding="utf-8")
+    target = tmp_path / "dest" / "demo"
+    assert publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+
+    # The kill: the swap moved their tree to `previous` and never landed ours.
+    abandoned = target.parent / ".autorun-publish-demo-k1LL3d"
+    (abandoned / "previous").mkdir(parents=True)
+    (abandoned / "previous" / "SKILL.md").write_text("THEIRS\n", encoding="utf-8")
+
+    # ...and the target is a directory again by the time the next install runs.
+    # An upgrade publishes over it, which is when the abandoned stage is swept.
+    (source / "SKILL.md").write_text("shipped v2\n", encoding="utf-8")
+
+    assert publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+
+    parked = sorted((tmp_path / "ar-home" / "installer" / "backups").glob("demo-*"))
+    assert parked, "the only copy of the user's old tree was deleted with the stage"
+    assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "THEIRS\n"
     assert not list(target.parent.glob(".autorun-publish-*")), "stage left behind"
 
 
@@ -840,6 +955,96 @@ def test_uninstall_uses_receipts_when_the_marketplace_source_is_gone(tmp_path, m
     assert result.missing == (), "a receipt makes source-independent uninstall possible"
     text = hooks.read_text(encoding="utf-8")
     assert "echo user" in text and "hook_entry.py" not in text
+
+
+def test_a_link_replaced_after_the_preflight_is_not_removed(tmp_path, monkeypatch):
+    """Resolving a link and unlinking a path are two operations.
+
+    `withdraw_link` read the link, proved its target sat inside the shared
+    skills root, and then unlinked — by path, with nothing holding the path
+    still in between. A replacement landing in that window was removed on the
+    strength of what the *previous* link pointed at, and a user's own link into
+    the same shared root is exactly the shape that cannot be told apart after
+    we stop looking. `publish_link` already closed the same window on the write
+    side by re-judging under the parent's lock; this is the removal side.
+    """
+    import autorun.installer.fs as fs
+
+    shared = tmp_path / "agents" / "skills" / "demo"
+    shared.mkdir(parents=True)
+    link = tmp_path / "dest" / "demo"
+    link.parent.mkdir(parents=True)
+    try:
+        link.symlink_to(shared)
+    except (OSError, NotImplementedError) as unsupported:
+        pytest.skip(f"this platform cannot create symlinks: {unsupported}")
+
+    theirs = tmp_path / "agents" / "skills" / "theirs"
+    theirs.mkdir()
+    real_lock = fs.FileLock
+
+    class ReplacingLock(real_lock):
+        """Stands in for the concurrent writer, between preflight and removal."""
+
+        def __enter__(self):
+            entered = super().__enter__()
+            if link.is_symlink():
+                link.unlink()
+                link.symlink_to(theirs)
+            return entered
+
+    monkeypatch.setattr(fs, "FileLock", ReplacingLock)
+
+    removed = fs.withdraw_link(link, tmp_path / "agents" / "skills", exact_target=shared)
+
+    assert removed is False, "the replacement was removed as if it were ours"
+    assert link.is_symlink() and link.resolve() == theirs.resolve()
+
+
+def test_a_kept_target_is_reported_once_per_uninstall_not_once_per_phase(
+    tmp_path, monkeypatch
+):
+    """One target, one decision, however many walks the operation takes.
+
+    Uninstall runs the selected-harness walk and then a separate retirement
+    sweep, each with its own dedup set. A target the walk *removed* is gone
+    before the sweep, so the two never collided — but a target the walk KEPT
+    because the user edited it is still there, still marked, and the sweep finds
+    it again. The user reading the report to find out what was preserved sees
+    the same path listed twice and cannot tell that from two different things
+    having been kept.
+    """
+    from collections import Counter
+
+    from autorun.installer.orchestrate import install, uninstall
+    from autorun.platforms import PLATFORMS
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    marketplace = Path(__file__).resolve().parents[3]
+    where = dict(
+        marketplace_root=marketplace,
+        plugins=("ar",),
+        harnesses=(PLATFORMS["codex"],),
+        home=tmp_path,
+        available=(),
+        state_dir=tmp_path / "state",
+    )
+
+    install(**where)
+    edited = tmp_path / ".agents" / "skills" / "commit" / "SKILL.md"
+    assert edited.is_file(), "the shared skill route did not publish"
+    edited.write_text("the user edited this\n", encoding="utf-8")
+
+    result = uninstall(**where)
+
+    repeated = {
+        target: count
+        for target, count in Counter(str(d.target) for d in result.decisions).items()
+        if count > 1
+    }
+    assert not repeated, repeated
+    assert edited.read_text(encoding="utf-8") == "the user edited this\n"
 
 
 def test_retirement_of_shared_files_keeps_the_users_directory(tmp_path, monkeypatch):

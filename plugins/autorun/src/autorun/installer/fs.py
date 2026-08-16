@@ -230,6 +230,38 @@ def _fingerprint(path: Path) -> str:
     return f"{hasher.hexdigest()}:{'x' if executable else '-'}"
 
 
+def _fingerprint_if_present(path: Path) -> str | None:
+    """:func:`_fingerprint`, or ``None`` where the file is no longer there.
+
+    Every shared-directory route hashes files in a directory the *user* also
+    writes to, and the install lock only excludes other autorun processes. An
+    ``exists()`` followed by a hash is two operations with a gap, and a
+    deletion landing in it raised ``FileNotFoundError`` out of the installer.
+    Absent is the honest answer for a file that is gone, and it is the one
+    :func:`scan_tree` already gives for an entry that vanishes mid-walk. Other
+    I/O errors still raise: only the missing file has a defined meaning here.
+    """
+    try:
+        return _fingerprint(path)
+    except FileNotFoundError:
+        return None
+
+
+def _as_published(path: Path) -> Path:
+    """A shipped source file as the shared-file route will write it.
+
+    ``publish_files`` copies content — ``copy2`` follows a symlink — so a
+    symlinked source lands as a regular file and is recorded by content, while
+    :func:`_fingerprint` records the source itself by link target. Comparing
+    those two could never agree, so a symlinked shipped file republished on
+    every install and reported PUBLISH for a directory nothing had changed.
+    Whole-tree publication keeps its links (``copytree(symlinks=True)``) and
+    ``scan_tree`` compares them as links; the routes differ because what they
+    write differs, so each is compared the way it writes.
+    """
+    return path.resolve() if path.is_symlink() else path
+
+
 def scan_tree(root: Path) -> dict[str, str]:
     """Fingerprint every file under ``root``, keyed by relative path.
 
@@ -641,8 +673,18 @@ def _resume_interrupted(target: Path) -> None:
     nothing the user can lose — a withdrawal was removing the tree deliberately,
     and a cache fill never touches an existing target — so they are only swept.
 
+    Nothing holds the target absent in the meantime. A user who recreates the
+    directory, restores it from their own backup, or lets another tool write it
+    makes the restore impossible, and sweeping the stage would then delete the
+    only remaining copy of what they had — the same loss the restore exists to
+    prevent, reached from a state it did not anticipate. That tree is parked
+    under ``~/.autorun/installer/backups/`` instead, where ``--force`` already
+    puts a tree it may not discard, and the stage still leaves the scanned
+    directory.
+
     Complexity: one ``iterdir`` of the parent per publication, which is a config
     or skills directory of tens of entries, plus the delete of what is found.
+    The park copies one tree, and only on the recreated-target path.
     """
     prefixes = tuple(f"{prefix}{target.name}-" for prefix in _STAGE_PREFIXES)
     try:
@@ -653,11 +695,26 @@ def _resume_interrupted(target: Path) -> None:
         if not stage.name.startswith(prefixes) or stage.is_symlink() or not stage.is_dir():
             continue
         previous = stage / "previous"
-        if (previous.exists() or previous.is_symlink()) and not (
-            target.exists() or target.is_symlink()
-        ):
-            os.replace(previous, target)
+        if previous.exists() or previous.is_symlink():
+            if not (target.exists() or target.is_symlink()):
+                os.replace(previous, target)
+            elif previous.is_dir() and not previous.is_symlink():
+                _park_backup(previous, _default_backup_root(), name=target.name)
         shutil.rmtree(stage, ignore_errors=True)
+
+
+def _default_backup_root() -> Path:
+    """Where a tree that cannot be put back at its target is parked.
+
+    :func:`traversal.backup_root` answers this for a walk, which carries the
+    ``Context`` owning the test seam. :func:`_resume_interrupted` runs
+    underneath every publication, including ones no walk started, so it
+    resolves the same location from the environment instead: ``AUTORUN_HOME``
+    when set — the variable the isolation contract redirects — and
+    ``~/.autorun`` otherwise.
+    """
+    root = os.environ.get("AUTORUN_HOME")
+    return (Path(root) if root else Path.home() / ".autorun") / "installer" / "backups"
 
 
 @contextmanager
@@ -934,10 +991,10 @@ def decide_files(
     ours = dict(marker.files) if owns(marker, plugin) else {}
     shipped = sorted(p.name for p in source.iterdir() if p.is_file()) if source.is_dir() else []
 
+    live = {name: _fingerprint_if_present(directory / name) for name in shipped}
     blocked = tuple(
         name for name in shipped
-        if (directory / name).exists()
-        and (name not in ours or _fingerprint(directory / name) != ours[name])
+        if live[name] is not None and (name not in ours or live[name] != ours[name])
     )
     # With backup on, a collision is not a refusal: the user's file moves aside
     # and ours lands, so everything shipped is writable.
@@ -963,9 +1020,8 @@ def decide_files(
     # reported "already current" every run. Same rule as `decide`, which
     # compares `scan_tree(source)` against the manifest.
     if not blocked and set(shipped) == set(ours) and all(
-        (directory / n).exists()
-        and _fingerprint(directory / n) == ours[n]
-        and _fingerprint(source / n) == ours[n]
+        live.get(n) == ours[n]
+        and _fingerprint_if_present(_as_published(source / n)) == ours[n]
         for n in ours
     ):
         return Decision(Verdict.SKIP, directory, "already current")
@@ -1018,9 +1074,9 @@ def publish_files(
         for candidate in sorted(p for p in source.iterdir() if p.is_file()):
             current = actual / candidate.name
             destination = staged / candidate.name
-            if current.exists() and (
-                candidate.name not in ours
-                or _fingerprint(current) != ours[candidate.name]
+            live = _fingerprint_if_present(current)
+            if live is not None and (
+                candidate.name not in ours or live != ours[candidate.name]
             ):
                 if not backup:
                     kept.append(candidate.name)
@@ -1032,9 +1088,8 @@ def publish_files(
             written[candidate.name] = _fingerprint(destination)
         # Files we published before and no longer ship stop being ours.
         for stale in set(ours) - set(written) - set(kept):
-            current = actual / stale
-            if current.exists() and _fingerprint(current) == ours[stale]:
-                (staged / stale).unlink()
+            if _fingerprint_if_present(actual / stale) == ours[stale]:
+                (staged / stale).unlink(missing_ok=True)
         atomic_write(
             staged / OWNED_MARKER_NAME,
             json.dumps(
@@ -1224,24 +1279,40 @@ def withdraw_link(
     created. Without this, every bridged link survives uninstall forever —
     ``withdrawn`` refuses symlinks by design, and the marker sweep skips them
     because markers live on directories.
+
+    The question is asked twice, as :func:`publish_link` asks its own: once to
+    skip the lock when there is nothing here of ours, and again under the
+    parent's publication lock immediately before the removal. Resolving a link
+    and then unlinking the *path* are two operations, and a replacement landing
+    between them was removed on the strength of what the previous link pointed
+    at — a user link into the same shared root is indistinguishable from ours
+    once we stop looking.
     """
-    if not target.is_symlink():
-        return False
-    try:
-        resolved = Path(os.readlink(target))
-        resolved = resolved if resolved.is_absolute() else (target.parent / resolved)
-        resolved = _strip_extended_prefix(resolved.resolve())
-        resolved.relative_to(
-            _strip_extended_prefix(inside.resolve())
-        )
-        if (
-            exact_target is not None
-            and resolved != _strip_extended_prefix(exact_target.resolve())
-        ):
+    def ours() -> bool:
+        if not target.is_symlink():
             return False
-    except (OSError, ValueError, RuntimeError):
+        try:
+            resolved = Path(os.readlink(target))
+            resolved = resolved if resolved.is_absolute() else (target.parent / resolved)
+            resolved = _strip_extended_prefix(resolved.resolve())
+            resolved.relative_to(
+                _strip_extended_prefix(inside.resolve())
+            )
+            if (
+                exact_target is not None
+                and resolved != _strip_extended_prefix(exact_target.resolve())
+            ):
+                return False
+        except (OSError, ValueError, RuntimeError):
+            return False
+        return True
+
+    if not ours():
         return False
-    target.unlink()
+    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+        if not ours():
+            return False
+        target.unlink()
     return True
 
 
@@ -1376,19 +1447,25 @@ def publish_tree(
     return decision
 
 
-def _park_backup(target: Path, backup_root: Path) -> Path:
+def _park_backup(target: Path, backup_root: Path, *, name: str = "") -> Path:
     """Copy ``target`` to ``backup_root/<name>-<stamp>`` and return the copy.
 
     Shared by the forced republish and the forced retirement of a hashless
     legacy tree. The backup is the user's to keep or discard, so it must not
     carry our marker: the retirement sweep would otherwise treat it as an
     owned tree that is "no longer shipped" and remove it.
+
+    ``name`` overrides what the copy is called for the one caller whose path
+    does not carry it: :func:`_resume_interrupted` parks a stage's ``previous``,
+    and a directory called ``previous-<stamp>`` tells its owner nothing about
+    which of their trees it is.
     """
     backup_root.mkdir(parents=True, exist_ok=True)
-    kept = backup_root / f"{target.name}-{_stamp()}"
+    stem = name or target.name
+    kept = backup_root / f"{stem}-{_stamp()}"
     counter = 1
     while kept.exists():
-        kept = backup_root / f"{target.name}-{_stamp()}.{counter}"
+        kept = backup_root / f"{stem}-{_stamp()}.{counter}"
         counter += 1
     shutil.copytree(target, kept, symlinks=True)
     (kept / OWNED_MARKER_NAME).unlink(missing_ok=True)

@@ -1021,11 +1021,17 @@ def _bootstrap_fingerprint(plugin_root: Path) -> str:
     """Identify the inputs a bootstrap's outcome depends on.
 
     A bootstrap installs ``plugin_root`` into ``sys.executable``. Given the same
-    interpreter and the same bytes it fails the same way every time, so the only
-    honest reason to retry is that one of them changed. File count, total size
-    and the newest nanosecond mtime see an edit, a checkout, or a reinstall;
-    hashing every file would claim more than this needs and is paid on a path
-    that has already failed.
+    interpreter, the same source and the same bytes it fails the same way every
+    time, so the only honest reason to retry is that one of them changed. File
+    count, total size and the newest nanosecond mtime see an edit, a checkout,
+    or a reinstall; hashing every file would claim more than this needs and is
+    paid on a path that has already failed.
+
+    The resolved root is part of the identity because the shape alone is not
+    unique. Two roots of equal weight — two empty ones exactly — produced one
+    fingerprint, so a machine carrying a broken checkout beside a good one had
+    the broken tree's failure refuse a bootstrap of the good one, quoting a
+    failure from a tree it had never tried.
 
     Complexity: one walk of ``plugin_root/src`` — about 130 files here — with a
     stat each, reached only after an import has already failed.
@@ -1050,7 +1056,7 @@ def _bootstrap_fingerprint(plugin_root: Path) -> str:
         newest = max(newest, info.st_mtime_ns)
     except OSError:
         pass
-    return f"{sys.executable}|{files}|{total}|{newest}"
+    return f"{sys.executable}|{os.path.realpath(plugin_root)}|{files}|{total}|{newest}"
 
 
 def _bootstrap_retry_wait(receipt: dict) -> float:

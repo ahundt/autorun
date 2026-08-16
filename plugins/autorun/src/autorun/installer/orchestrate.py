@@ -323,11 +323,14 @@ def perform(
                 for plugin_dir in named.values()
                 for name in skills.shippable_skills(plugin_dir)
             )
-        stale = retirements(
-            _config_roots(selected, staged),
-            () if mode is Mode.UNINSTALL else claimed,
-            plugins=named,
-        )
+        # The walk's own decisions are claimed in *every* mode. Uninstall passed
+        # nothing, on the reasoning that a removal must not let anything be
+        # spared — but a target the walk removed is gone before the sweep looks,
+        # so the only thing the empty set changed was a target the walk KEPT:
+        # still there, still marked, found again, and reported a second time. A
+        # user reading the report to learn what was preserved saw one path twice
+        # and could not tell that from two different trees having been kept.
+        stale = retirements(_config_roots(selected, staged), claimed, plugins=named)
         decisions.extend(run((), staged, mode, extra=stale))
 
         for harness in selected:

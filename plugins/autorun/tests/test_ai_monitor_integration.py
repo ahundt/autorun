@@ -749,3 +749,50 @@ class TestOptionParsingRefusesAmbiguity:
         assert session_id == "sess"
         assert config["prompt"] == "-- keep going"
         assert config["interval"] == 60
+
+
+class TestStartMonitorArgv:
+    """What `start_monitor` puts on the child's command line.
+
+    The library entry point and `parse_cli` are two halves of one contract, and
+    only the parsing half was pinned. A window the caller named has to arrive as
+    `--prompt-on-start <window>`, because the child cannot ask again.
+    """
+
+    def _argv(self, monkeypatch, **kwargs):
+        from autorun import ai_monitor
+
+        seen = {}
+
+        class Recorded:
+            def __init__(self, argv, **_):
+                seen["argv"] = argv
+                self.pid = 4242
+
+        monkeypatch.setattr(ai_monitor.sp, "Popen", Recorded)
+        monkeypatch.setattr(ai_monitor.Path, "exists", lambda self: False)
+        ai_monitor.start_monitor("sess", **kwargs)
+        return seen["argv"]
+
+    @pytest.mark.parametrize("window", [0, 1, 7])
+    def test_an_explicit_window_reaches_the_child(self, monkeypatch, window):
+        """Window 0 is a real window, and it is the falsy one.
+
+        `if start_window` dropped it twice over — out of the value list and out
+        of the enclosing condition — so a caller targeting the first window got
+        no `--prompt-on-start` at all and the monitor fell back to whichever
+        window it discovered as the minimum. Silent, and wrong precisely for the
+        window a caller is most likely to name explicitly.
+        """
+        argv = self._argv(monkeypatch, start_window=window)
+
+        assert "--prompt-on-start" in argv
+        assert argv[argv.index("--prompt-on-start") + 1] == str(window)
+
+    def test_no_window_and_no_prompt_on_start_stays_off(self, monkeypatch):
+        assert "--prompt-on-start" not in self._argv(monkeypatch)
+
+    def test_prompt_on_start_without_a_window_passes_the_bare_flag(self, monkeypatch):
+        argv = self._argv(monkeypatch, prompt_on_start=True)
+
+        assert argv[-1] == "--prompt-on-start", argv

@@ -119,9 +119,14 @@ def start_monitor(session_id, prompt="Continue working", stop_marker=None, max_c
     pid = sp.Popen([sys.executable, str(script), session_id, '--prompt', prompt,
                     '--max-retry-cycles', str(max_cycles)] +
                    # parse_cli reads the window from `--prompt-on-start [win]`; there is
-                   # no `--start` flag, so a window implies prompting on start.
-                   (['--prompt-on-start'] + ([str(start_window)] if start_window else [])
-                    if (prompt_on_start or start_window) else []) +
+                   # no `--start` flag, so a window implies prompting on start. The test
+                   # is `is not None` and not truthiness: window 0 is a real window and
+                   # the falsy one, so `if start_window` dropped exactly the window a
+                   # caller is most likely to name and fell back to the discovered
+                   # minimum without saying so.
+                   (['--prompt-on-start']
+                    + ([str(start_window)] if start_window is not None else [])
+                    if (prompt_on_start or start_window is not None) else []) +
                    (['--stop', stop_marker] if stop_marker else []),
                    stdout=sp.DEVNULL, stderr=sp.DEVNULL).pid
     return pid
