@@ -45,9 +45,9 @@ every case named below is one instance of its rule, never the rule's limit.
 Correctness before brevity, always — trimming a wrong sentence produces a shorter wrong
 sentence.
 
-1. **Survey the codebase's existing vocabulary, then applicable standards.** Structural
-   search (`search_graph`, `kit symbols`) or
-   grep the schema and CLI. Two targets: **conventions** — sign, units, naming, what `0`
+1. **Survey the codebase's existing vocabulary, then applicable standards.** Grep the
+   schema and CLI, or use a code-graph tool when the session has one (a codebase-memory MCP's
+   `search_graph`, `kit symbols`); no such tool can be assumed. Two targets: **conventions** — sign, units, naming, what `0`
    already means, since a value's meaning comes from its siblings rather than first
    principles; and **semantic duplicates**, of a parameter (`limit` beside `max_results`) and
    of a whole tool — state each job in a sentence and look for matches, the tell being a
