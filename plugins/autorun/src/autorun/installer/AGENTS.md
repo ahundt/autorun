@@ -152,6 +152,14 @@ Installer specifics:
 
 ## Checks
 
-Every module self-checks:
+Every module self-checks, from the repository root (`plugins/autorun/autorun.py`
+shadows the package if you `cd` in first):
 `uv run --project plugins/autorun python -c "from autorun.installer.fs import demo; demo()"`.
 Named tests live in `plugins/autorun/tests/test_install_*.py`.
+
+`test_install_gotchas.py::test_every_installer_module_self_check_passes` runs
+that command for each module, discovering them rather than listing them, so a
+new module's `demo()` is covered the moment it exists. Until it was added the
+claim above was unverified and `registration.demo()` had been failing for eight
+days: it asserted every `REGISTRATIONS` key was a bare harness name, which
+stopped being true when the `codex:<marketplace>` variants arrived.
