@@ -754,6 +754,22 @@ CONFIG = {
     # budget lets the eight-process reminder/concurrency path queue safely on
     # slower filesystems while remaining bounded for interactive hooks.
     "hook_state_lock_timeout_seconds": 0.5,
+    # The floor above is a *default*, not a ceiling. When the caller carries a
+    # deadline (ctx.deadline_monotonic), session_manager.state_lock_timeout()
+    # spends the time that request actually has left instead of a fixed 0.5s:
+    # a Windows runner under the full suite queued longer than the flat budget
+    # and returned SessionTimeoutError while the request still had seconds of
+    # its own dispatch window unused.
+    #
+    # Reserve: time held back from the deadline so a lock acquired at the last
+    # moment still leaves room to do the work and write the response. Without
+    # it, winning the lock and then overrunning the harness timeout is worse
+    # than failing early, because the harness discards the whole response.
+    "state_lock_response_reserve_seconds": 0.25,
+    # Ceiling: no single lock wait exceeds this however long the deadline is.
+    # A daemon request with a generous budget must not let one contended write
+    # occupy an executor thread indefinitely.
+    "state_lock_max_wait_seconds": 3.0,
     # ─── State store: which backend holds session state ───
     # "json"   — one file rewritten on every change. The original.
     # "sqlite" — one row per field. Existing JSON must first be converted with

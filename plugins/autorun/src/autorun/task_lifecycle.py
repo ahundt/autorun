@@ -58,6 +58,7 @@ from .session_manager import (
     MISSING,
     get_session_manager,
     session_state,
+    state_lock_timeout,
 )
 from .config import (
     CONFIG,
@@ -744,7 +745,6 @@ class TaskLifecycle:
 
         # Config
         self.config = config or TaskLifecycleConfig.load()
-        self._state_lock_timeout = self.config.hook_state_lock_timeout_seconds if ctx is not None else self.config.state_lock_timeout_seconds
 
         # Global key for session state (per-session isolation)
         self.global_key = f"__task_lifecycle__{self.session_id}"
@@ -755,6 +755,27 @@ class TaskLifecycle:
         )
 
     # === State Access (REUSES session_state() - DRY) ===
+
+    @property
+    def _state_lock_timeout(self) -> float:
+        """How long this operation may wait for the shared state lock.
+
+        Answered per operation, not once in ``__init__``: the deadline moves as
+        a handler spends its allowance, and a value frozen at construction is
+        the same constant advisory counters use. That is how a Pi task receipt
+        came to give up after 0.5s inside a handler still holding most of a 2s
+        budget — the write was not late, it was discarded.
+
+        Outside a hook there is no caller waiting, so the standalone budget
+        (30s) stands; ``state_lock_timeout`` owns the rule for the hook case and
+        is given this manager's own configured budget as the floor, so lowering
+        it in configuration still lowers it here.
+        """
+        if self.ctx is None:
+            return self.config.state_lock_timeout_seconds
+        return state_lock_timeout(
+            self.ctx, floor=self.config.hook_state_lock_timeout_seconds
+        )
 
     def _daemon_serialized(self):
         """Take turns with other daemon threads; a no-op for standalone use."""

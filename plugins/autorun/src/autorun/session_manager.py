@@ -35,6 +35,49 @@ DEFAULT_SESSION_TIMEOUT = 30.0
 SHARED_ACCESS_TIMEOUT = 5.0
 STATE_LOCK_POLL_INTERVAL = 0.005
 
+# Hooks must stay under strict harness budgets. Persistent session state is a
+# shared JSON file, so a hook path that knows nothing about its own deadline
+# waits only this long and skips persistence rather than timing out the session.
+HOOK_STATE_LOCK_TIMEOUT = float(_CONFIG.get("hook_state_lock_timeout_seconds", 0.5))
+STATE_LOCK_RESPONSE_RESERVE_SECONDS = float(
+    _CONFIG.get("state_lock_response_reserve_seconds", 0.25)
+)
+STATE_LOCK_MAX_WAIT_SECONDS = float(_CONFIG.get("state_lock_max_wait_seconds", 3.0))
+
+
+def state_lock_timeout(ctx=None, *, floor: float | None = None) -> float:
+    """How long this request may wait for the shared state lock.
+
+    ``config.py`` states the timeout layering — daemon dispatch < client
+    response < hook wrapper < harness. This is the rung *inside* dispatch, and
+    it knew nothing about the budget containing it: a fixed sub-second wait
+    gave up while most of the handler's allowance was still unspent, turning a
+    queue that would have cleared into a lost write. The Windows release gate
+    lost a Pi task receipt to ``after 0.5s`` inside a handler that had 2s to
+    answer in.
+
+    Where the request knows when its caller stops waiting, that deadline is the
+    budget, less the reserve that keeps the response writable. Where it does
+    not, nothing proves a longer wait affordable and the configured floor
+    stands — the same question ``message_delivery`` asks before a retry, which
+    is why the rule lives here rather than in either caller.
+
+    The ceiling is deliberately *not* the deadline. A wrapper may allow seconds
+    that a lock should never consume, and a caller blocked that long behind one
+    stuck holder has stopped serving the session it was called for.
+
+    ``floor`` lets a caller that resolved its own budget keep it. Callers with a
+    per-instance configuration would otherwise have it silently replaced by the
+    process-wide constant, so a deployment that deliberately *lowered* the hook
+    budget would find it raised again here.
+    """
+    base = HOOK_STATE_LOCK_TIMEOUT if floor is None else floor
+    deadline = getattr(ctx, "deadline_monotonic", None) if ctx is not None else None
+    if deadline is None:
+        return base
+    spare = deadline - time.monotonic() - STATE_LOCK_RESPONSE_RESERVE_SECONDS
+    return max(base, min(spare, STATE_LOCK_MAX_WAIT_SECONDS))
+
 
 class _StableFileLock(FileLock):
     """A filelock variant that keeps the lock path stable after release.

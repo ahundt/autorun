@@ -1508,6 +1508,70 @@ class TestAutorunDaemon:
         assert final["_autorun_bridge"]["tasks"][0]["status"] == "completed"
 
     @pytest.mark.asyncio
+    async def test_a_contended_snapshot_read_still_returns_a_receipt(self):
+        """Losing the lock must cost the snapshot, never the whole response.
+
+        This is the Windows release-gate failure. `_pi_task_snapshots` reads the
+        projection, the read raised `SessionTimeoutError` under contention, and
+        the exception escaped `handle_client` — so the response the extension
+        received was a generic daemon failure with no `_autorun_bridge` key at
+        all, and every one of the three Pi task tests died on `KeyError`.
+
+        The empty-list path is already the designed "unconfirmed" answer that
+        the extension reports to the model. The read has to reach it instead of
+        destroying the frame that carries it.
+        """
+        from autorun import core as _core
+        from autorun import plugins as _plugins  # noqa: F401
+        from autorun.session_manager import SessionTimeoutError
+
+        daemon = AutorunDaemon(app)
+
+        class FakeWriter:
+            def __init__(self): self.writes = []
+            def write(self, data): self.writes.append(data)
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def invoke(payload):
+            reader = Mock()
+            reader.readuntil = AsyncMock(return_value=json.dumps({
+                "session_id": "pi-task-contended",
+                "cli_type": "pi",
+                "inprocess_capabilities": ["task_operations_v1"],
+                **payload,
+            }).encode() + b"\n")
+            writer = FakeWriter()
+            await daemon.handle_client(reader, writer)
+            return json.loads(writer.writes[0])
+
+        await invoke({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "TaskCreate",
+            "tool_input": {"subject": "Contended", "description": "Lock lost"},
+            "tool_result": {"task": {"id": "contended-1"}},
+        })
+
+        def contended(ctx, task_ids):
+            raise SessionTimeoutError("Could not acquire state lock after 0.5s")
+
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(_core.AutorunDaemon, "_pi_task_snapshots", staticmethod(contended))
+            updated = await invoke({
+                "hook_event_name": "PostToolUse",
+                "tool_name": "TaskUpdate",
+                "tool_input": {"taskUpdates": [{"taskId": "contended-1", "status": "completed"}]},
+                "tool_result": {"taskUpdates": [{"taskId": "contended-1"}]},
+            })
+
+        assert "_autorun_bridge" in updated, (
+            "the receipt frame was destroyed by a read that lost a lock race; "
+            f"the extension has nothing to report. Got: {updated}"
+        )
+        assert updated["_autorun_bridge"]["task_snapshots"] == [], updated
+
+    @pytest.mark.asyncio
     async def test_pi_bulk_task_update_projects_all_snapshots_atomically(self):
         from autorun import plugins as _plugins  # noqa: F401
 

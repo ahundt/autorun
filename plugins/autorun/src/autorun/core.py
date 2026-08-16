@@ -54,9 +54,13 @@ from .session_manager import (
     SessionStateError,
     SessionTimeoutError,
     session_state,
-    # Re-exported: callers reach this as core.state_failure_is_contention, and
-    # tests patch it there, but the rule belongs beside the exceptions it reads.
+    # Re-exported: callers reach these as core.<name>, and tests patch them
+    # there, but each rule belongs beside the lock and exceptions it reads.
+    HOOK_STATE_LOCK_TIMEOUT,
+    STATE_LOCK_MAX_WAIT_SECONDS,
+    STATE_LOCK_RESPONSE_RESERVE_SECONDS,
     state_failure_is_contention,
+    state_lock_timeout,
 )
 from .config import CONFIG, HOOK_DEADLINE_PAYLOAD_KEY
 from .platforms import (
@@ -80,10 +84,6 @@ _process_start_units = ipc.process_start_units
 
 
 IDLE_TIMEOUT = 1800  # 30 minutes
-# Hooks must stay under strict harness budgets. Persistent session state is a
-# shared JSON file; advisory hook paths should skip persistence on contention
-# instead of waiting long enough to time out active sessions.
-HOOK_STATE_LOCK_TIMEOUT = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.5))
 
 # Advisory in-memory state has no durable home, so nothing else would ever
 # remove it. A daemon can serve thousands of sessions over days, and every
@@ -1888,13 +1888,33 @@ class EventContext:
         return self._agent_transcript_path
 
     def state_get(self, name: str, default=None, *, session_id: str | None = None):
-        """Read a session-scoped field through the shared daemon cache."""
+        """Read a session-scoped field through the shared daemon cache.
+
+        Contention degrades to ``default`` and is reported. A read that lost
+        the race never began, so the honest answer is the one every caller
+        already handles: the value it gets when the field is absent. Raising
+        instead took whole hooks down with it. Eight spawned processes crossed
+        one reminder boundary on Windows and the one that lost the lock exited
+        1; inside the daemon the same raise came out of a task-snapshot read
+        and replaced an entire ``PostToolUse`` response, so the Pi receipt it
+        was carrying arrived with no ``_autorun_bridge`` key at all.
+
+        Corruption is not contention and still raises. A state file that will
+        not parse has no safe default, and answering ``default`` there would
+        invent state rather than report that it cannot be read.
+        """
         store = object.__getattribute__(self, "_store")
         target_session = session_id or object.__getattribute__(self, "_session_id")
-        if store:
-            return store.get(f"{target_session}:{name}", default)
-        with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
-            return state.get(name, default)
+        try:
+            if store:
+                return store.get(f"{target_session}:{name}", default)
+            with session_state(target_session, timeout=state_lock_timeout(self)) as state:
+                return state.get(name, default)
+        except SessionStateError as exc:
+            if not state_failure_is_contention(exc):
+                raise
+            report_state_persistence_failure(self, [name], target_session, exc)
+            return default
 
     def state_set(self, name: str, value, *, session_id: str | None = None) -> StateWriteOutcome:
         """Persist a scoped field and update this request's local cache."""
@@ -1921,7 +1941,7 @@ class EventContext:
         else:
             persisted = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
             try:
-                with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
+                with session_state(target_session, timeout=state_lock_timeout(self)) as state:
                     state[name] = persisted
             except SessionStateError as exc:
                 report_state_persistence_failure(self, [name], target_session, exc)
@@ -1950,7 +1970,7 @@ class EventContext:
             if store:
                 value = store.update(f"{target_session}:{name}", updater, default)
             else:
-                with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
+                with session_state(target_session, timeout=state_lock_timeout(self)) as state:
                     current = state.get(name, default)
                     if isinstance(current, (list, dict, set)):
                         current = copy.deepcopy(current)
@@ -3027,15 +3047,31 @@ class AutorunDaemon:
                     task = ctx.tool_result.get("task")
                     if isinstance(task, dict):
                         task_ids = [str(task.get("id"))] if task.get("id") else []
-                snapshots = await asyncio.wait_for(
-                    asyncio.get_running_loop().run_in_executor(
-                        None,
-                        self._pi_task_snapshots,
-                        ctx,
-                        task_ids,
-                    ),
-                    timeout=dispatch_timeout_for_event(event),
-                )
+                # An unreadable projection means "unconfirmed", which is the
+                # empty-list path below — not the loss of the whole frame. The
+                # read raising here replaced the entire response with a generic
+                # daemon failure carrying no `_autorun_bridge` key, so the
+                # extension could not even report the receipt as unconfirmed.
+                # Only the caller can say what a failed read means; the reader
+                # itself must not decide, because a Stop gate that cannot see
+                # the tasks must never conclude there are none.
+                try:
+                    snapshots = await asyncio.wait_for(
+                        asyncio.get_running_loop().run_in_executor(
+                            None,
+                            self._pi_task_snapshots,
+                            ctx,
+                            task_ids,
+                        ),
+                        timeout=dispatch_timeout_for_event(event),
+                    )
+                except (SessionStateError, asyncio.TimeoutError) as exc:
+                    logger.warning(
+                        "Task snapshot read for %s was not available: %s",
+                        ctx.session_id,
+                        exc,
+                    )
+                    snapshots = []
                 if isinstance(task_updates, list):
                     # Bulk receipts confirm with the list shape. Unknown ids
                     # were materialized as ghosts by the handler above, so a

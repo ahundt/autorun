@@ -414,6 +414,144 @@ class TestPersistenceFailureReachesTheCaller:
         assert ctx.state_get("counter") == 1
 
 
+class TestAContendedReadDoesNotDestroyTheResponse:
+    """Losing a race for the lock must not lose the whole hook.
+
+    The Windows release gate failed on exactly this: eight spawned processes
+    crossed one reminder boundary, one lost the file lock, and
+    ``SessionTimeoutError`` came out of ``state_get`` and killed the process
+    (`ci (windows-latest, 3.13)` in run 31925817960, exit code 1 from
+    ``_process_pause_guidance_check``). In the daemon the same read raised out
+    of ``_pi_task_snapshots`` and the whole PostToolUse response was replaced
+    by a failure, so a Pi task receipt came back with no ``_autorun_bridge``
+    key at all.
+
+    A read that cannot take the lock still has the answer a caller gets when
+    the field is genuinely absent — its default — and that is what every
+    caller already handles. Contention therefore degrades and is reported.
+    Corruption does not: a broken state file has no safe default and must
+    still raise, which is what separates this from failing silently.
+    """
+
+    def _context(self, store=None, deadline=None):
+        return EventContext(
+            session_id="reader-a",
+            event="PostToolUse",
+            prompt="",
+            tool_name="Edit",
+            store=store,
+            cli_type="claude",
+            deadline_monotonic=deadline,
+        )
+
+    def test_a_contended_read_returns_the_default_instead_of_raising(
+        self, isolated_state
+    ):
+        ctx = self._context()
+
+        with failing_persistence():
+            value = ctx.state_get("tool_calls_since_task_update", 7)
+
+        assert value == 7
+        assert any(
+            "state lock" in message for message, _channel in ctx._chain_notifications
+        ), (
+            "Contention has to be reported, or a default silently stands in for "
+            f"a real value. Got: {ctx._chain_notifications}"
+        )
+
+    def test_a_corrupt_read_still_raises(self, isolated_state):
+        ctx = self._context()
+        broken = SessionBackendError("State file contains invalid JSON")
+
+        with failing_persistence(broken):
+            with pytest.raises(SessionBackendError):
+                ctx.state_get("tool_calls_since_task_update", 7)
+
+
+class TestTheLockBudgetFitsTheRequestsOwnDeadline:
+    """``config.py`` states the layering: dispatch < client < wrapper < harness.
+
+    The state lock is the rung inside dispatch, and it was a fixed 0.5s that
+    knew nothing about the budget it lived in — so an authoritative write gave
+    up while three quarters of its handler's allowance was still unspent, and
+    the task receipt was lost rather than merely late. Where the request knows
+    when its caller stops waiting, that deadline is the budget.
+    """
+
+    def test_without_a_deadline_the_configured_floor_stands(self):
+        assert core.state_lock_timeout(None) == core.HOOK_STATE_LOCK_TIMEOUT
+
+    def test_a_deadline_further_out_buys_a_longer_wait(self):
+        ctx = TestAContendedReadDoesNotDestroyTheResponse()._context(
+            deadline=time.monotonic() + 2.0
+        )
+
+        waited = core.state_lock_timeout(ctx)
+
+        assert waited > core.HOOK_STATE_LOCK_TIMEOUT
+        assert waited <= 2.0 - core.STATE_LOCK_RESPONSE_RESERVE_SECONDS
+
+    def test_an_expiring_deadline_never_drops_below_the_floor(self):
+        ctx = TestAContendedReadDoesNotDestroyTheResponse()._context(
+            deadline=time.monotonic() + 0.01
+        )
+
+        assert core.state_lock_timeout(ctx) == core.HOOK_STATE_LOCK_TIMEOUT
+
+    def test_every_direct_state_path_budgets_from_the_deadline(self, isolated_state):
+        """One owner, or the rung goes back to being three unrelated numbers."""
+        seen = []
+        ctx = TestAContendedReadDoesNotDestroyTheResponse()._context(
+            deadline=time.monotonic() + 2.0
+        )
+        real = core.session_state
+
+        @contextlib.contextmanager
+        def recording(session_id, timeout=None, **kwargs):
+            seen.append(timeout)
+            with real(session_id, timeout=timeout, **kwargs) as state:
+                yield state
+
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(core, "session_state", recording)
+            ctx.state_get("field", None)
+            ctx.state_set("field", 1)
+            ctx.state_update("field", lambda value: (value or 0) + 1, 0)
+
+        assert len(seen) == 3, seen
+        assert all(
+            budget > core.HOOK_STATE_LOCK_TIMEOUT for budget in seen
+        ), f"a direct path still used the constant instead of its deadline: {seen}"
+
+    def test_task_receipts_budget_from_the_deadline_too(self, isolated_state):
+        """The receipts are the writes that must not be lost to a lost race.
+
+        `TaskLifecycle` resolved its budget once in `__init__` from the same
+        constant advisory counters use, so a Pi task update gave up after 0.5s
+        inside a handler holding a 2s allowance and the receipt was gone. The
+        budget has to be answered per operation, because the deadline moves.
+        """
+        from autorun.task_lifecycle import TaskLifecycle
+
+        plain = TaskLifecycle(ctx=TestAContendedReadDoesNotDestroyTheResponse()._context())
+        timed = TaskLifecycle(
+            ctx=TestAContendedReadDoesNotDestroyTheResponse()._context(
+                deadline=time.monotonic() + 2.0
+            )
+        )
+
+        assert plain._state_lock_timeout == core.HOOK_STATE_LOCK_TIMEOUT
+        assert timed._state_lock_timeout > core.HOOK_STATE_LOCK_TIMEOUT
+
+    def test_a_distant_deadline_is_still_bounded(self):
+        ctx = TestAContendedReadDoesNotDestroyTheResponse()._context(
+            deadline=time.monotonic() + 3600.0
+        )
+
+        assert core.state_lock_timeout(ctx) == core.STATE_LOCK_MAX_WAIT_SECONDS
+
+
 class TestVolatileMemoryIsBounded:
     def test_advisory_values_stop_accumulating_at_the_entry_limit(self, isolated_state):
         db = ThreadSafeDB(volatile_max_entries=50)
