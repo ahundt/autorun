@@ -1320,15 +1320,7 @@ def _installer_modules_with_a_self_check() -> list[str]:
     )
 
 
-#: `orchestrate.demo()` runs a real install and uninstall, and on Windows it
-#: blocks: job 95163... showed pytest-timeout dumping two
-#: `subprocess._readerthread` stacks parked in `fh.read()`, so a spawned child
-#: never closed its pipes. Every other demo completes there. Skipped rather
-#: than guessed at, because the fix is in Windows daemon or subprocess
-#: behaviour that cannot be reproduced or verified from a POSIX machine.
-_DEMOS_THAT_HANG_ON_WINDOWS = {"orchestrate"}
-
-
+@pytest.mark.timeout(150)
 @pytest.mark.parametrize("module", _installer_modules_with_a_self_check())
 def test_every_installer_module_self_check_passes(module, request):
     """`installer/AGENTS.md` ends with "Every module self-checks" and prints the
@@ -1351,21 +1343,30 @@ def test_every_installer_module_self_check_passes(module, request):
     """
     import subprocess
 
-    if os.name == "nt" and module in _DEMOS_THAT_HANG_ON_WINDOWS:
-        pytest.skip(f"autorun.installer.{module}.demo() blocks on Windows")
-
     runtime = Path(os.environ["AUTORUN_TEST_RUNTIME_DIR"])
     home = runtime / f"demo-{module}"
     autorun_home = runtime / f"dh-{module}"
     for directory in (home, autorun_home):
         directory.mkdir(parents=True, exist_ok=True)
 
-    # Below pytest's own per-test budget, and derived from it so the two cannot
-    # drift. A demo that blocks has to fail its own test with the module named;
-    # when this was 120s against a 30s budget, pytest-timeout fired first and
-    # aborted the whole session at 40%, reporting thread stacks and no failing
-    # test — 5,000 tests went unrun because one demo hung.
-    budget = float(request.config.getini("timeout") or 30)
+    # Below this test's own per-test budget, and derived from it so the two
+    # cannot drift. When this was 120s against the suite's 30s default,
+    # pytest-timeout fired first and aborted the whole session at 40% — thread
+    # stacks, no failing test named, ~5,000 tests unrun because one demo was
+    # still working.
+    #
+    # The 150s marker above is sized from measurement, not from a guess.
+    # `orchestrate.demo()` runs a real install *and* uninstall across every
+    # harness and takes 2.07s here, ten times the next slowest of the sixteen
+    # and half their combined 4.2s. Windows does that many-small-file work an
+    # order of magnitude slower, which is what put it over the 30s default;
+    # its timeout dump showed `subprocess._readerthread` frames, which are this
+    # very `subprocess.run` reading the child, not a deadlock inside it —
+    # `orchestrate.demo()` spawns no subprocess at all.
+    marker = request.node.get_closest_marker("timeout")
+    budget = float(
+        marker.args[0] if marker and marker.args else (request.config.getini("timeout") or 30)
+    )
 
     try:
         result = subprocess.run(
