@@ -51,6 +51,23 @@ def _sid(prefix: str = "cache-test") -> str:
     return f"{prefix}-{os.getpid()}-{int(time.time() * 1e6)}"
 
 
+class _FrozenClock:
+    """Stands in for the `time` module inside `cache_guard` only.
+
+    `cache_guard` stores an absolute `expires_at = time.time() + duration` and
+    compares it against `time.time()` on read, so driving the clock tests the
+    expiry rule itself instead of the machine's speed. Substituted for
+    `cache_guard.time` rather than for `time.time` so a frozen clock cannot
+    reach the file locks and timeouts underneath `session_state`.
+    """
+
+    def __init__(self, now: float):
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+
 def _make_ctx(session_id: str, cli_type: str = "claude") -> object:
     """Build a minimal EventContext for PreToolUse without a running daemon."""
     from autorun.core import EventContext
@@ -166,13 +183,56 @@ class TestToggle:
         set_cache_enabled(sid, False)
         assert is_cache_enabled(sid) is False
 
-    def test_temporary_enable_expires(self, tmp_state_dir):
+    def test_temporary_enable_expires(self, tmp_state_dir, monkeypatch):
+        """A duration writes an absolute `expires_at`, and the read reverts to
+        `prior` once the clock passes it.
+
+        The clock is driven rather than slept through. This test used to grant
+        a 0.05s window and assert it was still open on the next line, with a
+        state-store write and a locked read in between — on a loaded
+        ubuntu-latest runner that window had already closed, and the assertion
+        failed on the expiry it was there to observe rather than on any defect.
+        A longer sleep would only move the threshold; controlling `time.time`
+        removes the race and the 0.1s sleep together.
+        """
+        from autorun import cache_guard
         from autorun.cache_guard import is_cache_enabled, set_cache_enabled
+
         sid = _sid()
+        now = 1_000_000.0
+        clock = _FrozenClock(now)
+        monkeypatch.setattr(cache_guard, "time", clock)
+
         set_cache_enabled(sid, True, duration=0.05)
-        assert is_cache_enabled(sid) is True
-        time.sleep(0.1)
+        assert is_cache_enabled(sid) is True, "still inside the window"
+
+        clock.now = now + 0.05
+        assert is_cache_enabled(sid) is False, "expiry is inclusive of its instant"
+
+        clock.now = now + 60.0
+        assert is_cache_enabled(sid) is False, "and stays reverted afterwards"
+
+    def test_a_temporary_enable_reverts_to_what_was_there_before(self, tmp_state_dir, monkeypatch):
+        """Expiry restores `prior`, which is not always "off".
+
+        The pairing test above starts from off, so a `_toggle_enabled` that
+        returned a bare `False` on expiry would pass it. This one starts from a
+        standing enable, where reverting and disabling differ.
+        """
+        from autorun import cache_guard
+        from autorun.cache_guard import is_cache_enabled, set_cache_enabled
+
+        sid = _sid("revert-to-prior")
+        now = 2_000_000.0
+        clock = _FrozenClock(now)
+        monkeypatch.setattr(cache_guard, "time", clock)
+
+        set_cache_enabled(sid, True)
+        set_cache_enabled(sid, False, duration=30.0)
         assert is_cache_enabled(sid) is False
+
+        clock.now = now + 31.0
+        assert is_cache_enabled(sid) is True, "reverts to the standing enable, not to off"
 
     def test_sessions_are_isolated(self, tmp_state_dir):
         from autorun.cache_guard import is_cache_enabled, set_cache_enabled
