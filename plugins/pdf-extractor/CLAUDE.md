@@ -26,8 +26,9 @@ extract-pdfs --list-backends
 autorun --install pdf-extractor --force
 ```
 
-Use `--claude`, `--gemini`, `--qwen`, `--antigravity`, or `--codex` to target
-one harness. Codex and ForgeCode load `$pdf-extractor` through the shared
+Use `--claude`, `--gemini`, `--qwen`, `--antigravity`, `--codex`, `--pi`, or
+`--prime` to target one harness — the full set `autorun --help` accepts. Codex,
+ForgeCode, Pi, and Prime Agent load `$pdf-extractor` through the shared
 `~/.agents/skills/pdf-extractor/` route.
 
 ### Using uv tool install (Recommended — makes extract-pdfs globally available)
@@ -93,7 +94,7 @@ ships in autorun's distribution; `--extra pdf` is what makes the backends
 importable, and without it they are all reported unavailable and still pass.
 
 ```bash
-uv run --project plugins/autorun --extra pdf --extra dev \
+uv run --project plugins/autorun --locked --extra pdf \
   pytest plugins/pdf-extractor/tests/ -v
 uv run ruff check \
   plugins/pdf-extractor/src/pdf_extraction plugins/pdf-extractor/tests

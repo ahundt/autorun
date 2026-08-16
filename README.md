@@ -682,7 +682,7 @@ uv run --project plugins/autorun python -m autorun --install --force
 # Option 2: pip fallback (if UV not available)
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e "plugins/autorun[dev]"
+python -m pip install -e plugins/autorun
 python -m autorun --install --force
 ```
 

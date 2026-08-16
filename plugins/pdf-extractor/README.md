@@ -25,11 +25,13 @@ The standalone autorun wheel embeds only the `ar` plugin's harness assets. Its
 running from a source marketplace checkout that contains both plugin trees. The
 extraction code itself is always present — see below.
 
-Target one harness with `--claude`, `--gemini`, `--qwen`, `--antigravity`, or
-`--codex`. Claude, Gemini, Qwen, and Antigravity use native per-plugin skills.
-Codex and ForgeCode load `$pdf-extractor` from the shared
-`~/.agents/skills/pdf-extractor/` route using the same ownership and upgrade
-rules as autorun's other global skills.
+Target one harness with `--claude`, `--gemini`, `--qwen`, `--antigravity`,
+`--codex`, `--pi`, or `--prime` — the same selection flags `autorun --help`
+lists, since this plugin installs through autorun's installer. Claude, Gemini,
+Qwen, and Antigravity use native per-plugin skills. Codex and ForgeCode load
+`$pdf-extractor` from the shared `~/.agents/skills/pdf-extractor/` route using
+the same ownership and upgrade rules as autorun's other global skills; Pi and
+Prime Agent read that shared route through their extension surface.
 
 ### Python CLI
 

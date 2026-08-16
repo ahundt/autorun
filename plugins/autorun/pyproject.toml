@@ -78,14 +78,12 @@ pdf-llm = ["pymupdf4llm>=0.0.1"]
 # extractors.py falls back to a no-op progress bar when tqdm is absent.
 pdf-progress = ["tqdm>=4.60.0"]
 pdf-all = ["autorun[pdf,pdf-gpu,pdf-llm,pdf-progress]"]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.0.0",
-    "pytest-mock>=3.10.0",
-    "black>=23.0.0",
-    "mypy>=1.0.0",
-]
+# There is no `dev` extra. The dev environment is `[dependency-groups].dev`
+# below, which uv includes by default in `uv run` and `uv sync`. Publishing a
+# second one drifted immediately: the extra floored pytest at 7 and shipped
+# black and mypy, while the group floors it at 8.4.2 and carries pytest-timeout
+# and pytest-xdist — so anything run with `--extra dev` had neither the timeout
+# plugin this file configures nor the xdist its addopts name.
 
 [tool.uv]
 # WARNING: Do NOT add deprecated fields here (e.g., default-extras).

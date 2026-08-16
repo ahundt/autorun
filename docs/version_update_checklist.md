@@ -221,15 +221,29 @@ test -z "$(git status --porcelain=v1)"
 # pyproject.toml — so the environment must come from the autorun project, with
 # `--extra pdf` for the backends. Running it as its own project resolves the
 # workspace root instead and collects four `ModuleNotFoundError: pdf_extraction`.
-uv run --project plugins/autorun --extra pdf --extra dev pytest plugins/pdf-extractor/tests/ -v
+uv run --project plugins/autorun --locked --extra pdf pytest plugins/pdf-extractor/tests/ -v
 (cd plugins/autorun && uv run --project . pytest tests/test_release_artifacts.py -m release -v)
 (cd plugins/autorun && AUTORUN_ENABLE_STATE_BENCHMARK=1 uv run --project . pytest tests/test_state_store_benchmark.py -m benchmark -v)
-# Reinstall this machine from the candidate before the check below. The
-# harness loads the plugin *cache*, not the source, so a fix to
-# hooks/hook_entry.py or hooks/hooks.json that never reaches the cache is
+# ─────────────────────────────────────────────────────────────────────────────
+# LIVE INSTALL BOUNDARY. Everything above this line runs against the checkout
+# and a scratch home. The next command is the one exception in this checklist:
+# it publishes the candidate to every harness detected on THIS machine and
+# restarts nothing, so every session already attached keeps its old hook until
+# it restarts. Run it only as the releasing maintainer, on your own machine,
+# when you intend that. An agent must not run it without your written
+# instruction in the current conversation naming this command — see the
+# isolation rule in AGENTS.md §1, which governs every other install here.
+#
+# It exists because the harness loads the plugin *cache*, not the source, so a
+# fix to hooks/hook_entry.py or hooks/hooks.json that never reaches the cache is
 # invisible: the live hook keeps running the previous file with nothing to say
-# so. This publishes the candidate to every detected harness.
+# so. The opt-in check below is what reads the cache, and it is meaningless
+# without this. To rehearse instead of committing, run the same command with
+# HOME, USERPROFILE, PI_CODING_AGENT_DIR, AUTORUN_HOME and
+# AUTORUN_TEST_STATE_DIR redirected to a scratch tree, as the marketplace
+# rehearsal in Stage 4 does, and skip the cache check.
 uv run --project plugins/autorun python -m autorun --install --force
+# ─────────────────────────────────────────────────────────────────────────────
 # Hook configuration is read once at session start, so a hook change takes
 # effect in the NEXT session, not this one.
 

@@ -53,7 +53,7 @@ Run the test suite for all plugins in the autorun marketplace that have tests, a
        if [ -f "pytest.ini" ] || [ -f "pyproject.toml" ]; then
          # Run pytest with verbose output
          echo "Running pytest..."
-         uv run --extra dev python -m pytest tests/ -v --tb=short
+         uv run python -m pytest tests/ -v --tb=short
 
          # Check exit code
          if [ $? -eq 0 ]; then

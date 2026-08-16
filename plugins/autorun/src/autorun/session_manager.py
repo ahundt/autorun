@@ -56,11 +56,20 @@ def state_lock_timeout(ctx=None, *, floor: float | None = None) -> float:
     lost a Pi task receipt to ``after 0.5s`` inside a handler that had 2s to
     answer in.
 
-    Where the request knows when its caller stops waiting, that deadline is the
-    budget, less the reserve that keeps the response writable. Where it does
-    not, nothing proves a longer wait affordable and the configured floor
-    stands — the same question ``message_delivery`` asks before a retry, which
-    is why the rule lives here rather than in either caller.
+    Where the request knows when its caller stops waiting, that deadline
+    *widens* the budget, less the reserve that keeps the response writable.
+    Where it does not, nothing proves a longer wait affordable and the
+    configured floor stands — the same question ``message_delivery`` asks
+    before a retry, which is why the rule lives here rather than in either
+    caller.
+
+    The floor outranks the deadline, and deliberately. A request whose deadline
+    has passed, or is nearer than the reserve, still waits the floor and so
+    overruns: the response is already too late to deliver, but the *write* is
+    not, and returning zero would drop it. That is the lost task receipt this
+    plumbing was added to stop, on the one path — a contended lock — where a
+    late request is most likely to arrive. The overrun is bounded by the floor
+    and the outer dispatcher cancels the work regardless.
 
     The ceiling is deliberately *not* the deadline. A wrapper may allow seconds
     that a lock should never consume, and a caller blocked that long behind one

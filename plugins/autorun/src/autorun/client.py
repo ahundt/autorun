@@ -109,6 +109,14 @@ def daemon_response_timeout_for_cli(cli_type: str) -> float:
 #: not exactly when it does.
 CLIENT_BUDGET_MARGIN_SECONDS = 0.2
 
+#: The shortest budget worth handing to an attempt. A warm daemon answers over
+#: its socket in about a millisecond, so anything above zero is worth spending;
+#: what is not worth having is a deadline already past, which `forward()` reads
+#: as "budget exhausted" and turns into a startup failure it never tested for.
+#: Both the deadline floor and `forward()`'s read timeout use this, so the two
+#: cannot drift into disagreeing about whether one attempt fits.
+MINIMUM_ATTEMPT_SECONDS = 0.05
+
 
 def client_total_budget(cli_type: str) -> float:
     """Total wall-clock the client may spend, cold start and response together.
@@ -183,6 +191,12 @@ def client_deadline(cli_type: str) -> float:
     unparseable, already past, or improbably far ahead falls back to the local
     budget: a stale variable inherited from an unrelated process must not make
     every hook fail instantly.
+
+    A deadline nearer than the margin is the remaining case, and subtracting
+    the margin from it put the answer in the past. ``forward()`` opens by
+    raising on a non-positive remainder, so the client gave up without opening
+    a socket and blamed a daemon it never contacted — with tenths of a second
+    still to ask in. Floored, that request gets its one attempt.
     """
     local = time.monotonic() + client_total_budget(cli_type)
     raw = os.environ.get(DEADLINE_ENV_VAR)
@@ -195,7 +209,10 @@ def client_deadline(cli_type: str) -> float:
     remaining = supplied - time.monotonic()
     if remaining <= 0 or remaining > _MAX_PLAUSIBLE_WRAPPER_SECONDS:
         return local
-    return supplied - CLIENT_BUDGET_MARGIN_SECONDS
+    return max(
+        supplied - CLIENT_BUDGET_MARGIN_SECONDS,
+        time.monotonic() + MINIMUM_ATTEMPT_SECONDS,
+    )
 
 
 #: Any wrapper budget beyond this is a stale or foreign value, not ours. Owned
@@ -538,7 +555,7 @@ def run_client() -> int:
                     # wrapper timeout.
                     timeout=min(
                         daemon_response_timeout_for_cli(cli_type),
-                        max(deadline - time.monotonic(), 0.05),
+                        max(deadline - time.monotonic(), MINIMUM_ATTEMPT_SECONDS),
                     ),
                 )
                 resp_text = resp.decode().strip()

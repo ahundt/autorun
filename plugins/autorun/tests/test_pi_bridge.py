@@ -337,6 +337,65 @@ console.log(JSON.stringify({ prose, command, notices }));
     )
 
 
+def test_one_typed_command_dispatches_once_even_if_pi_emits_both_events(tmp_path):
+    """Two claim paths, one command: at most one of them may act.
+
+    The extension both registers an ``ar`` command and watches raw input, so a
+    reasonable worry is that Pi delivers a registered command to the handler
+    *and* to the input hook, running one control command twice — two daemon
+    frames, two notices, and for a mutating command two state changes.
+
+    It cannot, and the reason is the separator rather than anything Pi does.
+    ``registerCommand("ar")`` claims the space-separated spelling `/ar st`,
+    while the input guard's `^\\/?ar[:\\-]` requires `:` or `-` immediately
+    after `ar`, which that spelling never has. The colon spelling `/ar:st` is
+    the mirror image: no command named `ar:st` is registered, so only the input
+    hook sees it. Feeding *both* paths both spellings is what makes that
+    independent of which events Pi chooses to emit — the property holds even
+    under the worst assumption about the host.
+    """
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        # One staged response, because one dispatch is the claim. The driver
+        # fails if the adapter asks for a second, which is the assertion.
+        [{"systemMessage": "status", "_autorun_bridge": {"starts_agent_turn": False}}],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map();
+const commands = new Map();
+const notices = [];
+const pi = {
+  registerCommand(name, value) { commands.set(name, value); },
+  registerTool() {}, on(name, handler) { handlers.set(name, handler); },
+  sendMessage() {}, sendUserMessage() {},
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "interactive",
+  isIdle: () => true, hasPendingMessages: () => false,
+  ui: { notify(message, level) { notices.push({ message, level }); } },
+  sessionManager: { getSessionId: () => "pi-session", getSessionFile: () => undefined },
+};
+// The slash spelling Pi routes to the registered command, offered to both.
+const spaced = await handlers.get("input")({ text: "/ar st" }, ctx);
+// The colon spelling, offered to both: no `ar:st` command exists to run.
+const colon = await handlers.get("input")({ text: "/ar:st" }, ctx);
+console.log(JSON.stringify({
+  spaced, colon, notices, registered: [...commands.keys()],
+}));
+''',
+    )
+
+    assert result["registered"] == ["ar"], result["registered"]
+    assert result["spaced"]["action"] == "continue", (
+        "the input hook also claimed the spelling registerCommand owns, so a "
+        f"single /ar st would run twice: {result['spaced']}"
+    )
+    assert result["colon"]["action"] == "handled", result["colon"]
+    assert len(result["notices"]) == 1, f"one command, two notices: {result['notices']}"
+    commands_sent = [f for f in frames if f.get("hook_event_name") == "UserPromptSubmit"]
+    assert len(commands_sent) == 1, f"one command reached the daemon twice: {commands_sent}"
+
+
 def _tool_call_driver(command: str) -> str:
     """Drive one ``tool_call`` callback through the staged adapter."""
     return '''import extension from "__EXTENSION__";

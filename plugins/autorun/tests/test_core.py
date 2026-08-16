@@ -335,6 +335,40 @@ class TestThreadSafeDB:
         assert HOOK_STATE_LOCK_TIMEOUT == CONFIG["hook_state_lock_timeout_seconds"]
         assert HOOK_STATE_LOCK_TIMEOUT < 1.0
 
+    def test_the_lock_wait_floor_holds_even_past_a_request_deadline(self):
+        """A late request still gets its one short attempt at persisting.
+
+        `state_lock_timeout` widens the wait toward a known deadline, and the
+        floor survives that: with 0.1 seconds spare, or none, or a deadline
+        already gone, the answer is still the configured floor rather than
+        zero. That overruns the request, and it is the deliberate choice —
+        the response is already too late to deliver, but the *write* is not,
+        and giving up on it re-creates the lost task receipt the deadline
+        plumbing was added to stop. Contention is exactly when a late request
+        arrives, so this is the path that matters most.
+
+        Pinned because the docstring's "that deadline is the budget" reads as
+        a cap, and nothing here said the floor outranks it.
+        """
+        import time
+
+        from autorun.session_manager import (
+            STATE_LOCK_MAX_WAIT_SECONDS,
+            state_lock_timeout,
+        )
+
+        class Request:
+            def __init__(self, spare):
+                self.deadline_monotonic = time.monotonic() + spare
+
+        for spare in (0.3, 0.1, 0.0, -1.0):
+            assert state_lock_timeout(Request(spare)) == HOOK_STATE_LOCK_TIMEOUT, spare
+
+        # A deadline with room to spare still widens the wait, and the ceiling
+        # is the ceiling: a wrapper may allow seconds a lock must never take.
+        assert state_lock_timeout(Request(2.0)) > HOOK_STATE_LOCK_TIMEOUT
+        assert state_lock_timeout(Request(600.0)) == STATE_LOCK_MAX_WAIT_SECONDS
+
     def test_dispatch_timeouts_come_from_config(self):
         """Daemon handler budgets must fit inside hook client timeouts."""
         from autorun import CONFIG

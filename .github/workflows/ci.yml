@@ -48,7 +48,7 @@ jobs:
 
       - name: Verify Python version
         run: |
-          uv run --project plugins/autorun python --version
+          uv run --project plugins/autorun --locked python --version
           echo "Expected: Python ${{ matrix.python-version }}"
 
       - name: Install dependencies
@@ -95,7 +95,7 @@ jobs:
         # seven-platform matrix does not pay instrumentation cost seven times.
         working-directory: plugins/autorun
         run: >-
-          uv run --project . pytest tests/
+          uv run --project . --locked pytest tests/
           -m "not tmux and not e2e and not release"
           --tb=short -v
           --junitxml=${{ github.workspace }}/test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
@@ -150,9 +150,14 @@ jobs:
         # autorun distribution, so the environment comes from that project.
         # `--extra pdf` is what makes the backends importable — without it the
         # suite would pass against a package that has no extraction library
-        # installed at all.
+        # installed at all. `--locked` because the sync above committed this job
+        # to the checked-in graph, and a `uv run` without it may quietly resolve
+        # a different one the moment metadata and lock diverge. The dev tooling
+        # comes from the `dev` dependency-group, which uv includes by default —
+        # naming an extra here gave this step pytest without the timeout and
+        # xdist plugins pyproject.toml configures.
         run: >-
-          uv run --project plugins/autorun --extra pdf --extra dev
+          uv run --project plugins/autorun --locked --extra pdf
           pytest plugins/pdf-extractor/tests/ --tb=short -v
 
   coverage:
@@ -176,7 +181,7 @@ jobs:
       - name: Enforce source coverage
         working-directory: plugins/autorun
         run: >-
-          uv run --project . pytest tests/
+          uv run --project . --locked pytest tests/
           -m "not tmux and not e2e and not release"
           --tb=short
           --cov=src/autorun
@@ -201,7 +206,7 @@ jobs:
       - name: Build twice and verify artifact lifecycles
         working-directory: plugins/autorun
         run: >-
-          uv run --project . pytest tests/test_release_artifacts.py
+          uv run --project . --locked pytest tests/test_release_artifacts.py
           -m release --tb=short -v
 
   tmux-integration:
@@ -225,7 +230,7 @@ jobs:
       - name: Run tests against a private tmux server
         working-directory: plugins/autorun
         run: >-
-          uv run --project . pytest tests/
+          uv run --project . --locked pytest tests/
           -m tmux --tb=short -v
 
   state-benchmark:
@@ -248,5 +253,5 @@ jobs:
         env:
           AUTORUN_ENABLE_STATE_BENCHMARK: "1"
         run: >-
-          uv run --project . pytest tests/test_state_store_benchmark.py
+          uv run --project . --locked pytest tests/test_state_store_benchmark.py
           -m benchmark --tb=short -v

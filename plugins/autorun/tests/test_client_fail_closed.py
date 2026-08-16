@@ -172,6 +172,40 @@ def test_the_client_deadline_comes_from_the_wrapper_when_it_supplies_one(monkeyp
     assert client_deadline("claude") > _time.monotonic()
 
 
+def test_a_deadline_squeezed_below_the_margin_still_buys_one_attempt(monkeypatch):
+    """Subtracting the margin must not hand back an instant already past.
+
+    The margin is slack for the client to write its own response, and it was
+    subtracted unconditionally. A wrapper deadline closer than the margin —
+    a slow cold start, a `uv run` resolve on Windows — therefore produced a
+    deadline in the past, and `forward()` opens with `if remaining <= 0: raise`.
+    So the client gave up *without opening a socket* and reported "Daemon failed
+    to start after budget exhausted", which is not what happened: a warm daemon
+    answers over a unix socket in about a millisecond, and there were still
+    tenths of a second left to ask it in.
+
+    The floor is the one `forward()` already uses for its own read timeout, so
+    the two agree instead of one guaranteeing the other can never run.
+    """
+    import time as _time
+
+    from autorun.client import (
+        DEADLINE_ENV_VAR,
+        MINIMUM_ATTEMPT_SECONDS,
+        client_deadline,
+    )
+
+    for remaining in (0.19, 0.1, 0.01):
+        monkeypatch.setenv(DEADLINE_ENV_VAR, repr(_time.monotonic() + remaining))
+        deadline = client_deadline("claude")
+
+        assert deadline > _time.monotonic(), (
+            f"{remaining}s left produced an expired deadline; the client would "
+            f"report a startup failure without ever connecting"
+        )
+        assert deadline <= _time.monotonic() + MINIMUM_ATTEMPT_SECONDS + 0.05
+
+
 def test_the_wrapper_and_the_client_agree_on_the_deadline_variable():
     """One name, spelled in a stdlib-only hook and in the package."""
     import importlib.util

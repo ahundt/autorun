@@ -727,6 +727,129 @@ def test_pdf_extraction_backends_are_all_optional():
     )
 
 
+def test_a_prerelease_note_pins_the_version_it_tells_readers_to_install():
+    """`uv tool install autorun` cannot install a prerelease.
+
+    pip and uv both exclude prereleases from an unqualified requirement, so the
+    RC note's own command installs nothing while the project is RC-only, and
+    installs the *stable* release the moment one exists — in both cases leaving
+    the reader believing they are running the candidate the note describes. A
+    version that says `rc`, `a` or `b` has to carry the pin into every install
+    line the note prints.
+    """
+    version = tomllib.loads(
+        (REPO_ROOT / "plugins" / "autorun" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )["project"]["version"]
+
+    for note in sorted((REPO_ROOT / "docs" / "releases").glob("*.md")):
+        released = note.stem
+        if not re.search(r"(rc|a|b)\d+$", released):
+            continue
+        # Only fenced commands: prose may name the unpinned form to warn about it.
+        unpinned, inside_fence = [], False
+        for line in note.read_text(encoding="utf-8").splitlines():
+            if line.startswith("```"):
+                inside_fence = not inside_fence
+                continue
+            if (
+                inside_fence
+                and "uv tool install" in line
+                and not line.lstrip().startswith("#")
+                and released not in line
+            ):
+                unpinned.append(line.strip())
+        assert not unpinned, (
+            f"docs/releases/{note.name} installs without the {released} pin, so "
+            f"the reader gets a different version than the note describes: {unpinned}"
+        )
+        if released == version:
+            assert "--version" in note.read_text(encoding="utf-8"), (
+                f"docs/releases/{note.name} never tells the reader how to check "
+                f"which version answered"
+            )
+
+
+def test_the_pdf_plugin_guides_name_every_harness_flag_the_cli_accepts():
+    """A per-plugin guide that lists *some* target flags reads as the whole set.
+
+    Both PDF guides listed `--claude`, `--gemini`, `--qwen`, `--antigravity`
+    and `--codex` and stopped, so a Pi or Prime Agent user reading the guide for
+    the plugin they want concluded their harness was unsupported — while
+    `autorun --help` had accepted `--pi` and `--prime` since the Pi family
+    landed. Deriving the expected set from the parser is what keeps this true
+    the next time a harness is added, rather than true on the day it was
+    written.
+    """
+    from autorun.__main__ import create_parser
+
+    selection = {
+        option
+        for action in create_parser()._actions
+        for option in action.option_strings
+        if isinstance(action.help, str) and action.help.startswith("Install for")
+    }
+    assert {"--pi", "--prime", "--claude"} <= selection, selection
+
+    for guide in ("README.md", "CLAUDE.md"):
+        text = (REPO_ROOT / "plugins" / "pdf-extractor" / guide).read_text(
+            encoding="utf-8"
+        )
+        missing = sorted(flag for flag in selection if flag not in text)
+        assert not missing, f"plugins/pdf-extractor/{guide} omits {missing}"
+
+
+def test_every_ci_environment_is_the_locked_one():
+    """A `uv run` without `--locked` may re-resolve, and CI would not notice.
+
+    The matrix opens with `uv sync --locked`, which is the whole point of
+    committing `uv.lock`: the release is tested against the graph it ships. A
+    later `uv run` in the same job that omits the flag is allowed to resolve
+    something else the moment metadata and lock diverge, so a stale or
+    release-platform-incompatible lock passes CI green. The step exists to test
+    the PDF backends, and the backends are exactly where the graph is widest.
+    """
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    unlocked = [
+        line.strip()
+        for line in workflow.splitlines()
+        if "uv run" in line
+        and not line.lstrip().startswith("#")
+        and "--locked" not in line
+        and "--frozen" not in line
+    ]
+
+    assert not unlocked, f"CI resolves outside the committed lock: {unlocked}"
+
+
+def test_the_dev_environment_has_one_definition():
+    """`uv sync --dev` and `autorun[dev]` must not be two different rooms.
+
+    Both were declared, and they disagreed: the published extra floored pytest
+    at 7 and carried black and mypy, while the dependency group floored it at
+    8.4.2 and carried pytest-timeout and pytest-xdist. Anything invoked with
+    `--extra dev` therefore ran without the timeout plugin that `pyproject.toml`
+    configures a global `timeout = 30` for, and without the xdist the suite's
+    `--dist=loadgroup` addopts names. The group is what CI syncs and what the
+    tooling settings are written against, so it is the definition; a second
+    public one can only drift.
+    """
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "plugins" / "autorun" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert "dev" not in pyproject["project"].get("optional-dependencies", {}), (
+        "a public `dev` extra is a second definition of the dev environment"
+    )
+    group = " ".join(pyproject["dependency-groups"]["dev"])
+    assert "pytest-timeout" in group and "pytest-xdist" in group, group
+
+
 def test_pdf_extractor_installs_from_wheels_on_python_314():
     """The optional CPU graph must retain Python 3.14 wheel coverage.
 
