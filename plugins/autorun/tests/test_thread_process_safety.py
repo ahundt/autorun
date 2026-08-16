@@ -107,17 +107,33 @@ def test_shared_access_safety():
     assert all(r["exclusive_worker"] == 1 for r in shared_results)
 
 
+# How long the holder keeps the state lock once it has it.
+LOCK_HOLD_SECONDS = 0.6
+# Must expire while the holder still owns the lock — that is the assertion.
+SHORT_BUDGET_SECONDS = 0.1
+# "Waits as long as it takes." The assertion is that a patient waiter gets the
+# lock, not that it gets it quickly, so this is not sized against the hold time.
+# It was 1.0s behind an 0.8s sleep, which made the test a race between the
+# runner and the clock: on Windows CI (run 31977067081) the holder had not
+# released within 1.8s under eight-worker load, and a test about lock budgets
+# failed on machine speed.
+PATIENT_BUDGET_SECONDS = 30.0
+
+
 def test_lock_timeout_behavior():
     """A short-timeout waiter fails while another thread owns the state lock."""
     from autorun import session_state
 
     session_id = _session_id("timeout")
     results = []
+    # The holder must be holding before the others try, or the test is about
+    # thread start order rather than about lock budgets.
+    holder_has_lock = threading.Event()
 
     def quick_worker():
         try:
-            time.sleep(0.8)
-            with session_state(session_id, timeout=1.0) as state:
+            holder_has_lock.wait(timeout=PATIENT_BUDGET_SECONDS)
+            with session_state(session_id, timeout=PATIENT_BUDGET_SECONDS) as state:
                 state["quick_worker"] = "success"
                 results.append("quick_success")
         except Exception as e:
@@ -125,17 +141,18 @@ def test_lock_timeout_behavior():
 
     def blocking_worker():
         try:
-            with session_state(session_id, timeout=1.0) as state:
+            with session_state(session_id, timeout=PATIENT_BUDGET_SECONDS) as state:
                 state["blocking_worker"] = "holding"
-                time.sleep(0.6)
+                holder_has_lock.set()
+                time.sleep(LOCK_HOLD_SECONDS)
                 results.append("blocking_success")
         except Exception as e:
             results.append(f"blocking_error: {e}")
 
     def timeout_worker():
         try:
-            time.sleep(0.05)
-            with session_state(session_id, timeout=0.1) as state:
+            holder_has_lock.wait(timeout=PATIENT_BUDGET_SECONDS)
+            with session_state(session_id, timeout=SHORT_BUDGET_SECONDS) as state:
                 state["timeout_worker"] = "should_not_reach"
                 results.append("timeout_success")
         except Exception as e:
