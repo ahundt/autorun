@@ -75,6 +75,13 @@ jobs:
         # Style and other issues reported but do not fail CI
         run: uvx ruff check --exit-zero .
 
+      - name: Record suite start
+        # A separate step because each `run:` gets its own shell, so $SECONDS
+        # inside the reporting step below would measure that step, not the
+        # tests. $GITHUB_ENV is the only value that survives between steps.
+        shell: bash
+        run: echo "SUITE_START=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Run unit tests
         # Run from plugins/autorun/ so pytest discovers plugins/autorun/pyproject.toml
         # for asyncio_mode, markers, timeout config (not the workspace root pyproject.toml).
@@ -92,6 +99,38 @@ jobs:
           -m "not tmux and not e2e and not release"
           --tb=short -v
           --junitxml=${{ github.workspace }}/test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
+
+      - name: Report suite wall time against its ceiling
+        # Always runs, so a failing suite still reports how long it took.
+        #
+        # The ceiling is deliberately loose. Hosted runners vary by more than a
+        # factor of two between runs, so a tight budget would fail builds for
+        # weather rather than for a regression -- the same flakiness this gate
+        # is meant to catch. What it does catch is the shape that actually hurt:
+        # the Windows job in run 31925817960 ran 25:35 before failing, and
+        # nothing flagged the duration itself.
+        #
+        # Local reference on an idle 16-core macOS machine: 6,111 tests in
+        # ~4m30s serial. Windows gets a larger ceiling because its process
+        # spawn and uv resolution are materially slower, and that is expected
+        # rather than a defect.
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          elapsed=$(( $(date +%s) - SUITE_START ))
+          case "${{ matrix.os }}" in
+            windows-latest) ceiling=1500 ;;
+            macos-latest)   ceiling=900  ;;
+            *)              ceiling=900  ;;
+          esac
+          printf '### Suite wall time\n\n%s on %s: **%ds** (ceiling %ds)\n' \
+            "py${{ matrix.python-version }}" "${{ matrix.os }}" \
+            "$elapsed" "$ceiling" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$elapsed" -gt "$ceiling" ]; then
+            echo "::error::suite took ${elapsed}s, past the ${ceiling}s ceiling for ${{ matrix.os }}. Profile with --durations=45 --durations-min=0.5 and see notes/2026-08-16-test-suite-profile.md before raising this number."
+            exit 1
+          fi
 
       - name: Publish test results
         # dorny/test-reporter: 1.1k stars, updated 2026, pure Node.js (no Docker).
