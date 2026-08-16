@@ -1055,7 +1055,31 @@ def act0_scripted(plugin_root: Path) -> None:
     banner()
     pause(1.5)
     type_cmd("autorun --status")
-    result = subprocess.run(["autorun", "--status"], capture_output=True, text=True)
+    # Run the status of *this* checkout against a scratch HOME, not the
+    # globally installed `autorun` against the developer's real one.
+    #
+    # `--status` fingerprints every installed tree under the harness config
+    # directories, so pointed at a live machine it hashed all of ~/.claude,
+    # ~/.agents, ~/.codex and ~/.gemini: 15.9s of this test's 18.0s, the
+    # largest single item in the whole suite. It also had no timeout and read
+    # live installation state from a test that is meant to be free, offline
+    # and isolated -- redirecting AUTORUN_HOME alone did not prevent that,
+    # because the harness roots hang off HOME.
+    #
+    # A scratch HOME has nothing installed, so status reports nothing and the
+    # fallback branch below prints the demo's canned summary. That is the
+    # right output here: this act demonstrates what autorun tells you, not
+    # what happens to be installed on the machine running the tests.
+    try:
+        with tempfile.TemporaryDirectory(prefix="ar-demo-home-") as scratch_home:
+            result = subprocess.run(
+                [sys.executable, "-m", "autorun", "--status"],
+                capture_output=True, text=True, timeout=30,
+                env={**_isolated_daemon_env(), "HOME": scratch_home,
+                     "USERPROFILE": scratch_home},
+            )
+    except (subprocess.SubprocessError, OSError):
+        result = subprocess.CompletedProcess([], 1, "", "")
     if result.returncode == 0 and result.stdout.strip():
         for line in result.stdout.splitlines():
             print(f"  {line}")

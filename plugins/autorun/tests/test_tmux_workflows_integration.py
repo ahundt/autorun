@@ -116,7 +116,6 @@ class TestSessionAutomationWorkflows:
         for cmd in health_commands:
             assert tmux.send_keys(cmd, session_name)
             assert tmux.send_keys('C-m', session_name)
-            time.sleep(0.1)  # Small delay for command execution
 
         # Phase 4: Process Execution
         process_commands = [
@@ -128,8 +127,9 @@ class TestSessionAutomationWorkflows:
         for cmd in process_commands:
             assert tmux.send_keys(cmd, session_name)
             assert tmux.send_keys('C-m', session_name)
-            if 'sleep' in cmd:
-                time.sleep(1.2)  # Wait for sleep command
+            # No sleep here: Phase 5 polls for 'Process execution completed'
+            # with its own deadline, so a fixed 1.2s wait was either redundant
+            # on an idle machine or too short on a loaded one.
 
         # Phase 5: Output Capture and Validation
         output = _wait_for_pane_text(tmux, session_name, 'Process execution completed')
@@ -255,7 +255,10 @@ class TestSessionAutomationWorkflows:
         for cmd in setup_commands:
             tmux.send_keys(cmd, session_name)
             tmux.send_keys('C-m', session_name)
-            time.sleep(0.1)
+        # Wait for the last command to land rather than sleeping per command:
+        # the shell echoes it when it has actually run, which is the condition
+        # the following snapshot depends on.
+        _wait_for_pane_text(tmux, session_name, 'Session configured')
 
         # Simulate backup operation
         backup_data = {
@@ -322,7 +325,6 @@ class TestCLITestingWorkflows:
                 # Send command to tmux session
                 assert tmux.send_keys(f'{cli}', test_session)
                 assert tmux.send_keys('C-m', test_session)
-                time.sleep(0.1)  # Small delay for execution
 
         # Verify session received commands by checking it's still responsive
         info = tmux.get_session_info()
@@ -706,16 +708,16 @@ class TestCrossSystemIntegration:
             assert tmux.send_keys(env_op, session_name)
             assert tmux.send_keys('C-m', session_name)
 
-        # Wait for commands to execute
-        time.sleep(0.5)
+        # Prove the exports actually ran instead of sleeping and then asserting
+        # that two calls returned non-None, which was true whether or not a
+        # single keystroke had been delivered.
+        assert tmux.send_keys('echo "env-check:$NUMBER:$BOOLEAN"', session_name)
+        assert tmux.send_keys('C-m', session_name)
+        output = _wait_for_pane_text(tmux, session_name, 'env-check:42:true')
+        assert 'env-check:42:true' in output, output
 
-        # Verify session is still responsive
         info = tmux.get_session_info()
         assert info is not None
-
-        # Capture pane output to verify commands were sent
-        capture_result = tmux.execute_tmux_command(['capture-pane', '-p'], session_name)
-        assert capture_result is not None
 
         # Cleanup
         tmux.execute_tmux_command(['kill-session', '-t', session_name])
