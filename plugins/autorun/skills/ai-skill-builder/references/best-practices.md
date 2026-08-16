@@ -344,13 +344,15 @@ Result: [Outcome achieved]
 ### Antipattern 5: The Untested Skill
 **Problem**: Publishing without validation
 
-**Solution**: Test before releasing
+**Solution**: Test before releasing, in the order SKILL.md's Step 4 gives
 ```
 1. Triggering tests
 2. Functional tests
 3. Performance tests
-4. User feedback
+4. Compatibility tests (every named host and version)
+5. Forward tests (realistic positive, negative, ambiguous, and adversarial prompts)
 ```
+Then collect user feedback.
 
 ### Antipattern 6: The Unmeasured Rewrite
 **Problem**: A revision adds material and no task outcome improves

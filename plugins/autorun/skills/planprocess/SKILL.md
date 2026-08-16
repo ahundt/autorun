@@ -1,7 +1,6 @@
 ---
 name: planprocess
 description: Use when the user asks to "execute the plan", "run the plan", "/ar:planprocess", or "/ar:pp". Executes an approved plan step by step with the wait process, task tracking, and verification before each completion claim.
-aliases: [pp]
 argument-hint: "[task description]"
 ---
 

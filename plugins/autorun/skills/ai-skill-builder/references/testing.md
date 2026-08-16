@@ -22,7 +22,7 @@ Start manual for concept validation, add scripted for automation, build programm
 
 ---
 
-## Phase 1: Triggering Tests
+## Test type 1: Triggering Tests
 
 **Goal**: Confirm Claude activates the skill when it should and ignores it when it shouldn't.
 
@@ -78,7 +78,7 @@ Test T6: Completely unrelated
 
 ---
 
-## Phase 2: Functional Tests
+## Test type 2: Functional Tests
 
 **Goal**: Validate the skill's core workflow produces correct, complete output for known inputs.
 
@@ -155,7 +155,7 @@ Test F3: Invalid OpenAPI spec
 
 ---
 
-## Phase 3: Performance Tests
+## Test type 3: Performance Tests
 
 **Goal**: Measure whether the skill provides concrete value compared to the manual baseline.
 
@@ -216,7 +216,7 @@ A number without those four is not checkable.
 
 ---
 
-## Phase 4: Compatibility Tests
+## Test type 4: Compatibility Tests
 
 **Goal**: Prove the skill works on every host and version it names (SKILL-REQ009). Passing one
 parser is not proof.
@@ -237,7 +237,7 @@ For each named host, in a clean session:
 
 ---
 
-## Phase 5: Forward Tests
+## Test type 5: Forward Tests
 
 **Goal**: Judge task outcome on realistic prompts, not whether the skill appeared in a list
 (SKILL-REQ012).

@@ -1,7 +1,6 @@
 ---
 name: philosophy
-description: Use when the user asks for the "system design philosophy", "design principles", "/ar:philosophy", or "/ar:ph", and before major feature work, an architecture decision, or a pull-request review. Lists the 17 universal system design principles, ordered from most fundamental to most specific, each with the concrete example that makes it checkable.
-aliases: [ph]
+description: Use when the user asks for the "system design philosophy", "design principles", "/ar:philosophy", or "/ar:ph", and before major feature work, an architecture decision, or a pull-request review. Lists the 17 universal system design principles, ordered from most fundamental to most specific, with concrete examples where a principle is easy to misread.
 ---
 
 # Universal System Design Philosophy
@@ -23,7 +22,8 @@ These are ordered from most fundamental to most specific:
 
 2. **Modernize Systems Automatically**: Transform legacy configurations into
    modern, reproducible environments. We find the newest compatible versions
-   that work together, not the oldest. We're upgrading, not downgrading.
+   that work together, not the oldest. We're upgrading, not downgrading — within
+   the constraints the user has stated (principle 12 wins when they conflict).
 
 3. **Easy to Use Correctly, Hard to Use Incorrectly**: Design systems and APIs that
    guide users toward success. Minimal parameters, smart defaults.

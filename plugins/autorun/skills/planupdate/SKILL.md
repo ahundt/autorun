@@ -1,7 +1,6 @@
 ---
 name: planupdate
 description: Use when the user asks to "update the plan", "sync the plan with the code", "/ar:planupdate", or "/ar:pu". Reconciles an existing plan with the current codebase and marks what already shipped.
-aliases: [pu]
 argument-hint: [plan file]
 ---
 

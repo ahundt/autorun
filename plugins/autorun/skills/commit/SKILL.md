@@ -1,7 +1,6 @@
 ---
 name: commit
 description: Use before writing any git commit message or reviewing one, and when the user asks for "commit requirements", "commit message guidelines", "/ar:commit", or "/ar:gc". Carries the 17-step pre-commit analysis, the concrete-subject rules that ban vague verbs and session-internal jargon, and the checks that keep a message reviewable from the repository alone.
-aliases: [gc]
 ---
 
 # Git Commit Requirements
@@ -41,7 +40,7 @@ Before writing commit message, review `git diff --staged` to ensure:
 - No assumptions about previous behavior - only describe what the diff shows changed
 - Subject line accurately reflects the files and scope of actual changes
 - All described functionality changes match what's visible in the code diff
-- **If regressions found**: Create task using TodoWrite and follow process/wait process to fix
+- **If regressions found**: record a task with the harness's task tool and fix it before writing the message
 
 ---
 
@@ -113,7 +112,7 @@ Before writing commit message, review `git diff --staged` to ensure:
 
 - Follow existing commit message style from `git log`
 - Match repository's commit message patterns
-- Focus on "why" rather than "what" (1-2 sentences for summary)
+- The subject names what changed (step 4); the body's summary explains why in 1-2 sentences
 
 ---
 
@@ -210,7 +209,7 @@ Based on analysis of problematic commit messages, avoid these common mistakes:
 
 3. **Missing application context**: Subject could apply to any project
    - **Problem**: Lost context about which application was changed
-   - **Solution**: Start with "TSB app:", "taskshow:", etc.
+   - **Solution**: Put the application in the scope — `fix(TSB) advanced-sandbox-config.ts: ...` — or lead with its files
 
 4. **Buried file impact**: Mentioning files deep in message body
    - **Problem**: Hard to understand scope of changes
@@ -223,7 +222,7 @@ Based on analysis of problematic commit messages, avoid these common mistakes:
 ### ✅ Good Git Commit Message Template
 
 ```
-AppName: [concrete action] [specific component] by [exact method]
+type(scope) <files>: [concrete action] [specific component] by [exact method]
 
 Summary: [Concrete action oriented brief high-level description of the change and why it matters]
 

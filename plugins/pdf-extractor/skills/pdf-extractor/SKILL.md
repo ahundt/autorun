@@ -57,16 +57,16 @@ To extract text from PDFs:
 If the `extract-pdfs` CLI isn't installed, install it first (recommended):
 
 ```bash
-# Install as global UV tool (from repo root):
-cd "${CLAUDE_PLUGIN_ROOT}/../.." && uv tool install --force --editable plugins/pdf-extractor
+# Install as global UV tool (from repo root); the code ships in the autorun distribution:
+cd "${CLAUDE_PLUGIN_ROOT}/../.." && uv tool install --force --editable "./plugins/autorun[pdf]"
 extract-pdfs --list-backends  # verify
 ```
 
 Or use these fallback methods without installing:
 
 ```bash
-# uv run (recommended fallback — no install required):
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m pdf_extraction document.pdf
+# From a source checkout, without installing (the package lives in plugins/autorun):
+uv run --project plugins/autorun --extra pdf python -m pdf_extraction document.pdf
 
 # Module execution, if the console script is not on PATH
 python -m pdf_extraction document.pdf
@@ -98,7 +98,7 @@ For systems without GPU, the recommended backend order:
 - `markitdown` - Microsoft's lightweight converter (MIT, fast, no models)
 - `pdfplumber` - Excellent for tables (MIT)
 - `pdfminer` - Pure Python, reliable (MIT)
-- `pypdf2` - Basic extraction through maintained `pypdf` (BSD-3; `cpu` extra)
+- `pypdf2` - Basic extraction through maintained `pypdf` (BSD-3; `pdf` extra)
 
 ### GPU Systems
 
@@ -314,12 +314,13 @@ All errors are captured in metadata rather than raising exceptions.
 The base package has no required Python dependencies. Select extras for the
 backends you need:
 
-- `cpu`: markitdown, pdfplumber, pdfminer.six, and maintained `pypdf` (the CLI
+- `pdf`: markitdown, pdfplumber, pdfminer.six, and maintained `pypdf` (the CLI
   backend id stays `pypdf2`)
-- `gpu`: docling on Linux/Windows; empty on macOS while docling's model stack
+- `pdf-gpu`: docling on Linux/Windows; empty on macOS while docling's model stack
   selects an advisory-affected transformers 4.x release
-- `llm`: pymupdf4llm
-- `progress`: tqdm
+- `pdf-llm`: pymupdf4llm
+- `pdf-progress`: tqdm
+- `pdf-all`: every extra above
 
 Install CPU dependencies:
 ```bash

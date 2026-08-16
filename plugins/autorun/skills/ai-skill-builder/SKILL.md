@@ -265,11 +265,11 @@ To validate structure:
 bash scripts/audit-skill.sh /path/to/YOUR-SKILL
 ```
 
-For automated quality review, use the built-in `skill-creator` skill:
+For automated quality review on a host that provides Anthropic's `skill-creator` skill:
 ```
 "Use the skill-creator skill to review the skill I just built and suggest improvements"
 ```
-Also available: the `skill-reviewer` agent from the plugin-dev plugin checks description quality.
+Claude Code with the `plugin-dev` plugin installed also offers a `skill-reviewer` agent that checks description quality.
 
 For detailed test case templates and the Testing Triangle methodology: `references/testing.md`
 
@@ -311,7 +311,7 @@ Signs a skill needs refinement:
 - File named README.md or folder has underscores/capitals (P0 — Claude cannot find it)
 - Missing YAML frontmatter (P0 — Claude cannot auto-activate it)
 - Description is outcome-focused instead of trigger-phrase format (P1)
-- SKILL.md is over 5,000 words (P0 — hard limit; Claude reports degraded quality above this)
+- SKILL.md is over 5,000 words (P0 on Claude hosts, where Anthropic's guide reports degraded quality above it; a heuristic elsewhere, per SKILL-REQ011)
 - SKILL.md is over 2,000 words with no references/ files (P1 — detail belongs in references/)
 - Wall of text with no progressive disclosure structure (P1)
 - No semantic XML regions, an unbalanced tag, or a `## ` heading outside every region (P1 —
@@ -331,7 +331,7 @@ scenarios, and before/after examples: `references/refining-skills.md`
 - **`references/research.md`** — before writing any domain instruction → source-tier judgement, `sources.md` entries
 - **`references/discovery.md`** — when requirements are unclear → 22-question plan: name, triggers, use cases, inputs, outputs, tests
 - **`references/categories.md`** — when Step 1's category is not obvious → category, structure, Level 2 template
-- **`references/best-practices.md`** — while writing body and frontmatter → description format, every optional field, level targets, 5 anti-patterns
+- **`references/best-practices.md`** — while writing body and frontmatter → description format, every optional field, level targets, 6 anti-patterns
 - **`references/patterns.md`** — when 4 phases are not enough → orchestration, multi-MCP, refinement loops, runtime branching, domain rules
 - **`references/testing.md`** — at Step 4 → T1-T6 triggering cases, F1-F4 functional cases, baseline comparison, per-host compatibility steps, forward-test kinds
 - **`references/troubleshooting.md`** — when a built skill misbehaves → fixes for no trigger, over-trigger, skipped instructions, context overload

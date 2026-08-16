@@ -1,7 +1,6 @@
 ---
 name: plannew
 description: Use when the user asks to "make a plan", "plan this out", "/ar:plannew", or "/ar:pn", or starts multi-step work that needs tracked steps. Creates a structured plan with checkbox steps, the evidence each step must produce, and the wait process between them.
-aliases: [pn]
 argument-hint: "[feature or project description]"
 ---
 
