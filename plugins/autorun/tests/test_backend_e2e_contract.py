@@ -298,7 +298,14 @@ def test_concurrent_git_warning_is_attempted_once_through_real_hook_processes(
             "claim contract explicitly duplicates rather than lose a warning "
             "when its lock budget is exhausted"
         )
-    assert all(result.returncode == 0 for result in results)
+    # Name the process that failed: a bare ``all(...)`` reports only a
+    # generator, which is what a CI-only failure of this test looked like.
+    crashed = [
+        (result.returncode, result.stdout[-600:], result.stderr[-1200:])
+        for result in results
+        if result.returncode != 0
+    ]
+    assert crashed == [], crashed
     assert delivered == 1, [result.stdout for result in results]
 
 
