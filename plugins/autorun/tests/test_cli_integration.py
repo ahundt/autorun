@@ -93,11 +93,12 @@ def test_uninstall_accepts_an_optional_plugin_selection(monkeypatch):
     called = []
     monkeypatch.setattr(
         "autorun.install.uninstall_plugins",
-        lambda selection: called.append(selection) or 0,
+        lambda selection, *, force=False: called.append((selection, force)) or 0,
     )
 
     assert main(["--uninstall", "pdf-extractor"]) == 0
-    assert called == ["pdf-extractor"]
+    assert main(["--uninstall", "pdf-extractor", "--force"]) == 0
+    assert called == [("pdf-extractor", False), ("pdf-extractor", True)]
 
 
 def test_codex_github_help_names_the_current_plugin_identity():
