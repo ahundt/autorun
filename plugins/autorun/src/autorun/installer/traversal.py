@@ -228,7 +228,25 @@ class Mode(Enum):
         return self is not Mode.PREVIEW
 
 
-def _perform(intent: Intent, decision: Decision) -> Decision:
+def backup_root(ctx: Context) -> Path:
+    """Where ``--force`` parks the previous copy of a hashless legacy tree.
+
+    Under autorun's own state directory, never inside a skills root: a
+    ``<name>.autorun-backup`` directory beside a skill is discovered as a skill
+    by every harness that scans the root. ``_backup_root`` in settings is the
+    test seam, the same shape ``_extension_source_root`` uses.
+    """
+    configured = ctx.settings.get("_backup_root")
+    return (
+        Path(str(configured))
+        if configured
+        else ctx.home / ".autorun" / "installer" / "backups"
+    )
+
+
+def _perform(
+    intent: Intent, decision: Decision, *, force: bool = False, backups: Path | None = None
+) -> Decision:
     """Carry out one decision. The only place this module touches the disk.
 
     A shared directory takes the per-file pair; an exclusive one takes the
@@ -243,6 +261,8 @@ def _perform(intent: Intent, decision: Decision) -> Decision:
                 intent.target,
                 plugin=intent.plugin,
                 ownership_proof=intent.ownership_proof,
+                force=force,
+                backup_root=backups,
                 **intent.settings,
             )
         if intent.kind is Kind.LINK:
@@ -436,8 +456,13 @@ def run(
                 ownership_proof=(
                     intent.ownership_proof if source is not None else None
                 ),
+                force=ctx.force,
             )
-        decisions.append(_perform(intent, decision) if mode.writes else decision)
+        decisions.append(
+            _perform(intent, decision, force=ctx.force, backups=backup_root(ctx))
+            if mode.writes
+            else decision
+        )
     return decisions
 
 
@@ -546,10 +571,12 @@ def demo() -> None:
         assert edited.read_text() == "MINE\n", "an edited skill is kept, not retired"
         assert any(d.verdict is Verdict.RETIRE for d in removed)
 
-        # Adding a harness adds no branch to this module.
+        # Adding a harness adds no branch to this module — and a second harness
+        # that yields the same skill intents (the shared-root shape) adds no
+        # decisions either: an identical intent is decided once per walk.
         second = Fake("other", (skills_step,))
         both = run([harness, second], ctx, Mode.PREVIEW)
-        assert len(both) == 5, "3 intents + 2 intents, no special cases"
+        assert len(both) == 3, "3 intents + 2 identical ones decided once, no special cases"
 
         # The real registry pairs the same way, and a harness with no declared
         # steps drops out of the walk without anything testing for its name.

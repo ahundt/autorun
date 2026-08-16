@@ -421,6 +421,14 @@ class _PublicationRefused(RuntimeError):
         self.decision = decision
 
 
+#: The one PUBLISH reason that replaces a tree whose contents were never
+#: recorded. ``publish_tree`` backs the previous copy up when it sees it.
+LEGACY_REPUBLISH = (
+    "republishing a tree installed before file hashes were recorded; "
+    "the previous copy is backed up"
+)
+
+
 def decide(
     target: Path,
     source: Path | None,
@@ -428,6 +436,7 @@ def decide(
     plugin: str,
     read: Callable[[Path], TreeManifest | None] = read_marker,
     ownership_proof: Callable[[Path], bool] | None = None,
+    force: bool = False,
 ) -> Decision:
     """Decide one directory's fate, the same way for install and uninstall.
 
@@ -436,6 +445,13 @@ def decide(
     are the same comparison, which is why they belong in one function — the code
     this replaces runs four passes that each re-derive their own paths and have
     each drifted from the others.
+
+    ``force`` widens exactly one case: an owned tree whose marker predates file
+    hashes and whose contents no longer match the source. Without hashes a user
+    edit and a stale copy look the same, so by default such a tree is KEPT and
+    the decision says how to move on; with ``force`` it is republished after
+    the previous copy is backed up. A recorded user edit is kept by every path,
+    ``force`` included — the hashes are the fact, and force does not erase it.
     """
     if not target.exists():
         return (Decision(Verdict.PUBLISH, target, "new") if source is not None
@@ -462,7 +478,9 @@ def decide(
         return Decision(Verdict.KEEP, target, f"belongs to {manifest.plugin}")
 
     if not manifest.files:
-        if source is not None and scan_tree(target) == scan_tree(source):
+        current = scan_tree(target)
+        shipped = scan_tree(source) if source is not None else None
+        if shipped is not None and current == shipped:
             return Decision(Verdict.PUBLISH, target, "recording legacy ownership")
         if ownership_proof is not None:
             try:
@@ -474,6 +492,25 @@ def decide(
                     )
             except (OSError, RuntimeError, ValueError):
                 pass
+        if shipped is not None:
+            # No byte receipt exists, so nothing here can be called an edit or
+            # called stale. Name what differs from today's source — that is
+            # the fact a user can act on — instead of listing every file as
+            # "you edited", which was true of none of them in particular.
+            drifted = tuple(sorted(
+                path for path in set(current) | set(shipped)
+                if current.get(path) != shipped.get(path)
+            ))
+            if force:
+                return Decision(Verdict.PUBLISH, target, LEGACY_REPUBLISH, drifted)
+            return Decision(
+                Verdict.KEEP,
+                target,
+                "installed before file hashes were recorded, so your edits "
+                "cannot be told from a stale copy; rerun with --force to "
+                "republish it and keep the current copy as a backup",
+                drifted,
+            )
     edited, missing, extra = compare(target, manifest)
     if changed := tuple(sorted((*edited, *missing, *extra))):
         return Decision(Verdict.KEEP, target, "you edited files we installed", changed)
@@ -1130,6 +1167,8 @@ def publish_tree(
     *,
     plugin: str = "",
     ownership_proof: Callable[[Path], bool] | None = None,
+    force: bool = False,
+    backup_root: Path | None = None,
     **settings: str,
 ) -> Decision:
     """The common case: copy a source tree in, unless the decision says not to.
@@ -1137,31 +1176,55 @@ def publish_tree(
     Every skill, extension, command bundle and plugin cache goes through this
     one call. The fourteen hand-rolled copy sites it replaces each answered
     "may I write here?" differently, and had each drifted from the others.
+
+    ``force`` with ``backup_root`` republishes a hashless legacy tree (see
+    :func:`decide`) after copying the current tree to
+    ``backup_root/<name>-<stamp>``. The backup goes there rather than beside the
+    target because a ``<name>.autorun-backup`` directory inside a skills root
+    is itself discovered as a skill by every harness that scans the root.
+    ``force`` without a ``backup_root`` is refused for that tree, so a caller
+    cannot discard an unrecorded copy by omission.
     """
-    decision = decide(
+    judge = lambda: decide(  # noqa: E731 - the same question, asked twice
         target,
         source,
         plugin=plugin,
         ownership_proof=ownership_proof,
+        force=force and backup_root is not None,
     )
+    decision = judge()
     if decision.verdict in (Verdict.KEEP, Verdict.SKIP):
         return decision
     try:
-        with published(
-            target,
-            plugin=plugin,
-            authorize=lambda: decide(
-                target,
-                source,
-                plugin=plugin,
-                ownership_proof=ownership_proof,
-            ),
-            **settings,
-        ) as staged:
+        with published(target, plugin=plugin, authorize=judge, **settings) as staged:
+            if decision.reason == LEGACY_REPUBLISH:
+                # Under the publication lock and before the swap, so a
+                # concurrent install cannot slip between the copy and the
+                # replacement, and a failed swap leaves the original in place
+                # with the backup as a harmless extra.
+                assert backup_root is not None
+                backup_root.mkdir(parents=True, exist_ok=True)
+                kept = backup_root / f"{target.name}-{_stamp()}"
+                counter = 1
+                while kept.exists():
+                    kept = backup_root / f"{target.name}-{_stamp()}.{counter}"
+                    counter += 1
+                shutil.copytree(target, kept, symlinks=True)
+                # The backup is the user's to keep or discard; it must not
+                # carry our marker, or the retirement sweep would treat it as
+                # an owned tree that is "no longer shipped" and remove it.
+                (kept / OWNED_MARKER_NAME).unlink(missing_ok=True)
             shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
     except _PublicationRefused as refused:
         return refused.decision
     return decision
+
+
+def _stamp() -> str:
+    """A filesystem-safe local timestamp for backup directory names."""
+    import time
+
+    return time.strftime("%Y%m%d-%H%M%S")
 
 
 def dereference_links(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:

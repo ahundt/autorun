@@ -550,6 +550,68 @@ def test_a_pre_manifest_marker_upgrades_instead_of_blocking(tmp_path, source):
     assert decide(target, source, plugin="ar").verdict is Verdict.PUBLISH
 
 
+def _legacy_hashless_tree(source: Path, target: Path) -> None:
+    """An owned tree from before file hashes were recorded, since edited or
+    left behind by a source that moved on: marker present, ``files`` empty,
+    contents no longer equal to ``source``."""
+    publish_tree(source, target, plugin="ar")
+    (target / OWNED_MARKER_NAME).write_text(
+        json.dumps({"plugin": "ar", "files": []}), encoding="utf-8"
+    )
+    (source / "SKILL.md").write_text("version two\n", encoding="utf-8")
+
+
+def test_a_hashless_legacy_tree_that_drifted_is_kept_and_says_how_to_republish(
+    tmp_path, source
+):
+    """Without hashes the installer cannot tell a user edit from a stale copy,
+    so it keeps the tree — but it must say so, name the files that differ from
+    what it ships now, and point at the way out. Listing every file as
+    "you edited files we installed" (the previous report) was false for all but
+    the drifted ones and gave the user nothing to act on."""
+    target = tmp_path / "dest" / "demo"
+    _legacy_hashless_tree(source, target)
+
+    decision = decide(target, source, plugin="ar")
+    assert decision.verdict is Verdict.KEEP
+    assert "--force" in decision.reason and "hash" in decision.reason, decision.reason
+    assert decision.edited == ("SKILL.md",), decision.edited
+
+
+def test_force_republishes_a_hashless_legacy_tree_after_backing_it_up(tmp_path, source):
+    """``--force`` is the user saying "take it"; the previous copy still moves
+    to the backup root rather than vanishing, because a hashless tree may
+    carry an edit nobody recorded. The backup lives outside the skills root so
+    no harness lists it as a phantom skill."""
+    target = tmp_path / "dest" / "demo"
+    _legacy_hashless_tree(source, target)
+    backups = tmp_path / "backups"
+
+    decision = publish_tree(source, target, plugin="ar", force=True, backup_root=backups)
+    assert decision.verdict is Verdict.PUBLISH, decision
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "version two\n"
+    assert read_marker(target).files, "the republished tree records hashes"
+    kept = list(backups.iterdir())
+    assert len(kept) == 1 and kept[0].name.startswith("demo"), kept
+    assert (kept[0] / "SKILL.md").read_text(encoding="utf-8") == "version one\n"
+    assert not (kept[0] / "SKILL.md").is_symlink()
+    assert decide(target, source, plugin="ar").verdict is Verdict.SKIP, "now current"
+
+
+def test_force_never_overrides_a_recorded_user_edit(tmp_path, source):
+    """The rule stands: a user edit inside a hashed tree is kept by every path,
+    ``--force`` included. Force widens only the hashless case, where there is
+    no recorded fact to honour."""
+    target = tmp_path / "dest" / "demo"
+    publish_tree(source, target, plugin="ar")
+    (target / "SKILL.md").write_text("mine\n", encoding="utf-8")
+
+    decision = publish_tree(source, target, plugin="ar", force=True, backup_root=tmp_path / "b")
+    assert decision.verdict is Verdict.KEEP
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "mine\n"
+    assert not (tmp_path / "b").exists()
+
+
 # ─── Registry documents ──────────────────────────────────────────────────────
 
 

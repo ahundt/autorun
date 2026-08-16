@@ -169,18 +169,25 @@ def test_shared_file_preflight_prevents_every_durable_install_write(
     assert calls == []
 
 
-def test_two_steps_yielding_the_same_target_are_both_walked(ctx, source, tmp_path):
-    """Not deduplicated, deliberately: the second publish sees the first's
-    marker and returns SKIP, so the outcome is correct and the report shows
-    both steps ran. Silently dropping one would hide a misconfigured step
-    table."""
+def test_two_steps_yielding_an_identical_intent_decide_it_once(ctx, source, tmp_path):
+    """One (kind, target, source, plugin, settings) tuple is one question,
+    however many steps or harnesses ask it. Six harnesses read the shared
+    ``~/.agents/skills`` root and each yields the same intent per skill; before
+    this the report listed every shared skill six times and the install hashed
+    each published tree six times to conclude "already current". The outcome
+    was already single, so the extra decisions carried no information — an
+    identical second intent can only ever SKIP.
+
+    An intent that differs in any field is still walked separately (see the
+    shared-and-exclusive test below), so a genuinely different step is never
+    hidden."""
     target = tmp_path / "dest" / "demo"
     def step(h, c):
         return (Intent(target=target, source=source, plugin="ar"),)
 
     decisions = run([Fake("h", (step, step))], ctx, Mode.INSTALL)
 
-    assert [d.verdict for d in decisions] == [Verdict.PUBLISH, Verdict.SKIP]
+    assert [d.verdict for d in decisions] == [Verdict.PUBLISH]
     assert (target / "SKILL.md").read_text() == "v1\n"
 
 

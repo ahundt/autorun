@@ -37,3 +37,23 @@ Labels: **[CLI]** = CLI pathway, **[TUI]** = TUI pathway, **[Both]** = either
 | MP4 files larger than necessary | Using h264_videotoolbox or crf=18 | Use `libx265 crf=28 tune=animation` as strategy 1 | [Both] |
 | Resolution too low (sub-HD) | Terminal size 80x24 at any font size | Use minimum 160x48 cols/rows; see Resolution Targets in SKILL.md | [Both] |
 | First frame shows shell init junk | asciinema records RC/prompt before script starts | `trim_cast_to_banner()` — find banner marker, drop prior events, rebase timestamps to t=0 | [Both] |
+
+## Installation-state commands leak the operator's machine [Both]
+
+Redirecting data reads is not enough for any command that reports **installation state**
+(`status`, `doctor`, `install`, `--version -v`). Those resolve from three roots the data
+variable does not touch, and each one prints the operator's machine into a published GIF:
+`HOME` for discovered client configs, `PATH` for the executable's own location and anything
+created beside it, and the config file's location for app-owned directories. Relocate all
+three, and prefer a short path such as `/tmp/<tool>-demo-home`: the platform temp directory
+is around sixty characters and wraps every row of a status table.
+
+Suppressing the leaking rows with flags (`--no-aliases`) is the wrong fix twice over. It
+hides output the viewer came to see, and it demos a command no real user would type.
+
+Gate it automatically rather than by eye. Decode the cast to visible text, then fail the
+recording on any home directory not owned by the synthetic demo user, the login name, the
+hostname, or an email address. Scan the rendered text, not the raw cast: escape sequences
+split words across events, and the file carries an `env` header no viewer sees. Run the gate
+on every record, and allow the synthetic identity explicitly, since a gate that fires on its
+own fixtures gets skipped.

@@ -188,6 +188,12 @@ DEMO_DATA_DIR = Path(__file__).parent / "tool-demo"
 DEMO_ENV = {**os.environ, "TOOL_ISOLATION_VAR": str(DEMO_DATA_DIR)}
 ```
 
+Redirecting data reads is not enough for commands that report **installation state**
+(`status`, `doctor`, `install`, `--version -v`): they also print `HOME`, `PATH`, and
+config-relative roots. Relocate all three and gate the decoded cast for the operator's
+home, login, hostname, and email — details in `references/common-pitfalls.md`,
+section "Installation-state commands leak the operator's machine".
+
 ### Date-Shifting Fixtures [CLI Only]
 
 Required when demo acts use `--since Nd`, `--after DATE`, or any time-relative filter.

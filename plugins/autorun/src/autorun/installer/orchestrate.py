@@ -889,8 +889,10 @@ def _exercise(root: Path, home: Path, record: Runner, calls: list) -> None:
     assert all(d.verdict is Verdict.SKIP for d in second.decisions), "not idempotent"
 
     # Uninstall removes ours and reports what it kept.
+    # Extension staging already created ``home/.autorun/installer``, so the
+    # state directory exists by the time uninstall is asked to keep it.
     state = home / ".autorun"
-    state.mkdir()
+    state.mkdir(exist_ok=True)
     gone = uninstall(**common, state_dir=state)
     assert any(d.verdict is Verdict.RETIRE for d in gone.decisions)
     assert gone.torn_down is not None and gone.torn_down.kept == state

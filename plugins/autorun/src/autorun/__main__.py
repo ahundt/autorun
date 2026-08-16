@@ -336,7 +336,12 @@ For more information: https://github.com/ahundt/autorun
         "--force",
         "-f",
         action="store_true",
-        help="Force reinstall even if same version (for development)",
+        help=(
+            "Force reinstall even if same version (for development). Also "
+            "republishes an owned tree installed before file hashes were "
+            "recorded, after backing the current copy up under "
+            "~/.autorun/installer/backups/; a recorded user edit is still kept."
+        ),
     )
     install_group.add_argument(
         "--install-dry-run",

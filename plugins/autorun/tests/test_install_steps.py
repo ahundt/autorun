@@ -660,6 +660,60 @@ def test_shared_root_skill_is_decided_once_across_shared_reading_harnesses(sandb
     )
 
 
+def test_force_republishes_a_hashless_legacy_shared_skill_and_keeps_a_backup(sandbox):
+    """A shared skill installed before hashes were recorded, since drifted from
+    the source, is kept by a plain install and republished by ``--force`` with
+    the previous copy parked under autorun's own state directory — never inside
+    the skills root, where a harness would list it as another skill.
+
+    This is the shape four skills had on a live machine: an owned marker with
+    ``files: []`` from an early August install, contents from an older release,
+    and a report that called every file "edited"; each reinstall kept them and
+    the harnesses that read ``~/.agents/skills`` loaded stale bodies.
+    """
+    import json
+
+    from autorun.installer import discovery
+    from autorun.installer.fs import OWNED_MARKER_NAME, read_marker
+    from autorun.installer.orchestrate import install, preview
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS["pi"],),
+    )
+    assert install(**common).ok is True
+    shared = discovery.shared_root(home=sandbox)
+    commit = shared / "commit"
+    (commit / OWNED_MARKER_NAME).write_text(
+        json.dumps({"plugin": "ar", "files": []}), encoding="utf-8"
+    )
+    (commit / "SKILL.md").write_text("an older release\n", encoding="utf-8")
+
+    kept = [d for d in preview(**common).decisions if d.target == commit]
+    assert kept and kept[0].verdict.value == "keep" and "--force" in kept[0].reason, kept
+    assert install(**common).ok is True
+    assert (commit / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
+
+    forced = install(force=True, **common)
+    assert forced.ok is True
+    assert (commit / "SKILL.md").read_text(encoding="utf-8") != "an older release\n"
+    assert read_marker(commit).files, "republished with hashes"
+    backups = sandbox / ".autorun" / "installer" / "backups"
+    parked = sorted(backups.iterdir())
+    assert len(parked) == 1 and parked[0].name.startswith("commit-"), parked
+    assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
+    assert not (parked[0] / OWNED_MARKER_NAME).exists(), "a backup is not an owned tree"
+    assert not any(p.name.endswith(".autorun-backup") for p in shared.iterdir())
+    # The backup root is not swept: a second install leaves it alone.
+    assert install(**common).ok is True
+    assert sorted(backups.iterdir()) == parked
+
+
 def test_install_with_no_harness_selected_retires_nothing(sandbox):
     """An empty selection is a no-op, never a sweep of every owned tree."""
     from autorun.installer import discovery

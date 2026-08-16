@@ -76,6 +76,15 @@ marketplace itself carries a separate `version` field.
   tree there as "no longer shipped" — the copies Codex, Qwen, Pi, Prime,
   ForgeCode, and OpenCode load. Every shipped skill is now claimed at the
   shared root on every install, and an empty selection sweeps nothing.
+- **A tree installed before file hashes were recorded is no longer stuck.**
+  Such a tree (owned marker, `files: []`) that had drifted from the source was
+  reported as "you edited files we installed" naming every file, and no
+  reinstall could refresh it, so harnesses reading `~/.agents/skills` loaded
+  stale bodies indefinitely. A plain install now keeps it, names only the
+  files that differ from what autorun ships, and says to rerun with
+  `--force`; `--force` republishes it after copying the current tree to
+  `~/.autorun/installer/backups/<name>-<stamp>/`. A recorded user edit is
+  still kept by every path.
 - **Status and dry run list each shared skill once.** The walk decided the
   same `~/.agents/skills/<name>` intent once per harness that reads the shared
   root (six lines per skill on a default install) and re-hashed the published
