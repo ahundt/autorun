@@ -1,6 +1,7 @@
 ---
 name: planrefine
 description: Use when the user asks to "refine the plan", "critique the plan", "/ar:planrefine", or "/ar:pr". Critiques an existing plan against the actual code, records a change ledger, and iterates until a full pass finds no new material issue.
+aliases: [pr]
 argument-hint: [plan file or content]
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: commit
 description: Use before writing any git commit message or reviewing one, and when the user asks for "commit requirements", "commit message guidelines", "/ar:commit", or "/ar:gc". Carries the 17-step pre-commit analysis, the concrete-subject rules that ban vague verbs and session-internal jargon, and the checks that keep a message reviewable from the repository alone.
+aliases: [gc]
 ---
 
 # Git Commit Requirements
@@ -49,15 +50,15 @@ Before writing commit message, review `git diff --staged` to ensure:
 ### 4. Subject Line Format
 
 - **Few/grouped files**: `<files>: concrete description of what specifically changed`
-  - Example: `tsb-launcher.ts,test.ts: enable automatic argument passthrough`
-  - Example: `test_*.ts: fix mocking infrastructure for argument parsing` (pattern grouping)
-  - Example: `src/security/*.sb: add AI config file access permissions` (directory grouping)
+  - Example: `scoped_allow.py,test_scoped_allow.py: accept day units in scope durations`
+  - Example: `test_install_*.py: pin tree publication under two processes` (pattern grouping)
+  - Example: `plugins/autorun/commands/*.md: run every bash block through uv run --project` (directory grouping)
 - **Many files**: `type(scope): concrete description of what specifically changed` (scope can be app name)
-  - Example: `fix(TSB): enable CLI argument passthrough by defaulting sandbox to enabled`
+  - Example: `fix(installer): retire a hashless legacy tree under --force after a backup`
 - **Mixed**: `type(scope) <files>: concrete description`
-  - Example: `fix(TSB) advanced-sandbox-config.ts: enable sandbox-exec by default`
+  - Example: `fix(installer) fs.py: republish a hashless legacy tree after backing it up`
 - **Always include**: Concrete and actionable description of what specifically changed
-- **Avoid vague terms**: "improve performance" → "cache API responses in RequestManager.fetch()", "enhance security" → "validate file paths in loadSandboxConfig()", "update system" → "default sandbox to enabled in AdvancedSecurityManager"
+- **Avoid vague terms**: "improve performance" → "hydrate ThreadSafeDB once per session instead of once per hook", "enhance security" → "reject relative export paths in plan_export before writing", "update system" → "default the cache gate to off in its FeatureToggle"
 
 ### 5. Message Structure
 
@@ -112,7 +113,7 @@ Before writing commit message, review `git diff --staged` to ensure:
 
 - Follow existing commit message style from `git log`
 - Match repository's commit message patterns
-- The subject names what changed (step 4); the body's summary explains why in 1-2 sentences
+- Focus on "why" rather than "what" (1-2 sentences for summary)
 
 ---
 
@@ -209,7 +210,7 @@ Based on analysis of problematic commit messages, avoid these common mistakes:
 
 3. **Missing application context**: Subject could apply to any project
    - **Problem**: Lost context about which application was changed
-   - **Solution**: Put the application in the scope — `fix(TSB) advanced-sandbox-config.ts: ...` — or lead with its files
+   - **Solution**: Name the component in the scope or lead with its files: `fix(installer): ...`, `fs.py,traversal.py: ...`
 
 4. **Buried file impact**: Mentioning files deep in message body
    - **Problem**: Hard to understand scope of changes
