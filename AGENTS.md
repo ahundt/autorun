@@ -83,10 +83,16 @@ uv run --project plugins/autorun pytest plugins/autorun/tests/ -q               
 
 ## 5. Installing for real (end users)
 
+`autorun` is one published distribution; `autorun --install` then publishes
+every detected harness's native assets. In priority order:
+
 ```bash
-claude plugin marketplace add https://github.com/ahundt/autorun.git && claude plugin install ar@autorun
-# or from a checkout: uv run --project plugins/autorun python -m autorun --install
+uv tool install autorun && autorun --install                                            # PyPI release
+uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun' && autorun --install   # git
+git clone https://github.com/ahundt/autorun.git && cd autorun && uv tool install --editable plugins/autorun && autorun --install   # local clone
 ```
 
-Full options, other harnesses, and verification: `README.md`. Inside a
+Claude Code alone can instead use the marketplace: `claude plugin marketplace
+add https://github.com/ahundt/autorun.git && claude plugin install ar@autorun`.
+Full options, extras (`autorun[pdf]`), and verification: `README.md`. Inside a
 development session these commands fall under section 1.
