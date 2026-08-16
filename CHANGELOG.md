@@ -61,6 +61,31 @@ marketplace itself carries a separate `version` field.
 
 ### Fixed
 
+- **Five wrapper spellings no longer hide the command they wrap.** The
+  transparent-wrapper grammar recorded the wrong arity for several options, and
+  every mistake pointed the same way — the child command vanished and the guard
+  allowed it. `sudo -k <command>` was treated as the credential-only form and
+  discarded, though sudo documents that with a command it runs the command;
+  `sudo -D <dir>` and `sudo -R <dir>` did not consume their directory, so the
+  directory was read as the command; `chroot --skip-chdir` (which takes no
+  value) swallowed NEWROOT; `env --block-signal`, `--default-signal` and
+  `--ignore-signal` are documented with a bracketed value, so consuming the next
+  word ate the command; and `env -a <name>` did not consume its value. Each
+  option's arity now matches the tool that owns it.
+- **A git reached by absolute path no longer bypasses the checkout guard.**
+  `command_matches_pattern` matched `/usr/bin/git checkout` by basename, so the
+  pattern fired, but the predicate deciding whether the write would discard
+  uncommitted changes compared the raw token, answered "nothing would be lost",
+  and let the overwrite through. It compares the basename now, like every other
+  layer.
+- **Creating a branch is no longer blocked as a destructive checkout.** The
+  `git reset --hard` block recommends `git checkout -b backup/<stamp>-wip` to
+  save the work first, and a dirty repository is exactly the state that produces
+  that block — so the recommended recovery was blocked too, with a message about
+  discarding changes. `git checkout -b` and `--orphan` create a branch at the
+  current commit and cannot overwrite working-tree content; git aborts rather
+  than write over a local change. Both are allowed now. `-B`, which moves an
+  existing branch ref, and `-f`, which really does overwrite, are unchanged.
 - **A user-authored shared skill no longer produces a duplicate listing.**
   When `~/.agents/skills/<name>` holds the user's own loadable skill, the
   installer previously published autorun's same-named skill natively (for

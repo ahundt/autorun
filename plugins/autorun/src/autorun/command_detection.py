@@ -272,20 +272,29 @@ _SUDO_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
         "-h", "--host",
         "-p", "--prompt",
         "-C", "--close-from",
+        "-D", "--chdir",
+        "-R", "--chroot",
         "-T", "--command-timeout",
         "-U", "--other-user",
     }),
-    stop_flags=frozenset({"-h", "--help", "-V", "--version", "-l", "--list", "-v", "--validate", "-k", "--reset-timestamp"}),
+    # -k is deliberately absent: `sudo -k <command>` runs the command with the
+    # cached credentials ignored, so stopping there hid every wrapped command
+    # from the guard. -K is the one that "is not possible to use ... in
+    # conjunction with a command", and falls through as an ordinary flag.
+    stop_flags=frozenset({"-h", "--help", "-V", "--version", "-l", "--list", "-v", "--validate"}),
 )
 
 _ENV_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    # --block-signal, --default-signal and --ignore-signal are documented with a
+    # bracketed value (`--block-signal[=SIG]`), so GNU env reads a value only in
+    # the attached form and the following word is the command. Listing them here
+    # ate that command. The attached form needs no entry: an option carrying its
+    # own `=value` is skipped whole.
     flags_with_arg=frozenset({
         "-u", "--unset",
         "-C", "--chdir",
         "-S", "--split-string",
-        "--ignore-signal",
-        "--block-signal",
-        "--default-signal",
+        "-a", "--argv0",
     }),
     stop_flags=frozenset({"-h", "--help", "--version"}),
     skip_env_assignments=True,
@@ -308,10 +317,11 @@ _IONICE_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
 )
 
 _CHROOT_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    # --skip-chdir takes no value; listing it here consumed NEWROOT, which then
+    # let the leading positional consume the command itself.
     flags_with_arg=frozenset({
         "--groups",
         "--userspec",
-        "--skip-chdir",
     }),
     stop_flags=frozenset({"--help", "--version"}),
     leading_positional_count=1,

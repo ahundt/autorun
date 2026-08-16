@@ -237,7 +237,7 @@ DEFAULT_INTEGRATIONS = {
     },
     "git checkout": {  # Catch modern syntax: git checkout path/to/file (without --)
         "action": "block",
-        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Switch branches** (if not targeting a file):\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow (default 1 use): /ar:ok 'git checkout'\nScope: [N|5m|permanent] (default 1 use)",
+        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Switch branches** (if not targeting a file):\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <name>' cannot be told apart from a path without guessing, so it is blocked while the repo has uncommitted changes. Creating a branch ('git checkout -b <new-branch>') and 'git switch <branch>' are always allowed.\n\nTo allow (default 1 use): /ar:ok 'git checkout'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git stash push {file} -m 'WIP: {file}'",
         "when": "_file_differs_from_ref",
     },

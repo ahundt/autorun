@@ -19,6 +19,7 @@ Tests for unified integrations system (superset of hookify).
 """
 
 import os
+import shutil
 import subprocess as _subprocess
 
 import pytest
@@ -2119,13 +2120,58 @@ class TestParseDestructiveGitCmd:
         assert p.verb == "checkout"
         assert p.files == ()  # no pathspec, no `--`
 
-    def test_checkout_dash_b_new_branch(self):
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "git checkout -b new-branch",
+            "git checkout -b backup/20260816-1200-wip",
+            "git checkout --orphan detached-start",
+            "git checkout -b new-branch origin/main",
+            "sudo -k git checkout -b new-branch",
+        ],
+    )
+    def test_creating_a_branch_is_not_a_destructive_checkout(self, cmd: str):
+        """`git checkout -b <name>` creates a branch at the current commit.
+
+        It cannot discard working-tree content: if the start point differed and
+        the checkout would overwrite a local change, git aborts with "Your local
+        changes to the following files would be overwritten" instead of writing.
+
+        This is not a style point. The `git reset --hard` block tells the user
+        to run `git checkout -b backup/$(date ...)-wip` to save their work — and
+        a dirty repo is the precondition for that block, so the recommended
+        recovery was itself blocked, with a message telling them to stash.
+        """
         from autorun.integrations import _parse_destructive_git_cmd
 
-        p = _parse_destructive_git_cmd("git checkout -b new-branch")
-        # -b is a flag; no pathspec extracted. Ref stays HEAD.
-        assert p.files == ()
-        assert p.ref == "HEAD"
+        assert _parse_destructive_git_cmd(cmd) is None, f"{cmd} is not destructive"
+
+    def test_branch_creation_survives_a_real_dirty_repo(self, tmp_path):
+        from autorun.integrations import _file_differs_from_ref
+
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("uncommitted-work\n")
+
+        ctx = _make_ctx("git checkout -b backup/wip", tmp_path)
+        assert _file_differs_from_ref(ctx) is False
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # -B moves an existing branch ref to HEAD and can orphan commits, so
+            # it stays destructive. So does a forced checkout, which is the one
+            # spelling that does overwrite local changes instead of aborting.
+            "git checkout -B existing-branch",
+            "git checkout -f main",
+            "git checkout --force main",
+        ],
+    )
+    def test_branch_forms_that_can_lose_work_stay_destructive(self, cmd: str):
+        from autorun.integrations import _parse_destructive_git_cmd
+
+        p = _parse_destructive_git_cmd(cmd)
+        assert p is not None, f"{cmd} must still reach the guard"
+        assert p.verb == "checkout"
 
     # ---- unusual but valid inputs ----
 
@@ -2244,6 +2290,36 @@ class TestDestructiveGitCmdFlagBypass:
         p = _parse_destructive_git_cmd("git -c user.email=t@t checkout HEAD -- file.ts")
         assert p is not None
         assert p.verb == "checkout"
+
+    @pytest.mark.parametrize(
+        "invocation",
+        ["/usr/bin/git", "/opt/homebrew/bin/git", "sudo -k git", "rtk git"],
+    )
+    def test_git_reached_by_path_or_wrapper_is_recognized(self, invocation: str):
+        """A git found by absolute path parses like a bare `git`.
+
+        Every other layer basenames argv[0] — `command_matches_pattern` matches
+        `git checkout` against `/usr/bin/git checkout`, so the pattern fires and
+        this predicate decides. Comparing the raw token meant the predicate
+        answered "nothing would be lost" and the write went through.
+        """
+        from autorun.integrations import _parse_destructive_git_cmd
+
+        p = _parse_destructive_git_cmd(f"{invocation} checkout HEAD -- file.ts")
+        assert p is not None, f"{invocation} bypassed the destructive-git parser"
+        assert p.verb == "checkout"
+        assert p.files == ("file.ts",)
+
+    def test_git_by_absolute_path_blocks_a_real_overwrite(self, tmp_path):
+        """End to end, with a repo on disk: the guard must still say block."""
+        from autorun.integrations import _file_differs_from_ref
+
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("uncommitted-change\n")
+        git = shutil.which("git") or "/usr/bin/git"
+
+        ctx = _make_ctx(f"{git} checkout HEAD -- seed.txt", tmp_path)
+        assert _file_differs_from_ref(ctx) is True
 
     def test_git_dash_C_bypass_is_blocked(self, tmp_path):
         """End-to-end: `git -C <tmp_path> checkout HEAD -- seed.txt` blocks."""

@@ -697,7 +697,11 @@ def _find_destructive_segment(cmd: str) -> list[str]:
         except Exception:
             tokens = segment.split()
         tokens = strip_transparent_command_wrappers(tokens)
-        if not tokens or tokens[0] != "git":
+        # Compare the basename, as every other layer does: the pattern that
+        # routes here already matched `/usr/bin/git checkout` by basename, so a
+        # raw-token comparison let the predicate answer "nothing would be lost"
+        # for exactly the commands the pattern had just flagged.
+        if not tokens or os.path.basename(tokens[0]) != "git":
             continue
         sub_idx = git_subcommand_index(tokens)
         if sub_idx >= len(tokens):
@@ -768,6 +772,25 @@ def _extract_pathspecs(tokens: list[str], verb: str) -> tuple[str, ...]:
     return tuple(files)
 
 
+def _creates_a_branch(tokens: list[str]) -> bool:
+    """Return whether this checkout only creates a branch at the current commit.
+
+    `-b <name>` and `--orphan <name>` cannot discard working-tree content: git
+    carries uncommitted changes across, and aborts with "Your local changes to
+    the following files would be overwritten by checkout" rather than writing
+    over them. Without this the `git reset --hard` block recommended
+    `git checkout -b backup/...-wip` and then blocked it, because a dirty repo
+    is exactly the state that produced the first block.
+
+    `-B` is deliberately absent: it moves an existing branch ref and can leave
+    commits unreachable. `-f`/`--force` is the spelling that really does
+    overwrite local changes, so a forced checkout is never exempt.
+    """
+    if any(t in ("-f", "--force") for t in tokens[2:]):
+        return False
+    return any(t in ("-b", "--orphan") for t in tokens[2:])
+
+
 def _parse_destructive_git_cmd(cmd: str) -> _DestructiveGitCommand | None:
     """Parse a shell command into a _DestructiveGitCommand, or None if no match.
 
@@ -779,6 +802,8 @@ def _parse_destructive_git_cmd(cmd: str) -> _DestructiveGitCommand | None:
     if not tokens:
         return None
     verb = tokens[1]  # "checkout" or "restore"
+    if verb == "checkout" and _creates_a_branch(tokens):
+        return None
     ref = _extract_checkout_ref(tokens) if verb == "checkout" else _extract_restore_ref(tokens)
     files = _extract_pathspecs(tokens, verb)
     return _DestructiveGitCommand(verb=verb, ref=ref, files=files)

@@ -268,6 +268,76 @@ class TestWrappedCommandDetection:
         assert command_matches_pattern(cmd, "git push") is False
         assert command_matches_pattern(cmd, "rm") is False
 
+    # Each option below was read from the tool that owns it, because a wrong
+    # arity in the wrapper grammar hides the child command and the guard fails
+    # OPEN — the direction that matters. Evidence, all quoted from this
+    # machine's own `--help`/`man` output:
+    #
+    #   sudo -k   "When used in conjunction with a command ... this option will
+    #             cause sudo to ignore the user's cached credentials", i.e. the
+    #             command still runs. Treating it as a stop flag discarded it.
+    #   sudo -D/-R  "--chdir=directory" / "--chroot=directory": both consume a
+    #             value, so an unlisted one made the directory look like argv[0].
+    #   chroot --skip-chdir  "do not change working directory to '/'" — no value.
+    #   env --block-signal[=SIG] and siblings  bracketed, so GNU env only accepts
+    #             the attached form and the next word is the command.
+    #   env -a/--argv0=ARG  consumes a value.
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "sudo -k rm -rf /tmp/target",
+            "sudo -k -u root rm -rf /tmp/target",
+            "sudo -D /tmp rm -rf /tmp/target",
+            "sudo --chdir=/tmp rm -rf /tmp/target",
+            "sudo -R /mnt rm -rf /tmp/target",
+            "chroot --skip-chdir /mnt rm -rf /tmp/target",
+            "chroot --userspec=root:root /mnt rm -rf /tmp/target",
+            "env --default-signal rm -rf /tmp/target",
+            "env --block-signal=INT rm -rf /tmp/target",
+            "env --ignore-signal rm -rf /tmp/target",
+            "env -a mask rm -rf /tmp/target",
+        ],
+    )
+    def test_wrapper_option_arity_never_swallows_the_child_command(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "rm -rf") is True
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "sudo -k git push origin main",
+            "sudo -D /tmp git push origin main",
+            "env --default-signal git push origin main",
+        ],
+    )
+    def test_wrapper_option_arity_holds_for_git_subcommands(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "git push") is True
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # Consuming a value that is really the command is the other half of
+            # the contract: these operands must stay operands.
+            "sudo -D /tmp echo rm",
+            "chroot --userspec=root:root /mnt echo rm",
+            "env -a mask echo rm",
+        ],
+    )
+    def test_wrapper_option_arity_does_not_invent_a_child(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "rm") is False
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # sudo -K "is not possible ... in conjunction with a command", and
+            # -l/-v never run one, so none of these may report a child.
+            "sudo -l rm -rf /tmp/target",
+            "sudo -v",
+            "sudo --version",
+        ],
+    )
+    def test_sudo_options_that_never_run_a_command_report_none(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "rm -rf") is False
+
 
 # ─── Edge Cases ───────────────────────────────────────────────────────────────
 
