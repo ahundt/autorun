@@ -542,7 +542,11 @@ console.log(JSON.stringify({
     assert result["listed"]["details"]["tasks"][0]["id"] == "existing"
     assert frames[0]["inprocess_operation"] == "task_next_id_v1"
     assert "task_operations_v1" in frames[0]["inprocess_capabilities"]
+    # task operations read state only, so they carry no transcript projection
+    assert "session_transcript" not in frames[0] and "session_transcript" not in frames[2]
+    assert frames[0]["session_id"] == "pi-session" and frames[0]["cwd"] == "/sandbox"
     assert frames[1]["hook_event_name"] == "PostToolUse"
+    assert "session_transcript" in frames[1]
     assert frames[1]["tool_result"]["task"]["id"] == "7"
     assert frames[2]["inprocess_operation"] == "task_list_v1"
 

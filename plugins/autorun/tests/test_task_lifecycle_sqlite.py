@@ -865,3 +865,18 @@ def test_task_projection_lists_in_creation_order_not_id_string_order(sqlite_life
 
     # ready tasks in creation order, then the blocked one
     assert [row["id"] for row in rows] == ["9", "11", "10"]
+
+
+def test_next_task_id_consumes_a_number_even_when_its_create_is_never_recorded(sqlite_lifecycle):
+    """Two mints before either create is recorded (parallel tool calls, or an
+    aborted create) must not hand out the same number: the sequence is
+    persisted under the session lock, not recomputed from recorded tasks."""
+    lifecycle = sqlite_lifecycle
+    first = lifecycle.next_task_id()
+    second = lifecycle.next_task_id()
+    assert (first, second) == ("1", "2")
+    lifecycle.create_task("2", {"subject": "Recorded second only"}, "created")
+    assert lifecycle.next_task_id() == "3"
+    # a higher numeric id recorded from elsewhere still moves the sequence past it
+    lifecycle.create_task("40", {"subject": "Imported"}, "created")
+    assert lifecycle.next_task_id() == "41"

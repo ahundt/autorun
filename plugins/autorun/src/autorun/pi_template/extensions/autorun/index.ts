@@ -95,10 +95,7 @@ export function createTaskId(): string {
 }
 
 async function mintTaskId(ctx: ExtensionContext): Promise<string> {
-  const response = await bridge.askDaemon({
-    ...frame(ctx, "AutorunOperation"),
-    inprocess_operation: "task_next_id_v1",
-  });
+  const response = await bridge.askDaemon(operationFrame(ctx, "task_next_id_v1"));
   const operation = response?._autorun_bridge;
   const minted = operation?.operation === "task_next_id_v1" ? operation.task_id : undefined;
   return typeof minted === "string" && minted.trim() ? minted : createTaskId();
@@ -147,6 +144,19 @@ function frame(ctx: ExtensionContext, event: string): Record<string, unknown> {
   };
 }
 
+// In-process task operations (mint, get, list, reproject) read task state
+// only, so they send no transcript: a mint costs a few hundred bytes on the
+// socket instead of the bounded 64 KiB projection that policy events carry.
+function operationFrame(ctx: ExtensionContext, operation: string): Record<string, unknown> {
+  return {
+    hook_event_name: "AutorunOperation",
+    session_id: sessionId(ctx),
+    transcript_path: ctx.sessionManager.getSessionFile(),
+    cwd: ctx.cwd,
+    inprocess_operation: operation,
+  };
+}
+
 export default function autorunPiExtension(pi: ExtensionAPI) {
   let continuationInFlight = false;
 
@@ -167,8 +177,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
       }
     }
     await bridge.askDaemon({
-      ...frame(ctx, "AutorunOperation"),
-      inprocess_operation: "task_reproject_v1",
+      ...operationFrame(ctx, "task_reproject_v1"),
       task_records: taskRecords,
     });
   }
@@ -231,10 +240,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_callId, _params, signal, _onUpdate, ctx) {
       throwIfAborted(signal);
-      const response = await bridge.askDaemon({
-        ...frame(ctx, "AutorunOperation"),
-        inprocess_operation: "task_list_v1",
-      });
+      const response = await bridge.askDaemon(operationFrame(ctx, "task_list_v1"));
       throwIfAborted(signal);
       const operation = response?._autorun_bridge;
       if (operation?.operation !== "task_list_v1" || !Array.isArray(operation.tasks)) {
@@ -258,8 +264,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     async execute(_callId, params: any, signal, _onUpdate, ctx) {
       throwIfAborted(signal);
       const response = await bridge.askDaemon({
-        ...frame(ctx, "AutorunOperation"),
-        inprocess_operation: "task_get_v1",
+        ...operationFrame(ctx, "task_get_v1"),
         task_id: params.taskId,
       });
       throwIfAborted(signal);

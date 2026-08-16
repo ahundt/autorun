@@ -1248,16 +1248,32 @@ class TaskLifecycle:
         )
 
     def next_task_id(self) -> str:
-        """Mint the session's next task id: one above every numeric id recorded.
+        """Mint the session's next task id under the session lock.
 
-        Deleted and completed tasks stay in the snapshot, so a number is never
-        reused; non-numeric ids do not move the sequence. O(T) over the session
-        task count. This is the one owner of id shape for adapters whose tools
-        autorun implements (the Pi-family extension asks for it through
-        ``task_next_id_v1``); harnesses with native task tools mint their own.
+        The id is one above both the persisted sequence and every numeric id
+        recorded, so a number is never reused: deleted and completed tasks stay
+        in the snapshot, a mint whose create is never recorded still consumes
+        its number, and two mints racing from parallel tool calls each get
+        their own. Non-numeric ids ("plan-2", OpenCode todo ids) do not move
+        the sequence. O(T) over the session task count, one locked write.
+
+        This is the one owner of id shape for adapters whose task tools autorun
+        implements (the Pi-family extension asks through ``task_next_id_v1``);
+        harnesses with native task tools mint their own ids.
         """
-        numeric = [int(task_id) for task_id in self.tasks if str(task_id).isdigit()]
-        return str(max(numeric) + 1 if numeric else 1)
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            tasks = (
+                repository.list_tasks(self.global_key, self._state_lock_timeout)
+                if repository is not None
+                else dict(state.get("tasks", {}))
+            )
+            numeric = [int(task_id) for task_id in tasks if str(task_id).isdigit()]
+            floor = state.get("task_id_sequence", 0)
+            floor = int(floor) if isinstance(floor, (int, float)) or str(floor).isdigit() else 0
+            minted = max([floor, *numeric]) + 1
+            state["task_id_sequence"] = minted
+        return str(minted)
 
     def _prioritize_task_snapshot(self, tasks: Dict[str, Dict]) -> List[Dict]:
         """Order blocking tasks from one authoritative task snapshot."""
