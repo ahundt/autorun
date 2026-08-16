@@ -101,8 +101,9 @@ Every skill this methodology produces meets all thirteen. Cite them by ID in aud
 
 Region names follow the task rather than one universal taxonomy: workflows use `<workflow>`,
 reference skills may use `<decision_guide>`, multi-mode skills `<routing>`, strict result contracts
-`<output_contract>`. Tags must be consistent, descriptive, balanced, and no more deeply nested than
-the task requires. The standard-versus-extension matrix, the claim audit, and the per-host
+`<output_contract>`, inline reference material `<reference>`, and pointers to bundled files and
+sources `<resources>`. Tags must be consistent, descriptive, balanced, and no more deeply nested
+than the task requires. The standard-versus-extension matrix, the claim audit, and the per-host
 validation receipt live in `references/portability-and-claim-audit.md`.
 
 </requirements>
