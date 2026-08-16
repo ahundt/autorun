@@ -415,13 +415,32 @@ class TmuxUtilities:
         'break': 'break-pane',
     }
 
-    def __init__(self, session_name: Optional[str] = None):
+    def __init__(
+        self,
+        session_name: Optional[str] = None,
+        server_socket: Optional[str] = None,
+    ):
         """
         Initialize tmux utilities with session name enforcement
 
         Args:
             session_name: Override default session name (should rarely be used)
+            server_socket: Talk to the tmux server at this socket path instead
+                of the one inherited from ``$TMUX``. Default None keeps the
+                existing behaviour exactly.
+
+                tmux runs one server per socket, and everything about a session
+                -- its name, its window indices, whether it exists at all --
+                belongs to that server. Inheriting ``$TMUX`` is right for
+                autorun itself, which is meant to act inside the session the
+                user is running. It is wrong for a test suite: run from inside
+                tmux, the tests create and kill sessions on the very server
+                holding the developer's own windows, and several of them
+                interleave with each other over shared window indices under
+                parallel execution. Pointing them at a throwaway socket makes
+                each run its own world.
         """
+        self.server_socket = server_socket
         self.session_name = session_name or self.DEFAULT_SESSION_NAME
         self.control_state = TmuxControlState.NORMAL
         self.tmux_binary = resolve_tmux_binary()
@@ -559,52 +578,47 @@ class TmuxUtilities:
 
 
         try:
-            # CRITICAL FIX: Use explicit tmux socket specification when running from within tmux
-            # This prevents subprocess from inheriting current session context and ensures proper targeting
+            # Name the server explicitly rather than letting the subprocess
+            # inherit one. `-S <socket>` pins which tmux server every command
+            # reaches, so a command cannot land in whatever session happens to
+            # be current.
+            #
+            # An explicit `server_socket` wins over the inherited `$TMUX`: that
+            # is what lets a caller (the test suite) work on a throwaway server
+            # instead of the one holding the user's own windows. With neither
+            # set, tmux picks its default socket, which is the behaviour
+            # outside a session.
+            socket_path = self.server_socket
+            if not socket_path:
+                # TMUX looks like /tmp/tmux-1000/default,4219,0
+                tmux_env = os.getenv('TMUX')
+                socket_path = tmux_env.split(',')[0] if tmux_env else None
 
-            # Check if we're running from within a tmux session
-            tmux_env = os.getenv('TMUX')
-            if tmux_env:
-                # Extract socket path from TMUX environment: /tmp/tmux-1000/default,4219,0
-                socket_path = tmux_env.split(',')[0]
+            prefix = (
+                [self.tmux_binary, '-S', socket_path] if socket_path
+                else [self.tmux_binary]
+            )
 
-                # Build command with explicit socket specification
-                # Format: tmux -S <socket> <command> [args...]
-                socket_cmd = [self.tmux_binary, '-S', socket_path] + full_cmd[1:]
-
-                # Ensure target session exists for commands that support targeting
-                if cmd and cmd[0] in commands_supporting_target:
-                    subprocess.run([self.tmux_binary, '-S', socket_path, 'new-session', '-d', '-s', target_session],
-                                  capture_output=True, text=True, timeout=5, shell=False)
-
-                result = subprocess.run(
-                    socket_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    shell=False
+            # Ensure target session exists for commands that support targeting
+            if cmd and cmd[0] in commands_supporting_target:
+                subprocess.run(
+                    prefix + ['new-session', '-d', '-s', target_session],
+                    capture_output=True, text=True, timeout=5, shell=False,
                 )
-            else:
-                # Not running within tmux, use regular command
-                # Ensure target session exists for commands that support targeting
-                if cmd and cmd[0] in commands_supporting_target:
-                    subprocess.run([self.tmux_binary, 'new-session', '-d', '-s', target_session],
-                                  capture_output=True, text=True, timeout=5, shell=False)
 
-                result = subprocess.run(
-                    full_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    shell=False
-                )
-            # Return the result with the actual command that was executed
-            actual_command = socket_cmd if tmux_env else full_cmd
+            executed = prefix + full_cmd[1:]
+            result = subprocess.run(
+                executed,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                shell=False
+            )
             return {
                 'returncode': result.returncode,
                 'stdout': result.stdout,
                 'stderr': result.stderr,
-                'command': actual_command
+                'command': executed,
             }
         except subprocess.TimeoutExpired:
             return None

@@ -10,7 +10,10 @@ import pytest
 import time
 import uuid
 import os
+import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 pytestmark = pytest.mark.tmux
 
@@ -18,7 +21,7 @@ pytestmark = pytest.mark.tmux
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from autorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import TmuxUtilities, get_tmux_utilities
 
 # Test session name prefixes for cleanup
 _TEST_PREFIXES = (
@@ -73,6 +76,57 @@ def _wait_for_pane_text(tmux, session_name, expected_text, timeout=10.0):
             return output
         time.sleep(0.2)
     return output
+
+
+def test_a_private_server_socket_keeps_sessions_off_the_users_tmux():
+    """Tests must not create and kill sessions on the server the user is using.
+
+    `TmuxUtilities` takes its server socket from the inherited `TMUX`
+    environment variable, so a suite run from inside tmux drives the very
+    server running the developer's own windows. That is how these tests came
+    to share window indices with live work, and why several of them fail
+    intermittently under `-n 8`: they are all talking to one server.
+
+    An explicit `server_socket` must win over the inherited one, so a test can
+    stand up a throwaway server and leave the user's alone.
+    """
+    if not shutil.which("tmux"):
+        pytest.skip("tmux not available")
+
+    # Deliberately NOT pytest's tmp_path. A tmux server socket is an AF_UNIX
+    # path, and sun_path is 104 bytes on macOS; pytest's temp root alone
+    # (/private/var/folders/<32 chars>/T/pytest-of-<user>/pytest-N/<testname>)
+    # already spends most of that, so tmux silently fails to bind and the
+    # server never appears. Same trap conftest.py documents for the test
+    # runtime's own daemon socket.
+    holder = tempfile.mkdtemp(prefix="ar-tmux-", dir="/tmp")
+    socket_path = Path(holder) / "s.sock"
+    session_name = f"private-{uuid.uuid4().hex[:8]}"
+    tmux = TmuxUtilities(session_name, server_socket=str(socket_path))
+    try:
+        assert tmux.execute_tmux_command(["new-session", "-d", "-s", session_name])
+        assert socket_path.exists(), "no server was started on the private socket"
+
+        # The session exists on the private server...
+        mine = subprocess.run(
+            ["tmux", "-S", str(socket_path), "has-session", "-t", session_name],
+            capture_output=True,
+        )
+        assert mine.returncode == 0, "the session is missing from its own server"
+
+        # ...and nowhere near the default one the user may be sitting in.
+        theirs = subprocess.run(
+            ["tmux", "has-session", "-t", session_name], capture_output=True
+        )
+        assert theirs.returncode != 0, (
+            "the session leaked onto the default tmux server, which is the "
+            "server the developer's own windows live on"
+        )
+    finally:
+        subprocess.run(
+            ["tmux", "-S", str(socket_path), "kill-server"], capture_output=True
+        )
+        shutil.rmtree(holder, ignore_errors=True)
 
 
 class TestSessionAutomationWorkflows:
