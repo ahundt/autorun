@@ -224,11 +224,18 @@ test -z "$(git status --porcelain=v1)"
 uv run --project plugins/autorun --extra pdf --extra dev pytest plugins/pdf-extractor/tests/ -v
 (cd plugins/autorun && uv run --project . pytest tests/test_release_artifacts.py -m release -v)
 (cd plugins/autorun && AUTORUN_ENABLE_STATE_BENCHMARK=1 uv run --project . pytest tests/test_state_store_benchmark.py -m benchmark -v)
-# Opt-in, and only meaningful once this machine has been reinstalled from the
-# candidate: confirms the Claude plugin cache and the installed Gemini
-# extension actually carry the hook files in this tree. A hook fix that never
-# reaches the cache is invisible, because the harness loads the cache and not
-# the source. Skipped by default so an ordinary source edit does not fail the
+# Reinstall this machine from the candidate before the check below. The
+# harness loads the plugin *cache*, not the source, so a fix to
+# hooks/hook_entry.py or hooks/hooks.json that never reaches the cache is
+# invisible: the live hook keeps running the previous file with nothing to say
+# so. This publishes the candidate to every detected harness.
+uv run --project plugins/autorun python -m autorun --install --force
+# Hook configuration is read once at session start, so a hook change takes
+# effect in the NEXT session, not this one.
+
+# Opt-in, and only meaningful after that reinstall: confirms the Claude plugin
+# cache and the installed Gemini extension actually carry the hook files in
+# this tree. Skipped by default so an ordinary source edit does not fail the
 # suite before the reinstall.
 (cd plugins/autorun && AUTORUN_ENABLE_LIVE_INSTALL_CHECKS=1 uv run --project . pytest tests/test_hook_entry.py -k "cache_matches_source or gemini_extension_hooks_match" -v)
 
