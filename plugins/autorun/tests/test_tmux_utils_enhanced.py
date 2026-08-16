@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun import tmux_utils as tmux_module
 from autorun.tmux_utils import (
+    TmuxUtilities,
     resolve_tmux_binary,
     tmux_detect_claude_thinking_mode,
     tmux_detect_claude_mode,
@@ -438,6 +439,51 @@ class TestNormalizeTargets:
         """Test dict missing required keys"""
         result = _tmux_normalize_targets({'title': 'test'})
         assert result == []
+
+
+class TestSendKeysArgv:
+    """`send_keys` builds one `send-keys <arg>` for every kind of send."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "keys",
+        [
+            "C-m", "C-c", "C-u",          # named in the old branch's list
+            "Enter", "Escape", "Tab", "BTab",  # key names it did not name
+            "C-a C-k", "Escape 0 d",      # multi-key sequences from tmux_injector
+            "export TEST_VAR=1",          # literal text
+            "",                           # empty send
+        ],
+    )
+    def test_every_kind_of_send_is_one_unmodified_argument(self, keys):
+        """tmux parses each argument as a key name and falls back to sending
+        its characters, which is why one form serves both.
+
+        Pinned because the branch this replaces claimed to separate the two and
+        built the same list in both arms. Separating them for real means
+        `send-keys -l` on the text arm, and the arm's five-name list did not
+        recognise `Enter`, `Escape`, `Tab`, `BTab`, `C-a C-k` or `Escape 0 d` —
+        so restoring the split without reclassifying those call sites would send
+        each of them as literal characters instead of as the key it names.
+        """
+        tmux = TmuxUtilities("some-session")
+        with patch.object(
+            tmux, "execute_tmux_command", return_value={"returncode": 0, "stdout": ""}
+        ) as executed:
+            assert tmux.send_keys(keys, "some-session") is True
+
+        executed.assert_called_once_with(
+            ["send-keys", keys], "some-session", None, None
+        )
+
+    @pytest.mark.unit
+    def test_a_failed_send_is_reported_as_false(self):
+        """A non-zero tmux exit and an unreachable server are both failures;
+        `execute_tmux_command` returns None for the second."""
+        tmux = TmuxUtilities("some-session")
+        for outcome in ({"returncode": 1, "stdout": ""}, None):
+            with patch.object(tmux, "execute_tmux_command", return_value=outcome):
+                assert not tmux.send_keys("C-m", "some-session")
 
 
 class TestExecuteWindowAction:

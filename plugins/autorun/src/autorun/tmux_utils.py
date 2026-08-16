@@ -772,14 +772,23 @@ class TmuxUtilities:
         Returns:
             True if successful, False otherwise
         """
-        # CRITICAL FIX: Split control sequences from regular text
-        # Control sequences like C-m, C-c must be separate arguments to tmux send-keys
-        if keys in ['C-m', 'C-c', 'C-l', 'C-u', 'C-w']:
-            # Single control sequence - send as individual argument
-            result = self.execute_tmux_command(['send-keys', keys], session, window, pane)
-        else:
-            # Regular text - send as single argument
-            result = self.execute_tmux_command(['send-keys', keys], session, window, pane)
+        # One argument serves both kinds of send. `tmux send-keys <arg>` parses
+        # the argument as a key name and falls back to sending its characters
+        # when it is not one, so `C-m` arrives as Enter and `export FOO=1`
+        # arrives as text without this having to tell them apart.
+        #
+        # A branch here used to claim it separated control sequences from text,
+        # with both arms building this same list. Sending text as text needs
+        # `send-keys -l`, which never appeared in this file; and applying it to
+        # the "not a control sequence" arm would have broken the `Enter`,
+        # `Escape`, `Tab`, `BTab`, `C-a C-k` and `Escape 0 d` call sites, none
+        # of which that arm's five-name list recognised.
+        #
+        # Known limit of the fallback: text that is exactly a tmux key name is
+        # sent as that key. A prompt of exactly `Up` recalls shell history
+        # instead of typing "Up". Fixing that means classifying at each call
+        # site, not here, because only the caller knows which it meant.
+        result = self.execute_tmux_command(['send-keys', keys], session, window, pane)
         return result and result['returncode'] == 0
 
     def get_session_info(self, session_name: Optional[str] = None) -> Dict[str, Any]:
