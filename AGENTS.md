@@ -353,7 +353,7 @@ autorun/                          # Git repository root
 │   │   ├── skills/                 # Claude Code skills
 │   │   └── hooks/                  # Event hooks
 │   └── pdf-extractor/              # PDF extraction plugin
-├── src/autorun_marketplace/      # Marketplace registration
+├── src/autorun_workspace/        # Workspace-root package (UV workspace member)
 ├── pyproject.toml                  # UV workspace config
 └── README.md                       # Full documentation
 ```
