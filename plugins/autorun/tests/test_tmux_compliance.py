@@ -321,3 +321,33 @@ def test_control_state_enum():
     assert tmux.control_state == TmuxControlState.NORMAL
     tmux.control_state = TmuxControlState.ESCAPE
     assert tmux.control_state == TmuxControlState.ESCAPE
+
+
+def test_start_monitor_spawns_argv_the_parser_accepts(monkeypatch, tmp_path):
+    """The window passed to start_monitor must reach the child. The spawn built
+    ``--start <win>``, a flag parse_cli never had (it takes ``--prompt-on-start
+    [win]``), so the window was silently dropped and the monitor prompted the
+    wrong pane."""
+    import sys
+
+    from autorun import ai_monitor
+
+    spawned: list[list[str]] = []
+
+    class _Proc:
+        pid = 4242
+
+    monkeypatch.setattr(ai_monitor.sp, "Popen", lambda argv, **_kw: spawned.append(argv) or _Proc())
+    monkeypatch.setattr(ai_monitor.Path, "exists", lambda self: False)
+
+    ai_monitor.start_monitor("s1", prompt="go", stop_marker="DONE", max_cycles=2, start_window="3")
+    assert spawned, "nothing spawned"
+    argv = spawned[0]
+
+    # Round-trip the child's argv through the real parser and require the window survives.
+    monkeypatch.setattr(sys, "argv", ["ai_monitor.py", *argv[2:]])
+    session_id, config = ai_monitor.parse_cli()
+    assert session_id == "s1"
+    assert config["prompt"] == "go" and config["stop_marker"] == "DONE" and config["max_cycles"] == 2
+    assert config["prompt_on_start"] is True and config["start_window"] == "3", config
+    assert "--start" not in argv

@@ -119,7 +119,7 @@ Use `autorun --restart-daemon` for the current install/source tree. Use `autorun
 *   **Claude Hooks Reference**: [https://code.claude.com/docs/en/hooks](https://code.claude.com/docs/en/hooks)
 *   **Claude Schema Output**: [https://code.claude.com/docs/en/hooks#json-output](https://code.claude.com/docs/en/hooks#json-output)
 *   **Gemini Hooks Reference**: [https://geminicli.com/docs/hooks/reference/](https://geminicli.com/docs/hooks/reference/)
-*   **Claude Bug #4669 (Exit 2)**: [https://claude.com/blog/how-to-configure-hooks](https://claude.com/blog/how-to-configure-hooks)
+*   **Claude Bug #4669 (Exit 2)**: [https://github.com/anthropics/claude-code/issues/4669](https://github.com/anthropics/claude-code/issues/4669)
 
 </architecture>
 
@@ -150,13 +150,13 @@ If synchronization fails, verify these locations for stale code:
 1.  **Git Source**: `plugins/autorun/src/autorun/`
 2.  **Dev Venv**: `plugins/autorun/.venv/lib/python*/site-packages/autorun/`
 3.  **Build Artifacts**: `plugins/autorun/build/` (remove only if it is known to be generated and unrelated to active work)
-4.  **Claude Cache**: `~/.claude/plugins/cache/autorun/autorun/<version>/`
+4.  **Claude Cache**: `~/.claude/plugins/cache/autorun/ar/<version>/`
 5.  **UV Tool**: `~/.local/share/uv/tools/autorun/` (Must be editable)
 6.  **Gemini Extension**: `~/.gemini/extensions/ar/` (Must be symlink)
 7.  **Gemini Venv**: `~/.gemini/extensions/ar/.venv/`
 8.  **Codex User Hooks**: `~/.codex/hooks.json`
-9.  **Codex Plugin Cache**: `~/.codex/plugins/cache/personal/autorun/<version>/`
-10. **Antigravity Extension**: `~/.gemini/antigravity-cli/extensions/ar/` or the configured custom Antigravity root.
+9.  **Codex Plugin Cache**: `~/.codex/plugins/cache/personal/ar/<version>/`
+10. **Antigravity Plugin**: `~/.gemini/config/plugins/ar/` (Agy's copy of `~/.autorun/installer/extension-sources/antigravity/ar`) or the configured custom Antigravity root.
 11. **Qwen Extension**: `~/.qwen/extensions/ar/`
 12. **Custom Harness Root**: the `config_dir` from `name=flavor:binary:config_dir[::display]`; the optional display name follows `::`
 
@@ -192,7 +192,7 @@ You are in a "Failure Loop" if:
 ## 11. Testing Strategy (Triple-Layer)
 
 1.  **Unit (integrations.py)**: Test predicate logic (e.g., `_not_in_pipe`).
-2.  **Integration (main.py)**: Test `should_block_command()` with real predicates.
+2.  **Integration (plugins.py)**: Test `check_blocked_commands(ctx)` with real predicates.
 3.  **E2E (hook_entry.py)**: Test the full subprocess execution path with fake JSON payloads.
 
 ### Synthetic Verification Examples:
@@ -242,7 +242,7 @@ If hooks fail to connect or present errors, follow this repair guide.
 | Symptom | Probable Cause | Diagnostic Command | Repair Action |
 | :--- | :--- | :--- | :--- |
 | **"Connection Refused"** | Daemon not running or socket stale. | `ls -l ~/.autorun/daemon.*` | Run `autorun --restart-daemon`. |
-| **"No such file" (Hook CLI)**| `${CLAUDE_PLUGIN_ROOT}` missing. | `cat hooks/hook_entry_debug.log` | Run `autorun --install --force`. |
+| **"No such file" (Hook CLI)**| `${CLAUDE_PLUGIN_ROOT}` missing. | `tail -n 20 ~/.autorun/hook_entry_debug.log` | Run `autorun --install --force`. |
 | **"ImportError"** | Python deps missing in venv. | `uv pip list --project plugins/autorun` | Run `uv sync --project plugins/autorun`. |
 | **"Hang" (Claude wait)** | Daemon frozen or buffer full. | `ps aux | grep autorun.daemon` | Run scoped `autorun --restart-daemon`; escalate to `autorun --restart-all-daemons` only with user approval. |
 | **"Hook Error" (UI)** | Stderr noise or bad JSON. | `tail -n 20 ~/.autorun/hook_entry_debug.log`| Check for double-printing or UV warnings. |
@@ -300,8 +300,8 @@ The hook script is registered but cannot be found or executed.
     1.  **Missing Substitution**: Claude fails to replace `${CLAUDE_PLUGIN_ROOT}` for local marketplaces.
     2.  **Partial Install**: `hooks/` directory skipped during `shutil.copytree` due to path logic.
 *   **Solution**:
-    1.  `install.py` must manually `sed`-replace the variables in `~/.claude/plugins/cache/`.
-    2.  Verify existence with: `ls -l ~/.claude/plugins/cache/autorun/autorun/<version>/hooks/hook_entry.py`.
+    1.  `installer/claude.py:substitute_root()` replaces the variables in `~/.claude/plugins/cache/` after registration.
+    2.  Verify existence with: `ls -l ~/.claude/plugins/cache/autorun/ar/<version>/hooks/hook_entry.py`.
 
 ### Layer 4: The Silent Ignore (Bug #4669)
 The hook "succeeds" (exit 0) but the safety guard is ignored.

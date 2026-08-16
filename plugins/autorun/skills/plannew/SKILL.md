@@ -167,7 +167,7 @@ Before designing, explore codebase:
 Use Task tool with Plan subagent to design implementation from exploration results.
 
 ### Step 8: Plan Structure
-Create plan addressing §1.1 Philosophy checklist:
+Create plan addressing the §1.1 Key Principles checklist:
 - [ ] TDD, [ ] DRY, [ ] OODA, [ ] KISS, [ ] YAGNI, [ ] SOLID, [ ] RAII, [ ] WOLOG
 
 ### Step 9: Describe Logic Flow
@@ -177,7 +177,7 @@ Trace logic flow through the description. Show data/control flow.
 Quote actual code with file:line-range references. No paraphrasing.
 
 ### Step 11: Critique Work
-Critique overall + line-by-line against ALL best practices (§1.1) and quality standards (§1.3).
+Critique overall + line-by-line against ALL best practices (Step 2) and quality standards (§1.3).
 
 ### Step 12: Propose Multiple Solutions
 Propose ≥3 distinct solutions to each issue. Choose best with compelling justification.
@@ -263,9 +263,9 @@ After outputting "Wait," execute these 8 steps:
 |---------------|-------------|
 | **Explore** | Codebase exploration, finding patterns, understanding implementations |
 | **Plan** | Designing approaches, alternatives, architectural decisions |
-| **code-architect** | Complex architectural planning |
-| **code-explorer** | Deep analysis of existing features |
-| **code-reviewer** | Code quality, bugs, security review |
+| **code-architect** | Complex architectural planning (Claude Code `feature-dev` plugin, when installed) |
+| **code-explorer** | Deep analysis of existing features (same plugin) |
+| **code-reviewer** | Code quality, bugs, security review (Claude Code `pr-review-toolkit` plugin, when installed) |
 
 **Parallel execution**: Launch multiple in single message when tasks are independent.
 
@@ -298,6 +298,7 @@ Then transition to execution:
 
 3. **SYSTEM STOP SIGNALS** - NEVER output unless condition met:
    - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` - Emergency stop
+   - `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` - Stage 3 done
 
 4. **Safety Protocol**: Execute **ONLY IF** task involves high-risk or irreversible destructive actions (e.g., database operations, file deletion, state modification).
    1. **Assess Risk**: Evaluate if action is irreversible or could cause state corruption.

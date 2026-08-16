@@ -118,8 +118,10 @@ def start_monitor(session_id, prompt="Continue working", stop_marker=None, max_c
     script = Path(__file__)
     pid = sp.Popen([sys.executable, str(script), session_id, '--prompt', prompt,
                     '--max-retry-cycles', str(max_cycles)] +
-                   (['--prompt-on-start'] if prompt_on_start else []) +
-                   (['--start', str(start_window)] if start_window else []) +
+                   # parse_cli reads the window from `--prompt-on-start [win]`; there is
+                   # no `--start` flag, so a window implies prompting on start.
+                   (['--prompt-on-start'] + ([str(start_window)] if start_window else [])
+                    if (prompt_on_start or start_window) else []) +
                    (['--stop', stop_marker] if stop_marker else []),
                    stdout=sp.DEVNULL, stderr=sp.DEVNULL).pid
     return pid
@@ -261,7 +263,7 @@ def parse_cli():
     session_id, args, i = None, sys.argv[1:], 0
 
     if '--help' in args or '-h' in args:
-        print('ai-monitor.py [session] [options]\nOptions: --prompt,-p <txt> --prompt-on-start --start <win> --stop,-s <str>\n  --max-retry-cycles,-c <n> --max-runtime-minutes <n> --check-interval <n>')
+        print('ai-monitor.py [session] [options]\nOptions: --prompt,-p <txt> --prompt-on-start [win] --stop,-s <str> --stop-delay-seconds <n>\n  --max-retry-cycles,-c <n> --max-runtime-minutes <n> --check-interval <n>')
         sys.exit(0)
 
     while i < len(args):

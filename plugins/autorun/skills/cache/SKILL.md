@@ -68,7 +68,7 @@ Percent: `85%` or bare decimal `0.85`. Durations: `5m`, `1h`, `2h30m`, `2d`, `pe
 The two grammars are semantically distinct. `/ar:ok <pattern>` allows a
 command-string pattern; `/ar:cache ok <scope>` overrides the feature gate.
 Overloading `/ar:ok cache` would silently collide with any user command named
-`cache`. Decision in plan §6.5.1 is: no `/ar:ok cache` alias in v1. A sigil-based
+`cache`. Decision: no `/ar:ok cache` alias in v1. A sigil-based
 alias (e.g. `/ar:ok @cache`) is backwards-compatible to add later if users ask.
 
 </commands>

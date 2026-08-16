@@ -15,7 +15,7 @@ metadata:
 Record polished demo videos for CLI tools — either as **direct subprocess recordings** (CLI tools, no AI session) or **real TUI recordings** (interactive AI sessions via tmux).
 
 **Use this skill when:** A demo GIF/video is needed for a CLI tool, plugin, or terminal application.
-**Invoke with:** `/cli-demo-recorder` or "Help me record a demo for my CLI tool"
+**Invoke with:** `/ar:cli-demo-recorder` (autorun plugin) or `/cli-demo-recorder` (skills root), or "Help me record a demo for my CLI tool"
 
 ---
 
@@ -59,12 +59,13 @@ Pick the pathway based on whether the tool has an interactive TUI session. Wrong
 
 ### Phase 4: Convert [Both]
 ```bash
+# values from the settings table below; fontdue renders vector-quality anti-aliased text
 agg demo.cast demo.gif \
     --theme dracula \
-    --font-size 14 \        # 14-16; smaller fits more content
-    --renderer fontdue \    # vector-quality anti-aliased text
-    --speed 0.75 \          # 0.75x — readable without pausing
-    --idle-time-limit 10    # 10s — preserves full banner display
+    --font-size 16 \
+    --renderer fontdue \
+    --speed 0.75 \
+    --idle-time-limit 10
 
 # MP4: 4-strategy fallback (best compression first)
 # Strategy 1: libx265 HEVC (tune=animation — ~50% smaller than libx264 at same quality)

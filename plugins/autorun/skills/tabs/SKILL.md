@@ -61,7 +61,8 @@ After user confirms, execute via:
 echo '{"selections": "B,C", "command": "continue", "sessions": [...session_data_from_discovery...]}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
 
 # Direct tmux (for simple commands)
-tmux send-keys -t "session:window" "command" C-m
+tmux send-keys -t "session:window" "command"
+tmux send-keys -t "session:window" C-m   # Enter as a separate call, as tmux-automation requires
 ```
 
 ## Prompt Types
@@ -96,8 +97,8 @@ Present discovered sessions as:
 Then ask: "Which sessions would you like to interact with?"
 
 **Related**:
-- `tmux-session-automation.md` - Advanced session lifecycle automation
-- `cli-test-automation.md` - CLI testing automation patterns
+- `agents/tmux-session-automation.md` (agent `ar:tmux-session-automation`) - Advanced session lifecycle automation
+- `agents/cli-test-automation.md` (agent `ar:cli-test-automation`) - CLI testing automation patterns
 
 **Implementation**: See `tabs-exec` script for discovery and execution logic.
 

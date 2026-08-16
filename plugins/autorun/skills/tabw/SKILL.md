@@ -70,7 +70,7 @@ targets = (windows
 )
 
 # Step 3: Verify targets before executing
-print(f"Will send to: {[f'{w['session']}:{w['w']}' for w in targets]}")
+print("Will send to:", [f"{w['session']}:{w['w']}" for w in targets])
 
 # Step 4: Execute batch action
 result = tmux_dangerous_batch_execute(tmux, 'continue', targets)

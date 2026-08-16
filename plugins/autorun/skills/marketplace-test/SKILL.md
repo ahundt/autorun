@@ -1,7 +1,7 @@
 ---
 name: marketplace-test
 description: Use when the user asks to "test the marketplace plugins", "run marketplace tests", "check every installed plugin", or "/ar:marketplace-test". Walks the installed marketplace plugins, finds each one's test suite, runs them from the plugin's own directory, and reports per-plugin results.
-allowed-tools: Bash(git, ls, find, cat, echo)
+allowed-tools: Bash(uv *), Bash(git *), Bash(ls *), Bash(find *)
 ---
 
 # Marketplace Plugin Testing

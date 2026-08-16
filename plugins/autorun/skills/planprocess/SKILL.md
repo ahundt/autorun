@@ -31,7 +31,7 @@ If this session was compacted, these rules STILL apply without exception:
 2. **ALL plan steps require TaskCreate.** If you haven't called TaskCreate for each step yet, do that NOW.
 3. **ALL user instructions must be directly quoted as a numbered list** at the top of the plan file. Every distinct message, with sub-items for context if needed.
 4. **NEVER delete content from plan files.** Only add or make micro-edits. Read before editing. Verify after.
-5. **After plan acceptance:** Create [TDD] and [EXEC] tasks for every implementation step before writing any code.
+5. **After plan acceptance:** Create [TDD] and [EXEC] tasks for every implementation step before writing any code (the scaffold is plannew's §10).
 6. **Keep tasks updated:** Before starting any step, `TaskUpdate(status="in_progress")`. When done, `TaskUpdate(status="completed")`.
 
 ---
@@ -257,10 +257,10 @@ After outputting "Wait," execute these 8 steps:
 |---------------|-------------|
 | **Explore** | Codebase exploration, finding patterns, understanding implementations |
 | **Plan** | Designing approaches, alternatives, architectural decisions |
-| **code-architect** | Complex architectural planning |
-| **code-explorer** | Deep analysis of existing features |
-| **code-reviewer** | Code quality, bugs, security review |
-| **pr-test-analyzer** | Test coverage analysis |
+| **code-architect** | Complex architectural planning (Claude Code `feature-dev` plugin, when installed) |
+| **code-explorer** | Deep analysis of existing features (same plugin) |
+| **code-reviewer** | Code quality, bugs, security review (Claude Code `pr-review-toolkit` plugin, when installed) |
+| **pr-test-analyzer** | Test coverage analysis (same plugin) |
 
 **Parallel execution**: Launch multiple in single message when tasks are independent.
 

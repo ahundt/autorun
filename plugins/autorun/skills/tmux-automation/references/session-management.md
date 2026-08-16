@@ -49,7 +49,7 @@ print(r['stdout'].strip() if r and r['returncode'] == 0 else 'No active sessions
 "
 ```
 
-### `cleanup` — Remove Sessions Older Than 1 Hour
+### `cleanup` — Remove autorun-test Sessions Older Than 1 Hour
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
@@ -67,13 +67,14 @@ else:
         if len(parts) == 2:
             sname, created_str = parts[0], parts[1]
             try:
-                if now - int(created_str) > 3600:
+                # SAFE: only autorun-test sessions, never the user's work sessions
+                if sname.startswith('autorun-test') and now - int(created_str) > 3600:
                     # CORRECT: session= param, not inline -t (avoids duplicate -t in execute_tmux_command)
                     tmux.execute_tmux_command(['kill-session'], session=sname)
                     killed.append(sname)
             except ValueError:
                 pass  # skip malformed lines
-    print('Cleaned up: ' + ', '.join(killed) if killed else 'No sessions older than 1 hour.')
+    print('Cleaned up: ' + ', '.join(killed) if killed else 'No autorun-test sessions older than 1 hour.')
 "
 ```
 

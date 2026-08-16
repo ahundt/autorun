@@ -53,7 +53,7 @@ Options:
   --help                Show this help
 ```
 
-**Output defaults:** Without `-o` or `-d`, writes `<name>.svg` next to each input file.
+**Output defaults:** Without `-o` or `--outdir`, writes `<name>.svg` next to each input file (`-d` is swallowed by `bun run`; use `--outdir`).
 
 **Shorthand:** Set `MERMAID=plugins/autorun/skills/mermaid-diagrams/render-mermaid.ts` for shorter commands.
 
@@ -87,7 +87,7 @@ bun run $MERMAID --list-themes
 
 ## Project Diagrams
 
-Mermaid source files (`.mmd`) and rendered output (`.svg`) in `docs/diagrams/`:
+Mermaid source files (`.mmd`) and rendered output (`.svg`) in `docs/diagrams/`, plus one source at the repository root:
 
 | Source | Description |
 |--------|-------------|

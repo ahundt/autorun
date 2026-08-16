@@ -134,11 +134,11 @@ autorun provides convenient commands for tmux session automation:
 ### Testing Automation
 - `/ar:ttest` or `/ar:tt` - Automated CLI testing in isolated sessions
   - Tests basic functionality, help system, custom commands
-  - 30-second timeout protection
+  - Session killed after each test (try/finally); long-running commands are not auto-killed
   - Clean session isolation
 
 ### Related Documentation
-- `commands/tabs.md` - Session discovery user interface
+- `skills/tabs/SKILL.md` + `commands/tabs-exec` - Session discovery (`/ar:tabs`)
 - `commands/tmux.md` - Session management command (`/ar:tmux`)
 - `agents/tmux-session-automation.md` - Advanced automation patterns
 
@@ -158,8 +158,7 @@ autorun provides convenient commands for tmux session automation:
 - `--max-retry-cycles/-c <n>` - Maximum number of re-prompt cycles
 - `--max-runtime-minutes <n>` - Maximum runtime in minutes
 - `--check-interval <n>` - Seconds between checks
-- `--prompt-on-start` - Send prompt immediately on start
-- `--start <window_numbers>` - Target specific windows
+- `--prompt-on-start [window]` - Send the prompt immediately on start, optionally to one window
 
 </integrations>
 
@@ -177,7 +176,7 @@ byobu send-keys -t "autorun" "cd /path/to/project" C-m
 byobu send-keys -t "autorun" "npm test" C-m
 
 # Start ai-monitor (from separate terminal)
-python3 ai_monitor.py "autorun" --prompt "Continue testing" --stop "Tests completed" --max-cycles 3
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m autorun.ai_monitor "autorun" --prompt "Continue testing" --stop "Tests completed" --max-retry-cycles 3
 ```
 
 ### Monitor Claude Code Session
@@ -188,7 +187,7 @@ byobu send-keys -t "autorun" "cd /project" C-m
 byobu send-keys -t "autorun" "claude" C-m
 
 # Start monitoring for autonomous work
-python3 ai_monitor.py "autorun" --prompt "Continue working autonomously" --stop "AUTORUN_ALL_TASKS_COMPLETED" --max-cycles 10
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m autorun.ai_monitor "autorun" --prompt "Continue working autonomously" --stop "AUTORUN_ALL_TASKS_COMPLETED" --max-retry-cycles 10
 ```
 
 ### Automated Plugin Testing Workflow

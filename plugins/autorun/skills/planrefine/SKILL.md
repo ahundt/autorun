@@ -220,7 +220,7 @@ For each section, output headers "PASS 1:", "PASS 2:", "PASS 3:", evaluating:
 After completing each pass, you MUST output the completion marker (exactly this format):
 `[PASS N COMPLETE: found X issues, Y corrections made]`
 
-Only proceed to §7 after outputting `[PASS 3 COMPLETE: 0 new issues found]`.
+Only proceed to §7 after outputting a pass marker with 0 issues found (`[PASS 3 COMPLETE: found 0 issues, 0 corrections made]` at the earliest).
 If Pass 3 finds issues, run Pass 4 and continue until a pass finds 0 new issues.
 Do NOT summarize or skip passes — each pass must produce output.
 
@@ -322,8 +322,8 @@ After outputting "Wait," execute these 8 steps:
 |---------------|-------------|
 | **Explore** | Verify code references, find missed implementations, check patterns |
 | **Plan** | Evaluate alternative approaches, consider tradeoffs |
-| **code-reviewer** | Detailed code quality analysis of proposed changes |
-| **code-explorer** | Deep analysis of existing feature implementations |
+| **code-reviewer** | Detailed code quality analysis of proposed changes (Claude Code `pr-review-toolkit` plugin, when installed) |
+| **code-explorer** | Deep analysis of existing feature implementations (Claude Code `feature-dev` plugin, when installed) |
 
 **Parallel execution**: Launch multiple in single message when tasks are independent.
 
@@ -356,6 +356,7 @@ Then transition to execution:
 
 3. **SYSTEM STOP SIGNALS** - NEVER output unless condition met:
    - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` - Emergency stop
+   - `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` - Stage 3 done
 
 4. **Safety Protocol**: Execute **ONLY IF** task involves high-risk or irreversible destructive actions (e.g., database operations, file deletion, state modification).
    1. **Assess Risk**: Evaluate if action is irreversible or could cause state corruption.
