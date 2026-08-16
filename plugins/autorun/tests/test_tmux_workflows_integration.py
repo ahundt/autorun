@@ -129,6 +129,36 @@ def test_a_private_server_socket_keeps_sessions_off_the_users_tmux():
         shutil.rmtree(holder, ignore_errors=True)
 
 
+def test_the_environment_can_route_every_caller_onto_a_private_server(monkeypatch):
+    """One switch has to cover callers that never pass a socket.
+
+    Nine test modules reach tmux through `get_tmux_utilities()`, a module
+    global that constructs `TmuxUtilities(session_name)` and has nowhere to put
+    a socket. Threading a parameter through all of them would leave the next
+    caller to forget it. `AUTORUN_TMUX_SERVER_SOCKET` is the same shape autorun
+    already uses for `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR`: set it once
+    for a process and every construction in that process is redirected.
+
+    An explicit argument still wins, so a caller that knows its server is not
+    overridden by the environment.
+    """
+    from autorun import tmux_utils
+
+    monkeypatch.setenv("AUTORUN_TMUX_SERVER_SOCKET", "/tmp/ar-env.sock")
+    monkeypatch.setattr(tmux_utils, "_tmux_utils", None)
+
+    assert tmux_utils.get_tmux_utilities("some-session").server_socket == (
+        "/tmp/ar-env.sock"
+    )
+    assert TmuxUtilities("s", server_socket="/tmp/explicit.sock").server_socket == (
+        "/tmp/explicit.sock"
+    ), "an explicit socket must beat the environment"
+
+    monkeypatch.delenv("AUTORUN_TMUX_SERVER_SOCKET")
+    monkeypatch.setattr(tmux_utils, "_tmux_utils", None)
+    assert tmux_utils.get_tmux_utilities("some-session").server_socket is None
+
+
 class TestSessionAutomationWorkflows:
     """Integration tests for session automation workflows"""
 

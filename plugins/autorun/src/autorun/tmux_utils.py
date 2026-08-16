@@ -439,8 +439,18 @@ class TmuxUtilities:
                 interleave with each other over shared window indices under
                 parallel execution. Pointing them at a throwaway socket makes
                 each run its own world.
+
+                Falls back to ``$AUTORUN_TMUX_SERVER_SOCKET`` when not given,
+                which is how a whole process is redirected at once. Callers
+                that reach tmux through :func:`get_tmux_utilities` never pass
+                this argument -- that is a module-level singleton with nowhere
+                to put one -- so an environment switch is what covers them, the
+                same shape ``AUTORUN_HOME`` and ``AUTORUN_TEST_STATE_DIR``
+                already use. An explicit argument wins over the environment.
         """
-        self.server_socket = server_socket
+        self.server_socket = (
+            server_socket or os.environ.get("AUTORUN_TMUX_SERVER_SOCKET") or None
+        )
         self.session_name = session_name or self.DEFAULT_SESSION_NAME
         self.control_state = TmuxControlState.NORMAL
         self.tmux_binary = resolve_tmux_binary()
