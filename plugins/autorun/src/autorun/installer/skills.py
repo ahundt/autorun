@@ -441,6 +441,7 @@ def bridge_intents(
                 plugin="ar",
                 kind=Kind.LINK if mode == "link" else Kind.TREE,
                 settings={"bridge": mode},
+                link_root=source,
             )
         if destination.is_dir():
             for stale in sorted(destination.iterdir()):
@@ -454,7 +455,18 @@ def bridge_intents(
                     )
                 except (OSError, RuntimeError, ValueError):
                     continue
-                yield Intent(target=stale, source=None, plugin="ar", kind=Kind.LINK)
+                # No source — that is what makes it stale — so the root that
+                # proves the link is ours travels on the intent. Without it the
+                # walk falls back to the link's own directory, decides "links
+                # outside the shared root", and the link outlives every install
+                # and uninstall.
+                yield Intent(
+                    target=stale,
+                    source=None,
+                    plugin="ar",
+                    kind=Kind.LINK,
+                    link_root=source,
+                )
 
 
 

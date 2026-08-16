@@ -608,13 +608,66 @@ def owned_trees(root: Path, *, plugin: str = "", max_depth: int = 5) -> Iterator
                 stack.append((child, depth + 1))
 
 
+#: Every staging directory this module creates, each keyed by the target name so
+#: an interrupted transaction can be told from another target's.
+_STAGE_PUBLISH = ".autorun-publish-"
+_STAGE_WITHDRAW = ".autorun-withdraw-"
+_STAGE_CACHE = ".autorun-cache-"
+_STAGE_PREFIXES = (_STAGE_PUBLISH, _STAGE_WITHDRAW, _STAGE_CACHE)
+
+
+def _resume_interrupted(target: Path) -> None:
+    """Finish the transaction a killed process left staged beside ``target``.
+
+    Every stage is created *inside* this parent's install lock, so while we hold
+    it no other autorun publication can be staging here: a directory matching a
+    stage prefix belongs to a process that is gone. That is what makes an age
+    heuristic unnecessary, and an age heuristic would be wrong anyway — a large
+    ``copytree`` legitimately outlives any threshold that is short enough to be
+    useful.
+
+    A publish stage holding ``previous`` is an *interrupted swap*: the target had
+    already been renamed aside and the replacement never landed, so the user's
+    tree exists nowhere else. Putting it back is precisely the rollback
+    :func:`_swapped` runs on a normal failure, and it must happen before the
+    caller's under-lock recheck so the restored tree is what gets decided about.
+    Without it the next install sees no target, answers "new", and republishes
+    over a tree it never knew was there.
+
+    Only stages naming *this* target are resumed. A skills root holds every
+    skill, so a ``previous`` there may belong to another target entirely, and
+    restoring it here would move one tree on top of another's name; that stage
+    is left for its own publication to finish. Withdraw and cache stages carry
+    nothing the user can lose — a withdrawal was removing the tree deliberately,
+    and a cache fill never touches an existing target — so they are only swept.
+
+    Complexity: one ``iterdir`` of the parent per publication, which is a config
+    or skills directory of tens of entries, plus the delete of what is found.
+    """
+    prefixes = tuple(f"{prefix}{target.name}-" for prefix in _STAGE_PREFIXES)
+    try:
+        stages = sorted(target.parent.iterdir())
+    except OSError:
+        return
+    for stage in stages:
+        if not stage.name.startswith(prefixes) or stage.is_symlink() or not stage.is_dir():
+            continue
+        previous = stage / "previous"
+        if (previous.exists() or previous.is_symlink()) and not (
+            target.exists() or target.is_symlink()
+        ):
+            os.replace(previous, target)
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 @contextmanager
 def _swapped(target: Path) -> Iterator[Path]:
     """Yield a same-filesystem stage and atomically replace ``target`` on success."""
     target.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+        _resume_interrupted(target)
         with tempfile.TemporaryDirectory(
-            prefix=f".autorun-publish-{target.name}-", dir=target.parent
+            prefix=f"{_STAGE_PUBLISH}{target.name}-", dir=target.parent
         ) as tmp:
             staged, backup = Path(tmp) / "next", Path(tmp) / "previous"
             yield staged
@@ -688,7 +741,7 @@ def fill_tree(source: Path, target: Path) -> Path | None:
         if target.exists() or target.is_symlink():
             return None
         with tempfile.TemporaryDirectory(
-            prefix=f".autorun-cache-{target.name}-", dir=target.parent
+            prefix=f"{_STAGE_CACHE}{target.name}-", dir=target.parent
         ) as tmp:
             staged = Path(tmp) / "next"
             shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
@@ -804,7 +857,7 @@ def withdrawn(
             assert backup_root is not None
             _park_backup(target, backup_root)
         with tempfile.TemporaryDirectory(
-            prefix=f".autorun-withdraw-{target.name}-", dir=target.parent
+            prefix=f"{_STAGE_WITHDRAW}{target.name}-", dir=target.parent
         ) as tmp:
             quarantined = Path(tmp) / target.name
             os.replace(target, quarantined)

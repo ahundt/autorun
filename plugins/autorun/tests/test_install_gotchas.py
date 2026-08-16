@@ -267,6 +267,173 @@ def test_publish_files_into_a_symlinked_directory(tmp_path, source):
     assert not (real / "go.md").exists()
 
 
+@pytest.mark.parametrize("shape", ["file", "link_to_file", "broken_link"])
+def test_a_shared_directory_route_occupied_by_a_file_is_never_replaced(
+    tmp_path, shape
+):
+    """`commands/` is a *directory* contract, and the user has a file there.
+
+    Publishing would have to replace it, and there is nothing to replace it
+    with that keeps their bytes: `_swapped` moves the target into a staging
+    directory that is deleted on the way out, so the file left no copy anywhere
+    — it was simply gone, while the install reported PUBLISH.
+
+    The symlink case is why moving it aside is not the answer either.
+    `publish_files` resolves a linked target, so `~/.codex/commands ->
+    ~/notes.txt` puts both the replacement and any backup in a directory
+    autorun has no business writing to. A non-directory here is the user's, it
+    is reported, and nothing is written.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "ar-go.md").write_text("shipped\n", encoding="utf-8")
+    shared = tmp_path / "dest" / "commands"
+    shared.parent.mkdir(parents=True)
+    if shape == "file":
+        shared.write_text("USER CONTENT\n", encoding="utf-8")
+    else:
+        elsewhere = tmp_path / "elsewhere.txt"
+        if shape == "link_to_file":
+            elsewhere.write_text("USER CONTENT\n", encoding="utf-8")
+        shared.symlink_to(elsewhere)
+
+    for decision in (
+        decide_files(staging, shared, plugin="ar"),
+        publish_files(staging, shared, plugin="ar"),
+    ):
+        assert decision.verdict is Verdict.KEEP, decision
+        assert "directory" in decision.reason, decision
+
+    assert not shared.is_dir(), "the route stayed the user's"
+    assert not (shared / "ar-go.md").exists()
+    survivors = [
+        p for p in tmp_path.rglob("*")
+        if p.is_file() and not p.is_symlink()
+        and "USER CONTENT" in p.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert bool(survivors) is (shape != "broken_link"), survivors
+
+
+def test_a_directory_that_arrives_while_the_link_lock_is_taken_survives(
+    tmp_path, monkeypatch
+):
+    """`publish_link` decided before the lock and never looked again.
+
+    `publish_tree` closes this window with `published(..., authorize=judge)`,
+    which re-decides under the publication lock immediately before the swap.
+    Its link twin checked once, up front, and then swapped whatever had arrived
+    in the meantime — so a directory the user created between the two moments
+    was replaced with our symlink and its contents were gone.
+
+    The window is opened deterministically here rather than raced for: the
+    stand-in creates the user's directory at the instant the real `_swapped`
+    is entered, which is exactly the interleaving the check must survive.
+    """
+    from autorun.installer import fs
+
+    source = tmp_path / "shared" / "commit"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("ours\n", encoding="utf-8")
+    target = tmp_path / "dest" / "commit"
+    target.parent.mkdir(parents=True)
+    real_swapped = fs._swapped
+
+    def racing(path):
+        if not path.exists():
+            path.mkdir(parents=True)
+            (path / "SKILL.md").write_text("THEIRS\n", encoding="utf-8")
+        return real_swapped(path)
+
+    monkeypatch.setattr(fs, "_swapped", racing)
+
+    decision = fs.publish_link(source, target, plugin="ar")
+
+    assert decision.verdict is Verdict.KEEP, decision
+    assert not target.is_symlink(), "the user's directory was replaced by our link"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "THEIRS\n"
+
+
+def test_a_swap_a_kill_interrupted_puts_the_users_tree_back(tmp_path):
+    """SIGKILL between the two renames leaves the tree only in the stage.
+
+    `_swapped` moves the target aside to `previous`, then renames the stage over
+    it. A process killed between those two renames cannot run either the
+    context manager's cleanup or its rollback, so the target is *absent* and the
+    user's bytes exist only inside `.autorun-publish-<name>-XXXX/previous`.
+
+    That is worse than clutter. The next install finds no target, `decide`
+    answers "new", and the tree is republished over the top — the user's edits
+    were never seen, never reported, and are then deleted with the stale stage.
+    Resuming the interrupted rollback is what the dead process would have done.
+    """
+    source = tmp_path / "src" / "demo"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("shipped\n", encoding="utf-8")
+
+    target = tmp_path / "dest" / "demo"
+    target.parent.mkdir(parents=True)
+    abandoned = target.parent / ".autorun-publish-demo-k1LL3d"
+    (abandoned / "previous").mkdir(parents=True)
+    (abandoned / "previous" / "SKILL.md").write_text("THEIRS\n", encoding="utf-8")
+    (abandoned / "next").mkdir()
+    (abandoned / "next" / "SKILL.md").write_text("shipped\n", encoding="utf-8")
+
+    decision = publish_tree(source, target, plugin="ar")
+
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "THEIRS\n", decision
+    assert decision.verdict is Verdict.KEEP, decision
+    assert not list(target.parent.glob(".autorun-publish-*")), "stage left behind"
+
+
+def test_a_stage_left_by_a_kill_before_the_swap_is_swept(tmp_path):
+    """The common abandoned stage: killed during the copy, target untouched.
+
+    Nothing was moved aside yet, so there is no user data to recover and the
+    publication proceeds normally. The leftover directory still has to go: it
+    accumulates one per interrupted run beside the user's own directories, and
+    the tree inside it carries our marker, so a later sweep reports it as an
+    owned tree at a path no route names.
+    """
+    source = tmp_path / "src" / "demo"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("shipped\n", encoding="utf-8")
+
+    target = tmp_path / "dest" / "demo"
+    target.parent.mkdir(parents=True)
+    abandoned = target.parent / ".autorun-publish-demo-h4LfW4y"
+    (abandoned / "next").mkdir(parents=True)
+    (abandoned / "next" / "SKILL.md").write_text("partial", encoding="utf-8")
+
+    assert publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "shipped\n"
+    assert not list(target.parent.glob(".autorun-publish-*")), "stage left behind"
+
+
+def test_another_targets_abandoned_stage_is_left_for_its_own_publication(tmp_path):
+    """Sweeping is scoped to the target being published, not to the directory.
+
+    A skills root holds every skill, so one `previous` there may belong to a
+    different target entirely. Restoring it to *this* target would move one
+    user's tree on top of another's name. The stage prefix carries the target
+    name for exactly this reason, and only a matching one is resumed.
+    """
+    source = tmp_path / "src" / "demo"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("shipped\n", encoding="utf-8")
+
+    target = tmp_path / "dest" / "demo"
+    target.parent.mkdir(parents=True)
+    foreign = target.parent / ".autorun-publish-commit-0th3rs"
+    (foreign / "previous").mkdir(parents=True)
+    (foreign / "previous" / "SKILL.md").write_text("SOMEONE ELSE\n", encoding="utf-8")
+
+    assert publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "shipped\n"
+    assert (foreign / "previous" / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == "SOMEONE ELSE\n", "another target's interrupted swap was consumed"
+
+
 # ─── The manifest describing something that changed shape ───────────────────
 
 

@@ -121,6 +121,12 @@ class Intent:
     ``kind`` picks which publish/withdraw pair applies. Three, not a boolean:
     a flag could express two and the bridge needs a third, and a second flag
     beside it would admit a state that means nothing.
+
+    ``link_root`` is the root a ``LINK`` must resolve inside for us to own it.
+    It is normally ``source.parent`` and needs no stating — but a *retired* link
+    has no source, and deriving the root from the target instead names the
+    harness's own skills directory, which nothing points into. The step that
+    knows the root says so here.
     """
 
     target: Path
@@ -129,6 +135,7 @@ class Intent:
     settings: Mapping[str, str] = field(default_factory=dict)
     ownership_proof: Callable[[Path], bool] | None = None
     kind: "Kind" = None  # defaults to Kind.TREE in __post_init__
+    link_root: Path | None = None
 
     def __post_init__(self):
         if self.kind is None:
@@ -253,6 +260,7 @@ def _perform(
     whole-tree pair. Choosing between them is the only thing an ``Intent``
     flag decides, because everything else about the two is identical.
     """
+    root = _link_root(intent)
     publishers = {Kind.TREE: publish_tree, Kind.FILES: publish_files, Kind.LINK: publish_link}
     if decision.verdict is Verdict.PUBLISH and intent.source is not None:
         if intent.kind is Kind.TREE:
@@ -284,11 +292,11 @@ def _perform(
     if decision.verdict is Verdict.RETIRE:
         if intent.kind is Kind.FILES:
             removed = bool(withdraw_files(intent.target, plugin=intent.plugin))
-        elif intent.kind is Kind.LINK and intent.source is not None:
+        elif intent.kind is Kind.LINK and root is not None:
             if intent.target.is_symlink():
                 removed = withdraw_link(
                     intent.target,
-                    intent.source.parent,
+                    root,
                     exact_target=(
                         intent.source
                         if intent.settings.get("registration_link") == "1"
@@ -317,6 +325,25 @@ def _perform(
         if not removed:
             return Decision(Verdict.KEEP, intent.target, "could not remove", decision.edited)
     return decision
+
+
+def _link_root(intent: Intent) -> Path | None:
+    """Where a ``LINK`` must point for it to be ours to replace or remove.
+
+    Both halves of a link's lifecycle ask this, so they ask it once, here. A
+    live bridge proves ownership by its source's root; a *stale* one has no
+    source — that is what makes it stale — so the step that emitted it names the
+    root on the intent instead.
+
+    ``None`` means nothing established a root, and the caller must not treat the
+    link as ours. Deriving one from the target is what hid this: the target's
+    own directory is the harness's skills folder, nothing points into it, so
+    every stale link was decided "links outside the shared root" and survived
+    both install and uninstall while still resolving into our shared root.
+    """
+    if intent.link_root is not None:
+        return intent.link_root
+    return intent.source.parent if intent.source is not None else None
 
 
 def walk(harnesses: Sequence[Harness], ctx: Context) -> Iterator[Intent]:
@@ -419,7 +446,7 @@ def run(
     for intent in chain(walk(harnesses, ctx), extra):
         key = (
             intent.kind, intent.target, intent.source, intent.plugin,
-            tuple(sorted(intent.settings.items())),
+            intent.link_root, tuple(sorted(intent.settings.items())),
         )
         if key in decided:
             continue
@@ -427,19 +454,27 @@ def run(
         source = None if mode.retiring else intent.source
         if intent.kind is Kind.LINK:
             # A link's ownership is its target, not a marker; `decide` reads a
-            # live symlink as user-authored and would refuse it forever.
-            inside = (intent.source or intent.target).parent
-            decision = decide_link(
-                source,
-                intent.target,
-                inside,
-                plugin=intent.plugin,
-                ownership_proof=intent.ownership_proof,
-                exact_target=(
-                    intent.source
-                    if intent.settings.get("registration_link") == "1"
-                    else None
-                ),
+            # live symlink as user-authored and would refuse it forever. With no
+            # root established nothing can prove the link is ours, so it is the
+            # user's and `decide_link` is never asked.
+            inside = _link_root(intent)
+            decision = (
+                decide_link(
+                    source,
+                    intent.target,
+                    inside,
+                    plugin=intent.plugin,
+                    ownership_proof=intent.ownership_proof,
+                    exact_target=(
+                        intent.source
+                        if intent.settings.get("registration_link") == "1"
+                        else None
+                    ),
+                )
+                if inside is not None
+                else Decision(
+                    Verdict.KEEP, intent.target, "no shared root proves this is ours"
+                )
             )
         elif intent.kind is Kind.FILES:
             if source is not None:

@@ -468,3 +468,60 @@ def test_a_broken_bridge_for_a_retired_skill_is_planned_for_removal(
 
     retired = next(intent for intent in intents if intent.target == stale)
     assert retired.source is None and retired.kind.value == "link"
+
+
+@pytest.mark.parametrize("mode_name", ["INSTALL", "UNINSTALL"])
+def test_a_stale_bridge_link_is_actually_removed_not_merely_planned(
+    tmp_path, shared, ctx, monkeypatch, mode_name
+):
+    """Planning the removal is the easy half; the walk has to carry it out.
+
+    A stale link has no source — that is what makes it stale — and both halves
+    of the retirement read ownership off the source. `run()` derived the root a
+    link must point into from `(source or target).parent`, which for a stale
+    intent is the harness's own skills directory: nothing points into that, so
+    every stale link was decided "links outside the shared root". Even past
+    that, `_perform` only reached `withdraw_link` when a source existed, and
+    `withdrawn` refuses symlinks by design. The link therefore survived install
+    *and* uninstall while still resolving into autorun's shared root.
+
+    A link pointing anywhere else is the user's and must survive both.
+    """
+    from autorun.installer.fs import Verdict
+    from autorun.installer.traversal import Mode, run
+
+    (shared / "commit").mkdir(parents=True)
+    (shared / "commit" / "SKILL.md").write_text("# commit\n", encoding="utf-8")
+    destination = tmp_path / "claude" / "skills"
+    destination.mkdir(parents=True)
+    stale = destination / "retired"
+    stale.symlink_to(shared / "retired")
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "SKILL.md").parent.mkdir(parents=True)
+    (elsewhere / "SKILL.md").write_text("# theirs\n", encoding="utf-8")
+    theirs = destination / "theirs"
+    theirs.symlink_to(elsewhere)
+    monkeypatch.setattr(
+        "autorun.installer.discovery.skill_destinations",
+        lambda _platform, reading=False: (destination,) if reading else (),
+    )
+    platform = FakePlatform("w", False, native_skills=Route("plugins"))
+
+    @dataclass(frozen=True)
+    class Fake:
+        name: str
+        install_steps: tuple
+
+    decisions = run(
+        [Fake("w", (lambda harness, context: bridge_intents(
+            platform, context, shared_root_override=shared
+        ),))],
+        ctx,
+        Mode[mode_name],
+    )
+    named = {d.target: d for d in decisions}
+
+    assert named[stale].verdict is Verdict.RETIRE, named[stale]
+    assert not stale.is_symlink(), "the stale link outlived its own retirement"
+    assert theirs not in named, "a link outside the shared root is not our business"
+    assert theirs.is_symlink() and (theirs / "SKILL.md").is_file()
