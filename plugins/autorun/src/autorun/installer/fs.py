@@ -1492,9 +1492,13 @@ def demo() -> None:
         assert "SKILL.md" in kept.describe()
 
         # Flipping the executable bit counts as an edit, not a silent rewrite.
+        # POSIX only, for the same reason as the exec-bit assertion above:
+        # clearing S_IXUSR on Windows changes nothing, so `decide` is right to
+        # report no edit and the assertion would be measuring the platform.
         (target / "SKILL.md").write_text("version one\n", encoding="utf-8")
-        os.chmod(target / "run.sh", os.stat(target / "run.sh").st_mode & ~stat.S_IXUSR)
-        assert "run.sh" in decide(target, source, plugin="ar").edited
+        if os.name == "posix":
+            os.chmod(target / "run.sh", os.stat(target / "run.sh").st_mode & ~stat.S_IXUSR)
+            assert "run.sh" in decide(target, source, plugin="ar").edited
 
         # Another plugin's tree is never touched, and never removed.
         publish_tree(source, root / "dest" / "other", plugin="pdf-extractor")
