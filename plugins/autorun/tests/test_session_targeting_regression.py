@@ -18,7 +18,7 @@ pytestmark = pytest.mark.tmux
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 # Import conftest utilities for cleanup
-from conftest import should_keep_test_artifacts
+from conftest import tmux_argv, should_keep_test_artifacts
 
 from autorun.tmux_utils import get_tmux_utilities
 
@@ -32,14 +32,14 @@ class TestSessionTargetingRegression:
         self.current_session = "main"  # Expected current session
 
         # Ensure test session exists
-        subprocess.run(['tmux', 'new-session', '-d', '-s', self.test_session],
+        subprocess.run(tmux_argv('new-session', '-d', '-s', self.test_session),
                       capture_output=True, timeout=5)
 
         # Get tmux utilities for test session
         self.tmux = get_tmux_utilities(self.test_session)
 
         # Store initial current session content for leakage detection
-        initial_capture = subprocess.run(['tmux', 'capture-pane', '-p', '-J'],
+        initial_capture = subprocess.run(tmux_argv('capture-pane', '-p', '-J'),
                                         capture_output=True, text=True, timeout=5)
         self.initial_current_content = initial_capture.stdout
 
@@ -49,7 +49,7 @@ class TestSessionTargetingRegression:
             print(f"\n[DEBUG] Keeping tmux session: {self.test_session}")
             return
 
-        subprocess.run(['tmux', 'kill-session', '-t', self.test_session],
+        subprocess.run(tmux_argv('kill-session', '-t', self.test_session),
                       capture_output=True, timeout=5)
 
     def _capture_session_content(self, session_name):
@@ -62,7 +62,7 @@ class TestSessionTargetingRegression:
         ~/work/autorun/autorun/plugins/autorun$ `) pushes an echo past 80
         columns, which no developer's shorter prompt does.
         """
-        result = subprocess.run(['tmux', 'capture-pane', '-t', session_name, '-p', '-J'],
+        result = subprocess.run(tmux_argv('capture-pane', '-t', session_name, '-p', '-J'),
                               capture_output=True, text=True, timeout=5)
         return result.stdout if result.returncode == 0 else ""
 
@@ -79,7 +79,7 @@ class TestSessionTargetingRegression:
     def test_send_keys_targets_correct_session(self):
         """Test that send-keys properly targets the specified session"""
         # Clear current session to detect any leakage
-        subprocess.run(['tmux', 'send-keys', 'C-c'], capture_output=True, timeout=5)
+        subprocess.run(tmux_argv('send-keys', 'C-c'), capture_output=True, timeout=5)
         time.sleep(0.1)  # Brief pause
 
         # Send test command to target session
@@ -159,7 +159,7 @@ class TestSessionTargetingRegression:
         assert os.path.basename(command[0]) == 'tmux', "Should start with a tmux executable"
 
         # When running within tmux, command should include socket specification
-        # Format: ['tmux', '-S', socket_path, 'send-keys', '-t', 'session', 'text']
+        # Format: tmux_argv('-S', socket_path, 'send-keys', '-t', 'session', 'text')
         if '-S' in command:
             socket_index = command.index('-S')
             assert socket_index + 1 < len(command), "Socket path should follow -S flag"
@@ -200,14 +200,14 @@ class TestSessionTargetingRegression:
 
         # Create a temporary session for testing leakage detection
         temp_session = f"leak-test-{timestamp}"
-        subprocess.run(['tmux', 'new-session', '-d', '-s', temp_session],
+        subprocess.run(tmux_argv('new-session', '-d', '-s', temp_session),
                       capture_output=True, timeout=5)
 
         try:
             # Test our leakage detection by sending command to temp session
             # and verifying we can detect it there
-            subprocess.run(['tmux', 'send-keys', '-t', temp_session, test_text], capture_output=True, timeout=5)
-            subprocess.run(['tmux', 'send-keys', '-t', temp_session, 'C-m'], capture_output=True, timeout=5)
+            subprocess.run(tmux_argv('send-keys', '-t', temp_session, test_text), capture_output=True, timeout=5)
+            subprocess.run(tmux_argv('send-keys', '-t', temp_session, 'C-m'), capture_output=True, timeout=5)
             time.sleep(0.2)
 
             # Our leakage detection should find this in the temp session
@@ -226,14 +226,14 @@ class TestSessionTargetingRegression:
 
         finally:
             # Clean up temporary session
-            subprocess.run(['tmux', 'kill-session', '-t', temp_session],
+            subprocess.run(tmux_argv('kill-session', '-t', temp_session),
                           capture_output=True, timeout=5)
 
     def test_session_cleanup_and_isolation(self):
         """Test that session cleanup works and doesn't affect other sessions"""
         # Create a temporary session
         temp_session = "temp-cleanup-test"
-        subprocess.run(['tmux', 'new-session', '-d', '-s', temp_session],
+        subprocess.run(tmux_argv('new-session', '-d', '-s', temp_session),
                       capture_output=True, timeout=5)
 
         try:
@@ -253,7 +253,7 @@ class TestSessionTargetingRegression:
 
         finally:
             # Clean up temp session
-            subprocess.run(['tmux', 'kill-session', '-t', temp_session],
+            subprocess.run(tmux_argv('kill-session', '-t', temp_session),
                           capture_output=True, timeout=5)
 
     def test_command_construction_includes_target(self):
@@ -276,7 +276,7 @@ class TestSessionTargetingRegression:
         assert '-t' in command, "Command should include target flag"
         assert 'test-construction' in command, "Command should include target session"
 
-        # Expected format: ['tmux', 'send-keys', 'test-text', '-t', 'test-construction']
+        # Expected format: tmux_argv('send-keys', 'test-text', '-t', 'test-construction')
         expected_target_index = command.index('-t')
         assert expected_target_index > 0, "-t flag should be present"
         assert expected_target_index + 1 < len(command), "Target should follow -t flag"
@@ -288,8 +288,8 @@ class TestSessionTargetingRegression:
         session2 = "isolation-test-2"
 
         # Create test sessions
-        subprocess.run(['tmux', 'new-session', '-d', '-s', session1], capture_output=True, timeout=5)
-        subprocess.run(['tmux', 'new-session', '-d', '-s', session2], capture_output=True, timeout=5)
+        subprocess.run(tmux_argv('new-session', '-d', '-s', session1), capture_output=True, timeout=5)
+        subprocess.run(tmux_argv('new-session', '-d', '-s', session2), capture_output=True, timeout=5)
 
         try:
             # Get tmux utilities for each session
@@ -310,9 +310,9 @@ class TestSessionTargetingRegression:
             time.sleep(0.2)
 
             # Verify isolation
-            capture1 = subprocess.run(['tmux', 'capture-pane', '-t', session1, '-p', '-J'],
+            capture1 = subprocess.run(tmux_argv('capture-pane', '-t', session1, '-p', '-J'),
                                     capture_output=True, text=True, timeout=5)
-            capture2 = subprocess.run(['tmux', 'capture-pane', '-t', session2, '-p', '-J'],
+            capture2 = subprocess.run(tmux_argv('capture-pane', '-t', session2, '-p', '-J'),
                                     capture_output=True, text=True, timeout=5)
 
             assert text1 in capture1.stdout, "Text1 should appear in session1"
@@ -322,8 +322,8 @@ class TestSessionTargetingRegression:
 
         finally:
             # Clean up test sessions
-            subprocess.run(['tmux', 'kill-session', '-t', session1], capture_output=True, timeout=5)
-            subprocess.run(['tmux', 'kill-session', '-t', session2], capture_output=True, timeout=5)
+            subprocess.run(tmux_argv('kill-session', '-t', session1), capture_output=True, timeout=5)
+            subprocess.run(tmux_argv('kill-session', '-t', session2), capture_output=True, timeout=5)
 
     def test_no_target_leakage_in_current_session(self):
         """Test that targeted commands don't leak into a non-target session.
@@ -352,7 +352,7 @@ class TestSessionTargetingRegression:
         # Create a separate observer session that should remain untouched.
         observer_session = f"leakage-observer-{uid}"
         subprocess.run(
-            ['tmux', 'new-session', '-d', '-s', observer_session],
+            tmux_argv('new-session', '-d', '-s', observer_session),
             capture_output=True, timeout=5,
         )
         try:
@@ -392,7 +392,7 @@ class TestSessionTargetingRegression:
                 )
         finally:
             subprocess.run(
-                ['tmux', 'kill-session', '-t', observer_session],
+                tmux_argv('kill-session', '-t', observer_session),
                 capture_output=True, timeout=5,
             )
 

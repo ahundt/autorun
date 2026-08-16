@@ -7,6 +7,8 @@ This test identifies and explains the root cause of why session targeting is fai
 
 import pytest
 import subprocess
+
+from conftest import tmux_argv
 import time
 import os
 import sys
@@ -32,11 +34,11 @@ def test_session_targeting_root_cause_analysis():
     test_session = "diagnostic-test-session"
 
     # Clean up any existing test session
-    subprocess.run(['tmux', 'kill-session', '-t', test_session],
+    subprocess.run(tmux_argv('kill-session', '-t', test_session),
                   capture_output=True, timeout=5)
 
     # Create test session
-    subprocess.run(['tmux', 'new-session', '-d', '-s', test_session],
+    subprocess.run(tmux_argv('new-session', '-d', '-s', test_session),
                   capture_output=True, timeout=5)
 
     try:
@@ -44,14 +46,14 @@ def test_session_targeting_root_cause_analysis():
 
         # Test 1: Manual tmux command (should work)
         print("\n2. Testing MANUAL tmux command:")
-        manual_result = subprocess.run(['tmux', 'send-keys', '-t', test_session, 'echo manual-test', 'C-m'],
+        manual_result = subprocess.run(tmux_argv('send-keys', '-t', test_session, 'echo manual-test', 'C-m'),
                                        capture_output=True, text=True, timeout=5)
         print(f"   Command: tmux send-keys -t {test_session} echo manual-test C-m")
         print(f"   Return code: {manual_result.returncode}")
         assert manual_result.returncode == 0, manual_result.stderr
 
         time.sleep(0.2)
-        manual_capture = subprocess.run(['tmux', 'capture-pane', '-t', test_session, '-p'],
+        manual_capture = subprocess.run(tmux_argv('capture-pane', '-t', test_session, '-p'),
                                         capture_output=True, text=True, timeout=5)
         manual_success = "echo manual-test" in manual_capture.stdout
         print(f"   Success: {manual_success}")
@@ -75,9 +77,9 @@ def test_session_targeting_root_cause_analysis():
         time.sleep(0.2)
 
         # Check where the command went
-        python_capture_target = subprocess.run(['tmux', 'capture-pane', '-t', test_session, '-p'],
+        python_capture_target = subprocess.run(tmux_argv('capture-pane', '-t', test_session, '-p'),
                                               capture_output=True, text=True, timeout=5)
-        python_capture_current = subprocess.run(['tmux', 'capture-pane', '-p'],
+        python_capture_current = subprocess.run(tmux_argv('capture-pane', '-p'),
                                                 capture_output=True, text=True, timeout=5)
 
         target_success = "echo python-test" in python_capture_target.stdout
@@ -96,7 +98,7 @@ def test_session_targeting_root_cause_analysis():
 
             # Check if command structure is correct
             if isinstance(command, list) and len(command) >= 5:
-                expected_structure = ['tmux', 'send-keys', 'echo construction-test', '-t', test_session]
+                expected_structure = tmux_argv('send-keys', 'echo construction-test', '-t', test_session)
                 if command == expected_structure:
                     print("   ✅ Command structure is correct")
                 else:
@@ -117,13 +119,13 @@ def test_session_targeting_root_cause_analysis():
             print(f"   Socket path: {socket_path}")
 
             # Test with explicit socket
-            socket_cmd = ['tmux', '-S', socket_path, 'send-keys', '-t', test_session, 'echo socket-test', 'C-m']
+            socket_cmd = tmux_argv('-S', socket_path, 'send-keys', '-t', test_session, 'echo socket-test', 'C-m')
             socket_result = subprocess.run(socket_cmd, capture_output=True, text=True, timeout=5)
             print(f"   Socket command: {' '.join(socket_cmd)}")
             print(f"   Socket result return code: {socket_result.returncode}")
 
             time.sleep(0.2)
-            socket_capture = subprocess.run(['tmux', 'capture-pane', '-t', test_session, '-p'],
+            socket_capture = subprocess.run(tmux_argv('capture-pane', '-t', test_session, '-p'),
                                            capture_output=True, text=True, timeout=5)
             socket_success = "echo socket-test" in socket_capture.stdout
             print(f"   Socket command success: {socket_success}")
@@ -164,7 +166,7 @@ def test_session_targeting_root_cause_analysis():
 
     finally:
         # Clean up
-        subprocess.run(['tmux', 'kill-session', '-t', test_session],
+        subprocess.run(tmux_argv('kill-session', '-t', test_session),
                       capture_output=True, timeout=5)
 
 

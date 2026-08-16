@@ -12,6 +12,8 @@ import uuid
 import os
 import shutil
 import subprocess
+
+from conftest import tmux_argv
 import tempfile
 from pathlib import Path
 
@@ -42,14 +44,14 @@ def clean_tmux_test_sessions():
     def _cleanup():
         try:
             result = subprocess.run(
-                ["tmux", "list-sessions", "-F", "#{session_name}"],
+                tmux_argv("list-sessions", "-F", "#{session_name}"),
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
                 for name in result.stdout.strip().split("\n"):
                     if name and any(name.startswith(p) for p in _TEST_PREFIXES):
                         subprocess.run(
-                            ["tmux", "kill-session", "-t", name],
+                            tmux_argv("kill-session", "-t", name),
                             capture_output=True, timeout=5,
                         )
         except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -107,7 +109,11 @@ def test_a_private_server_socket_keeps_sessions_off_the_users_tmux():
         assert tmux.execute_tmux_command(["new-session", "-d", "-s", session_name])
         assert socket_path.exists(), "no server was started on the private socket"
 
-        # The session exists on the private server...
+        # Raw `tmux`, not tmux_argv: this test is *about* comparing two
+        # specific servers, so it must name each socket itself. tmux_argv
+        # would add the ambient AUTORUN_TMUX_SERVER_SOCKET, which would both
+        # double the -S flag here and make the "default server" check below
+        # interrogate the private fixture server instead of the real default.
         mine = subprocess.run(
             ["tmux", "-S", str(socket_path), "has-session", "-t", session_name],
             capture_output=True,

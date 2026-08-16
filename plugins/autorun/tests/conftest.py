@@ -172,6 +172,18 @@ _SERIAL_TMUX_TESTS = {
 }
 
 
+def tmux_argv(*args):
+    """A raw tmux command that reaches the same server TmuxUtilities does.
+
+    A test that builds `["tmux", ...]` by hand talks to the default server,
+    while its `TmuxUtilities` calls honour ``AUTORUN_TMUX_SERVER_SOCKET``. Mix
+    the two and the test sends on one server and reads on another, which is a
+    guaranteed miss that looks like a delivery bug. Route both through here.
+    """
+    socket_path = os.environ.get("AUTORUN_TMUX_SERVER_SOCKET")
+    return ["tmux", *(["-S", socket_path] if socket_path else []), *args]
+
+
 @pytest.fixture(scope="session")
 def private_tmux_server():
     """A private tmux server a test can use instead of the user's.
