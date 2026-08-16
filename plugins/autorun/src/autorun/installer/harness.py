@@ -134,15 +134,19 @@ def demo() -> None:
         nasty = Command("x", 'has "quotes" and \\ backslash', 'body with """ fence')
         assert tomllib.loads(render_toml_command(nasty))["description"] == nasty.description
 
-    # Placeholder substitution accepts both spellings.
+    # Placeholder substitution accepts both spellings. The expectation is built
+    # from `root` rather than written out, because `str(Path("/opt/plugins/ar"))`
+    # is a backslash path on Windows and a hardcoded POSIX spelling made this
+    # assert what the platform separator is, not what `substitute` does.
     root = Path("/opt/plugins/ar")
-    assert substitute("run ${CLAUDE_PLUGIN_ROOT}/hooks/x.py", root) == "run /opt/plugins/ar/hooks/x.py"
-    assert substitute("run $CLAUDE_PLUGIN_ROOT/x", root) == "run /opt/plugins/ar/x"
+    here = str(root)
+    assert substitute("run ${CLAUDE_PLUGIN_ROOT}/hooks/x.py", root) == f"run {here}/hooks/x.py"
+    assert substitute("run $CLAUDE_PLUGIN_ROOT/x", root) == f"run {here}/x"
     assert substitute("nothing to do", root) == "nothing to do"
 
     # A different harness placeholder is honoured.
     assert substitute("${extensionPath}/h.py", root, placeholder="${extensionPath}") == \
-        "/opt/plugins/ar/h.py"
+        f"{here}/h.py"
 
     print("installer.harness: all self-checks passed")
 

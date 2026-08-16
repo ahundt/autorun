@@ -596,7 +596,11 @@ def demo() -> None:
     # The shell form is the SAME command, and survives a space in the path.
     rendered = command.shell()
     assert shlex.split(rendered) == list(argv), (rendered, argv)
-    assert "'/tmp/a project/with space'" in rendered or '"/tmp/a project/with space"' in rendered
+    # Quoted from the same value rather than a written-out POSIX spelling:
+    # `str(Path("/tmp/a project/with space"))` is a backslash path on Windows,
+    # so the literal asserted the separator instead of the quoting.
+    assert shlex.quote(str(project)) in rendered, (rendered, project)
+    assert shlex.quote(str(project)) != str(project), "the space must force quoting"
 
     # Flags are described once, so both forms change together.
     loose = UvCommand(project=project, no_sync=False, quiet=False)

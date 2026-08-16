@@ -1460,7 +1460,14 @@ def demo() -> None:
         assert publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
 
         assert (target / "logo.png").read_bytes().startswith(b"\x89PNG"), "binary survives"
-        assert os.stat(target / "run.sh").st_mode & stat.S_IXUSR, "exec bit survives"
+        if os.name == "posix":
+            # Windows has no execute permission bit: `chmod` there only moves
+            # the read-only flag, so `S_IXUSR` is absent on the source too and
+            # the assertion would be about the platform rather than about
+            # `publish_tree` preserving what it was given. The bit matters
+            # because `hooks/hook_entry.py` stops being runnable without it,
+            # which is a POSIX concern only.
+            assert os.stat(target / "run.sh").st_mode & stat.S_IXUSR, "exec bit survives"
         assert (target / "linked.md").is_symlink(), "symlink survives"
         assert (target / OWNED_MARKER_NAME).is_file(), "marker landed with the contents"
 

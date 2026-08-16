@@ -652,12 +652,18 @@ def demo() -> None:
         # process's home, and ~someone-else names a home it is not running as.
         # Returning a relative path called `~root` under the CWD, which the
         # first draft did, is the one answer that is certainly wrong.
-        import pwd
+        #
+        # POSIX only: `pwd` is the account database module and does not exist on
+        # Windows, where `~other` has no meaning to expanduser either. The seam
+        # itself is asserted above on every platform; this covers the one case
+        # that needs a real second account to exist.
+        if os.name == "posix":
+            import pwd
 
-        other = next((u.pw_name for u in pwd.getpwall() if u.pw_dir.startswith("/")), "")
-        if other:
-            resolved = expand_home(f"~{other}/x", home=fake_home)
-            assert resolved.is_absolute(), resolved
+            other = next((u.pw_name for u in pwd.getpwall() if u.pw_dir.startswith("/")), "")
+            if other:
+                resolved = expand_home(f"~{other}/x", home=fake_home)
+                assert resolved.is_absolute(), resolved
 
         # Reproducible metadata: same epoch in, same string out.
         assert build_timestamp({"SOURCE_DATE_EPOCH": "1700000000"}) == \
