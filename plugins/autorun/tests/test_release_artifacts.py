@@ -91,6 +91,17 @@ def _digest(path: Path) -> str:
 
 @pytest.fixture(scope="module")
 def release_bundle(tmp_path_factory):
+    """Build the release artifacts twice, from one prospective checkout.
+
+    REAL WORK IS THE ASSERTION — do not collapse the two passes to speed this
+    up. `test_release_archives_repeat_bytes_in_one_toolchain_and_are_clean`
+    compares the two builds digest for digest, so the second pass *is* the
+    reproducibility check; building once and comparing the result to itself
+    would assert nothing. The 5.7s this costs is the price of that proof.
+
+    It is already module scope, so both passes are paid once for every test in
+    the file rather than once per test.
+    """
     root = tmp_path_factory.mktemp("release-artifacts")
     checkout = root / "checkout"
     checkout.mkdir()

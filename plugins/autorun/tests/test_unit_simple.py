@@ -4,8 +4,11 @@
 Simplified unit tests for autorun core functionality
 """
 
+import importlib
 import pytest
+import subprocess
 import sys
+import types
 from pathlib import Path
 
 from conftest import skip_if_windows_service_provider_error
@@ -424,7 +427,62 @@ TIME_IS_THE_ASSERTION = {
     "test_opencode_bridge.py": "ELAPSED TIME IS THE ASSERTION",
     "test_task_state_writes_survive_concurrency.py": "REAL CONTENTION IS THE ASSERTION",
     "test_thread_process_safety.py": "REAL CONTENTION IS THE ASSERTION",
+    # Builds the release artifacts twice and compares them digest for digest.
+    # Collapsing the second pass would compare a build to itself.
+    "test_release_artifacts.py": "REAL WORK IS THE ASSERTION",
 }
+
+
+class TestAFailedSubprocessExplainsItself:
+    """A dead child process must say why, not just that it died.
+
+    `subprocess.run(..., check=True)` raises CalledProcessError whose message
+    is only "Command '[...]' returned non-zero exit status N". The captured
+    output is on the exception and nothing prints it, so a spawned hook that
+    crashes reports an exit code and no cause — which is how the antigravity
+    hook failure on ubuntu-3.11 stayed undiagnosed until its assertion was
+    rewritten by hand. conftest.py's `pytest_exception_interact` attaches the
+    output for every such site at once.
+    """
+
+    def _report_sections(self, exception):
+        import subprocess as sp  # noqa: F401 - the hook narrows on these types
+
+        conftest = importlib.import_module("conftest")
+
+        class _Call:
+            def __init__(self, exc):
+                self.excinfo = types.SimpleNamespace(value=exc)
+
+        class _Report:
+            def __init__(self):
+                self.sections = []
+
+        report = _Report()
+        conftest.pytest_exception_interact(None, _Call(exception), report)
+        return report.sections
+
+    def test_a_nonzero_exit_reports_both_streams(self):
+        failure = subprocess.CalledProcessError(
+            3, ["hook_entry.py"], output="OUT", stderr="ERR"
+        )
+        sections = dict(self._report_sections(failure))
+        assert sections.get("subprocess stdout (exit 3)") == "OUT"
+        assert sections.get("subprocess stderr (exit 3)") == "ERR"
+
+    def test_a_timeout_reports_what_the_child_managed_to_say(self):
+        sections = dict(
+            self._report_sections(
+                subprocess.TimeoutExpired(
+                    ["hook_entry.py"], 5, output=b"PARTIAL", stderr=b"WHY"
+                )
+            )
+        )
+        assert sections.get("subprocess stdout (exit timed out)") == "PARTIAL"
+        assert sections.get("subprocess stderr (exit timed out)") == "WHY"
+
+    def test_an_unrelated_failure_is_left_alone(self):
+        assert self._report_sections(AssertionError("ordinary")) == []
 
 
 class TestIdentitiesAreActuallyUnique:

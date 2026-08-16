@@ -172,6 +172,41 @@ _SERIAL_TMUX_TESTS = {
 }
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_exception_interact(node, call, report):
+    """Attach a failed subprocess's own output to the failure report.
+
+    ``subprocess.run(..., check=True)`` raises ``CalledProcessError``, whose
+    message is only "Command '[...]' returned non-zero exit status N". The
+    captured stdout and stderr are attributes on the exception, but nothing
+    prints them, so a test that spawns a hook process and dies reports an exit
+    code and nothing about why. That is exactly how the antigravity hook
+    failure on ubuntu-3.11 stayed undiagnosed: the assertion had to be
+    rewritten by hand to report the child's output before the cause was
+    visible.
+
+    Forty-two call sites in this suite use ``check=True`` and a further set
+    passes ``timeout=``. Attaching the output once, here, covers all of them,
+    and it cannot change any test's outcome -- it only adds sections to a
+    report that has already failed.
+    """
+    exception = call.excinfo.value if call.excinfo is not None else None
+    if not isinstance(
+        exception, (subprocess.CalledProcessError, subprocess.TimeoutExpired)
+    ):
+        return
+    returncode = getattr(exception, "returncode", "timed out")
+    for stream in ("stdout", "stderr"):
+        captured = getattr(exception, stream, None)
+        if not captured:
+            continue
+        if isinstance(captured, bytes):
+            captured = captured.decode("utf-8", "replace")
+        report.sections.append(
+            (f"subprocess {stream} (exit {returncode})", captured)
+        )
+
+
 def pytest_collection_modifyitems(config, items):
     """Auto-assign serial/parallel markers based on test file dependencies.
 
