@@ -2291,6 +2291,74 @@ class TestDestructiveGitCmdFlagBypass:
         assert p is not None
         assert p.verb == "checkout"
 
+    def _repo_with_a_clean_and_a_dirty_file(self, tmp_path):
+        env = {
+            **os.environ,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        _init_git_repo(tmp_path)
+        for name in ("clean.py", "dirty.py"):
+            (tmp_path / name).write_text("committed\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, env=env)
+        _subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "-qm", "files"], check=True, env=env
+        )
+        (tmp_path / "dirty.py").write_text("uncommitted work\n")
+        return tmp_path
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # The destructive write is the second segment in each of these.
+            "git checkout -- clean.py && git checkout -- dirty.py",
+            "git checkout -b feature && git checkout -- dirty.py",
+            "git restore --staged clean.py && git restore dirty.py",
+            "git restore --staged clean.py; git restore dirty.py",
+            # A --staged that is not an operand at all: text inside another
+            # command. Scanning the whole string for the flag disarmed the guard.
+            "echo 'next time use git restore --staged' && git restore dirty.py",
+        ],
+    )
+    def test_a_destructive_segment_is_caught_wherever_it_sits(self, cmd, tmp_path):
+        """Every checkout/restore segment is judged, not just the first.
+
+        The predicates read one segment: the first whose git subcommand is
+        checkout or restore. A compound command whose opening segment is
+        harmless — restoring a clean file, unstaging, creating a branch, or
+        merely mentioning `--staged` in an echo — answered for the whole line,
+        and the write that followed went through and took the work with it.
+        """
+        from autorun.integrations import _file_differs_from_ref, _restore_is_destructive
+
+        repo = self._repo_with_a_clean_and_a_dirty_file(tmp_path)
+        ctx = _make_ctx(cmd, repo)
+        predicate = _restore_is_destructive if "restore" in cmd else _file_differs_from_ref
+
+        assert predicate(ctx) is True, f"{cmd} discarded dirty.py unchallenged"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "git checkout -- clean.py",
+            "git checkout -- clean.py && git status",
+            "git restore --staged clean.py && git restore --staged dirty.py",
+            "git restore -S dirty.py",
+        ],
+    )
+    def test_segments_that_lose_nothing_are_still_allowed(self, cmd, tmp_path):
+        """Widening the scan must not start blocking harmless compounds."""
+        from autorun.integrations import _file_differs_from_ref, _restore_is_destructive
+
+        repo = self._repo_with_a_clean_and_a_dirty_file(tmp_path)
+        ctx = _make_ctx(cmd, repo)
+        predicate = _restore_is_destructive if "restore" in cmd else _file_differs_from_ref
+
+        assert predicate(ctx) is False
+
     @pytest.mark.parametrize(
         "invocation",
         ["/usr/bin/git", "/opt/homebrew/bin/git", "sudo -k git", "rtk git"],

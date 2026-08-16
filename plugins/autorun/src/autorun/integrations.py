@@ -675,12 +675,18 @@ class _DestructiveGitCommand:
     files: tuple[str, ...]
 
 
-def _find_destructive_segment(cmd: str) -> list[str]:
-    """Return tokens of the first shell segment whose git subcommand is
-    `checkout` or `restore`; [] if none.
+def _destructive_segments(cmd: str) -> list[list[str]]:
+    """Return tokens of every shell segment whose git subcommand is
+    `checkout` or `restore`, in order; [] if none.
 
     Segment-scoped: splits on `;`, `&&`, `||`, `|`, `&`, `\\n` so tokens
-    from subsequent chained commands never leak into pathspec parsing.
+    from one chained command never leak into another's parsing.
+
+    All of them, not the first: `git checkout -- clean.py && git checkout --
+    dirty.py` used to be judged entirely by `clean.py`, which loses nothing, so
+    the write that took `dirty.py`'s uncommitted work ran unchallenged. The
+    same shape hid behind an opening `git checkout -b`, an opening
+    `git restore --staged`, and an `echo` that merely mentioned a flag.
 
     Normalizes git global options away so downstream callers see
     `["git", <verb>, ...subcmd_args]` regardless of whether the source
@@ -688,6 +694,7 @@ def _find_destructive_segment(cmd: str) -> list[str]:
     """
     from autorun.command_detection import _SHELL_OPERATORS, _shlex_split_safe
 
+    found: list[list[str]] = []
     for segment in _SHELL_OPERATORS.split(cmd):
         segment = segment.strip()
         if not segment:
@@ -707,10 +714,16 @@ def _find_destructive_segment(cmd: str) -> list[str]:
         if sub_idx >= len(tokens):
             continue
         if tokens[sub_idx] in ("checkout", "restore"):
-            # Return normalized form so _extract_* helpers can rely on
+            # Normalized form so _extract_* helpers can rely on
             # tokens[0] == "git" and tokens[1] == <verb>.
-            return ["git"] + tokens[sub_idx:]
-    return []
+            found.append(["git"] + tokens[sub_idx:])
+    return found
+
+
+def _find_destructive_segment(cmd: str) -> list[str]:
+    """Return the first segment `_destructive_segments` finds; [] if none."""
+    segments = _destructive_segments(cmd)
+    return segments[0] if segments else []
 
 
 def _extract_checkout_ref(tokens: list[str]) -> str:
@@ -791,43 +804,60 @@ def _creates_a_branch(tokens: list[str]) -> bool:
     return any(t in ("-b", "--orphan") for t in tokens[2:])
 
 
-def _parse_destructive_git_cmd(cmd: str) -> _DestructiveGitCommand | None:
-    """Parse a shell command into a _DestructiveGitCommand, or None if no match.
+def _parse_destructive_git_cmds(cmd: str) -> list[_DestructiveGitCommand]:
+    """Parse every destructive checkout/restore in a shell command, in order.
 
-    Pure function. No subprocess, no I/O. Unit-testable in isolation.
+    Pure function. No subprocess, no I/O. Unit-testable in isolation. Segments
+    that only create a branch are dropped, so a leading `git checkout -b` never
+    speaks for the segments after it.
     """
     if not cmd:
-        return None
-    tokens = _find_destructive_segment(cmd)
-    if not tokens:
-        return None
-    verb = tokens[1]  # "checkout" or "restore"
-    if verb == "checkout" and _creates_a_branch(tokens):
-        return None
-    ref = _extract_checkout_ref(tokens) if verb == "checkout" else _extract_restore_ref(tokens)
-    files = _extract_pathspecs(tokens, verb)
-    return _DestructiveGitCommand(verb=verb, ref=ref, files=files)
+        return []
+    parsed: list[_DestructiveGitCommand] = []
+    for tokens in _destructive_segments(cmd):
+        verb = tokens[1]  # "checkout" or "restore"
+        if verb == "checkout" and _creates_a_branch(tokens):
+            continue
+        ref = (
+            _extract_checkout_ref(tokens)
+            if verb == "checkout"
+            else _extract_restore_ref(tokens)
+        )
+        parsed.append(
+            _DestructiveGitCommand(
+                verb=verb, ref=ref, files=_extract_pathspecs(tokens, verb)
+            )
+        )
+    return parsed
+
+
+def _parse_destructive_git_cmd(cmd: str) -> _DestructiveGitCommand | None:
+    """Return the first command `_parse_destructive_git_cmds` finds, or None."""
+    parsed = _parse_destructive_git_cmds(cmd)
+    return parsed[0] if parsed else None
 
 
 # ---- Predicate using the pure parser + hardened subprocess helper ------------
 
 
 def _file_differs_from_ref(ctx: any) -> bool:
-    """Return True iff the git checkout/restore in ctx would alter tracked content.
+    """Return True iff any git checkout/restore in ctx would alter tracked content.
 
-    Uses `_parse_destructive_git_cmd` (pure) to extract (verb, ref, files), then
-    `_git_diff_quiet` (hardened I/O) to check. Fail-safe: block on internal error.
-    Fail-soft: allow when no repo context is available (predicate inapplicable).
+    Uses `_parse_destructive_git_cmds` (pure) to extract every (verb, ref,
+    files), then `_git_diff_quiet` (hardened I/O) to check each. Fail-safe:
+    block on internal error. Fail-soft: allow when no repo context is available
+    (predicate inapplicable).
     """
     try:
         cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
-        parsed = _parse_destructive_git_cmd(cmd)
-        if parsed is None:
-            return False
         cwd = getattr(ctx, "cwd", None)
-        if not parsed.files:
-            return _git_diff_quiet(cwd, parsed.ref, None)
-        return any(_git_diff_quiet(cwd, parsed.ref, f) for f in parsed.files)
+        for parsed in _parse_destructive_git_cmds(cmd):
+            if not parsed.files:
+                if _git_diff_quiet(cwd, parsed.ref, None):
+                    return True
+            elif any(_git_diff_quiet(cwd, parsed.ref, f) for f in parsed.files):
+                return True
+        return False
     except Exception as e:
         logger.warning("_file_differs_from_ref fail-safe block: %s", e)
         return True
@@ -1097,6 +1127,27 @@ def _sed_modifies_files(ctx: any) -> bool:
         return False
 
 
+def _restore_touches_worktree(tokens: list[str]) -> bool:
+    """Return whether one `git restore` segment writes the working tree.
+
+    `--worktree`/`-W` always does, even alongside `--staged`. `--staged`/`-S`
+    alone only unstages. With neither, git defaults to `--worktree`.
+
+    Short flags bundle (`-SW`, `-WS`), and case carries meaning: `-S` is
+    `--staged` while `-s` is `--source`. Only the segment's own tokens are
+    read — scanning the whole command string meant a `--staged` anywhere,
+    including inside an unrelated `echo`, spoke for a destructive restore
+    further along the line.
+    """
+    flags = [t for t in tokens[2:] if t.startswith("-") and t != "--"]
+    short = [f for f in flags if not f.startswith("--")]
+    if "--worktree" in flags or any("W" in f for f in short):
+        return True
+    if "--staged" in flags or any("S" in f for f in short):
+        return False
+    return True
+
+
 def _restore_is_destructive(ctx: any) -> bool:
     """
     Check if 'git restore' is destructive (discards working tree changes).
@@ -1120,30 +1171,13 @@ def _restore_is_destructive(ctx: any) -> bool:
         if not cmd:
             return False
 
-        parts = cmd.split()
-
-        # Check for --worktree or -W (explicitly destructive even with --staged)
-        has_worktree = "--worktree" in parts or "-W" in parts
-        for p in parts:
-            if p.startswith("-") and not p.startswith("--") and "W" in p:
-                has_worktree = True  # catches -SW, -WS, etc.
-
-        # Check for --staged or -S (safe if alone, destructive if combined with -W)
-        has_staged = "--staged" in parts or "-S" in parts
-        for p in parts:
-            if p.startswith("-") and not p.startswith("--") and "S" in p:
-                has_staged = True  # catches -SW, -WS, etc.
-
-        if has_worktree:
-            # --worktree is always destructive, even with --staged
-            return _file_differs_from_ref(ctx)
-        if has_staged:
-            # --staged only: unstages without discarding worktree → safe.
-            # (With --source=<ref>, this restores the INDEX from <ref> — no
-            # worktree data loss; still classified safe.)
+        restores = [t for t in _destructive_segments(cmd) if t[1] == "restore"]
+        if restores and not any(_restore_touches_worktree(t) for t in restores):
+            # Every restore here is --staged only: unstages without discarding
+            # the worktree. (With --source=<ref> this restores the INDEX from
+            # <ref> — no worktree data loss; still classified safe.)
             return False
 
-        # Default (no flags) is --worktree, which is destructive
         return _file_differs_from_ref(ctx)
     except Exception as e:
         logger.warning("_restore_is_destructive fail-safe block: %s", e)

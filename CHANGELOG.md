@@ -84,6 +84,17 @@ marketplace itself carries a separate `version` field.
   `--ignore-signal` are documented with a bracketed value, so consuming the next
   word ate the command; and `env -a <name>` did not consume its value. Each
   option's arity now matches the tool that owns it.
+- **A destructive checkout or restore is caught wherever it sits in the line.**
+  Both predicates read one segment — the first whose git subcommand is
+  `checkout` or `restore` — and let it answer for the whole command. So
+  `git checkout -- clean.py && git checkout -- dirty.py` was judged entirely by
+  the file that had nothing to lose, and the write that discarded `dirty.py`
+  ran unchallenged. The same shape hid behind a leading `git checkout -b` and a
+  leading `git restore --staged`. Separately, `git restore` decided
+  staged-versus-worktree by scanning the whole command string for the flag, so
+  a `--staged` in an unrelated `echo` disarmed it. Every checkout and restore
+  segment is judged now, and the restore flags are read from the restore's own
+  tokens.
 - **A git reached by absolute path no longer bypasses the checkout guard.**
   `command_matches_pattern` matched `/usr/bin/git checkout` by basename, so the
   pattern fired, but the predicate deciding whether the write would discard
