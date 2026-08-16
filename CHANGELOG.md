@@ -84,6 +84,15 @@ marketplace itself carries a separate `version` field.
   `--ignore-signal` are documented with a bracketed value, so consuming the next
   word ate the command; and `env -a <name>` did not consume its value. Each
   option's arity now matches the tool that owns it.
+- **The remaining predicates ask about the session's directory too.**
+  `_has_uncommitted_changes` — registered under two names for user integration
+  files — kept its pre-v4 body after its sibling became an alias: `git diff
+  --quiet` with no directory, no scrubbed environment, and every error read as
+  "no changes". It reported on whatever directory the daemon was started in,
+  and a staged-only edit did not count as uncommitted work. It delegates to
+  `_repo_differs_from_head` now, like `_has_unstaged_changes` already did. A
+  user-written bash `when:` (`test -f package.json`) also ran in that same
+  shared directory; it runs in the session's.
 - **`git stash drop` is judged against the session's repository.** The guard
   that asks whether a stash exists ran `git stash list` in the hook process's
   own working directory — and the daemon serves every session on this machine

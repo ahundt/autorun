@@ -289,16 +289,52 @@ class TestWhenPredicates:
         """'always' predicate returns True."""
         assert check_when_predicate("always", None) is True
 
-    @patch("subprocess.run")
-    def test_python_predicate_has_uncommitted_changes(self, mock_run):
-        """has_uncommitted_changes calls git diff."""
-        mock_run.return_value = MagicMock(returncode=1)  # Has changes
+    @pytest.mark.parametrize("name", ["has_uncommitted_changes", "_has_uncommitted_changes"])
+    def test_python_predicate_has_uncommitted_changes(self, name, tmp_path):
+        """Both registered spellings answer about the session's repository.
 
-        result = check_when_predicate("has_uncommitted_changes", None)
+        This predicate is not used by any shipped rule; it stays registered for
+        user hookify files, which is exactly why it has to be right. It kept the
+        pre-v4 body — `git diff --quiet` with no cwd and no scrubbed env — after
+        its sibling `_has_unstaged_changes` became an alias, so it read the hook
+        process's directory and missed a staged-only change, which is
+        uncommitted work like any other.
+        """
+        repo = _init_git_repo(tmp_path / "dirty")
+        (repo / "seed.txt").write_text("uncommitted\n")
 
-        assert result is True
-        mock_run.assert_called_once()
-        assert "git diff" in mock_run.call_args[0][0]
+        assert check_when_predicate(name, _make_ctx("git reset --hard", repo)) is True
+
+    @pytest.mark.parametrize("name", ["has_uncommitted_changes", "_has_uncommitted_changes"])
+    def test_has_uncommitted_changes_sees_a_staged_only_edit(self, name, tmp_path):
+        repo = _init_git_repo(tmp_path / "staged")
+        (repo / "seed.txt").write_text("staged\n")
+        _subprocess.run(["git", "-C", str(repo), "add", "seed.txt"], check=True)
+
+        assert check_when_predicate(name, _make_ctx("git reset --hard", repo)) is True
+
+    @pytest.mark.parametrize("name", ["has_uncommitted_changes", "_has_uncommitted_changes"])
+    def test_has_uncommitted_changes_is_quiet_on_a_clean_repo(self, name, tmp_path):
+        repo = _init_git_repo(tmp_path / "clean")
+
+        assert check_when_predicate(name, _make_ctx("git reset --hard", repo)) is False
+
+    def test_a_user_written_bash_predicate_runs_in_the_session_directory(self, tmp_path):
+        """`when: test -f package.json` asks about the user's project.
+
+        The predicate string is written by whoever authored the integration
+        file, about the repository their session is in. Running it with the
+        daemon's own directory — one directory shared by every session on the
+        machine — answered about a project they were not working on.
+        """
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "package.json").write_text("{}\n")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+
+        assert check_when_predicate("test -f package.json", _make_ctx("npm test", project)) is True
+        assert check_when_predicate("test -f package.json", _make_ctx("npm test", elsewhere)) is False
 
     @patch("subprocess.run")
     def test_python_predicate_no_changes(self, mock_run):

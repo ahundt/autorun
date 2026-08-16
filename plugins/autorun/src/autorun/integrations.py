@@ -522,9 +522,21 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
                 logger.warning(f"When predicate '{when}' failed: {e}")
                 return False
 
-        # Fallback: run as bash command
+        # Fallback: run as bash command, in the session's directory. A
+        # user-authored `when:` is about the project the session is working in
+        # ("test -f package.json"), and the daemon serving that session is
+        # running wherever it was started — one directory for every session on
+        # the machine. cwd=None keeps the previous behavior when the event
+        # carries no directory.
         try:
-            result = subprocess.run(when, shell=True, capture_output=True, timeout=2, text=True)
+            result = subprocess.run(
+                when,
+                shell=True,
+                capture_output=True,
+                timeout=2,
+                text=True,
+                cwd=getattr(ctx, "cwd", None) or None,
+            )
             return result.returncode == 0
         except subprocess.TimeoutExpired:
             logger.warning(f"When predicate '{when}' timed out")
@@ -534,15 +546,6 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
             return False
     finally:
         _restore_current_pattern(ctx, state, previous)
-
-
-def _has_uncommitted_changes(ctx: any) -> bool:
-    """Check if git has uncommitted changes."""
-    try:
-        result = subprocess.run("git diff --quiet --exit-code", shell=True, capture_output=True, timeout=2)
-        return result.returncode != 0
-    except Exception:
-        return False
 
 
 # v4 single-source-of-truth for destructive-git predicates.
@@ -635,10 +638,20 @@ def _repo_differs_from_head(ctx: any) -> bool:
     return _git_diff_quiet(getattr(ctx, "cwd", None), "HEAD", None)
 
 
-# Backward-compat alias — preserves any user hookify files or config entries
-# still referencing the legacy `_has_unstaged_changes` name. New code should
-# call `_repo_differs_from_head` directly.
+# Backward-compat aliases — preserve any user hookify files or config entries
+# still referencing the legacy names. New code should call
+# `_repo_differs_from_head` directly.
+#
+# `_has_uncommitted_changes` kept its own pre-v4 body long after this one became
+# an alias: `git diff --quiet` with no cwd, no scrubbed environment, and every
+# error swallowed into False. It therefore answered about the daemon's own
+# directory rather than the session's, and a staged-only edit — uncommitted work
+# like any other — did not count as a change.
 def _has_unstaged_changes(ctx: any) -> bool:
+    return _repo_differs_from_head(ctx)
+
+
+def _has_uncommitted_changes(ctx: any) -> bool:
     return _repo_differs_from_head(ctx)
 
 
