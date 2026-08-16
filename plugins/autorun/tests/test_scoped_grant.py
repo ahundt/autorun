@@ -104,6 +104,58 @@ def test_parallel_replays_of_first_use_consume_only_one_count():
     assert state["grant"].remaining_uses == 4
 
 
+@pytest.mark.parametrize("granted", [2, 3, 5])
+def test_one_command_seen_by_both_hooks_costs_one_use(granted: int):
+    """`/ar:ok rm 3` must buy three commands, not one and a half.
+
+    autorun runs twice for one Bash command — its own PreToolUse hook and the
+    `rtk hook claude` entry that spawns another autorun — which is the whole
+    reason `last_call_id` exists. `is_valid` grants the second invocation its
+    grace only once the count has reached 0, so at any higher count both
+    invocations took the normal path and `consume` decremented twice. A user
+    asking for three uses got to run the command once, then once more, then was
+    blocked. `ScopedGrant.claim_once` has always refused to double-count, and
+    one grammar cannot have two answers.
+    """
+    allow = ScopedAllow(pattern="rm", remaining_uses=granted, grace_seconds=1.0)
+    call = "fingerprint-of-one-bash-call"
+
+    for hook_time in (100.0, 100.1):  # the two invocations, 100ms apart
+        assert allow.is_valid(call, now=hook_time)
+        allow = allow.consume(call, now=hook_time)
+
+    assert allow.remaining_uses == granted - 1
+
+    # A different command is a different call: it costs its own use.
+    assert allow.is_valid("a-different-call", now=100.2)
+    allow = allow.consume("a-different-call", now=100.2)
+    assert allow.remaining_uses == granted - 2
+
+
+def test_a_repeat_after_the_grace_window_costs_its_own_use():
+    allow = ScopedAllow(pattern="rm", remaining_uses=3, grace_seconds=1.0)
+    call = "same-command-typed-twice"
+
+    allow = allow.consume(call, now=100.0)
+    assert allow.remaining_uses == 2
+    assert allow.is_valid(call, now=200.0)
+    allow = allow.consume(call, now=200.0)
+    assert allow.remaining_uses == 1
+
+
+def test_the_last_use_still_grants_grace_to_the_parallel_invocation():
+    """The count=1 path this grace was built for keeps working unchanged."""
+    allow = ScopedAllow(pattern="rm", remaining_uses=1, grace_seconds=1.0)
+    call = "fingerprint-of-one-bash-call"
+
+    assert allow.is_valid(call, now=100.0)
+    allow = allow.consume(call, now=100.0)
+    assert allow.remaining_uses == 0
+    assert allow.is_valid(call, now=100.1), "second invocation must not fall to TIER 2"
+    assert not allow.is_valid("another-call", now=100.1)
+    assert not allow.is_valid(call, now=101.5), "grace expires"
+
+
 def test_scoped_allow_positional_pattern_and_flat_round_trip_remain_compatible():
     allow = ScopedAllow(
         "git status",

@@ -61,6 +61,18 @@ marketplace itself carries a separate `version` field.
 
 ### Fixed
 
+- **A counted allow is no longer spent twice by one command.** autorun runs
+  twice for a single Bash command — its own hook, and the `rtk hook claude`
+  entry that spawns another autorun — which is why grants carry the
+  `session:tool:command` fingerprint of the call that consumed them. That
+  fingerprint was recorded only on the use that reached zero, so at any higher
+  count both invocations took the ordinary path and each decremented:
+  `/ar:ok rm 3` bought one command, then a second, then blocked, and
+  `/ar:ok rm 2` bought one. Every counted call is stamped now, and a repeat of
+  the stamped call inside the grace window refreshes the stamp without
+  decrementing — the rule `ScopedGrant.claim_once` already applied. A different
+  command arriving in the same window still costs its own use. `/ar:cache ok N`
+  grants are counted through the same code and were affected identically.
 - **Five wrapper spellings no longer hide the command they wrap.** The
   transparent-wrapper grammar recorded the wrong arity for several options, and
   every mistake pointed the same way — the child command vanished and the guard

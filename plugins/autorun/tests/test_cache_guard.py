@@ -68,14 +68,22 @@ class _FrozenClock:
         return self.now
 
 
-def _make_ctx(session_id: str, cli_type: str = "claude") -> object:
-    """Build a minimal EventContext for PreToolUse without a running daemon."""
+def _make_ctx(
+    session_id: str, cli_type: str = "claude", command: str = "git push"
+) -> object:
+    """Build a minimal EventContext for PreToolUse without a running daemon.
+
+    `command` is a parameter because the grant fingerprint is
+    session+tool+command: two checks carrying the same command are one logical
+    call and spend one use between them, so a test that means "three separate
+    commands" has to say three commands.
+    """
     from autorun.core import EventContext
     return EventContext(
         session_id=session_id,
         event="PreToolUse",
         tool_name="Bash",
-        tool_input={"command": "git push"},
+        tool_input={"command": command},
         cli_type=cli_type,
         transcript_path=None,
     )
@@ -407,15 +415,37 @@ class TestCacheGuardDecision:
         assert g.check(ctx) is None
 
     def test_grant_n3_decrements(self, tmp_state_dir):
+        """Three commands spend three uses; the fourth is stopped."""
+        from autorun.cache_guard import CacheGuardConfig, grant_override
+        g, _ctx = _guard(tmp_state_dir,
+                         threshold=CacheGuardConfig(cache_hit_ratio_min=0.5),
+                         usage=_FakeUsage(cache_hit_ratio=0.1))
+        grant_override(g.session_id, ttl_seconds=None, uses=3)
+        for command in ("git push", "git fetch", "git status"):
+            assert g.check(_make_ctx(g.session_id, command=command)) is None
+        assert g.check(_make_ctx(g.session_id, command="git log")) is not None
+
+    def test_grant_n3_is_not_spent_by_one_command_hooked_twice(self, tmp_state_dir):
+        """autorun runs twice per Bash command; a 3-use grant must survive that.
+
+        The second run is the `rtk hook claude` entry spawning another autorun
+        against the same daemon, within ~200ms and with an identical
+        session+tool+command fingerprint. Counting it separately spent two of
+        the three uses on the first command.
+        """
         from autorun.cache_guard import CacheGuardConfig, grant_override
         g, ctx = _guard(tmp_state_dir,
                         threshold=CacheGuardConfig(cache_hit_ratio_min=0.5),
                         usage=_FakeUsage(cache_hit_ratio=0.1))
         grant_override(g.session_id, ttl_seconds=None, uses=3)
-        for _ in range(3):
-            assert g.check(ctx) is None
-        time.sleep(1.5)  # clear parallel-hook grace window
-        assert g.check(ctx) is not None
+
+        assert g.check(ctx) is None      # plugin hook
+        assert g.check(ctx) is None      # rtk-spawned hook, same command
+
+        # Two more genuine commands remain, and only then does it stop.
+        assert g.check(_make_ctx(g.session_id, command="git fetch")) is None
+        assert g.check(_make_ctx(g.session_id, command="git status")) is None
+        assert g.check(_make_ctx(g.session_id, command="git log")) is not None
 
     def test_grant_perm_allows_until_axis_clears(self, tmp_state_dir):
         from autorun.cache_guard import CacheGuardConfig, grant_override

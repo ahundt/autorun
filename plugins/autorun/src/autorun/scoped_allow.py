@@ -449,21 +449,26 @@ class ScopedAllow(ScopedGrant):
                      last_call_id so subsequent parallel invocations with the
                      same fingerprint can use the grace period.
 
-        Sets consumed_at and last_call_id when remaining_uses hits 0, enabling
-        the grace period. Refreshes both if already 0 (subsequent parallel
-        invocations extend the grace window).
+        Every counted call is stamped, and a repeat of the stamped call inside
+        the grace window refreshes the stamp without decrementing — the same
+        rule `ScopedGrant.claim_once` applies. Stamping only on the way to 0
+        left every higher count unprotected: `is_valid` returns True by the
+        ordinary route while uses remain, so both invocations of one Bash
+        command decremented and `/ar:ok rm 3` bought one command and a half.
         """
         if self.remaining_uses is None:
             return self
-        new_count = self.remaining_uses - 1
-        if new_count <= 0:
-            return dataclasses.replace(
-                self,
-                remaining_uses=max(0, new_count),
-                consumed_at=time.time() if now is None else now,
-                last_call_id=call_id,
-            )
-        return dataclasses.replace(self, remaining_uses=new_count)
+        timestamp = time.time() if now is None else now
+        if call_id and self.last_call_id == call_id and self.consumed_at > 0:
+            grace_seconds = self.grace_seconds if self.grace_seconds is not None else _configured_parallel_grace_seconds()
+            if 0 <= timestamp - self.consumed_at < grace_seconds:
+                return dataclasses.replace(self, consumed_at=timestamp)
+        return dataclasses.replace(
+            self,
+            remaining_uses=max(0, self.remaining_uses - 1),
+            consumed_at=timestamp,
+            last_call_id=call_id,
+        )
 
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict (for session_manager storage)."""

@@ -120,15 +120,21 @@ class TestScopedAllowConsume:
         consumed = sa.consume()
         assert consumed is sa  # Same object returned
 
-    def test_consumed_at_not_set_until_exhausted(self):
-        """consumed_at stays 0 while uses remain — only set when count hits 0."""
+    def test_every_counted_call_is_stamped(self):
+        """consumed_at marks each counted call, not only the one that hits 0.
+
+        The stamp is what lets the next invocation recognize a repeat of the
+        same call; stamping only on exhaustion left every count above 1 unable
+        to tell one Bash command's two hook invocations apart from two commands.
+        An unfingerprinted consume (no call_id) still decrements every time.
+        """
         sa = ScopedAllow(pattern="rm", remaining_uses=2)
         after_one = sa.consume()
         assert after_one.remaining_uses == 1
-        assert after_one.consumed_at == 0.0  # Not yet exhausted
+        assert after_one.consumed_at > 0.0
         after_two = after_one.consume()
         assert after_two.remaining_uses == 0
-        assert after_two.consumed_at > 0.0  # Stamped on exhaustion
+        assert after_two.consumed_at > 0.0
 
     def test_consume_when_already_zero_refreshes_grace_window(self):
         """A third parallel hook invocation (consume on already-0) refreshes consumed_at.
@@ -224,14 +230,25 @@ class TestParallelHookGracePeriod:
         sa = ScopedAllow(pattern="rm", remaining_uses=0, consumed_at=0.0)
         assert sa.is_valid(self.CALL_ID) is False  # No grace period without consumed_at
 
-    def test_multi_use_allow_no_grace_until_exhausted(self):
-        """Grace period only activates when remaining_uses hits 0, not before."""
-        sa = ScopedAllow(pattern="rm", remaining_uses=3)
-        after_one = sa.consume(self.CALL_ID)
+    def test_multi_use_allow_gives_no_free_ride_to_another_call(self):
+        """The no-decrement window belongs to the stamped call and no other.
+
+        A counted call is stamped whatever the count, so the second invocation
+        of the same Bash command spends nothing — but a different command
+        arriving inside that same window is a second use and pays for it.
+        Without the second half, one grant would cover every command issued in
+        the following second.
+        """
+        sa = ScopedAllow(pattern="rm", remaining_uses=3, grace_seconds=1.0)
+        after_one = sa.consume(self.CALL_ID, now=100.0)
         assert after_one.remaining_uses == 2
-        assert after_one.consumed_at == 0.0  # Not exhausted yet
-        assert after_one.last_call_id == ""  # Fingerprint not stamped yet
-        assert after_one.is_valid(self.CALL_ID) is True  # Valid normally, not via grace
+        assert after_one.consumed_at == 100.0
+        assert after_one.last_call_id == self.CALL_ID
+        assert after_one.is_valid(self.CALL_ID, now=100.1) is True
+
+        after_other = after_one.consume("dddd4444dddd4444", now=100.1)
+        assert after_other.remaining_uses == 1
+        assert after_other.last_call_id == "dddd4444dddd4444"
 
     def test_different_call_id_blocked_within_grace_window(self):
         """Different session's fingerprint is blocked even within the 1s grace window.
