@@ -285,6 +285,58 @@ console.log(JSON.stringify({ sent, users, notices }));
     ]
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_ordinary_text_that_merely_starts_like_a_command_reaches_the_ai(tmp_path):
+    """A prefix is not a command, and only the daemon can tell them apart.
+
+    ``ar-`` is a registered spelling on every harness, so the guard is right to
+    look at it — but it claimed the input on the prefix alone and answered
+    ``handled`` whatever came back. A prompt like ``ar-archive the release
+    notes`` was swallowed: the model never saw it and the user got a notice
+    about an unknown command.
+
+    The daemon already answers this. ``response_projection_v2`` attaches
+    ``_autorun_bridge`` only when ``_find_command`` matched, so its absence is
+    the "this was just text" signal the guard has to honour.
+    """
+    result, _frames = _run_pi_adapter_driver(
+        tmp_path,
+        [
+            {"systemMessage": "unknown command"},
+            {"systemMessage": "status", "_autorun_bridge": {"starts_agent_turn": False}},
+        ],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map();
+const notices = [];
+const pi = {
+  registerCommand() {}, registerTool() {}, on(name, handler) { handlers.set(name, handler); },
+  sendMessage() {}, sendUserMessage() {},
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "interactive",
+  isIdle: () => true, hasPendingMessages: () => false,
+  ui: { notify(message, level) { notices.push({ message, level }); } },
+  sessionManager: { getSessionId: () => "pi-session", getSessionFile: () => undefined },
+};
+const prose = await handlers.get("input")({ text: "ar-archive the release notes" }, ctx);
+const command = await handlers.get("input")({ text: "ar-st" }, ctx);
+console.log(JSON.stringify({ prose, command, notices }));
+''',
+    )
+
+    assert result["prose"]["action"] == "continue", (
+        "ordinary prose starting with a command prefix was consumed, so the AI "
+        f"never received it: {result['prose']}"
+    )
+    assert result["command"]["action"] == "handled", (
+        f"a real command must still be claimed: {result['command']}"
+    )
+    assert result["notices"] == [{"message": "status", "level": "info"}], (
+        f"only the matched command may report to the user: {result['notices']}"
+    )
+
+
 def _tool_call_driver(command: str) -> str:
     """Drive one ``tool_call`` callback through the staged adapter."""
     return '''import extension from "__EXTENSION__";

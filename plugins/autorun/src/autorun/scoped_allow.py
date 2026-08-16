@@ -86,6 +86,15 @@ def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
         if low in _PERMANENT_KEYWORDS:
             permanent = True
         elif low.isdigit():
+            # Repeats are refused, not overwritten. Taking the last token
+            # silently widened the grant a user actually typed: `2 3` granted
+            # three uses. The strict sibling `parse_scope_tokens` has always
+            # refused this, and one grammar cannot have two answers.
+            if uses is not None:
+                raise ValueError(
+                    f"count may be provided once; got {part!r}; pass one "
+                    "positive count, optionally with one duration"
+                )
             uses = int(low)
             if uses <= 0:
                 raise ValueError(
@@ -93,6 +102,11 @@ def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
                     "positive count, a duration such as 5m or 2d, or perm"
                 )
         elif looks_like_duration(low):
+            if ttl is not None:
+                raise ValueError(
+                    f"duration may be provided once; got {part!r}; pass one "
+                    "duration, optionally with one count"
+                )
             parsed_ttl = parse_duration(low)
             if parsed_ttl is None:
                 raise ValueError(

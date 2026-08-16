@@ -838,3 +838,47 @@ class TestQuotedRegexGrantRoundTrip:
         # Now allowed; an unrelated blocked command is still blocked.
         assert decision("git push origin main") != "deny"
         assert decision("rm -rf /tmp/x") == "deny"
+
+
+class TestDuplicateScopeTokensAreRefused:
+    """Two parsers, one grammar — and only the strict one refused a repeat.
+
+    `parse_scope_tokens` rejects a second count or duration by name. This
+    parser overwrote instead, so the *last* token silently won: `/ar:ok git
+    push 2 3` granted three uses and `/ar:ok git push 5m 6m` granted six
+    minutes. A typo that should have been refused quietly widened a permission
+    beyond what was typed, which is the one direction a safety grammar must
+    never fail in.
+
+    `_parse_allow_args` peels only scope-shaped tokens off each edge, so every
+    token reaching here is a scope token and a repeat is unambiguous.
+    """
+
+    @pytest.mark.parametrize(
+        "desc, offending",
+        [("2 3", "3"), ("5m 6m", "6m"), ("3 2 5m", "2"), ("5m 3 10m", "10m")],
+    )
+    def test_a_repeated_count_or_duration_is_rejected(self, desc, offending):
+        with pytest.raises(ValueError) as raised:
+            parse_scope_args(desc)
+
+        assert "once" in str(raised.value)
+        assert offending in str(raised.value)
+
+    @pytest.mark.parametrize("desc, expected", [
+        ("3", (None, 3, False)),
+        ("5m", (300.0, None, False)),
+        ("3 5m", (300.0, 3, False)),
+        ("5m 3", (300.0, 3, False)),
+    ])
+    def test_one_of_each_still_parses(self, desc, expected):
+        assert parse_scope_args(desc) == expected
+
+    @pytest.mark.parametrize("args", ["git push 2 3", "2 git push 3", "git push 5m 6m"])
+    def test_the_ok_command_refuses_the_widened_grant(self, args):
+        """End to end: the handler must not hand back the larger scope."""
+        pattern, desc, _ptype = plugins._parse_allow_args(args)
+
+        assert pattern == "git push"
+        with pytest.raises(ValueError):
+            parse_scope_args(desc)

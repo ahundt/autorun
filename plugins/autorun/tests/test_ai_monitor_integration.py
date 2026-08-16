@@ -686,3 +686,66 @@ class TestCompleteFlow:
         assert result is None  # Allow stop
         assert ctx3.autorun_active is False
         assert ctx3.autorun_stage == EventContext.STAGE_INACTIVE
+
+
+class TestOptionParsingRefusesAmbiguity:
+    """A missing option value must be an error, never a silently eaten flag.
+
+    `parse_cli` cast whatever token followed an option without asking whether
+    it was a value at all. `--prompt --stop DONE` therefore set the prompt to
+    the literal string `--stop` and dropped `--stop` entirely, so a monitor ran
+    with no stop marker and a nonsense prompt while reporting nothing wrong.
+    The integer options were worse: `--check-interval --stop DONE` raised an
+    uncaught `ValueError` traceback at a user who had simply mistyped.
+
+    A *known flag* is the discriminator, not a leading dash: `--prompt "-- and
+    then continue"` is a legitimate prompt and must still parse.
+    """
+
+    def _parse(self, monkeypatch, argv):
+        from autorun import ai_monitor
+
+        monkeypatch.setattr(ai_monitor.sys, "argv", ["ai-monitor", "sess", *argv])
+        return ai_monitor.parse_cli()
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--prompt", "--stop", "DONE"],
+            ["--check-interval", "--stop", "DONE"],
+            ["--prompt"],
+            ["--check-interval"],
+            ["--max-retry-cycles", "--prompt", "hi"],
+        ],
+    )
+    def test_an_option_followed_by_another_flag_is_a_usage_error(
+        self, monkeypatch, capsys, argv
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            self._parse(monkeypatch, argv)
+
+        assert exit_info.value.code == 2
+        # stdout, not stderr: any stderr from a module the package imports can
+        # reach a hook, and Claude Code discards a hook's whole response when it
+        # sees one. The exit status reports the failure; the stream carries the
+        # message. test_unit_simple.py::test_no_print_to_stderr_anywhere owns
+        # that rule for the whole codebase.
+        assert argv[0] in capsys.readouterr().out
+
+    def test_a_non_numeric_value_is_a_usage_error_not_a_traceback(
+        self, monkeypatch, capsys
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            self._parse(monkeypatch, ["--check-interval", "often"])
+
+        assert exit_info.value.code == 2
+        assert "often" in capsys.readouterr().out
+
+    def test_values_that_merely_look_like_flags_still_parse(self, monkeypatch):
+        session_id, config = self._parse(
+            monkeypatch, ["--prompt", "-- keep going", "--check-interval", "60"]
+        )
+
+        assert session_id == "sess"
+        assert config["prompt"] == "-- keep going"
+        assert config["interval"] == 60

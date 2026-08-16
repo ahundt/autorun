@@ -289,6 +289,15 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx) => {
     if (!/^\/?ar[:\-]/i.test(event.text.trim())) return { action: "continue" };
     const response = await bridge.runCommandResponse(event.text, ctx.cwd, sessionId(ctx));
+    // A prefix is not a command. `ar-` is a registered spelling here, so the
+    // guard is right to look, but claiming the input on the prefix alone
+    // swallowed ordinary prose: `ar-archive the release notes` never reached
+    // the model and the user got an unknown-command notice instead.
+    //
+    // Only the command registry can tell the two apart, and it already does:
+    // `response_projection_v2` attaches `_autorun_bridge` exactly when
+    // `_find_command` matched, so its absence means this was just text.
+    if (response?._autorun_bridge === undefined) return { action: "continue" };
     deliverCommandResponse(response, ctx);
     return { action: "handled" };
   });

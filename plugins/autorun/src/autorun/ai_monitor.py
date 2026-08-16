@@ -256,6 +256,24 @@ ARG_DISPATCH = {
     '--check-interval': ('interval', int),
 }
 
+# What separates "the value for this option" from "the next option". A leading
+# dash cannot be the test: `--prompt "-- keep going"` is a legitimate prompt.
+KNOWN_FLAGS = frozenset(ARG_DISPATCH) | {'--prompt-on-start', '--help', '-h'}
+
+
+def _usage_error(message: str):
+    """Report a malformed invocation to the user, not as a traceback.
+
+    Reached only from this module's own ``__main__``. It still writes to stdout
+    rather than stderr, because the codebase's rule is global for a reason: any
+    stderr from a module the package imports is one refactor away from reaching
+    a hook, and Claude Code discards a hook's whole response when it sees one.
+    The exit status is what reports failure; the stream carries the message.
+    """
+    print(f"ai-monitor: {message}")
+    sys.exit(2)
+
+
 def parse_cli():
     """Parse CLI args using dispatch dict"""
     config = {"prompt": "Continue working", "interval": 40, "max_cycles": 5, "max_runtime": 0,
@@ -276,7 +294,13 @@ def parse_cli():
                 i += 1
         elif arg in ARG_DISPATCH:
             key, cast = ARG_DISPATCH[arg]
-            config[key], i = cast(args[i + 1]) if i + 1 < len(args) else config[key], i + 2
+            if i + 1 >= len(args) or args[i + 1] in KNOWN_FLAGS:
+                _usage_error(f"{arg} needs a value")
+            try:
+                config[key] = cast(args[i + 1])
+            except ValueError:
+                _usage_error(f"{arg} needs a whole number, got {args[i + 1]!r}")
+            i += 2
         elif not session_id and not arg.startswith('-'):
             session_id, i = arg, i + 1
         else:
