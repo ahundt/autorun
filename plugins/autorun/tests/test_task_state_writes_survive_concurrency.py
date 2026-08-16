@@ -51,6 +51,17 @@ from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 SAVE_HOLD_SECONDS = 0.15
 HOOK_LOCK_BUDGET_SECONDS = 0.05
 
+# The barrier lines the writers up so they genuinely overlap; it is not a
+# performance assertion. Its timeout exists only so a thread that never arrives
+# fails loudly instead of hanging, and it is deliberately well under the join
+# below so that failure is reported rather than left running. Five seconds was
+# not that: on Windows CI (run 31974614887) three threads that each construct a
+# TaskLifecycle in well under a millisecond here failed to reach the line in
+# time while eight workers shared the runner, and a test about lost writes
+# failed for a reason with nothing to do with writes.
+BARRIER_TIMEOUT_SECONDS = 20.0
+THREAD_JOIN_TIMEOUT_SECONDS = 30.0
+
 
 @pytest.fixture
 def isolated_session(tmp_path):
@@ -143,7 +154,7 @@ class TestConcurrentTaskWritesAllPersist:
         def complete(tid: str) -> None:
             manager = TaskLifecycle(ctx=_ctx(session_id, store), config=cfg)
             try:
-                barrier.wait(timeout=5)  # Force genuine overlap, not luck.
+                barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)  # Force genuine overlap, not luck.
                 manager.update_task(tid, {"status": "completed"}, "finished")
             except Exception as exc:  # noqa: BLE001 - the assertion is the report
                 errors.append(exc)
@@ -152,7 +163,7 @@ class TestConcurrentTaskWritesAllPersist:
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=30)
+            thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
 
         assert not errors, (
             "Concurrent task updates raised instead of queueing. Task state is "
@@ -185,7 +196,7 @@ class TestConcurrentTaskWritesAllPersist:
         def bump() -> None:
             manager = TaskLifecycle(ctx=_ctx(session_id, store), config=cfg)
             try:
-                barrier.wait(timeout=5)
+                barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
                 manager.atomic_update_metadata(
                     lambda metadata: metadata.__setitem__("hits", metadata.get("hits", 0) + 1)
                 )
@@ -196,7 +207,7 @@ class TestConcurrentTaskWritesAllPersist:
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=30)
+            thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
 
         assert not errors, f"Concurrent metadata updates raised: {errors}"
         hits = TaskLifecycle(config=cfg, session_id=session_id).session_metadata["hits"]
