@@ -546,7 +546,11 @@ def test_a_recreated_target_does_not_cost_the_user_a_previous_of_any_kind(
         assert parked[0].read_text(encoding="utf-8") == '{"plugins": ["THEIRS"]}\n'
     else:
         assert parked[0].is_symlink()
-        assert Path(os.readlink(parked[0])) == tmp_path / "somewhere-else"
+        # Windows resolves a link target through `\\?\`, which names the same
+        # path; `fs` already owns stripping it.
+        assert fs._strip_extended_prefix(Path(os.readlink(parked[0]))) == (
+            fs._strip_extended_prefix(tmp_path / "somewhere-else")
+        )
     assert not list(target.parent.glob(".autorun-publish-*")), "stage left behind"
 
 

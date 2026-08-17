@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing
+import time
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from autorun.core import (
     AutorunApp,
     EventContext,
     ThreadSafeDB,
+    dispatch_timeout_for_event,
     format_command_for_cli,
 )
 from autorun.platforms import PLATFORMS
@@ -49,6 +51,20 @@ def _manager(tmp_path, *, stop_block_max_count: int) -> TaskLifecycle:
 
 
 def _stop_context(manager: TaskLifecycle, store: ThreadSafeDB) -> EventContext:
+    """A Stop context shaped like the one the daemon dispatches.
+
+    `core.AutorunDaemon._dispatch_with_timeout` stamps every context it hands a
+    handler with a deadline, and `session_manager.state_lock_timeout` spends
+    that deadline rather than the flat `hook_state_lock_timeout_seconds` floor.
+    A context built without one therefore waits 0.5s for the shared lock where
+    production waits up to the 3s ceiling — so eight concurrent callbacks, the
+    contention this module exists to test, queued past a budget no real Stop
+    callback is given and raised `SessionTimeoutError` on a Windows runner.
+
+    The deadline is `dispatch_timeout_for_event("Stop")` from now, exactly as
+    the daemon computes it. Nothing about what is asserted changes: the bound
+    is still `configured_max` blocks out of `callback_count` callbacks.
+    """
     return EventContext(
         session_id=manager.session_id,
         event="Stop",
@@ -58,6 +74,7 @@ def _stop_context(manager: TaskLifecycle, store: ThreadSafeDB) -> EventContext:
         session_transcript=[],
         store=store,
         cli_type="codex",
+        deadline_monotonic=time.monotonic() + dispatch_timeout_for_event("Stop"),
     )
 
 

@@ -221,9 +221,12 @@ def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(tmp_pat
     tmux_bin = os.environ.get("AUTORUN_TMUX_BIN", "tmux")
 
     session = f"outer-{os.getpid()}"
+    # 60s, not 10: this is the first tmux call of the run, so it pays for
+    # starting the server, and a loaded CI runner has taken longer than ten
+    # seconds to do it.
     started = subprocess.run(
         [tmux_bin, "new-session", "-d", "-s", session],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=60,
     )
     assert started.returncode == 0, started.stderr
 
@@ -242,7 +245,7 @@ def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(tmp_pat
 
         alive = subprocess.run(
             [tmux_bin, "has-session", "-t", session],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=60,
         )
         assert alive.returncode == 0, (
             "the nested pytest run tore down the outer run's tmux server: "
@@ -251,5 +254,5 @@ def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(tmp_pat
     finally:
         subprocess.run(
             [tmux_bin, "kill-session", "-t", session],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=60,
         )

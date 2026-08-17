@@ -17,7 +17,7 @@ import threading
 
 import pytest
 
-from autorun.core import EventContext, ThreadSafeDB
+from autorun.core import EventContext, ThreadSafeDB, dispatch_timeout_for_event
 from autorun.config import CONFIG
 from autorun.plugins import (
     is_premature_stop,
@@ -40,7 +40,17 @@ def _make_ctx(
     autorun_mode: str = "standard",
     store=None,
 ) -> EventContext:
-    """Create an EventContext for testing autorun injection functions."""
+    """Create an EventContext for testing autorun injection functions.
+
+    The deadline is what the daemon stamps on every context it dispatches
+    (`core.AutorunDaemon._dispatch_with_timeout`), and
+    `session_manager.state_lock_timeout` spends it instead of the flat
+    `hook_state_lock_timeout_seconds` floor. Without it these contexts wait
+    0.5s for the shared state lock where a real Stop callback waits up to the
+    3s ceiling, so `TestSessionIsolation::test_concurrent_sessions` — three
+    threads writing at once — lost a `filelock.Timeout` on a loaded runner and
+    reported `assert 1 == 3`, which names the symptom and not the budget.
+    """
     session_transcript = []
     if transcript_text:
         session_transcript = [{"role": "assistant", "content": transcript_text}]
@@ -54,6 +64,7 @@ def _make_ctx(
         tool_result="",
         session_transcript=session_transcript,
         store=store or ThreadSafeDB(),
+        deadline_monotonic=time.monotonic() + dispatch_timeout_for_event("Stop"),
     )
     ctx.autorun_active = active
     ctx.autorun_stage = stage

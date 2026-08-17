@@ -27,7 +27,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
 __all__ = [
@@ -146,28 +146,41 @@ def _from_editable_install(origin: Path) -> Iterator[Path]:
             continue
         url = str(data.get("url", ""))
         source = _url_to_path(url) if url.startswith("file:") else Path(url)
+        if source is None:
+            continue
         yield from (source, source / "plugins" / "autorun")
 
 
-def _url_to_path(url: str) -> Path:
-    """Decode one ``file://`` URL, authority included.
+def _url_to_path(url: str) -> Path | None:
+    """Decode one ``file://`` URL, authority included, or ``None``.
 
     ``url2pathname`` takes a path, not a URL, so the authority has to be put
-    back in front of it or the host is simply gone: ``pip install -e
-    \\\\build01\\share\\autorun`` records ``file://build01/share/autorun``, and
-    passing ``urlparse(url).path`` alone decodes ``/share/autorun`` — a local
-    directory on a different machine's disk, which does not exist, resolves to
-    nothing, and reports nothing.
+    back in front of the decoded path or the host is simply gone: ``pip install
+    -e \\\\build01\\share\\autorun`` records ``file://build01/share/autorun``,
+    and passing ``urlparse(url).path`` alone decodes ``/share/autorun`` — a
+    local directory on a different machine's disk, which does not exist,
+    resolves to nothing, and reports nothing.
 
     An empty authority and ``localhost`` both mean "this machine" (RFC 8089
-    §2), and pip has written each, so neither may be reattached: ``//localhost/
-    opt/src`` would be a network path on Windows.
+    §2), and pip has written each, so neither is reattached: ``//localhost/opt/
+    src`` would be a network path on Windows.
+
+    Any other authority names a host, and only Windows has a path syntax for
+    one. ``None`` says so, and the caller skips that record rather than
+    offering a local path that means somewhere else. Python 3.14 reached the
+    same conclusion in the standard library — its ``url2pathname`` raises
+    ``URLError: file:// scheme is supported only on localhost`` for a remote
+    authority — so the authority is joined here rather than handed back to a
+    decoder whose answer changes with the interpreter version.
     """
     parsed = urlparse(url)
-    path = parsed.path
-    if parsed.netloc and parsed.netloc.lower() != "localhost":
-        path = f"//{parsed.netloc}{path}"
-    return Path(url2pathname(path))
+    decoded = url2pathname(parsed.path)
+    host = parsed.netloc
+    if host and host.lower() != "localhost":
+        if os.name != "nt":
+            return None
+        decoded = f"\\\\{unquote(host)}{decoded}"
+    return Path(decoded)
 
 
 def _from_uv_tool_search(origin: Path) -> Iterator[Path]:

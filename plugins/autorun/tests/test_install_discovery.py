@@ -129,9 +129,12 @@ def test_an_editable_checkout_on_a_network_share_keeps_its_host(tmp_path):
     last-resort search — the same silent failure the `%20` fix above closed,
     for the other half of the URL.
 
-    A UNC checkout is the ordinary shape for a Windows team share, and the
-    round trip has to hold on both platforms: POSIX keeps `//host/share` as
-    written, Windows renders it as `\\\\host\\share`.
+    A UNC checkout is the ordinary shape for a Windows team share, so Windows
+    gets the path. POSIX has no syntax for a remote authority, and Python 3.14
+    made that explicit by raising `URLError: file:// scheme is supported only
+    on localhost` rather than inventing one — so the record is skipped there,
+    which is what "we cannot resolve this" has to look like: no candidate,
+    rather than a local path pointing somewhere else.
     """
     from autorun.installer.discovery import _from_editable_install
 
@@ -148,12 +151,13 @@ def test_an_editable_checkout_on_a_network_share_keeps_its_host(tmp_path):
 
     offered = [str(path) for path in _from_editable_install(running)]
 
-    assert any("build01" in path for path in offered), (
-        f"the file server was dropped from the recorded URL: {offered}"
-    )
-    assert not any("%20" in path for path in offered), offered
-    separator = "\\" if os.name == "nt" else "/"
-    assert offered[0] == f"{separator * 2}build01{separator}share{separator}My Projects", offered
+    if os.name == "nt":
+        assert offered[0] == "\\\\build01\\share\\My Projects", offered
+        assert not any("%20" in path for path in offered), offered
+    else:
+        assert offered == [], (
+            f"a host-qualified URL resolved to a local path on POSIX: {offered}"
+        )
 
 
 def test_a_localhost_authority_is_not_mistaken_for_a_file_server(tmp_path):
