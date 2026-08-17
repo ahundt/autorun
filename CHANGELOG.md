@@ -47,6 +47,18 @@ marketplace itself carries a separate `version` field.
   wrong machine. The host is preserved; an empty authority and `localhost` still
   mean the local filesystem.
 
+- **A nested test run no longer kills the outer run's private tmux server.**
+  `conftest.py` gives the suite a private tmux server and reuses an inherited
+  socket so one run never starts a dozen servers, but its teardown ran
+  `kill-server` on that socket whether it had created the server or inherited
+  it. A pytest process spawned by a test therefore destroyed the server its
+  parent was still using: the outer run reported `server exited unexpectedly`
+  or `no server running on <socket>`, windows created moments earlier were
+  gone, and `send_keys` returned False. Three tmux workflow tests failed this
+  way in roughly two of every five full parallel runs. Only the process that
+  created the socket now tears the server down, and it also removes the socket
+  file, which `kill-server` leaves behind whenever no server was listening.
+
 ### Changed
 
 - **`plugins/autorun/Makefile` runs the documented commands.** Its test targets

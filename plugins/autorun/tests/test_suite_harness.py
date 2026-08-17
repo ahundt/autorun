@@ -11,6 +11,7 @@ raise, it produces a green run whose results describe the wrong machine.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -188,3 +189,67 @@ def test_each_serialized_resource_class_names_modules_that_exist(group):
     )
 
     assert missing == [], f"{group} group names modules that no longer exist: {missing}"
+
+
+@pytest.mark.subprocess
+def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(tmp_path):
+    """`pytest_sessionfinish` kills the server whose socket it *inherited*.
+
+    `pytest_configure` reads `AUTORUN_TEST_TMUX_SOCKET` from the environment
+    and only invents a socket when it is absent, so a pytest process spawned by
+    a test — `test_suite_harness`, `test_release_artifacts`, and the other
+    nested runs — reuses its parent's private server, which is what keeps the
+    isolation from multiplying. `pytest_sessionfinish` then ran `kill-server`
+    on that socket unconditionally, so the child's exit destroyed the server
+    the parent was still using.
+
+    That is the whole of the tmux flake: the outer run's next tmux command
+    reports `server exited unexpectedly` or `no server running on <socket>`,
+    windows created moments earlier are gone, and `send_keys` returns False.
+    It is invisible when the tmux tests run alone, because nothing else is
+    spawning pytest at the same time, and invisible to a standalone tmux probe,
+    because the killer is pytest rather than tmux.
+
+    Ownership is the fix: the process that invented the socket tears the server
+    down, and every process that inherited one leaves it alone.
+    """
+    import subprocess
+
+    socket_path = os.environ.get("AUTORUN_TEST_TMUX_SOCKET")
+    if not socket_path:
+        pytest.skip("no private tmux server on this platform")
+    tmux_bin = os.environ.get("AUTORUN_TMUX_BIN", "tmux")
+
+    session = f"outer-{os.getpid()}"
+    started = subprocess.run(
+        [tmux_bin, "new-session", "-d", "-s", session],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert started.returncode == 0, started.stderr
+
+    try:
+        # A node inside this directory, so the nested run loads the same
+        # `conftest.py`. A throwaway file in `tmp_path` would not, and the
+        # teardown under test lives in that conftest.
+        nested_target = (
+            f"{Path(__file__).name}::test_the_suite_never_resolves_state_to_the_developers_home"
+        )
+        child = subprocess.run(
+            [sys.executable, "-m", "pytest", nested_target, "-q", "-p", "no:cacheprovider"],
+            capture_output=True, text=True, timeout=300, cwd=str(Path(__file__).parent),
+        )
+        assert child.returncode == 0, f"{child.returncode}\n{child.stdout}\n{child.stderr}"
+
+        alive = subprocess.run(
+            [tmux_bin, "has-session", "-t", session],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert alive.returncode == 0, (
+            "the nested pytest run tore down the outer run's tmux server: "
+            f"{alive.stderr.strip()!r}"
+        )
+    finally:
+        subprocess.run(
+            [tmux_bin, "kill-session", "-t", session],
+            capture_output=True, text=True, timeout=10,
+        )

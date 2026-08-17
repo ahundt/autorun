@@ -113,10 +113,21 @@ def pytest_configure(config):
         # or the wrapper would exec itself. On Apple Silicon this also prefers
         # /opt/homebrew over an older /usr/local client.
         real_tmux = resolve_tmux_binary()
-        socket_path = os.environ.get(
-            "AUTORUN_TEST_TMUX_SOCKET",
-            str(Path(tempfile.gettempdir()) / f"autorun-pytest-tmux-{uuid.uuid4().hex}"),
+        # Whoever invents the socket owns the server. An inherited one belongs
+        # to an outer pytest — the controller, for an xdist worker, or the run
+        # that spawned this one, for the nested pytest invocations in
+        # `test_release_artifacts` and `test_suite_harness`. Reusing it is
+        # deliberate and keeps one private server per run; tearing it down is
+        # not, and `pytest_sessionfinish` used to do exactly that. The outer
+        # run's next tmux call then reported `server exited unexpectedly` or
+        # `no server running on <socket>`, its windows were gone, and its
+        # `send_keys` returned False — a flake that only appears when something
+        # else is spawning pytest at the same time.
+        inherited_socket = os.environ.get("AUTORUN_TEST_TMUX_SOCKET")
+        socket_path = inherited_socket or str(
+            Path(tempfile.gettempdir()) / f"autorun-pytest-tmux-{uuid.uuid4().hex}"
         )
+        config._autorun_owns_test_tmux_server = inherited_socket is None
         wrapper_dir = test_runtime_dir / "tmux-bin"
         wrapper_dir.mkdir(parents=True, exist_ok=True)
         wrapper = wrapper_dir / "tmux"
@@ -753,7 +764,8 @@ def pytest_sessionfinish(session, exitstatus):
     DaemonManager.cleanup()
 
     test_tmux_socket = getattr(session.config, "_autorun_test_tmux_socket", None)
-    if test_tmux_socket and not should_keep_test_artifacts():
+    owns_tmux_server = getattr(session.config, "_autorun_owns_test_tmux_server", False)
+    if test_tmux_socket and owns_tmux_server and not should_keep_test_artifacts():
         tmux_bin = getattr(session.config, "_autorun_real_tmux_bin", "tmux")
         try:
             subprocess.run(
@@ -764,6 +776,14 @@ def pytest_sessionfinish(session, exitstatus):
                 env={key: value for key, value in os.environ.items() if key != "TMUX"},
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        # `kill-server` removes the socket only when a server was listening on
+        # it, and most runs never start one -- the file is created by the first
+        # client that probes it. Left behind, one accumulates per run in the
+        # user's temporary directory forever.
+        try:
+            Path(test_tmux_socket).unlink(missing_ok=True)
+        except OSError:
             pass
 
     # Clean up isolated state, socket, PID, and logs together.
