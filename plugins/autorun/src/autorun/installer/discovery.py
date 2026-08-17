@@ -145,8 +145,29 @@ def _from_editable_install(origin: Path) -> Iterator[Path]:
         if "editable" not in data.get("dir_info", {}):
             continue
         url = str(data.get("url", ""))
-        source = Path(url2pathname(urlparse(url).path) if url.startswith("file:") else url)
+        source = _url_to_path(url) if url.startswith("file:") else Path(url)
         yield from (source, source / "plugins" / "autorun")
+
+
+def _url_to_path(url: str) -> Path:
+    """Decode one ``file://`` URL, authority included.
+
+    ``url2pathname`` takes a path, not a URL, so the authority has to be put
+    back in front of it or the host is simply gone: ``pip install -e
+    \\\\build01\\share\\autorun`` records ``file://build01/share/autorun``, and
+    passing ``urlparse(url).path`` alone decodes ``/share/autorun`` — a local
+    directory on a different machine's disk, which does not exist, resolves to
+    nothing, and reports nothing.
+
+    An empty authority and ``localhost`` both mean "this machine" (RFC 8089
+    §2), and pip has written each, so neither may be reattached: ``//localhost/
+    opt/src`` would be a network path on Windows.
+    """
+    parsed = urlparse(url)
+    path = parsed.path
+    if parsed.netloc and parsed.netloc.lower() != "localhost":
+        path = f"//{parsed.netloc}{path}"
+    return Path(url2pathname(path))
 
 
 def _from_uv_tool_search(origin: Path) -> Iterator[Path]:

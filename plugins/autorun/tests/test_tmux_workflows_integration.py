@@ -183,20 +183,30 @@ class TestSessionAutomationWorkflows:
             ('monitoring', 'echo "Monitoring window initialized"'),
         ]
 
-        created_windows = []
+        # Every tmux call is asserted with its returncode and stderr. Skipping a
+        # failed `new-window` in an `if` and then asserting that three windows
+        # exist reports the count, which is a consequence, and never the tmux
+        # error, which is the cause -- under a loaded machine this failed as
+        # `assert 2 >= 4` with nothing to say about why one window was missing.
         for window_name, init_cmd in windows:
-            # Create new window with custom name
             result = tmux.execute_tmux_command(['new-window', '-n', window_name], session_name)
-            if result and result['returncode'] == 0:
-                created_windows.append(window_name)
-                assert tmux.send_keys(init_cmd, session_name, window_name)
-                assert tmux.send_keys('C-m', session_name, window_name)
+            assert result is not None, f"new-window {window_name} timed out or raised"
+            assert result['returncode'] == 0, (
+                f"new-window {window_name} failed: {result['returncode']} {result['stderr']!r}"
+            )
+            assert tmux.send_keys(init_cmd, session_name, window_name)
+            assert tmux.send_keys('C-m', session_name, window_name)
 
         # Verify windows were created
         windows_result = tmux.execute_tmux_command(['list-windows'], session_name)
-        if windows_result and windows_result['returncode'] == 0:
-            window_lines = windows_result['stdout'].strip().split('\n')
-            assert len(window_lines) >= len(windows) + 1  # +1 for initial window
+        assert windows_result is not None, "list-windows timed out or raised"
+        assert windows_result['returncode'] == 0, (
+            f"list-windows failed: {windows_result['returncode']} {windows_result['stderr']!r}"
+        )
+        window_lines = windows_result['stdout'].strip().split('\n')
+        assert len(window_lines) >= len(windows) + 1, (  # +1 for initial window
+            f"created {len(windows)} windows, tmux lists {window_lines}"
+        )
 
         # Test window operations
         layout_result = tmux.execute_win_op('select-layout', ['even-horizontal'], session_name)

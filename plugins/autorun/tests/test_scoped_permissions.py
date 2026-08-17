@@ -1,6 +1,7 @@
 """Tests for scoped permission grants (ScopedAllow, parse_scope_args, enforcement)."""
 
 import contextlib
+import threading
 import time
 import pytest
 from unittest.mock import patch
@@ -906,3 +907,105 @@ class TestDuplicateScopeTokensAreRefused:
         assert pattern == "git push"
         with pytest.raises(ValueError):
             parse_scope_args(desc)
+
+
+class TestConcurrentDistinctCallsCannotOvercount:
+    """`/ar:ok rm 1` must buy one command, whichever commands arrive together.
+
+    The grace window in `TestParallelHookGracePeriod` above solves the opposite
+    problem: one Bash call reaching the hook twice must spend one use. It keys
+    on the call fingerprint, so two *different* commands were never covered by
+    it — and they were not covered by anything else either.
+
+    `check_blocked_commands` read the allow list, asked `is_valid`, computed
+    `consume()`, and only then handed the finished dictionary to
+    `ScopeAccessor.consume_allowed`, which wrote it inside `state_update`. The
+    write was the only part under the lock. Two concurrent sessions, or two
+    tools in one session, both read `remaining_uses=1`, both computed `0`, both
+    were allowed, and the second write stored the same `0` the first had — a
+    lost update in the permissive direction, on the object whose entire job is
+    to say no after N.
+
+    `ThreadSafeDB.update` already documents the fix ("Deferring the updater
+    lets concurrent hook processes all read the same old value and claim the
+    same one-shot operation"). The claim has to happen inside that callback.
+    """
+
+    @staticmethod
+    def _grant(store, sid, args):
+        result = plugins.app.dispatch(EventContext(
+            session_id=sid, event="UserPromptSubmit", prompt=f"/ar:ok {args}",
+            store=store,
+        ))
+        assert "Allowed" in result.get("systemMessage", ""), result
+        return result
+
+    @staticmethod
+    def _was_allowed(response) -> bool:
+        if not response:
+            return False
+        message = str(response.get("systemMessage", ""))
+        decision = response.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        return decision != "deny" and "Allowed 'rm'" in message
+
+    def _race(self, store, sid, commands):
+        """Dispatch each command on its own thread, reads deliberately paired.
+
+        The barrier sits immediately after the allow list is read and before
+        anything is claimed, which is where two real hook processes overlap.
+        It is outside every lock in both the broken and the fixed version, so
+        the fixed version resolves the tie rather than deadlocking on it.
+        """
+        barrier = threading.Barrier(len(commands), timeout=30)
+        real_get_allowed = plugins.ScopeAccessor.get_allowed
+        paired = threading.local()
+
+        def get_allowed_then_wait(self):
+            allows = real_get_allowed(self)
+            if not getattr(paired, "done", False):
+                paired.done = True
+                barrier.wait()
+            return allows
+
+        responses = {}
+
+        def run(index, command):
+            responses[index] = plugins.app.dispatch(EventContext(
+                session_id=sid, event="PreToolUse", tool_name="Bash",
+                tool_input={"command": command}, store=store,
+            ))
+
+        with patch.object(plugins.ScopeAccessor, "get_allowed", get_allowed_then_wait):
+            threads = [
+                threading.Thread(target=run, args=(i, cmd), daemon=True)
+                for i, cmd in enumerate(commands)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=30)
+                assert not thread.is_alive(), "a dispatch never finished"
+
+        return [responses[i] for i in range(len(commands))]
+
+    def test_one_use_admits_exactly_one_of_two_concurrent_commands(self):
+        sid = f"test-race-one-{time.time()}"
+        store = ThreadSafeDB()
+        self._grant(store, sid, "rm 1")
+
+        responses = self._race(store, sid, ["rm /tmp/first", "rm /tmp/second"])
+
+        allowed = [r for r in responses if self._was_allowed(r)]
+        assert len(allowed) == 1, f"one use admitted {len(allowed)} commands: {responses}"
+
+    def test_the_stored_count_reaches_zero_rather_than_one(self):
+        """The lost update is visible in the state, not only in the verdicts."""
+        sid = f"test-race-count-{time.time()}"
+        store = ThreadSafeDB()
+        self._grant(store, sid, "rm 2")
+
+        self._race(store, sid, ["rm /tmp/a", "rm /tmp/b"])
+
+        stored = store.get(f"{sid}:session_allowed_patterns", [])
+        remaining = [ScopedAllow.from_dict(a).remaining_uses for a in stored]
+        assert remaining == [0], f"two uses were spent as one: {stored}"

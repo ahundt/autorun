@@ -8,9 +8,11 @@ the new resolver against this repository's real manifest.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.request import url2pathname
 
 import pytest
 
@@ -114,6 +116,69 @@ def test_an_editable_checkout_whose_path_has_a_space_still_resolves(tmp_path):
 
     assert checkout in offered, offered
     assert not any("%20" in str(path) for path in offered), offered
+
+
+def test_an_editable_checkout_on_a_network_share_keeps_its_host(tmp_path):
+    """A `file://` URL's authority is the server, and dropping it changes machine.
+
+    `pip install -e \\\\build01\\share\\autorun` records
+    `file://build01/share/autorun`. Feeding only `urlparse(url).path` to
+    `url2pathname` decodes `/share/autorun` and discards `build01`, so the
+    resolver goes looking on the *local* disk for a path that is meant to be on
+    a file server. It finds nothing, says nothing, and falls through to the
+    last-resort search — the same silent failure the `%20` fix above closed,
+    for the other half of the URL.
+
+    A UNC checkout is the ordinary shape for a Windows team share, and the
+    round trip has to hold on both platforms: POSIX keeps `//host/share` as
+    written, Windows renders it as `\\\\host\\share`.
+    """
+    from autorun.installer.discovery import _from_editable_install
+
+    running = tmp_path / "site-packages" / "autorun" / "discovery.py"
+    running.parent.mkdir(parents=True)
+    dist_info = tmp_path / "site-packages" / "autorun-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "direct_url.json").write_text(
+        json.dumps(
+            {"url": "file://build01/share/My%20Projects", "dir_info": {"editable": True}}
+        ),
+        encoding="utf-8",
+    )
+
+    offered = [str(path) for path in _from_editable_install(running)]
+
+    assert any("build01" in path for path in offered), (
+        f"the file server was dropped from the recorded URL: {offered}"
+    )
+    assert not any("%20" in path for path in offered), offered
+    separator = "\\" if os.name == "nt" else "/"
+    assert offered[0] == f"{separator * 2}build01{separator}share{separator}My Projects", offered
+
+
+def test_a_localhost_authority_is_not_mistaken_for_a_file_server(tmp_path):
+    """`file://localhost/opt/src` and `file:///opt/src` name the same path.
+
+    RFC 8089 lets a local path carry either an empty authority or `localhost`,
+    and pip has written both. Preserving the authority blindly would turn the
+    second spelling into `//localhost/opt/src`, which is a network path on
+    Windows and an implementation-defined one on POSIX.
+    """
+    from autorun.installer.discovery import _from_editable_install
+
+    running = tmp_path / "site-packages" / "autorun" / "discovery.py"
+    running.parent.mkdir(parents=True)
+    dist_info = tmp_path / "site-packages" / "autorun-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "direct_url.json").write_text(
+        json.dumps({"url": "file://localhost/opt/src", "dir_info": {"editable": True}}),
+        encoding="utf-8",
+    )
+
+    offered = [str(path) for path in _from_editable_install(running)]
+
+    assert "localhost" not in offered[0], offered
+    assert offered[0] == str(Path(url2pathname("/opt/src"))), offered
 
 
 def test_no_root_anywhere_returns_none_rather_than_guessing(tmp_path):

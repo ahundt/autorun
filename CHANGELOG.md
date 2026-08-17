@@ -8,6 +8,61 @@ marketplace itself carries a separate `version` field.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An interrupted install no longer deletes a file or link it moved aside.**
+  Recovery from a killed publication put the staged copy back when the target
+  was gone, and parked it under `~/.autorun/installer/backups/` when the target
+  had been recreated — but only for a directory, because the parker copied with
+  `copytree`. A regular file or a symlink was deleted with the abandoned stage
+  instead. Antigravity's `import_manifest.json`, which lists every plugin the
+  user has imported, reaches that path through the native-CLI rollback.
+- **A tree written at the target while an install was copying is kept.**
+  Ownership was decided before the source copy, which for a real skills bundle
+  takes seconds, and anything the user wrote at the target during that window
+  was renamed into the staging directory and deleted with it. The target is now
+  renamed aside first and identified afterwards, so a replacement is parked
+  rather than discarded. The same change removes the window between
+  `withdraw_link`'s final ownership check and its removal: the link is renamed
+  out of the way and judged there, then restored or parked if it turns out not
+  to be autorun's.
+- **`/ar:ok <pattern> <count>` counts concurrent commands correctly.** The
+  remaining-use count was read, decremented, and only then written inside the
+  state lock, so two commands arriving together both read the same value and
+  both were allowed — one use admitted two commands. The read, the validity
+  check, and the decrement now happen in one locked transaction, and a call
+  that loses the race falls through to the block rules. The parallel-invocation
+  grace window for a single command is unchanged.
+- **`git checkout <file>` is judged in the session's repository.** The
+  backward-compatible `_checkout_targets_file_with_changes` predicate, which a
+  user's own integration file may name, tested `os.path.exists` against the
+  daemon's own working directory rather than the session's, compared the first
+  argument against the literal `git` so `/usr/bin/git` and `git.exe` slipped
+  past, and split the command string so only its first segment was examined.
+  All three allowed a destructive checkout. It now delegates to the hardened
+  parser the shipped rules already use.
+- **An editable install on a network share resolves its own source.**
+  `pip install -e \\server\share\autorun` records `file://server/share/autorun`,
+  and the decoder discarded the URL authority, producing a local path on the
+  wrong machine. The host is preserved; an empty authority and `localhost` still
+  mean the local filesystem.
+
+### Changed
+
+- **`plugins/autorun/Makefile` runs the documented commands.** Its test targets
+  called `run_tests.py`, which `.gitignore` excludes and which was never
+  committed, so they failed in any fresh clone; `install-deps` requested a `dev`
+  extra that no longer exists, which pip reports as a warning and an exit code
+  of zero, so `make ci` installed nothing and said nothing. Every target is now
+  a thin alias over the `uv` commands CI and the release checklist already use,
+  including CI's exact marker selection and its two `ruff` passes.
+- **Every `uv run` in `docs/version_update_checklist.md` passes `--locked`.**
+  The rule that a candidate is validated against the graph `uv.lock` commits
+  applied to CI alone, so a maintainer's pre-flight — the full suite, the
+  artifact build, the benchmark, the post-install cache check — could resolve a
+  different graph. One test now enforces it on the workflow and the runbook
+  together.
+
 ## [1.0.0rc1] - 2026-08-15
 
 ### Added

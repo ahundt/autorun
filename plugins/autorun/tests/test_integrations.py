@@ -1886,21 +1886,20 @@ class TestRepoDiffersFromHead:
 
 
 class TestCheckoutTargetsFileWithChanges:
-    """_checkout_targets_file_with_changes: `git checkout <path>` form."""
+    """_checkout_targets_file_with_changes: the legacy name for the same question.
 
-    def test_dirty_file_target_blocks(self, tmp_path, monkeypatch):
-        """`git checkout <path>` with staged-only changes blocks.
+    Kept because a user's own integration file may name it. It must answer
+    exactly what `_file_differs_from_ref` answers, or a custom rule is a
+    weaker guard than the shipped one wearing the same label.
+    """
 
-        NOTE: _checkout_targets_file_with_changes uses os.path.exists() which
-        resolves relative to the process cwd, NOT ctx.cwd. We chdir into the
-        tmp repo to exercise the intended code path.
-        """
+    def test_dirty_file_target_blocks(self, tmp_path):
+        """`git checkout <path>` with staged-only changes blocks."""
         from autorun.integrations import _checkout_targets_file_with_changes
 
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("dirty\n")
         _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
-        monkeypatch.chdir(tmp_path)
         ctx = _make_ctx("git checkout seed.txt", tmp_path)
         assert _checkout_targets_file_with_changes(ctx) is True
 
@@ -1912,6 +1911,67 @@ class TestCheckoutTargetsFileWithChanges:
         _subprocess.run(["git", "-C", str(tmp_path), "branch", "feature"], check=True)
         ctx = _make_ctx("git checkout feature", tmp_path)
         assert _checkout_targets_file_with_changes(ctx) is False
+
+    def test_the_session_directory_decides_not_the_daemon_process_directory(
+        self, tmp_path, monkeypatch
+    ):
+        """One daemon serves every session, so its own cwd answers for none of them.
+
+        The predicate asked `os.path.exists(target)`, which resolves against
+        the *process* directory. The daemon is started once, from wherever the
+        first session happened to be, and then answers for every repository on
+        the machine. So `git checkout seed.txt` in a session whose repo has
+        uncommitted work in `seed.txt` was read as "no such file, so it must be
+        a branch name" and allowed — the exact write the rule exists to stop,
+        and it fails silently in the permissive direction.
+
+        The daemon here sits in an empty directory, which is the ordinary case:
+        nothing named `seed.txt` exists beside it.
+        """
+        from autorun.integrations import _checkout_targets_file_with_changes
+
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("work not yet committed\n")
+        elsewhere = tmp_path.parent / "daemon-cwd"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        ctx = _make_ctx("git checkout seed.txt", tmp_path)
+
+        assert _checkout_targets_file_with_changes(ctx) is True
+
+    def test_an_absolute_git_is_still_git(self, tmp_path):
+        """`parts[0] != "git"` let every absolute path through.
+
+        The pattern layer matched `/usr/bin/git checkout` — `_get_basename` is
+        its authority and strips the directory and a Windows `.exe`. The
+        predicate then compared the raw token, answered "not a git command at
+        all", and allowed exactly what the pattern had just flagged.
+        """
+        from autorun.integrations import _checkout_targets_file_with_changes
+
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("work not yet committed\n")
+
+        ctx = _make_ctx("/usr/bin/git checkout seed.txt", tmp_path)
+
+        assert _checkout_targets_file_with_changes(ctx) is True
+
+    def test_a_later_segment_is_judged_too(self, tmp_path):
+        """`parts = cmd.split()` read one command out of a whole shell line.
+
+        `git status && git checkout seed.txt` starts with `git status`, so
+        `parts[1] != "checkout"` returned False and the destructive half of the
+        line was never examined.
+        """
+        from autorun.integrations import _checkout_targets_file_with_changes
+
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("work not yet committed\n")
+
+        ctx = _make_ctx("git status && git checkout seed.txt", tmp_path)
+
+        assert _checkout_targets_file_with_changes(ctx) is True
 
 
 class TestConcurrentPredicates:

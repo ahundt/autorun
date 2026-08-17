@@ -800,8 +800,37 @@ def test_the_pdf_plugin_guides_name_every_harness_flag_the_cli_accepts():
         assert not missing, f"plugins/pdf-extractor/{guide} omits {missing}"
 
 
-def test_every_ci_environment_is_the_locked_one():
-    """A `uv run` without `--locked` may re-resolve, and CI would not notice.
+#: Every file whose `uv run` commands validate a release candidate, and must
+#: therefore run against the graph `uv.lock` commits rather than a fresh
+#: resolution. The workflow and the runbook are the same contract asked of a
+#: machine and of a person; scoping the rule to one of them is how the runbook
+#: kept telling a maintainer to re-resolve while CI was locked down.
+_LOCKED_UV_SURFACES = (
+    Path(".github") / "workflows" / "ci.yml",
+    Path("docs") / "version_update_checklist.md",
+)
+
+
+def _unlocked_uv_runs(text: str) -> list[str]:
+    """Lines invoking a project environment without pinning it to the lock.
+
+    `--no-project` has no environment to pin, so it is not in scope: the
+    publish workflow uses it to read a TOML file with the interpreter alone.
+    """
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if "uv run" in line
+        and not line.lstrip().startswith("#")
+        and "--no-project" not in line
+        and "--locked" not in line
+        and "--frozen" not in line
+    ]
+
+
+@pytest.mark.parametrize("relative", _LOCKED_UV_SURFACES, ids=lambda p: p.name)
+def test_every_release_gate_environment_is_the_locked_one(relative):
+    """A `uv run` without `--locked` may re-resolve, and nothing would notice.
 
     The matrix opens with `uv sync --locked`, which is the whole point of
     committing `uv.lock`: the release is tested against the graph it ships. A
@@ -809,20 +838,18 @@ def test_every_ci_environment_is_the_locked_one():
     something else the moment metadata and lock diverge, so a stale or
     release-platform-incompatible lock passes CI green. The step exists to test
     the PDF backends, and the backends are exactly where the graph is widest.
-    """
-    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
-    unlocked = [
-        line.strip()
-        for line in workflow.splitlines()
-        if "uv run" in line
-        and not line.lstrip().startswith("#")
-        and "--locked" not in line
-        and "--frozen" not in line
-    ]
 
-    assert not unlocked, f"CI resolves outside the committed lock: {unlocked}"
+    The release checklist is the same gate run by hand, so it is held to the
+    same rule. Locking only the workflow left the maintainer's pre-flight —
+    the full suite, the artifact build, the benchmark, the post-install cache
+    check — free to resolve a graph the candidate does not ship, while the
+    checklist reads as the authoritative validation of that candidate.
+    """
+    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+
+    unlocked = _unlocked_uv_runs(text)
+
+    assert not unlocked, f"{relative} resolves outside the committed lock: {unlocked}"
 
 
 def test_the_dev_environment_has_one_definition():
@@ -848,6 +875,54 @@ def test_the_dev_environment_has_one_definition():
     )
     group = " ".join(pyproject["dependency-groups"]["dev"])
     assert "pytest-timeout" in group and "pytest-xdist" in group, group
+
+
+#: `pip install -e .[dev]`, `uv sync --extra pdf`, `'autorun[pdf,pdf-gpu]'` —
+#: every spelling a contributor entrypoint uses to name an extra.
+_EXTRA_REQUEST = re.compile(r"(?:\.|autorun|\])\[([A-Za-z0-9_.,\- ]+)\]")
+
+
+def test_no_contributor_entrypoint_installs_an_extra_that_was_removed():
+    """An undeclared extra is a warning, not an error, so the target looks fine.
+
+    `Makefile:install-deps` ran `pip install -e .[dev]` for as long as the
+    `dev` extra existed. Deleting the extra in favour of the single
+    `[dependency-groups].dev` definition did not break that command loudly:
+    pip prints `WARNING: autorun <version> does not provide the extra 'dev'`,
+    installs the runtime dependencies, and exits 0. So `make install-deps`
+    reports success while installing no pytest, no ruff and no xdist, and the
+    failure surfaces two targets later as `make ci` reaching `ruff: command not
+    found`.
+
+    Checking the *name* rather than the exit code is what catches it: the
+    entrypoints and `pyproject.toml` have to agree about which extras exist,
+    and only one of the two is authoritative.
+    """
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "plugins" / "autorun" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    declared = set(pyproject["project"].get("optional-dependencies", {}))
+
+    entrypoints = [
+        REPO_ROOT / "plugins" / "autorun" / "Makefile",
+        REPO_ROOT / ".github" / "workflows" / "ci.yml",
+        REPO_ROOT / "docs" / "version_update_checklist.md",
+    ]
+    undeclared: list[str] = []
+    for path in entrypoints:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.lstrip().startswith("#") or "install" not in line:
+                continue
+            for match in _EXTRA_REQUEST.findall(line):
+                for extra in match.replace(" ", "").split(","):
+                    if extra and extra not in declared:
+                        undeclared.append(f"{path.name}: [{extra}] in {line.strip()}")
+
+    assert not undeclared, (
+        f"declared extras are {sorted(declared)}; these ask for others: {undeclared}"
+    )
 
 
 def test_pdf_extractor_installs_from_wheels_on_python_314():

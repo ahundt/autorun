@@ -669,22 +669,26 @@ def _resume_interrupted(target: Path) -> None:
     Only stages naming *this* target are resumed. A skills root holds every
     skill, so a ``previous`` there may belong to another target entirely, and
     restoring it here would move one tree on top of another's name; that stage
-    is left for its own publication to finish. Withdraw and cache stages carry
-    nothing the user can lose — a withdrawal was removing the tree deliberately,
-    and a cache fill never touches an existing target — so they are only swept.
+    is left for its own publication to finish. A cache stage holds only
+    ``next``, so it has nothing to restore and is simply swept.
 
     Nothing holds the target absent in the meantime. A user who recreates the
     directory, restores it from their own backup, or lets another tool write it
     makes the restore impossible, and sweeping the stage would then delete the
     only remaining copy of what they had — the same loss the restore exists to
-    prevent, reached from a state it did not anticipate. That tree is parked
-    under ``~/.autorun/installer/backups/`` instead, where ``--force`` already
-    puts a tree it may not discard, and the stage still leaves the scanned
-    directory.
+    prevent, reached from a state it did not anticipate. It is parked under
+    ``~/.autorun/installer/backups/`` instead, where ``--force`` already puts a
+    tree it may not discard, and the stage still leaves the scanned directory.
+
+    What sits at ``previous`` is whatever ``_swapped`` was transacting over, and
+    that is not always a tree: a harness receipt and Antigravity's
+    ``import_manifest.json`` are files, and a skill bridge is a symlink. Every
+    kind is restored and every kind is parked. Requiring a directory to park
+    meant the two shapes that were not trees were deleted instead.
 
     Complexity: one ``iterdir`` of the parent per publication, which is a config
     or skills directory of tens of entries, plus the delete of what is found.
-    The park copies one tree, and only on the recreated-target path.
+    The park copies one path, and only on the recreated-target route.
     """
     prefixes = tuple(f"{prefix}{target.name}-" for prefix in _STAGE_PREFIXES)
     try:
@@ -698,7 +702,7 @@ def _resume_interrupted(target: Path) -> None:
         if previous.exists() or previous.is_symlink():
             if not (target.exists() or target.is_symlink()):
                 os.replace(previous, target)
-            elif previous.is_dir() and not previous.is_symlink():
+            else:
                 _park_backup(previous, _default_backup_root(), name=target.name)
         shutil.rmtree(stage, ignore_errors=True)
 
@@ -717,12 +721,46 @@ def _default_backup_root() -> Path:
     return (Path(root) if root else Path.home() / ".autorun") / "installer" / "backups"
 
 
+def _identity(path: Path) -> tuple | None:
+    """What ``path`` is right now, or ``None`` if it is not there.
+
+    Inode and device survive a rename, so this identifies the same object
+    before and after ``os.replace`` moves it aside — which is what lets a
+    replacement be told from the thing that was replaced. Mode distinguishes a
+    directory from a file from a link at the same inode number on a different
+    device; size and mtime catch a same-inode rewrite in place.
+    """
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return None
+    return (info.st_mode, info.st_ino, info.st_dev, info.st_mtime_ns, info.st_size)
+
+
 @contextmanager
 def _swapped(target: Path) -> Iterator[Path]:
-    """Yield a same-filesystem stage and atomically replace ``target`` on success."""
+    """Yield a same-filesystem stage and atomically replace ``target`` on success.
+
+    The caller decides whether the target may be replaced *before* filling the
+    stage, and filling it is a whole-tree ``copytree`` — seconds for a real
+    skills bundle. Only autorun processes take this lock, so a user writing
+    their own tree at the target during those seconds used to have it renamed
+    into the stage on exit and deleted with the stage: bytes nobody ever
+    decided about, gone.
+
+    Rechecking before the rename would only narrow that. Renaming *first* ends
+    it: once the target is ``previous``, no later write can change what is
+    being judged. So the identity is captured here, under the lock, and
+    compared to what actually came out. A mismatch means somebody else's write
+    is in hand, and it is parked under ``~/.autorun/installer/backups/`` rather
+    than discarded — the same place :func:`_resume_interrupted` puts a tree it
+    cannot put back. The publication still completes: a partly-installed
+    package is its own failure, and the user's copy is recoverable.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
         _resume_interrupted(target)
+        judged = _identity(target)
         with tempfile.TemporaryDirectory(
             prefix=f"{_STAGE_PUBLISH}{target.name}-", dir=target.parent
         ) as tmp:
@@ -730,6 +768,8 @@ def _swapped(target: Path) -> Iterator[Path]:
             yield staged
             if target.exists() or target.is_symlink():
                 os.replace(target, backup)
+                if _identity(backup) != judged:
+                    _park_backup(backup, _default_backup_root(), name=target.name)
             try:
                 os.replace(staged, target)
             except BaseException:
@@ -1292,20 +1332,29 @@ def withdraw_link(
     ``withdrawn`` refuses symlinks by design, and the marker sweep skips them
     because markers live on directories.
 
-    The question is asked twice, as :func:`publish_link` asks its own: once to
-    skip the lock when there is nothing here of ours, and again under the
-    parent's publication lock immediately before the removal. Resolving a link
-    and then unlinking the *path* are two operations, and a replacement landing
-    between them was removed on the strength of what the previous link pointed
-    at — a user link into the same shared root is indistinguishable from ours
-    once we stop looking.
+    The question is asked twice: once to skip the lock when there is nothing
+    here of ours, and again under the parent's publication lock — but the
+    second time it is asked about the link *after* it has been renamed aside,
+    not about the path. Resolving a link and then unlinking the path are two
+    operations, and the lock coordinates autorun processes only, so a user link
+    written between them was removed on the strength of what the previous link
+    pointed at. A user link into the same shared root is indistinguishable from
+    ours once we stop looking; renaming first means we never stop looking at
+    the same object.
+
+    If the frozen link turns out not to be ours it goes back, and if the user
+    has meanwhile filled the path it is parked rather than dropped on top of
+    what they wrote.
     """
-    def ours() -> bool:
-        if not target.is_symlink():
+    def ours(link: Path, base: Path) -> bool:
+        # ``base`` rather than ``link.parent``: a relative link keeps pointing
+        # at what it pointed at when it is renamed into the staging directory,
+        # so it must still be resolved against the directory it came from.
+        if not link.is_symlink():
             return False
         try:
-            resolved = Path(os.readlink(target))
-            resolved = resolved if resolved.is_absolute() else (target.parent / resolved)
+            resolved = Path(os.readlink(link))
+            resolved = resolved if resolved.is_absolute() else (base / resolved)
             resolved = _strip_extended_prefix(resolved.resolve())
             resolved.relative_to(
                 _strip_extended_prefix(inside.resolve())
@@ -1319,12 +1368,26 @@ def withdraw_link(
             return False
         return True
 
-    if not ours():
+    if not ours(target, target.parent):
         return False
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
-        if not ours():
-            return False
-        target.unlink()
+        with tempfile.TemporaryDirectory(
+            prefix=f"{_STAGE_WITHDRAW}{target.name}-", dir=target.parent
+        ) as tmp:
+            # ``previous`` is the name `_resume_interrupted` restores, so a
+            # process killed here leaves the link recoverable rather than swept.
+            quarantined = Path(tmp) / "previous"
+            try:
+                os.replace(target, quarantined)
+            except OSError:
+                return False
+            if not ours(quarantined, target.parent):
+                if target.exists() or target.is_symlink():
+                    _park_backup(quarantined, _default_backup_root(), name=target.name)
+                else:
+                    os.replace(quarantined, target)
+                return False
+            quarantined.unlink()
     return True
 
 
@@ -1462,25 +1525,33 @@ def publish_tree(
 def _park_backup(target: Path, backup_root: Path, *, name: str = "") -> Path:
     """Copy ``target`` to ``backup_root/<name>-<stamp>`` and return the copy.
 
-    Shared by the forced republish and the forced retirement of a hashless
-    legacy tree. The backup is the user's to keep or discard, so it must not
-    carry our marker: the retirement sweep would otherwise treat it as an
-    owned tree that is "no longer shipped" and remove it.
+    Shared by the forced republish, the forced retirement of a hashless legacy
+    tree, and the interrupted-swap recovery. The backup is the user's to keep
+    or discard, so a directory must not carry our marker: the retirement sweep
+    would otherwise treat it as an owned tree that is "no longer shipped" and
+    remove it.
 
     ``name`` overrides what the copy is called for the one caller whose path
     does not carry it: :func:`_resume_interrupted` parks a stage's ``previous``,
     and a directory called ``previous-<stamp>`` tells its owner nothing about
     which of their trees it is.
+
+    ``_copy_path`` rather than ``copytree``: ``_swapped`` transacts over files
+    and links as well as trees — a harness receipt, Antigravity's
+    ``import_manifest.json``, a bridge symlink — and a parker that could only
+    accept a directory forced its callers to guard on ``is_dir()`` and silently
+    drop everything else.
     """
     backup_root.mkdir(parents=True, exist_ok=True)
     stem = name or target.name
     kept = backup_root / f"{stem}-{_stamp()}"
     counter = 1
-    while kept.exists():
+    while kept.exists() or kept.is_symlink():
         kept = backup_root / f"{stem}-{_stamp()}.{counter}"
         counter += 1
-    shutil.copytree(target, kept, symlinks=True)
-    (kept / OWNED_MARKER_NAME).unlink(missing_ok=True)
+    _copy_path(target, kept)
+    if kept.is_dir() and not kept.is_symlink():
+        (kept / OWNED_MARKER_NAME).unlink(missing_ok=True)
     return kept
 
 

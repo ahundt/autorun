@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import json
+import shutil
 import stat
 import sys
 from dataclasses import dataclass
@@ -498,6 +499,172 @@ def test_a_recreated_target_does_not_cost_the_user_the_tree_in_the_stage(
     assert parked, "the only copy of the user's old tree was deleted with the stage"
     assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "THEIRS\n"
     assert not list(target.parent.glob(".autorun-publish-*")), "stage left behind"
+
+
+@pytest.mark.parametrize("kind", ["file", "link"])
+def test_a_recreated_target_does_not_cost_the_user_a_previous_of_any_kind(
+    tmp_path, monkeypatch, kind
+):
+    """`_swapped` is not a tree-only transaction, and neither is the loss.
+
+    `preserved_paths` snapshots and restores whatever the native harness CLIs
+    touch, and two of those are single files: an extension's
+    `.<cli>-extension-install.json` receipt, and Antigravity's
+    `import_manifest.json`, which lists every plugin the user has imported —
+    not only ours. Both reach `_swapped`, so both can be left in an abandoned
+    stage as a regular-file `previous`. A skill bridge leaves a symlink there.
+
+    The recovery branch parked `previous` only when it was a directory, because
+    `_park_backup` copied with `copytree`. Everything else fell through to
+    `shutil.rmtree(stage, ignore_errors=True)` and was deleted — the same loss
+    the branch was added to prevent, for the two shapes it did not cover. The
+    docstring already promised otherwise.
+    """
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    from autorun.installer import fs
+
+    target = tmp_path / "dest" / "manifest.json"
+    target.parent.mkdir(parents=True)
+    abandoned = target.parent / ".autorun-publish-manifest.json-k1LL3d"
+    abandoned.mkdir()
+    previous = abandoned / "previous"
+    if kind == "file":
+        previous.write_text('{"plugins": ["THEIRS"]}\n', encoding="utf-8")
+    else:
+        previous.symlink_to(tmp_path / "somewhere-else")
+
+    # ...and the target exists again by the time the next publication runs, so
+    # the restore cannot put `previous` back where it came from.
+    target.write_text('{"plugins": ["recreated"]}\n', encoding="utf-8")
+
+    with fs._swapped(target) as staged:
+        staged.write_text('{"plugins": ["ours"]}\n', encoding="utf-8")
+
+    parked = sorted((tmp_path / "ar-home" / "installer" / "backups").glob("manifest.json-*"))
+    assert parked, "the only copy of the user's previous state was deleted with the stage"
+    if kind == "file":
+        assert parked[0].read_text(encoding="utf-8") == '{"plugins": ["THEIRS"]}\n'
+    else:
+        assert parked[0].is_symlink()
+        assert Path(os.readlink(parked[0])) == tmp_path / "somewhere-else"
+    assert not list(target.parent.glob(".autorun-publish-*")), "stage left behind"
+
+
+def test_a_replacement_written_while_we_staged_is_kept_not_swapped_away(
+    tmp_path, monkeypatch
+):
+    """The ownership check runs before the copy, and the copy is not instant.
+
+    `published(authorize=...)` asks "may we replace what is at the target?"
+    under the lock and then yields, and what the caller does next is
+    `shutil.copytree` of the whole source tree — seconds for a real skills
+    bundle. Only autorun processes honour that lock. A user who writes their
+    own tree at the target during those seconds had it renamed into the stage
+    on exit and deleted with the stage, having never been asked about.
+
+    Checking again before the rename would only narrow the window. Renaming
+    first closes it: once the target is `previous`, no later write can change
+    the bytes being decided about, so the identity captured on entry is
+    compared to what actually came out, and a mismatch is parked rather than
+    dropped. The publication still completes — the shipped set has to be
+    complete — and the user's copy is recoverable.
+    """
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    from autorun.installer import fs
+
+    target = tmp_path / "dest" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("ours v1\n", encoding="utf-8")
+
+    with fs._swapped(target) as staged:
+        # The window: our copy is still running, and the user replaces the
+        # directory out from under it.
+        shutil.rmtree(target)
+        target.mkdir()
+        (target / "SKILL.md").write_text("THEIRS\n", encoding="utf-8")
+        staged.mkdir()
+        (staged / "SKILL.md").write_text("ours v2\n", encoding="utf-8")
+
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "ours v2\n"
+    parked = sorted((tmp_path / "ar-home" / "installer" / "backups").glob("demo-*"))
+    assert parked, "the tree the user wrote during the copy was deleted with the stage"
+    assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "THEIRS\n"
+
+
+def test_an_unchanged_target_is_not_parked_on_every_publication(tmp_path, monkeypatch):
+    """The ordinary upgrade must leave no backup behind.
+
+    An identity check that fired on our own reads would put a copy of every
+    tree into `~/.autorun/installer/backups/` on every install, which is both
+    noise and disk.
+    """
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    from autorun.installer import fs
+
+    target = tmp_path / "dest" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("ours v1\n", encoding="utf-8")
+
+    with fs._swapped(target) as staged:
+        staged.mkdir()
+        (staged / "SKILL.md").write_text("ours v2\n", encoding="utf-8")
+
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "ours v2\n"
+    assert not (tmp_path / "ar-home" / "installer" / "backups").exists(), (
+        "an ordinary replacement parked a backup"
+    )
+
+
+def test_a_link_replaced_after_the_final_ownership_check_survives(tmp_path, monkeypatch):
+    """`ours()` then `unlink()` are two operations, and the user is not locked.
+
+    The recheck under the parent's publication lock proved the link was ours
+    at the moment it was read. The removal is a separate syscall against the
+    *path*, so a user link written between the two was removed on the strength
+    of what the previous link pointed at.
+
+    The lock cannot help: it coordinates autorun processes, and the writer here
+    is the user's editor or another tool. Renaming the link aside first is what
+    makes the decision exact — the object being judged is no longer reachable
+    by the path anyone else is writing to.
+
+    The stand-in writes the user's link at the instant the removal is issued,
+    which is the one moment the recheck cannot cover. Before the fix that
+    removal names the target, so the link written there is what disappears.
+    After it, the removal names the copy already renamed out of the way, and
+    the path the user wrote to is not the path being deleted.
+    """
+    from autorun.installer import fs
+
+    shared = tmp_path / "shared" / "commit"
+    shared.mkdir(parents=True)
+    (shared / "SKILL.md").write_text("ours\n", encoding="utf-8")
+    theirs = tmp_path / "their-own" / "commit"
+    theirs.mkdir(parents=True)
+    (theirs / "SKILL.md").write_text("THEIRS\n", encoding="utf-8")
+
+    target = tmp_path / "dest" / "commit"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(shared, target_is_directory=True)
+
+    real_unlink = Path.unlink
+    raced = []
+
+    def unlink_after_the_user_writes(self, *args, **kwargs):
+        if not raced:
+            raced.append(self)
+            if target.is_symlink() or target.exists():
+                real_unlink(target)
+            target.symlink_to(theirs, target_is_directory=True)
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink_after_the_user_writes)
+
+    fs.withdraw_link(target, tmp_path / "shared")
+
+    assert raced, "the stand-in never fired; the test proved nothing"
+    assert target.is_symlink(), "the user's link was removed"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "THEIRS\n"
 
 
 def test_a_stage_left_by_a_kill_before_the_swap_is_swept(tmp_path):

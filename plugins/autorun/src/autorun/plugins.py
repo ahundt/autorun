@@ -597,22 +597,54 @@ class ScopeAccessor:
         session_id = None if self.scope == "session" else "__global__"
         self.ctx.state_set(self._allowed_key, allows, session_id=session_id)
 
-    def consume_allowed(self, index: int, consumed_dict: dict) -> None:
-        """Atomic update of a single allow entry (safe for global scope)."""
-        session_id = None if self.scope == "session" else "__global__"
+    def claim_allowed(self, allow: ScopedAllow, call_id: str) -> "ScopedAllow | None":
+        """Spend one use of ``allow``, deciding inside the state lock.
 
-        def replace_entry(current):
+        Returns the consumed grant, or ``None`` when the grant was exhausted
+        between the caller's read and this transaction — the caller must then
+        fall through to the block tiers instead of allowing.
+
+        The whole read-validate-decrement-write sequence lives in this callback
+        because ``state_update`` holds both the in-process lock and the
+        cross-process state lock across it. Computing ``consume()`` outside and
+        passing the finished dictionary in made only the *write* atomic: two
+        concurrent calls both read ``remaining_uses=1``, both computed ``0``,
+        both were allowed, and the second write stored the same ``0`` the first
+        had. ``/ar:ok rm 1`` bought two commands. The same-command replay that
+        ``_PARALLEL_GRACE_SECONDS`` absorbs is unaffected — ``consume`` still
+        refreshes rather than decrements for a matching ``call_id`` — it is
+        *distinct* calls that were never counted as separate claims.
+
+        The entry is found by ``(pattern, pattern_type)`` rather than by list
+        position: lazy cleanup in another process can drop an expired entry and
+        shift every index after it, and two entries with the same pattern and
+        type are interchangeable for this decision anyway.
+        """
+        session_id = None if self.scope == "session" else "__global__"
+        identity = (allow.pattern, allow.pattern_type)
+        claimed: list[ScopedAllow] = []
+
+        def claim(current):
             allows = list(current or [])
-            if index < len(allows):
-                allows[index] = consumed_dict
+            for position, entry in enumerate(allows):
+                fresh = ScopedAllow.from_dict(entry)
+                if (fresh.pattern, fresh.pattern_type) != identity:
+                    continue
+                if not fresh.is_valid(call_id):
+                    continue
+                consumed = fresh.consume(call_id)
+                allows[position] = consumed.to_dict()
+                claimed.append(consumed)
+                break
             return allows
 
         self.ctx.state_update(
             self._allowed_key,
-            replace_entry,
+            claim,
             [],
             session_id=session_id,
         )
+        return claimed[0] if claimed else None
 
 
 # MEGA DRY: Single factory for ALL block operations
@@ -1098,13 +1130,18 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     for scope_name in ("session", "global"):
         accessor = ScopeAccessor(ctx, scope_name)
         allows = accessor.get_allowed()
-        for i, a in enumerate(allows):
+        for a in allows:
             sa = ScopedAllow.from_dict(a)
             if not sa.is_valid(call_id):
                 continue  # Expired/exhausted — skip (lazy cleanup)
             if _match(cmd, sa.pattern, sa.pattern_type):
-                consumed = sa.consume(call_id)
-                accessor.consume_allowed(i, consumed.to_dict())
+                # `sa` is a read from before the lock, so it can only rule the
+                # grant out; `claim_allowed` re-reads and decides under the
+                # lock, and returns None when a concurrent call already spent
+                # the last use.
+                consumed = accessor.claim_allowed(sa, call_id)
+                if consumed is None:
+                    continue
                 label = consumed.status_label()
                 if label != "permanent":
                     allowed_msg = f"Allowed '{sa.pattern}' ({label})"

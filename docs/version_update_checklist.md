@@ -194,10 +194,17 @@ These are minimum versions — only bump for breaking changes, not patch release
 After updating versions:
 
 1. **Search for old version**: use the `rg --hidden` command in "Quick Method"
-2. **Run core tests**: `uv run --project plugins/autorun pytest plugins/autorun/tests/test_unit_simple.py -v`
-3. **Run version-sensitive tests**: `uv run --project plugins/autorun pytest plugins/autorun/tests/test_install_memory_runtime.py plugins/autorun/tests/test_hook_entry.py plugins/autorun/tests/test_hooks_format.py plugins/autorun/tests/test_bootstrap_config.py plugins/autorun/tests/test_actual_command_blocking.py -v`
-4. **Run full suite**: `uv run --project plugins/autorun pytest plugins/autorun/tests/ -v`
-5. **Verify config loads**: `uv run --project plugins/autorun python -c "from autorun.config import DEFAULT_INTEGRATIONS; print(len(DEFAULT_INTEGRATIONS))"`
+2. **Run core tests**: `uv run --project plugins/autorun --locked pytest plugins/autorun/tests/test_unit_simple.py -v`
+3. **Run version-sensitive tests**: `uv run --project plugins/autorun --locked pytest plugins/autorun/tests/test_install_memory_runtime.py plugins/autorun/tests/test_hook_entry.py plugins/autorun/tests/test_hooks_format.py plugins/autorun/tests/test_bootstrap_config.py plugins/autorun/tests/test_actual_command_blocking.py -v`
+4. **Run full suite**: `uv run --project plugins/autorun --locked pytest plugins/autorun/tests/ -v`
+5. **Verify config loads**: `uv run --project plugins/autorun --locked python -c "from autorun.config import DEFAULT_INTEGRATIONS; print(len(DEFAULT_INTEGRATIONS))"`
+
+Every command in this checklist passes `--locked`. It is the same rule
+`.github/workflows/ci.yml` follows and
+`test_documentation_consistency.py::test_every_release_gate_environment_is_the_locked_one`
+enforces on both files: a candidate is validated against the graph `uv.lock`
+commits, never against a fresh resolution that the release will not ship. A
+command that must run outside the lock has to say why, on the line.
 
 ## Release Workflow
 
@@ -215,15 +222,15 @@ git fetch origin main --tags
 test -z "$(git status --porcelain=v1)"
 
 # Run from the plugin directories, matching CI discovery/configuration.
-(cd plugins/autorun && uv run --project . pytest tests/ -m "not tmux and not e2e and not release" -v)
+(cd plugins/autorun && uv run --project . --locked pytest tests/ -m "not tmux and not e2e and not release" -v)
 # The PDF tests stay with their plugin, but the code they import ships in the
 # autorun distribution and `plugins/pdf-extractor` deliberately has no
 # pyproject.toml — so the environment must come from the autorun project, with
 # `--extra pdf` for the backends. Running it as its own project resolves the
 # workspace root instead and collects four `ModuleNotFoundError: pdf_extraction`.
 uv run --project plugins/autorun --locked --extra pdf pytest plugins/pdf-extractor/tests/ -v
-(cd plugins/autorun && uv run --project . pytest tests/test_release_artifacts.py -m release -v)
-(cd plugins/autorun && AUTORUN_ENABLE_STATE_BENCHMARK=1 uv run --project . pytest tests/test_state_store_benchmark.py -m benchmark -v)
+(cd plugins/autorun && uv run --project . --locked pytest tests/test_release_artifacts.py -m release -v)
+(cd plugins/autorun && AUTORUN_ENABLE_STATE_BENCHMARK=1 uv run --project . --locked pytest tests/test_state_store_benchmark.py -m benchmark -v)
 # ─────────────────────────────────────────────────────────────────────────────
 # LIVE INSTALL BOUNDARY. Everything above this line runs against the checkout
 # and a scratch home. The next command is the one exception in this checklist:
@@ -242,7 +249,7 @@ uv run --project plugins/autorun --locked --extra pdf pytest plugins/pdf-extract
 # HOME, USERPROFILE, PI_CODING_AGENT_DIR, AUTORUN_HOME and
 # AUTORUN_TEST_STATE_DIR redirected to a scratch tree, as the marketplace
 # rehearsal in Stage 4 does, and skip the cache check.
-uv run --project plugins/autorun python -m autorun --install --force
+uv run --project plugins/autorun --locked python -m autorun --install --force
 # ─────────────────────────────────────────────────────────────────────────────
 # Hook configuration is read once at session start, so a hook change takes
 # effect in the NEXT session, not this one.
@@ -251,7 +258,7 @@ uv run --project plugins/autorun python -m autorun --install --force
 # cache and the installed Gemini extension actually carry the hook files in
 # this tree. Skipped by default so an ordinary source edit does not fail the
 # suite before the reinstall.
-(cd plugins/autorun && AUTORUN_ENABLE_LIVE_INSTALL_CHECKS=1 uv run --project . pytest tests/test_hook_entry.py -k "cache_matches_source or gemini_extension_hooks_match" -v)
+(cd plugins/autorun && AUTORUN_ENABLE_LIVE_INSTALL_CHECKS=1 uv run --project . --locked pytest tests/test_hook_entry.py -k "cache_matches_source or gemini_extension_hooks_match" -v)
 
 # No existing tag for this version
 git tag -l 'vX.Y.Z'                    # expect empty

@@ -915,60 +915,26 @@ def _file_differs_from_ref(ctx: any) -> bool:
         return True
 
 
-# Backward-compat alias — preserves config.py and user hookify files that
-# still reference the legacy name. New code should call _file_differs_from_ref.
+# Backward-compat aliases. `config.py` no longer names either, but a user's own
+# integration file may, and a rule that keeps working has to keep meaning the
+# same thing. New code calls _file_differs_from_ref.
+#
+# `_checkout_targets_file_with_changes` was the last separate implementation of
+# "would this checkout discard work", and it was weaker than the shared one on
+# three axes, each of which allowed a destructive command. It split the raw
+# string, so it read only the first command on a line; it compared `parts[0]`
+# against the literal "git", letting `/usr/bin/git` and `git.exe` past a pattern
+# layer that had already matched them through `_get_basename`; and it asked
+# `os.path.exists(target)`, which resolves against the *daemon's* process
+# directory rather than `ctx.cwd`. One daemon serves every session on the
+# machine, so that last one answered about a directory the user is not in, and
+# answered "allow".
 def _file_has_unstaged_changes(ctx: any) -> bool:
     return _file_differs_from_ref(ctx)
 
 
 def _checkout_targets_file_with_changes(ctx: any) -> bool:
-    """
-    Check if 'git checkout <target>' is targeting an existing file with unstaged changes.
-
-    Distinguishes between:
-    - git checkout branch-name (safe, returns False to allow)
-    - git checkout path/to/file (destructive if file has changes, returns True to block)
-
-    Args:
-        ctx: EventContext with tool_input["command"]
-
-    Returns:
-        True if checkout targets a file with unstaged changes, False otherwise
-    """
-    try:
-        import os
-
-        cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
-        if not cmd:
-            return False
-
-        # Parse command to get target
-        parts = cmd.split()
-        if len(parts) < 3 or parts[0] != "git" or parts[1] != "checkout":
-            return False
-
-        # Skip if it has "--" separator (handled by different pattern)
-        if "--" in parts:
-            return False
-
-        # Get the target (could be branch or file path)
-        target = parts[2]
-
-        # Special cases that are always safe
-        if target in ("-b", "-B", "--track", "--orphan"):
-            return False  # Branch creation flags
-
-        # Check if target is an existing file path
-        if not os.path.exists(target):
-            # Not a file, probably a branch name - allow
-            return False
-
-        # It's a file — check via the hardened helper (cwd-aware, env-scrubbed,
-        # ref-aware, fail-safe). HEAD-relative diff catches staged + unstaged.
-        return _git_diff_quiet(getattr(ctx, "cwd", None), "HEAD", target)
-    except Exception as e:
-        logger.warning("_checkout_targets_file_with_changes fail-safe block: %s", e)
-        return True
+    return _file_differs_from_ref(ctx)
 
 
 def _command_has_file_args(tokens: list[str], pattern: str | None = None) -> bool:
