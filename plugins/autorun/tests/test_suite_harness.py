@@ -192,6 +192,12 @@ def test_each_serialized_resource_class_names_modules_that_exist(group):
 
 
 @pytest.mark.subprocess
+# 300s, against the module-wide `timeout = 30` in pyproject.toml: this test
+# runs a whole nested pytest session, which loads the same conftest, builds
+# its own runtime root and starts a tmux server. On a macOS runner that
+# exceeded thirty seconds and pytest-timeout killed the test rather than the
+# assertion reporting anything.
+@pytest.mark.timeout(300)
 def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(tmp_path):
     """`pytest_sessionfinish` kills the server whose socket it *inherited*.
 

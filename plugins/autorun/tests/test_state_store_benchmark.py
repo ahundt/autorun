@@ -97,6 +97,32 @@ def _time_repeatedly(operation, repeats: int = REPEATS) -> dict:
     return _summarize(samples)
 
 
+def _time_interleaved(operations: list[tuple[int, object]], repeats: int = REPEATS) -> list:
+    """Time several corpus sizes round-robin, one sample each per round.
+
+    A growth ratio compares two medians, and measuring one corpus to
+    completion before starting the next puts minutes between them. On a shared
+    runner that is long enough for the machine to change underneath the sweep:
+    `state-benchmark` reported `updating one took 23.18x as long` from medians
+    of 2.605ms, 2.270ms and 60.373ms at 100, 1000 and 10000 tasks — a jump that
+    lands entirely on the corpus measured last, while 100 to 1000 stayed flat.
+    Cost that actually grows with n shows at *every* step of the sweep, so that
+    shape is contention, not scaling.
+
+    Interleaving makes each corpus experience the same runner: a burst raises
+    every median together and the ratio survives it, while a real O(n) cost
+    still separates them. This changes how the measurement is taken and
+    nothing about what is asserted.
+    """
+    samples: dict[int, list[float]] = {size: [] for size, _ in operations}
+    for _ in range(repeats):
+        for size, operation in operations:
+            start = time.perf_counter()
+            operation()
+            samples[size].append((time.perf_counter() - start) * 1000.0)
+    return [(size, _summarize(samples[size])) for size, _ in operations]
+
+
 def _fill_json(state_dir: Path, sessions: int, fields_per_session: int = 4) -> None:
     payload = {
         f"filler-{index}/field-{field}": {"blob": "y" * 200}
@@ -173,18 +199,19 @@ def test_the_budget_reads_a_statistic_a_stalled_runner_cannot_move(
 class TestWriteCostVersusCorpusSize:
     def test_the_json_store_gets_slower_as_unrelated_state_grows(self, tmp_path):
         """Establishes that the thing being fixed is real and measurable."""
-        rows = []
+        operations = []
         for sessions in (100, 400, 1600):
             state_dir = tmp_path / f"json-{sessions}"
             state_dir.mkdir(parents=True)
             _fill_json(state_dir, sessions)
 
-            def write():
+            def write(state_dir=state_dir):
                 with session_state("subject", state_dir=str(state_dir)) as state:
                     state["field"] = SMALL_CHANGE + str(time.time())
 
-            rows.append((sessions, _time_repeatedly(write)))
+            operations.append((sessions, write))
 
+        rows = _time_interleaved(operations)
         _report("JSON store: one small write, growing unrelated corpus", rows)
         growth = rows[-1][1]["median_ms"] / max(rows[0][1]["median_ms"], 1e-9)
         assert growth > 2.0, (
@@ -197,18 +224,19 @@ class TestWriteCostVersusCorpusSize:
         self, tmp_path
     ):
         """The property the whole change exists to obtain."""
-        rows = []
+        operations = []
         for sessions in (100, 400, 1600):
             store = SQLiteStore(tmp_path / f"sqlite-{sessions}" / "state.sqlite3")
             store.initialize()
             _fill_sqlite(store, sessions)
 
-            def write():
+            def write(store=store):
                 with store.session("subject") as state:
                     state["field"] = SMALL_CHANGE + str(time.time())
 
-            rows.append((sessions, _time_repeatedly(write)))
+            operations.append((sessions, write))
 
+        rows = _time_interleaved(operations)
         _report("SQLite store: one small write, growing unrelated corpus", rows)
         growth = rows[-1][1]["median_ms"] / max(rows[0][1]["median_ms"], 1e-9)
         assert growth < 2.0, (
@@ -243,7 +271,7 @@ class TestWriteCostVersusCorpusSize:
 class TestTaskCostVersusTaskCount:
     def test_one_task_update_costs_the_same_however_many_tasks_exist(self, tmp_path):
         """The 922 KB value: 647 tasks rewritten to change one status."""
-        rows = []
+        operations = []
         for task_count in (100, 1000, 10000):
             store = SQLiteStore(tmp_path / f"tasks-{task_count}" / "state.sqlite3")
             store.initialize()
@@ -259,12 +287,13 @@ class TestTaskCostVersusTaskCount:
                             "updated_at": time.time(),
                         })
 
-            def update():
+            def update(repo=repo, session_id=session_id):
                 repo.mutate_task(session_id, "0",
                                  lambda task: {**task, "status": "completed"})
 
-            rows.append((task_count, _time_repeatedly(update)))
+            operations.append((task_count, update))
 
+        rows = _time_interleaved(operations)
         _report("SQLite store: one task update, growing task count", rows)
         growth = rows[-1][1]["median_ms"] / max(rows[0][1]["median_ms"], 1e-9)
         assert growth < 2.0, (
