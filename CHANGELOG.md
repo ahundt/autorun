@@ -74,6 +74,21 @@ marketplace itself carries a separate `version` field.
   artifact build, the benchmark, the post-install cache check — could resolve a
   different graph. One test now enforces it on the workflow and the runbook
   together.
+- **Which tests cost money is now a query, not a file name.** Seven test
+  modules each re-derived
+  `os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"`, so
+  a paid test could be added with no gate and nothing would notice, and the
+  only evidence that none had run was the absence of skip lines in a log. File
+  names were no help in either direction: most tests in
+  `test_*_e2e_real_money.py` are free local hook subprocesses, and paid tests
+  also live in `test_claude_e2e.py`, `test_demo.py`,
+  `test_gemini_before_tool_hooks.py` and `test_gemini_e2e_improved.py`.
+  `tests/e2e_support.py:requires_real_money` is now the single gate and applies
+  a registered `real_money` marker, so
+  `pytest -m real_money --collect-only` lists the 26 billable tests by name and
+  `pytest -m "not real_money"` proves a run collected none of them.
+  `tests/test_real_money_gate.py` fails the build if a second copy of the gate
+  appears.
 
 ## [1.0.0rc1] - 2026-08-15
 

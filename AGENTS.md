@@ -90,6 +90,20 @@ uv run --project plugins/autorun pytest plugins/autorun/tests/test_unit_simple.p
 uv run --project plugins/autorun pytest plugins/autorun/tests/ -q                       # full
 ```
 
+Paid model calls are off unless you export
+`AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1`, and every such test carries the
+`real_money` marker, so which ones they are is a query rather than a claim:
+
+```bash
+uv run --project plugins/autorun pytest plugins/autorun/tests/ -m real_money --collect-only -q   # list what would cost money
+uv run --project plugins/autorun pytest plugins/autorun/tests/ -m "not real_money" -q            # run with none of it collected
+```
+
+A module name proves nothing here: most tests in `test_*_e2e_real_money.py`
+are free hook subprocesses, and paid tests also live in modules whose names
+say nothing about cost. `tests/e2e_support.py:requires_real_money` is the only
+gate; `tests/test_real_money_gate.py` fails if a second copy appears.
+
 ## 5. Installing for real (end users)
 
 `autorun` is one published distribution; `autorun --install` then publishes

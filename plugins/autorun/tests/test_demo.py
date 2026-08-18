@@ -110,6 +110,15 @@ _src_path = str(Path(__file__).parent.parent / "src")
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
 
+try:
+    from e2e_support import requires_real_money
+except ImportError:  # standalone recording use, where `autorun` may not import
+    # Without the shared gate there is no way to read the opt-in, so the paid
+    # tests stay off. Skipping costs a demo run nothing; guessing could cost money.
+    requires_real_money = pytest.mark.skip(
+        reason="e2e_support unavailable; paid Claude tests stay off"
+    )
+
 # Import tmux detection functions (graceful fallback for environments without autorun)
 try:
     from autorun.tmux_utils import (
@@ -139,7 +148,6 @@ except ImportError:
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
-ENABLE_REAL_MONEY = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR = (
     os.environ.get("AUTORUN_ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS", "0") == "1"
 )
@@ -2022,10 +2030,7 @@ class TestDemoFree:
         assert len(log.stdout.strip().splitlines()) >= 3, "Should have 3+ commits"
 
 
-@pytest.mark.skipif(
-    not ENABLE_REAL_MONEY,
-    reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run live Claude tests"
-)
+@requires_real_money
 @pytest.mark.e2e
 class TestDemoRealMoney:
     """Live Claude Haiku session tests — uses tmux + claude TUI, ~$0.02 total.

@@ -26,6 +26,7 @@ from packaging.version import InvalidVersion, Version
 
 from e2e_support import (
     RETIRED_GEMINI_BACKEND_REASON,
+    requires_real_money,
     retired_gemini_backend_enabled,
 )
 
@@ -35,10 +36,7 @@ retired_gemini_model = pytest.mark.skipif(
     not retired_gemini_backend_enabled(),
     reason=RETIRED_GEMINI_BACKEND_REASON,
 )
-real_money_model = pytest.mark.skipif(
-    os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") != "1",
-    reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for live model tests.",
-)
+real_money_model = requires_real_money
 
 # Add src to path for tmux_utils import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))

@@ -154,6 +154,7 @@ markers = [
     "subprocess: marks tests that spawn subprocesses",
     "tmux: marks tests that require tmux sessions",
     "e2e: marks end-to-end tests (may require Gemini CLI, real API calls)",
+    "real_money: marks tests that call a paid model API (AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1); `-m \"not real_money\"` proves none were collected",
     "daemon: marks tests that require a running daemon process",
     "serial: marks tests that must run serially (not in parallel)",
     "stress: marks stress tests",

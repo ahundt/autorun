@@ -77,13 +77,28 @@ or they reach the live daemon; spec:
     from the rendered prose and recorded nothing live while every unit test
     passed. `hooks/hook_entry.py` replays a captured payload from stdin;
     `~/.autorun/hook_entry_debug.log` logs only the byte count and cannot settle it.
-12. **Give every wire contract one live canary** behind
-    `AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1`, asserting on persisted state,
-    never the model's reply (`test_claude_live_fanout_populates_the_spawn_ledger`,
+12. **Give every wire contract one live canary** gated by
+    `@requires_real_money` from `tests/e2e_support.py`, asserting on persisted
+    state, never the model's reply
+    (`test_claude_live_fanout_populates_the_spawn_ledger`,
     `test_pi_live_model_tool_call_is_blocked_and_the_file_survives`; Pi's cannot
     be home-isolated because `auth.json` shares the extension directory). Record
     what a canary cannot cover in `BACKEND_E2E_CONTRACTS`, which is asserted
     against `PLATFORMS`.
+13. **`@requires_real_money` is the only real-money gate**, and it both skips
+    (unless `AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1`) and applies the
+    `real_money` marker. Never re-read that variable in a test module:
+    `test_real_money_gate.py` fails the build if you do, because a hand-rolled
+    copy is how a paid test gets added with no gate at all. The marker is what
+    makes the negative provable — a module *name* is not evidence, since paid
+    tests also live in `test_claude_e2e.py`, `test_demo.py`,
+    `test_gemini_before_tool_hooks.py` and `test_gemini_e2e_improved.py`, none
+    of which say "real money":
+
+    ```bash
+    uv run --project plugins/autorun pytest plugins/autorun/tests/ -m real_money --collect-only -q   # what would cost money
+    uv run --project plugins/autorun pytest plugins/autorun/tests/ -m "not real_money" -q            # provably none of it
+    ```
 
 ## Bug workaround policy
 

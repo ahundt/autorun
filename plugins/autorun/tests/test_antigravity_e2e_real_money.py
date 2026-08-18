@@ -16,7 +16,7 @@ from e2e_support import (
     installed_task_pause_command_is_current,
     live_model_env,
     model_override,
-    real_money_enabled,
+    requires_real_money,
     run_bounded_stop_hook_sequence,
     run_isolated_hook,
     task_pause_recovery_prompt,
@@ -136,10 +136,7 @@ def test_antigravity_bounded_stop_retains_tasks_and_resets_on_next_prompt(tmp_pa
 @pytest.mark.e2e
 @pytest.mark.serial
 @pytest.mark.timeout(120)
-@pytest.mark.skipif(
-    not real_money_enabled(),
-    reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for one Antigravity call.",
-)
+@requires_real_money
 def test_antigravity_task_pause_recovery_in_minimal_live_model_session(tmp_path):
     """Prove Antigravity receives the generated task-pause recovery token."""
     if not shutil.which("agy"):

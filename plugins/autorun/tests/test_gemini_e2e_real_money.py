@@ -20,16 +20,12 @@ import pytest
 from e2e_support import (
     RETIRED_GEMINI_BACKEND_REASON,
     autorun_extension_listed,
+    real_money_enabled,
+    requires_real_money,
     retired_gemini_backend_enabled,
 )
 
-# Check for AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
-ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
-
-paid_gemini_e2e = pytest.mark.skipif(
-    not ENABLE_REAL_MONEY_TESTS,
-    reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for legacy model tests.",
-)
+paid_gemini_e2e = requires_real_money
 
 
 @pytest.fixture(scope="module")
@@ -49,17 +45,17 @@ def gemini_cli_check():
         )
         if result.returncode != 0:
             message = f"Installed Gemini CLI is not runnable: {result.stderr}"
-            if ENABLE_REAL_MONEY_TESTS:
+            if real_money_enabled():
                 pytest.fail(message)
             pytest.skip(message)
     except subprocess.TimeoutExpired:
         message = "Installed Gemini CLI --version timed out (>5s)"
-        if ENABLE_REAL_MONEY_TESTS:
+        if real_money_enabled():
             pytest.fail(message)
         pytest.skip(message)
     except OSError as error:
         message = f"Installed Gemini CLI check failed: {error}"
-        if ENABLE_REAL_MONEY_TESTS:
+        if real_money_enabled():
             pytest.fail(message)
         pytest.skip(message)
 
@@ -81,7 +77,7 @@ def gemini_extension_check():
         )
         if result.returncode != 0:
             message = f"Installed Gemini extension list failed: {result.stderr}"
-            if ENABLE_REAL_MONEY_TESTS:
+            if real_money_enabled():
                 pytest.fail(message)
             pytest.skip(message)
 
@@ -91,12 +87,12 @@ def gemini_extension_check():
             pytest.skip("ar (autorun) extension not installed in Gemini CLI")
     except subprocess.TimeoutExpired:
         message = "Installed Gemini extension list timed out (>30s)"
-        if ENABLE_REAL_MONEY_TESTS:
+        if real_money_enabled():
             pytest.fail(message)
         pytest.skip(message)
     except OSError as error:
         message = f"Installed Gemini extension check failed: {error}"
-        if ENABLE_REAL_MONEY_TESTS:
+        if real_money_enabled():
             pytest.fail(message)
         pytest.skip(message)
 

@@ -30,21 +30,15 @@ from e2e_support import (
     assert_bounded_stop_hook_result,
     find_task_recovery_marker,
     live_model_env,
+    requires_real_money,
     run_bounded_stop_hook_sequence,
     task_pause_recovery_prompt,
 )
 
 
-ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 _LOG_DIR = Path("/tmp") / "autorun-e2e-test-logs"
 
-paid_codex_e2e = pytest.mark.skipif(
-    not ENABLE_REAL_MONEY_TESTS,
-    reason=(
-        "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests "
-        "spawn real Codex CLI sessions and can cost money."
-    ),
-)
+paid_codex_e2e = requires_real_money
 
 
 PLUGIN_ROOT = Path(__file__).parent.parent

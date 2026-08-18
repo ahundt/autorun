@@ -65,6 +65,7 @@ from e2e_support import (
     find_task_recovery_marker,
     live_model_env,
     model_override,
+    requires_real_money,
     run_bounded_stop_hook_sequence,
     task_pause_recovery_prompt,
 )
@@ -108,7 +109,6 @@ def _log_run(label: str, payload: dict, rc: int, stdout: str, stderr: str) -> Pa
 # FLAG: Gate tests (same flag as Gemini test file)
 # =============================================================================
 
-ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS = (
     os.environ.get("AUTORUN_ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS", "0") == "1"
 )
@@ -121,14 +121,7 @@ slow_claude_model_behavior = pytest.mark.skipif(
     ),
 )
 
-paid_claude_e2e = pytest.mark.skipif(
-    not ENABLE_REAL_MONEY_TESTS,
-    reason=(
-        "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set. "
-        "Set to 1 to run real Claude subprocess tests; free hook-process "
-        "coverage remains enabled."
-    ),
-)
+paid_claude_e2e = requires_real_money
 
 
 # =============================================================================

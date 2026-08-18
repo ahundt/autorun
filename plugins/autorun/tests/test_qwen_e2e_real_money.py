@@ -28,13 +28,13 @@ from e2e_support import (
     find_task_recovery_marker,
     installed_task_pause_command_is_current,
     live_model_env,
+    requires_real_money,
     run_bounded_stop_hook_sequence,
     run_isolated_hook,
     task_pause_recovery_prompt,
 )
 
 
-ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 PLUGIN_ROOT = Path(__file__).parent.parent
 REPO_ROOT = PLUGIN_ROOT.parent.parent
 HOOK_ENTRY = PLUGIN_ROOT / "hooks" / "hook_entry.py"
@@ -220,13 +220,7 @@ def test_qwen_bounded_stop_retains_tasks_and_resets_on_next_prompt(tmp_path):
 
 @pytest.mark.e2e
 @pytest.mark.timeout(120)
-@pytest.mark.skipif(
-    not ENABLE_REAL_MONEY_TESTS,
-    reason=(
-        "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - this test makes "
-        "one real Qwen/Z.AI GLM-5.2 API call."
-    ),
-)
+@requires_real_money
 def test_qwen_zai_glm52_task_pause_recovery_real_money(tmp_path):
     """Prove Qwen returns the generation-bound task-pause recovery token."""
     if not shutil.which("qwen"):

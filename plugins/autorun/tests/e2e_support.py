@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from autorun.core import format_command_for_cli
 from autorun.platforms import PLATFORMS, to_harness_cli_event
 
@@ -78,6 +80,33 @@ BACKEND_E2E_CONTRACTS = {
 def real_money_enabled() -> bool:
     """Return whether the caller explicitly opted into paid model calls."""
     return os.environ.get(REAL_MONEY_ENV, "0") == "1"
+
+
+REAL_MONEY_SKIP_REASON = (
+    f"{REAL_MONEY_ENV} not set - this test calls a paid model API. "
+    f"Set {REAL_MONEY_ENV}=1 to opt in and pay for it."
+)
+
+
+def requires_real_money(target):
+    """Gate one paid test or class, and label it so it can be selected.
+
+    Both halves matter and neither works alone. The ``skipif`` keeps the call
+    from happening; the ``real_money`` marker makes the paid set addressable,
+    so ``pytest -m "not real_money"`` is a positive proof that nothing billable
+    was collected. Without the marker the only available evidence is the
+    absence of skip lines in a log, and a module *name* is no evidence at all:
+    most tests in the ``test_*_e2e_real_money.py`` modules are free local hook
+    subprocesses, and paid tests also live in modules whose names say nothing
+    about cost. A failure line naming a module settles neither question.
+
+    Applied to a class, both marks reach every test it contains.
+    """
+    return pytest.mark.real_money(
+        pytest.mark.skipif(not real_money_enabled(), reason=REAL_MONEY_SKIP_REASON)(
+            target
+        )
+    )
 
 
 def live_install_checks_enabled() -> bool:

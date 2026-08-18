@@ -31,11 +31,9 @@ import pytest
 from e2e_support import (
     RETIRED_GEMINI_BACKEND_REASON,
     autorun_extension_listed,
+    requires_real_money,
     retired_gemini_backend_enabled,
 )
-
-# Check for AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
-ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 
 
 def find_hook_script() -> Path:
@@ -341,12 +339,7 @@ class TestGeminiHookEntryPointDirect:
         # else: empty stdout = pass-through allow (correct behavior)
 
 
-# Skip entire class if ENABLE_REAL_MONEY_TESTS not set
-@pytest.mark.skipif(
-    not ENABLE_REAL_MONEY_TESTS,
-    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
-           "Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
-)
+@requires_real_money
 @pytest.mark.e2e
 class TestGeminiCLIRealMoney:
     """Real Gemini CLI E2E tests that make actual API calls.

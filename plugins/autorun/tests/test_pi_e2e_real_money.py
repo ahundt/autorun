@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from e2e_support import model_override, real_money_enabled
+from e2e_support import model_override, requires_real_money
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -150,13 +150,7 @@ def test_pi_reaches_the_installed_daemon_and_reports_live_policy(tmp_path):
 @requires_installed_pi
 @pytest.mark.e2e
 @pytest.mark.timeout(400)
-@pytest.mark.skipif(
-    not real_money_enabled(),
-    reason=(
-        "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - this test makes "
-        "one real Pi model call."
-    ),
-)
+@requires_real_money
 def test_pi_live_model_tool_call_is_blocked_and_the_file_survives(tmp_path):
     """A live model asks Pi's shell to delete a file; autorun must stop it.
 
