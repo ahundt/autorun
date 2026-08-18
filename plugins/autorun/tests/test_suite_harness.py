@@ -10,6 +10,7 @@ raise, it produces a green run whose results describe the wrong machine.
 """
 from __future__ import annotations
 
+import ast
 import os
 import shutil
 import sys
@@ -326,3 +327,55 @@ def test_the_private_tmux_wrapper_is_only_written_for_a_real_binary(
     monkeypatch.setattr(conftest.os, "access", lambda path, mode: exists)
 
     assert conftest.private_tmux_binary(resolved) == (resolved if wrapped else None)
+
+
+# Modules that entered the standard library after this project's floor,
+# `requires-python = ">=3.10"`. Importing one unguarded costs the whole run:
+# a collection error stops pytest before any test executes, so the job reports
+# an exit code and no failing test name.
+STDLIB_AFTER_THE_PYTHON_FLOOR = {"tomllib": "3.11"}
+
+
+def test_no_test_module_imports_a_stdlib_module_newer_than_the_python_floor():
+    """A `import tomllib` that works on 3.12 is a collection error on 3.10.
+
+    This is not a hypothetical either, and the repository had already written
+    the warning down twice — `test_documentation_consistency.py:514` and `:557`
+    both explain that `tomllib` is 3.11+ while autorun supports 3.10, and both
+    that module and `test_hook_entry.py:1411` fall back to `tomli`. A new
+    module still imported it bare, passed on this machine's 3.12, and took
+    `ci (ubuntu-latest, 3.10)` down at collection: `ModuleNotFoundError: No
+    module named 'tomllib'`, `1 skipped, 129 deselected, 1 error`, exit 2 —
+    6,161 selected tests, none of them run.
+
+    A comment cannot fail a build, so this does. Guard a late-stdlib import
+    with `try: import tomllib / except ImportError: import tomli as tomllib`,
+    or ask for the value some other way — the marker check in
+    `test_real_money_gate.py` reads pytest's own config instead of parsing
+    `pyproject.toml`, which is both version-proof and closer to the property
+    under test.
+    """
+    tests_dir = Path(__file__).resolve().parent
+    offenders = {}
+    # Every .py here, not just `test_*.py`: `conftest.py` and `e2e_support.py`
+    # are imported during collection too, and take the run down the same way.
+    for module in sorted(tests_dir.rglob("*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in tree.body:  # module scope only; a guarded import is nested
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module.split(".")[0]]
+            for name in names:
+                if name in STDLIB_AFTER_THE_PYTHON_FLOOR:
+                    offenders.setdefault(
+                        module.relative_to(tests_dir).as_posix(), []
+                    ).append((name, node.lineno))
+
+    assert not offenders, (
+        "These modules import a standard-library module that does not exist on "
+        "the oldest supported Python, at module scope where the failure is a "
+        "collection error rather than a test failure. Versions: "
+        f"{STDLIB_AFTER_THE_PYTHON_FLOOR}. Offenders: {offenders}"
+    )

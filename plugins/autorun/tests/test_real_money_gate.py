@@ -22,14 +22,12 @@ from __future__ import annotations
 
 import ast
 import os
-import tomllib
 from pathlib import Path
 
 from e2e_support import REAL_MONEY_ENV, requires_real_money
 
 
 TESTS_DIR = Path(__file__).resolve().parent
-PLUGIN_ROOT = TESTS_DIR.parent
 GATE_OWNER = "e2e_support.py"
 
 
@@ -81,11 +79,15 @@ def test_only_e2e_support_reads_the_real_money_environment_variable():
     )
 
 
-def test_the_real_money_marker_is_registered():
-    """`--strict-markers` is on, so an unregistered mark is a collection error."""
-    config = tomllib.loads((PLUGIN_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    markers = config["tool"]["pytest"]["ini_options"]["markers"]
-    names = {entry.split(":", 1)[0].strip() for entry in markers}
+def test_the_real_money_marker_is_registered(pytestconfig):
+    """`--strict-markers` is on, so an unregistered mark is a collection error.
+
+    Asked of the running config rather than parsed out of ``pyproject.toml``:
+    what matters is that *pytest* knows the marker, and reading the file would
+    also drag in ``tomllib``, which is not stdlib before Python 3.11 and the
+    matrix still covers 3.10.
+    """
+    names = {entry.split(":", 1)[0].strip() for entry in pytestconfig.getini("markers")}
 
     assert "real_money" in names, (
         "`pytest -m \"not real_money\"` is how a maintainer proves no paid "
