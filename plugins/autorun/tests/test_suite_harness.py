@@ -280,17 +280,17 @@ def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(request
 
 
 @pytest.mark.parametrize(
-    "resolved, exists, expected",
+    "kind, exists, wrapped",
     [
-        ("/opt/homebrew/bin/tmux", True, "/opt/homebrew/bin/tmux"),
-        ("tmux", True, None),
-        ("tmux", False, None),
-        ("/usr/bin/tmux", False, None),
-        (None, False, None),
+        ("absolute", True, True),
+        ("absolute", False, False),
+        ("bare", True, False),
+        ("bare", False, False),
+        ("empty", False, False),
     ],
 )
 def test_the_private_tmux_wrapper_is_only_written_for_a_real_binary(
-    resolved, exists, expected, monkeypatch
+    kind, exists, wrapped, tmp_path, monkeypatch
 ):
     """A wrapper named `tmux` that execs `tmux` execs itself, forever.
 
@@ -300,7 +300,8 @@ def test_the_private_tmux_wrapper_is_only_written_for_a_real_binary(
     the real client before the wrapper shadows it — but
     `tmux_utils._candidate_tmux_binaries` ends with `or ["tmux"]`, a bare name,
     when the machine has no tmux at all. The wrapper then execs `tmux`, `PATH`
-    resolves that to the wrapper, and the exec loop never terminates.
+    resolves that to the wrapper, and the exec loop never terminates. A wrapper
+    with that exact body had to be SIGKILLed after fifteen seconds.
 
     That is not hypothetical. `ci (macos-latest, 3.13)` installs no tmux — only
     the `tmux-integration` job runs `apt-get install tmux` — and the first
@@ -312,12 +313,16 @@ def test_the_private_tmux_wrapper_is_only_written_for_a_real_binary(
     up a pytest session: a wrapper is written only for a resolved path that is
     absolute and executable. Everything else means "no private server", tests
     that need one skip, and `PATH` is left alone.
+
+    The absolute case is built from `tmp_path` rather than written out, because
+    what counts as absolute is the running platform's answer: Python 3.13's
+    `ntpath.isabs` stopped treating a single leading slash as absolute, so a
+    hardcoded POSIX path made this fail on Windows for a reason that had
+    nothing to do with the rule under test.
     """
     import conftest
 
-    monkeypatch.setattr(conftest.os.path, "isabs", os.path.isabs)
-    monkeypatch.setattr(
-        conftest.os, "access", lambda path, mode: exists and os.path.isabs(str(path))
-    )
+    resolved = {"absolute": str(tmp_path / "tmux"), "bare": "tmux", "empty": ""}[kind]
+    monkeypatch.setattr(conftest.os, "access", lambda path, mode: exists)
 
-    assert conftest.private_tmux_binary(resolved) == expected
+    assert conftest.private_tmux_binary(resolved) == (resolved if wrapped else None)
