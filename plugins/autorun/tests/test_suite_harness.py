@@ -11,7 +11,9 @@ raise, it produces a green run whose results describe the wrong machine.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -193,21 +195,19 @@ def test_each_serialized_resource_class_names_modules_that_exist(group):
 
 @pytest.mark.subprocess
 # 300s, against the module-wide `timeout = 30` in pyproject.toml: this test
-# runs a whole nested pytest session, which loads the same conftest, builds
-# its own runtime root and starts a tmux server. On a macOS runner that
-# exceeded thirty seconds and pytest-timeout killed the test rather than the
-# assertion reporting anything.
+# runs a whole nested pytest session, which loads the same conftest and builds
+# its own runtime root.
 @pytest.mark.timeout(300)
-def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(tmp_path):
+def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(request):
     """`pytest_sessionfinish` kills the server whose socket it *inherited*.
 
     `pytest_configure` reads `AUTORUN_TEST_TMUX_SOCKET` from the environment
     and only invents a socket when it is absent, so a pytest process spawned by
-    a test — `test_suite_harness`, `test_release_artifacts`, and the other
-    nested runs — reuses its parent's private server, which is what keeps the
-    isolation from multiplying. `pytest_sessionfinish` then ran `kill-server`
-    on that socket unconditionally, so the child's exit destroyed the server
-    the parent was still using.
+    a test — `test_release_artifacts`, and this one — reuses its parent's
+    private server, which is what keeps the isolation from multiplying.
+    `pytest_sessionfinish` then ran `kill-server` on that socket
+    unconditionally, so the child's exit destroyed the server the parent was
+    still using.
 
     That is the whole of the tmux flake: the outer run's next tmux command
     reports `server exited unexpectedly` or `no server running on <socket>`,
@@ -218,21 +218,34 @@ def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(tmp_pat
 
     Ownership is the fix: the process that invented the socket tears the server
     down, and every process that inherited one leaves it alone.
+
+    The server here is this test's own, not the suite's. Standing up a session
+    on the shared one made a module outside `conftest._SERIAL_TMUX_TESTS` drive
+    it concurrently with the tests that are serialized against each other, and
+    a macOS runner hung `new-session` for the full sixty seconds. A private
+    socket reproduces the inheritance exactly — the child is handed this path
+    in its environment, which is the same way an xdist worker or a nested run
+    receives one — while touching nothing another test is using.
     """
     import subprocess
 
-    socket_path = os.environ.get("AUTORUN_TEST_TMUX_SOCKET")
-    if not socket_path:
+    real_tmux = getattr(request.config, "_autorun_real_tmux_bin", None)
+    if real_tmux is None or os.name != "posix":
         pytest.skip("no private tmux server on this platform")
-    tmux_bin = os.environ.get("AUTORUN_TMUX_BIN", "tmux")
 
-    session = f"outer-{os.getpid()}"
-    # 60s, not 10: this is the first tmux call of the run, so it pays for
-    # starting the server, and a loaded CI runner has taken longer than ten
-    # seconds to do it.
+    # Not `tmp_path`: `sun_path` is 104 bytes on macOS and pytest's per-test
+    # directory alone exceeds it — tmux answers `File name too long`. The
+    # suite's own socket is short for the same reason.
+    own_root = tempfile.mkdtemp(prefix="arown", dir="/tmp" if os.path.isdir("/tmp") else None)
+    socket_path = os.path.join(own_root, "s")
+    argv = [real_tmux, "-f", "/dev/null", "-S", socket_path]
+    env = {key: value for key, value in os.environ.items() if key != "TMUX"}
+    env["AUTORUN_TEST_TMUX_SOCKET"] = socket_path
+
+    session = "outer"
     started = subprocess.run(
-        [tmux_bin, "new-session", "-d", "-s", session],
-        capture_output=True, text=True, timeout=60,
+        [*argv, "new-session", "-d", "-s", session],
+        capture_output=True, text=True, timeout=60, env=env,
     )
     assert started.returncode == 0, started.stderr
 
@@ -245,20 +258,22 @@ def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(tmp_pat
         )
         child = subprocess.run(
             [sys.executable, "-m", "pytest", nested_target, "-q", "-p", "no:cacheprovider"],
-            capture_output=True, text=True, timeout=300, cwd=str(Path(__file__).parent),
+            capture_output=True, text=True, timeout=240,
+            cwd=str(Path(__file__).parent), env=env,
         )
         assert child.returncode == 0, f"{child.returncode}\n{child.stdout}\n{child.stderr}"
 
         alive = subprocess.run(
-            [tmux_bin, "has-session", "-t", session],
-            capture_output=True, text=True, timeout=60,
+            [*argv, "has-session", "-t", session],
+            capture_output=True, text=True, timeout=60, env=env,
         )
         assert alive.returncode == 0, (
-            "the nested pytest run tore down the outer run's tmux server: "
-            f"{alive.stderr.strip()!r}"
+            "the nested pytest run tore down the tmux server whose socket it "
+            f"inherited: {alive.stderr.strip()!r}"
         )
     finally:
         subprocess.run(
-            [tmux_bin, "kill-session", "-t", session],
-            capture_output=True, text=True, timeout=60,
+            [*argv, "kill-server"],
+            capture_output=True, text=True, timeout=60, env=env,
         )
+        shutil.rmtree(own_root, ignore_errors=True)
