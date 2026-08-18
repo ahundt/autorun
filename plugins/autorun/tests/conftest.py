@@ -40,6 +40,35 @@ def skip_if_windows_service_provider_error(result: subprocess.CompletedProcess) 
         pytest.skip("Windows runner has no usable _overlapped service provider")
 
 
+def private_tmux_binary(resolved: str | None) -> str | None:
+    """The real tmux client to wrap, or ``None`` when there is none to wrap.
+
+    `pytest_configure` writes a shell script named `tmux` that adds
+    `-S <private socket>` and puts its directory first on `PATH`, so every tmux
+    call in the run is isolated. That only works if the script execs a *different*
+    binary. `tmux_utils._candidate_tmux_binaries` ends with `or ["tmux"]` — a
+    bare name — when the machine has no tmux at all, and a wrapper that execs
+    `tmux` resolves through `PATH` straight back to itself and loops until
+    something times out.
+
+    `ci (macos-latest, 3.13)` is such a machine: only the `tmux-integration`
+    job installs tmux. The first non-tmux-marked test to call tmux there hung
+    for its full 60-second subprocess budget.
+
+    So: wrap an absolute, executable path, and nothing else. Without one there
+    is no private server, `AUTORUN_TEST_TMUX_SOCKET` stays unset, `PATH` is left
+    alone, and the tests that need tmux skip — which is the honest outcome on a
+    machine that has none.
+    """
+    if not resolved:
+        return None
+    if not os.path.isabs(str(resolved)):
+        return None
+    if not os.access(str(resolved), os.X_OK):
+        return None
+    return str(resolved)
+
+
 def pytest_configure(config):
     """Configure pytest with custom markers and DB isolation."""
     config.addinivalue_line("markers", "slow: marks tests as slow")
@@ -112,7 +141,11 @@ def pytest_configure(config):
         # Resolve the real client BEFORE the wrapper shadows `tmux` on PATH,
         # or the wrapper would exec itself. On Apple Silicon this also prefers
         # /opt/homebrew over an older /usr/local client.
-        real_tmux = resolve_tmux_binary()
+        real_tmux = private_tmux_binary(resolve_tmux_binary())
+    else:
+        real_tmux = None
+
+    if real_tmux is not None:
         # Whoever invents the socket owns the server. An inherited one belongs
         # to an outer pytest — the controller, for an xdist worker, or the run
         # that spawned this one, for the nested pytest invocations in

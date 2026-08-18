@@ -277,3 +277,47 @@ def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(request
             capture_output=True, text=True, timeout=60, env=env,
         )
         shutil.rmtree(own_root, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    "resolved, exists, expected",
+    [
+        ("/opt/homebrew/bin/tmux", True, "/opt/homebrew/bin/tmux"),
+        ("tmux", True, None),
+        ("tmux", False, None),
+        ("/usr/bin/tmux", False, None),
+        (None, False, None),
+    ],
+)
+def test_the_private_tmux_wrapper_is_only_written_for_a_real_binary(
+    resolved, exists, expected, monkeypatch
+):
+    """A wrapper named `tmux` that execs `tmux` execs itself, forever.
+
+    `conftest.pytest_configure` writes a `tmux` shell script that adds
+    `-S <private socket>` and puts its directory FIRST on `PATH`, so every
+    `tmux` in the run is isolated. Its own comment records the hazard — resolve
+    the real client before the wrapper shadows it — but
+    `tmux_utils._candidate_tmux_binaries` ends with `or ["tmux"]`, a bare name,
+    when the machine has no tmux at all. The wrapper then execs `tmux`, `PATH`
+    resolves that to the wrapper, and the exec loop never terminates.
+
+    That is not hypothetical. `ci (macos-latest, 3.13)` installs no tmux — only
+    the `tmux-integration` job runs `apt-get install tmux` — and the first
+    non-tmux-marked test to call tmux there hung until its 60-second subprocess
+    timeout, reporting `Command '['tmux', '-f', '/dev/null', '-S', ...,
+    'new-session', ...]' timed out`.
+
+    The decision belongs to one function so it can be checked without standing
+    up a pytest session: a wrapper is written only for a resolved path that is
+    absolute and executable. Everything else means "no private server", tests
+    that need one skip, and `PATH` is left alone.
+    """
+    import conftest
+
+    monkeypatch.setattr(conftest.os.path, "isabs", os.path.isabs)
+    monkeypatch.setattr(
+        conftest.os, "access", lambda path, mode: exists and os.path.isabs(str(path))
+    )
+
+    assert conftest.private_tmux_binary(resolved) == expected
