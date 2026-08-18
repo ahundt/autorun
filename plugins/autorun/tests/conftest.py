@@ -399,10 +399,57 @@ class DaemonManager:
             print(f"\n[DEBUG] Production daemon PIDs (protected): {cls._production_pids}")
 
     @classmethod
+    def _daemon_home(cls, pid_str: str):
+        """The ``AUTORUN_HOME`` a running daemon was started with, or ``None``."""
+        try:
+            return psutil.Process(int(pid_str)).environ().get("AUTORUN_HOME")
+        except (
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+            psutil.ZombieProcess,
+            ValueError,
+            OSError,
+        ):
+            return None
+
+    @classmethod
+    def _is_ours(cls, pid_str: str) -> bool:
+        """Whether this worker started the daemon or hosts it in its own root.
+
+        The environment is the durable signal: ``plugins/autorun/conftest.py``
+        gives every worker process its own ``mkdtemp`` runtime root and exports
+        ``AUTORUN_HOME`` under it, so a daemon's own ``AUTORUN_HOME`` says which
+        worker it belongs to no matter who spawned it. ``_test_spawned_pids`` is
+        the fallback for when ``environ()`` is denied.
+
+        Unknown means not ours. Sparing a daemon we cannot identify costs a
+        leaked process in a temporary directory; killing one costs another
+        worker its test.
+        """
+        if pid_str in cls._test_spawned_pids:
+            return True
+        home = cls._daemon_home(pid_str)
+        runtime = os.environ.get("AUTORUN_TEST_RUNTIME_DIR")
+        if not home or not runtime:
+            return False
+        try:
+            runtime = os.path.realpath(runtime)
+            return os.path.commonpath([os.path.realpath(home), runtime]) == runtime
+        except ValueError:  # different drives on Windows, or a relative path
+            return False
+
+    @classmethod
     def get_test_daemon_pids(cls) -> list:
-        """Get PIDs of daemons spawned during testing (excludes production)."""
-        all_pids = set(cls._get_all_daemon_pids())
-        return sorted(all_pids - cls._production_pids)
+        """Daemons this worker is responsible for.
+
+        Excludes production daemons recorded at session start AND daemons
+        belonging to the other xdist workers. `pytest_sessionstart` runs once
+        per worker process, so each snapshot is blind to every daemon another
+        worker starts later; without the ownership test the first worker to
+        sweep terminated the others' daemons mid-test.
+        """
+        all_pids = set(cls._get_all_daemon_pids()) - cls._production_pids
+        return sorted(pid for pid in all_pids if cls._is_ours(pid))
 
     @classmethod
     def _kill_pid(cls, pid_str: str):

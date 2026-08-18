@@ -635,8 +635,26 @@ class TestInteractiveManagementWorkflows:
         health_score = (passed_checks / total_checks) * 100
         critical_score = (critical_passed / len(critical_checks)) * 100 if critical_checks else 100
 
-        assert health_score >= 50, "Overall health score should be at least 50%"
-        assert critical_score >= 80, "Critical health score should be at least 80%"
+        # Name the failing check and its cost. A bare percentage says a score
+        # dropped and nothing about which of `echo`, `ps aux`, `env` or `date`
+        # took longer than its 5s budget, which is the only interesting fact
+        # here: these are shell commands whose runtime tracks machine load, not
+        # anything autorun owns. One local `-n 8` run scored 66.67 and left no
+        # way to tell which check it was.
+        failed = "; ".join(
+            f"{name}: success={r['success']} "
+            f"took={r['execution_time']:.2f}s critical={r['critical']} "
+            f"error={r['error'][:200]!r}"
+            for name, r in sorted(health_results.items())
+            if not r['success']
+        ) or "none"
+
+        assert health_score >= 50, (
+            f"Overall health score {health_score:.2f}% below 50%. Failing: {failed}"
+        )
+        assert critical_score >= 80, (
+            f"Critical health score {critical_score:.2f}% below 80%. Failing: {failed}"
+        )
 
         # Cleanup
         tmux.execute_tmux_command(['kill-session', '-t', session_name])

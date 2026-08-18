@@ -379,3 +379,95 @@ def test_no_test_module_imports_a_stdlib_module_newer_than_the_python_floor():
         "collection error rather than a test failure. Versions: "
         f"{STDLIB_AFTER_THE_PYTHON_FLOOR}. Offenders: {offenders}"
     )
+
+
+@pytest.fixture
+def daemon_sweep(monkeypatch, tmp_path):
+    """A `DaemonManager` whose process discovery and kills are observable."""
+    import conftest
+
+    manager = conftest.DaemonManager
+    mine = tmp_path / "worker-a"
+    theirs = tmp_path / "worker-b"
+    (mine / "autorun-home").mkdir(parents=True)
+    (theirs / "autorun-home").mkdir(parents=True)
+    monkeypatch.setenv("AUTORUN_TEST_RUNTIME_DIR", str(mine))
+    monkeypatch.setattr(manager, "_production_pids", {"100"})
+    monkeypatch.setattr(manager, "_test_spawned_pids", set())
+    monkeypatch.setattr(manager, "_get_all_daemon_pids", classmethod(lambda cls: []))
+    monkeypatch.setattr(manager, "_daemon_home", classmethod(lambda cls, pid: None))
+
+    killed = []
+    monkeypatch.setattr(
+        manager, "_kill_pid", classmethod(lambda cls, pid: killed.append(pid))
+    )
+
+    def arrange(*, running, homes, spawned=()):
+        monkeypatch.setattr(
+            manager, "_get_all_daemon_pids", classmethod(lambda cls: list(running))
+        )
+        monkeypatch.setattr(
+            manager, "_daemon_home", classmethod(lambda cls, pid: homes.get(pid))
+        )
+        monkeypatch.setattr(manager, "_test_spawned_pids", set(spawned))
+        return manager
+
+    arrange.mine = str(mine / "autorun-home")
+    arrange.theirs = str(theirs / "autorun-home")
+    arrange.killed = killed
+    return arrange
+
+
+def test_the_daemon_sweep_spares_a_daemon_another_worker_started(daemon_sweep):
+    """`-n 8` means eight snapshots, each blind to the other workers' daemons.
+
+    `pytest_sessionstart` runs once per xdist worker and records the daemon PIDs
+    alive *at that moment* as production. Anything appearing later looked like
+    "a test daemon" to every worker, so the first worker to reach
+    `ensure_single_daemon` terminated daemons belonging to the other seven.
+
+    That is not theoretical. `test_daemon_startup_race.py:472-548` spawns
+    `python -c "... from autorun.daemon import main; main()"`, whose cmdline
+    matches the `autorun.daemon` sweep, and a captured full-suite failure shows
+    the child publishing its socket and being killed 63ms later::
+
+        Daemon started on unix:/tmp/arduz8v7i4g/h/daemon.sock   23:07:57,047
+        Received SIGTERM                                        23:07:57,110
+        Daemon exited                                           23:07:57,115
+
+    The test polls every 0.2s, so the socket existed and vanished between two
+    polls: `contents: ['daemon.log']`, `child exit code: 0`, `assert None`.
+    Ownership decides who may kill what — a daemon running in another worker's
+    `AUTORUN_TEST_RUNTIME_DIR` is that worker's business.
+    """
+    manager = daemon_sweep(
+        running=["100", "200", "300"],
+        homes={"200": daemon_sweep.mine, "300": daemon_sweep.theirs},
+    )
+
+    manager.kill_test_daemons()
+
+    assert daemon_sweep.killed == ["200"], (
+        "the sweep must kill only this worker's daemon (200): 100 is production "
+        "and 300 belongs to another worker's runtime root. "
+        f"Killed: {daemon_sweep.killed}"
+    )
+
+
+def test_the_daemon_sweep_still_kills_one_it_spawned_with_no_readable_home(
+    daemon_sweep,
+):
+    """Explicit spawn bookkeeping is the fallback when `environ()` is denied.
+
+    `psutil.Process.environ()` can raise `AccessDenied`, and a daemon this
+    worker started is still this worker's to clean up. Without the union a
+    single unreadable environment would leak a daemon for the whole session.
+    """
+    manager = daemon_sweep(running=["100", "400"], homes={}, spawned={"400"})
+
+    manager.kill_test_daemons()
+
+    assert daemon_sweep.killed == ["400"], (
+        "a daemon recorded in _test_spawned_pids must be killed even when its "
+        f"environment cannot be read. Killed: {daemon_sweep.killed}"
+    )
