@@ -42,6 +42,17 @@ from autorun.installer.fs import (  # noqa: E402
 )
 
 
+def test_backup_path_never_reuses_a_broken_symlink(tmp_path):
+    """A broken backup link still occupies its pathname and belongs to the user."""
+    original = tmp_path / "command.md"
+    first = tmp_path / "command.md.autorun-backup"
+    first.symlink_to(tmp_path / "missing-user-target")
+
+    assert installer_fs.backup_path(original) == (
+        tmp_path / "command.md.autorun-backup.1"
+    )
+
+
 @pytest.fixture
 def source(tmp_path: Path) -> Path:
     """A plugin tree with the four content shapes that broke earlier drafts."""

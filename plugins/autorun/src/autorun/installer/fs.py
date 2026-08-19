@@ -1143,7 +1143,7 @@ def backup_path(path: Path) -> Path:
     """
     candidate = path.with_name(path.name + BACKUP_SUFFIX)
     counter = 1
-    while candidate.exists():
+    while candidate.exists() or candidate.is_symlink():
         candidate = path.with_name(f"{path.name}{BACKUP_SUFFIX}.{counter}")
         counter += 1
     return candidate
