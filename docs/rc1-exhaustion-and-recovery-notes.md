@@ -377,6 +377,30 @@ possible split. Harness versions are dotted integers, which a zero-padded tuple
 comparison orders correctly; a build suffix (`2.1.240-beta.1`) compares on its
 leading numeric components rather than failing.
 
+### Cost of the new hot-path code, measured
+
+`workaround_applies` runs on the PreToolUse path, so its cost was measured
+rather than asserted (100k iterations, this machine):
+
+| Path | Cost | `packaging` imported |
+|------|------|----------------------|
+| default, no env var set | 3.96 µs/call | no |
+| explicit `always` | 1.68 µs/call | no |
+| version range | 28.4 µs/call | yes, only here |
+
+Against the 3-second PreToolUse dispatch budget in
+`daemon_dispatch_timeouts_seconds`, the default path costs about 0.0001% of the
+allowance. The lazy import is confirmed working: `packaging` is absent from
+`sys.modules` after 200k calls through the word grammar and appears only once a
+flag actually holds a range.
+
+Deliberately not memoized: caching `SpecifierSet` per spec string would save
+~28 µs on a path that runs at most once per hook event. Note the ceiling rather
+than build the cache — if ranges ever move into a per-tool loop, revisit.
+
+The three new spec-check tests read and AST-parse the source tree. That cost is
+CI-only; no runtime module imports them.
+
 ### #225 · IN PROGRESS · what version each harness actually reports
 
 Measured on this machine rather than assumed:
