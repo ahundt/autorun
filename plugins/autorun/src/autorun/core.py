@@ -57,8 +57,8 @@ from .session_manager import (
     # Re-exported: callers reach these as core.<name>, and tests patch them
     # there, but each rule belongs beside the lock and exceptions it reads.
     HOOK_STATE_LOCK_TIMEOUT,
-    STATE_LOCK_MAX_WAIT_SECONDS,
-    STATE_LOCK_RESPONSE_RESERVE_SECONDS,
+    STATE_LOCK_MAX_WAIT_SECONDS,  # noqa: F401 - compatibility export used by tests/callers
+    STATE_LOCK_RESPONSE_RESERVE_SECONDS,  # noqa: F401 - compatibility export
     state_failure_is_contention,
     state_lock_timeout,
 )
@@ -722,7 +722,7 @@ class ThreadSafeDB:
     def _batch_depth(self) -> int:
         return int(getattr(self._batch, "depth", 0))
 
-    def get(self, key: str, default=None) -> Any:
+    def get(self, key: str, default=None, *, timeout: float | None = None) -> Any:
         """Hydrate one session once, then serve present and missing fields from memory."""
         dirty = getattr(self._batch, "dirty", {})
         if self._batch_depth() > 0 and key in dirty:
@@ -739,7 +739,10 @@ class ThreadSafeDB:
                 return default
 
             try:
-                with session_state(session_id, timeout=self._state_timeout) as state:
+                with session_state(
+                    session_id,
+                    timeout=self._state_timeout if timeout is None else timeout,
+                ) as state:
                     for stored_field, value in state.items():
                         self._cache[f"{session_id}:{stored_field}"] = value
                 self._loaded_sessions.add(session_id)
@@ -754,7 +757,7 @@ class ThreadSafeDB:
                     f"Could not read persistent state for {key!r}: {exc}"
                 ) from exc
 
-    def set(self, key: str, value: Any):
+    def set(self, key: str, value: Any, *, timeout: float | None = None):
         """Set value in both memory cache and persistent JSON store."""
         # Deep copy only mutable types for clean serialization
         if isinstance(value, (list, dict, set)):
@@ -768,10 +771,17 @@ class ThreadSafeDB:
 
         with self._lock:
             # Persist to JSON via session_state() RAII wrapper
-            self._persist_many({key: value})
+            self._persist_many({key: value}, timeout=timeout)
             return StateWriteStatus.DURABLE
 
-    def update(self, key: str, updater: Callable[[Any], Any], default=None) -> Any:
+    def update(
+        self,
+        key: str,
+        updater: Callable[[Any], Any],
+        default=None,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
         """Atomically update one field and synchronize the daemon cache.
 
         Unlike plain ``set`` calls, read-modify-write operations are immediate
@@ -784,7 +794,10 @@ class ThreadSafeDB:
             dirty = getattr(self._batch, "dirty", {})
             has_staged_value = self._batch_depth() > 0 and key in dirty
             try:
-                with session_state(session_id, timeout=self._state_timeout) as state:
+                with session_state(
+                    session_id,
+                    timeout=self._state_timeout if timeout is None else timeout,
+                ) as state:
                     current = dirty[key] if has_staged_value else state.get(field, default)
                     if isinstance(current, (list, dict, set)):
                         current = copy.deepcopy(current)
@@ -959,7 +972,7 @@ class ThreadSafeDB:
             )
 
     @contextlib.contextmanager
-    def batch_writes(self):
+    def batch_writes(self, *, timeout: float | None = None):
         """Batch magic-state writes made by one hook dispatch.
 
         Handlers still observe their writes through the daemon cache immediately,
@@ -970,6 +983,7 @@ class ThreadSafeDB:
         """
         if self._batch_depth() == 0:
             self._batch.dirty = {}
+            self._batch.timeout = timeout
         self._batch.depth = self._batch_depth() + 1
         try:
             yield
@@ -982,9 +996,14 @@ class ThreadSafeDB:
                     # Raises if any group failed, after removing those keys
                     # from the cache. The dispatch that opened the batch turns
                     # that into a report on the response.
-                    self._persist_many(dict(dirty))
+                    self._persist_many(
+                        dict(dirty), timeout=getattr(self._batch, "timeout", None)
+                    )
+                self._batch.timeout = None
 
-    def _persist_many(self, values: Dict[str, Any]) -> None:
+    def _persist_many(
+        self, values: Dict[str, Any], *, timeout: float | None = None
+    ) -> None:
         """Write cached values through to storage, or disown them.
 
         A failure here used to be logged and otherwise ignored, which left the
@@ -1007,7 +1026,10 @@ class ThreadSafeDB:
             failures = []
             for session_id, fields in grouped.items():
                 try:
-                    with session_state(session_id, timeout=self._state_timeout) as state:
+                    with session_state(
+                        session_id,
+                        timeout=self._state_timeout if timeout is None else timeout,
+                    ) as state:
                         for field, value in fields.items():
                             state[field] = value
                 except Exception as e:
@@ -1907,6 +1929,12 @@ class EventContext:
         target_session = session_id or object.__getattribute__(self, "_session_id")
         try:
             if store:
+                if isinstance(store, ThreadSafeDB):
+                    return store.get(
+                        f"{target_session}:{name}",
+                        default,
+                        timeout=state_lock_timeout(self, floor=store._state_timeout),
+                    )
                 return store.get(f"{target_session}:{name}", default)
             with session_state(target_session, timeout=state_lock_timeout(self)) as state:
                 return state.get(name, default)
@@ -1923,7 +1951,14 @@ class EventContext:
         target_session = session_id or own_session
         if store:
             try:
-                status = store.set(f"{target_session}:{name}", value)
+                if isinstance(store, ThreadSafeDB):
+                    status = store.set(
+                        f"{target_session}:{name}",
+                        value,
+                        timeout=state_lock_timeout(self, floor=store._state_timeout),
+                    )
+                else:
+                    status = store.set(f"{target_session}:{name}", value)
             except SessionPersistenceError as exc:
                 # Reported rather than raised: a hook that fails here would
                 # block a tool call over bookkeeping. The value is already
@@ -1968,7 +2003,15 @@ class EventContext:
         target_session = session_id or own_session
         try:
             if store:
-                value = store.update(f"{target_session}:{name}", updater, default)
+                if isinstance(store, ThreadSafeDB):
+                    value = store.update(
+                        f"{target_session}:{name}",
+                        updater,
+                        default,
+                        timeout=state_lock_timeout(self, floor=store._state_timeout),
+                    )
+                else:
+                    value = store.update(f"{target_session}:{name}", updater, default)
             else:
                 with session_state(target_session, timeout=state_lock_timeout(self)) as state:
                     current = state.get(name, default)
@@ -2653,7 +2696,14 @@ class AutorunApp:
 
         response = None
         try:
-            with store.batch_writes():
+            batch = (
+                store.batch_writes(
+                    timeout=state_lock_timeout(ctx, floor=store._state_timeout)
+                )
+                if isinstance(store, ThreadSafeDB)
+                else store.batch_writes()
+            )
+            with batch:
                 response = self._dispatch_unbatched(ctx)
         except SessionPersistenceError as exc:
             # The handlers finished and produced a response; only the flush

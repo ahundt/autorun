@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import multiprocessing
 import os
+import time
 from threading import Barrier
 
 import pytest
@@ -53,7 +54,11 @@ def _process_task_pause_claim(
     session_manager._CONFIG["state_backend"] = backend
     session_manager._reset_for_testing()
     try:
-        ctx = _context(session_id, message=message)
+        ctx = _context(
+            session_id,
+            message=message,
+            deadline_monotonic=time.monotonic() + 5.0,
+        )
         barrier.wait()
         results.put(task_pause_allows_stop(ctx, now=101.0))
     finally:
@@ -112,6 +117,7 @@ def _context(
     cwd: str | None = None,
     store: ThreadSafeDB | None = None,
     tool_name: str = "",
+    deadline_monotonic: float | None = None,
 ) -> EventContext:
     return EventContext(
         session_id=session_id,
@@ -123,6 +129,7 @@ def _context(
         cli_type="codex",
         cwd=cwd,
         tool_name=tool_name,
+        deadline_monotonic=deadline_monotonic,
     )
 
 

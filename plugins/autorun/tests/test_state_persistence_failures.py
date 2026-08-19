@@ -238,11 +238,11 @@ class TestPersistenceFailureIsLoud:
         second_flush_done = threading.Event()
         original_persist = db._persist_many
 
-        def ordered_persist(values):
+        def ordered_persist(values, *, timeout=None):
             if threading.current_thread().name == "first-batch":
                 first_flush_ready.set()
                 assert second_flush_done.wait(5)
-            original_persist(values)
+            original_persist(values, timeout=timeout)
             if threading.current_thread().name == "second-batch":
                 second_flush_done.set()
 
@@ -523,6 +523,38 @@ class TestTheLockBudgetFitsTheRequestsOwnDeadline:
         assert all(
             budget > core.HOOK_STATE_LOCK_TIMEOUT for budget in seen
         ), f"a direct path still used the constant instead of its deadline: {seen}"
+
+    def test_cached_state_paths_budget_from_the_request_deadline(self, isolated_state):
+        """A daemon-backed EventContext must not fall back to the store's floor."""
+        seen = []
+        store = ThreadSafeDB()
+        ctx = TestAContendedReadDoesNotDestroyTheResponse()._context(
+            store=store, deadline=time.monotonic() + 2.0
+        )
+
+        real_get, real_set, real_update = store.get, store.set, store.update
+
+        def get(key, default=None, *, timeout=None):
+            seen.append(("get", timeout))
+            return real_get(key, default, timeout=timeout)
+
+        def set_(key, value, *, timeout=None):
+            seen.append(("set", timeout))
+            return real_set(key, value, timeout=timeout)
+
+        def update(key, updater, default=None, *, timeout=None):
+            seen.append(("update", timeout))
+            return real_update(key, updater, default, timeout=timeout)
+
+        store.get, store.set, store.update = get, set_, update
+        ctx.state_get("field", None)
+        ctx.state_set("field", 1)
+        ctx.state_update("field", lambda value: (value or 0) + 1, 0)
+
+        assert [name for name, _timeout in seen] == ["get", "set", "update"]
+        assert all(
+            timeout > core.HOOK_STATE_LOCK_TIMEOUT for _name, timeout in seen
+        ), seen
 
     def test_task_receipts_budget_from_the_deadline_too(self, isolated_state):
         """The receipts are the writes that must not be lost to a lost race.
