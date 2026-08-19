@@ -6,24 +6,16 @@ Tests complete end-to-end workflows including session automation,
 CLI testing, and interactive management scenarios.
 """
 
-import pytest
+import subprocess
 import time
 import uuid
-import os
-import shutil
-import subprocess
 
+import pytest
+
+from autorun.tmux_utils import get_tmux_utilities
 from conftest import tmux_argv
-import tempfile
-from pathlib import Path
 
 pytestmark = pytest.mark.tmux
-
-# Add src to path for imports
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from autorun.tmux_utils import TmuxUtilities, get_tmux_utilities
 
 # Test session name prefixes for cleanup
 _TEST_PREFIXES = (
@@ -568,96 +560,18 @@ class TestInteractiveManagementWorkflows:
 
     @pytest.mark.integration
     def test_health_monitoring_integration(self):
-        """Test health monitoring integration using subprocess for shell commands"""
+        """The tmux health check measures tmux, not unrelated host commands."""
         session_name = f"health-monitor-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
-        # Clean up any existing session, then let auto-creation handle it
-        tmux.execute_tmux_command(['kill-session', '-t', session_name])
-        # Session is auto-created by execute_tmux_command
-        create_result = tmux.execute_tmux_command(['display-message', '-p', 'Ready'], session_name)
-        assert create_result is not None
-
-        # Define health checks - use subprocess for shell commands
-        health_checks = [
-            {
-                'name': 'Basic Responsiveness',
-                'command': ['echo', 'Health check'],
-                'critical': True
-            },
-            {
-                'name': 'Process Status',
-                'command': ['ps', 'aux'],
-                'critical': True
-            },
-            {
-                'name': 'Environment Status',
-                'command': ['env'],
-                'critical': False
-            },
-            {
-                'name': 'System Time',
-                'command': ['date'],
-                'critical': True
-            }
-        ]
-
-        health_results = {}
-        for check in health_checks:
-            start_time = time.time()
-            try:
-                # Use subprocess for shell commands, not tmux
-                result = subprocess.run(check['command'], capture_output=True, text=True, timeout=5)
-                execution_time = time.time() - start_time
-                health_results[check['name']] = {
-                    'success': result.returncode == 0,
-                    'execution_time': execution_time,
-                    'critical': check['critical'],
-                    'output': result.stdout,
-                    'error': result.stderr
-                }
-            except Exception as e:
-                execution_time = time.time() - start_time
-                health_results[check['name']] = {
-                    'success': False,
-                    'execution_time': execution_time,
-                    'critical': check['critical'],
-                    'output': '',
-                    'error': str(e)
-                }
-
-        # Calculate overall health score
-        total_checks = len(health_results)
-        passed_checks = sum(1 for r in health_results.values() if r['success'])
-        critical_checks = [r for r in health_results.values() if r['critical']]
-        critical_passed = sum(1 for r in critical_checks if r['success'])
-
-        health_score = (passed_checks / total_checks) * 100
-        critical_score = (critical_passed / len(critical_checks)) * 100 if critical_checks else 100
-
-        # Name the failing check and its cost. A bare percentage says a score
-        # dropped and nothing about which of `echo`, `ps aux`, `env` or `date`
-        # took longer than its 5s budget, which is the only interesting fact
-        # here: these are shell commands whose runtime tracks machine load, not
-        # anything autorun owns. One local `-n 8` run scored 66.67 and left no
-        # way to tell which check it was.
-        failed = "; ".join(
-            f"{name}: success={r['success']} "
-            f"took={r['execution_time']:.2f}s critical={r['critical']} "
-            f"error={r['error'][:200]!r}"
-            for name, r in sorted(health_results.items())
-            if not r['success']
-        ) or "none"
-
-        assert health_score >= 50, (
-            f"Overall health score {health_score:.2f}% below 50%. Failing: {failed}"
-        )
-        assert critical_score >= 80, (
-            f"Critical health score {critical_score:.2f}% below 80%. Failing: {failed}"
-        )
-
-        # Cleanup
-        tmux.execute_tmux_command(['kill-session', '-t', session_name])
+        try:
+            result = tmux.execute_tmux_command(['has-session'], session_name)
+            assert result is not None
+            assert result['returncode'] == 0, result
+            info = tmux.get_session_info()
+            assert info is not None, "the responsive session must be discoverable"
+        finally:
+            tmux.execute_tmux_command(['kill-session'], session=session_name)
 
     @pytest.mark.integration
     def test_batch_operations_workflow(self):

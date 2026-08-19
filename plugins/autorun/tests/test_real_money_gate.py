@@ -21,10 +21,11 @@ Two properties fix it, and these guards hold them:
 from __future__ import annotations
 
 import ast
-import os
 from pathlib import Path
 
-from e2e_support import REAL_MONEY_ENV, requires_real_money
+import pytest
+
+from e2e_support import REAL_MONEY_ENV, real_money_enabled, requires_real_money
 
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -41,8 +42,31 @@ def _reads_real_money_env(source: str) -> list[int]:
     Only real environment access counts. A docstring or skip reason naming the
     variable is documentation, which every paid test should keep.
     """
+    tree = ast.parse(source)
+    variable_names = {"REAL_MONEY_ENV"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "REAL_MONEY_ENV":
+                    variable_names.add(alias.asname or alias.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if isinstance(value, ast.Constant) and value.value == REAL_MONEY_ENV:
+                variable_names.update(
+                    target.id for target in targets if isinstance(target, ast.Name)
+                )
+
+    def names_opt_in(node: ast.AST) -> bool:
+        return any(
+            (isinstance(part, ast.Constant) and part.value == REAL_MONEY_ENV)
+            or (isinstance(part, ast.Name) and part.id in variable_names)
+            or (isinstance(part, ast.Attribute) and part.attr in variable_names)
+            for part in ast.walk(node)
+        )
+
     lines: list[int] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
             name = getattr(func, "attr", None) or getattr(func, "id", None)
@@ -53,9 +77,25 @@ def _reads_real_money_env(source: str) -> list[int]:
         else:
             continue
         segment = ast.unparse(node)
-        if REAL_MONEY_ENV in segment and ("environ" in segment or "getenv" in segment):
+        if names_opt_in(node) and ("environ" in segment or "getenv" in segment):
             lines.append(node.lineno)
     return sorted(set(lines))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0")',
+        'os.getenv("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0")',
+        'os.environ["AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"]',
+        'os.environ.get(REAL_MONEY_ENV, "0")',
+        'os.getenv(REAL_MONEY_ENV, "0")',
+        'os.environ[REAL_MONEY_ENV]',
+    ],
+)
+def test_real_money_environment_reader_detects_literal_and_constant_forms(source):
+    """The audit must recognize the forms contributors actually write."""
+    assert _reads_real_money_env(source) == [1]
 
 
 def test_only_e2e_support_reads_the_real_money_environment_variable():
@@ -115,7 +155,7 @@ def test_requires_real_money_both_marks_and_skips():
 
     skipif = next(m for m in sample_test.pytestmark if m.name == "skipif")
     (condition,) = skipif.args
-    enabled = os.environ.get(REAL_MONEY_ENV, "0") == "1"
+    enabled = real_money_enabled()
     assert condition is not enabled, (
         "The skip condition must be the negation of the opt-in: skip when the "
         f"variable is unset. {REAL_MONEY_ENV} enabled={enabled}, "

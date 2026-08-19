@@ -377,14 +377,33 @@ class DaemonManager:
         if sys.platform == "win32":
             return []
         pids = []
-        for proc in psutil.process_iter(['pid', 'cmdline']):
-            try:
-                cmdline = proc.info.get('cmdline') or []
-                cmdline_str = ' '.join(cmdline)
-                if 'autorun.daemon' in cmdline_str:
-                    pids.append(str(proc.info['pid']))
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                pass
+        try:
+            # Do not request attrs here.  psutil materializes ``proc.info``
+            # before yielding, so a macOS KERN_PROCARGS2 permission race then
+            # escapes outside the per-process handler and fails the suite.
+            for proc in psutil.process_iter():
+                try:
+                    cmdline = proc.cmdline() or []
+                    if 'autorun.daemon' in ' '.join(cmdline):
+                        pids.append(str(proc.pid))
+                except (
+                    psutil.NoSuchProcess,
+                    psutil.AccessDenied,
+                    psutil.ZombieProcess,
+                    OSError,
+                    SystemError,
+                ):
+                    pass
+        except (
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+            psutil.ZombieProcess,
+            OSError,
+            SystemError,
+        ):
+            # Enumeration is diagnostic cleanup.  An unreadable process is
+            # unknown and therefore never ours to terminate.
+            pass
         return pids
 
     @classmethod

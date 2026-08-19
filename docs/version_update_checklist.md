@@ -25,7 +25,7 @@ rg --hidden -n "OLD_VERSION" --glob '*.py' --glob '*.json' --glob '*.toml' --glo
 
 # 2. Review EVERY match before replacing — see Gotchas below
 # 3. Replace only the ones that are autorun version refs
-# 4. Run tests: uv run --project plugins/autorun pytest plugins/autorun/tests/ -v
+# 4. Run tests: uv run --project plugins/autorun --locked pytest plugins/autorun/tests/ -v
 # 5. Verify zero old refs remain (excluding notes/)
 ```
 

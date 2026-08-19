@@ -418,6 +418,24 @@ def daemon_sweep(monkeypatch, tmp_path):
     return arrange
 
 
+def test_daemon_discovery_ignores_process_table_permission_races(monkeypatch):
+    """A cleanup diagnostic must not fail the suite on one unreadable process.
+
+    On macOS psutil can surface ``sysctl(KERN_PROCARGS2)`` permission failures
+    while ``process_iter(attrs=...)`` materializes ``proc.info``, before the
+    loop body can catch ``AccessDenied``. Treat that process as unobservable.
+    """
+    import conftest
+
+    def permission_failure(*_args, **_kwargs):
+        raise SystemError("proc_cmdline returned a result with an exception set")
+        yield  # pragma: no cover - makes this the iteration-time failure seen on macOS
+
+    monkeypatch.setattr(conftest.psutil, "process_iter", permission_failure)
+
+    assert conftest.DaemonManager._get_all_daemon_pids() == []
+
+
 def test_the_daemon_sweep_spares_a_daemon_another_worker_started(daemon_sweep):
     """`-n 8` means eight snapshots, each blind to the other workers' daemons.
 

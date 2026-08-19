@@ -14,12 +14,14 @@ Key bugs fixed:
 6. F-string syntax errors (use local variables, not backslash in f-strings)
 """
 
-import sys
 import os
-from pathlib import Path
-import pytest
 import subprocess
+import sys
 import time
+import uuid
+from pathlib import Path
+
+import pytest
 
 pytestmark = pytest.mark.tmux
 
@@ -29,14 +31,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from autorun.tmux_utils import get_tmux_utilities
 
 
+def _create_test_session(prefix):
+    """Create one collision-free session or fail with tmux's exact error."""
+    session = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    result = subprocess.run(
+        ['tmux', 'new-session', '-d', '-s', session],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"tmux could not create {session!r}: stdout={result.stdout!r} "
+        f"stderr={result.stderr!r}"
+    )
+    return session
+
+
 class TestDuplicateTargetFlagBugFix:
     """Test fix for duplicate -t flag bug in execute_tmux_command"""
 
     def setup_method(self):
         """Create test session"""
-        self.test_session = "test-duplicate-t-flag"
-        subprocess.run(['tmux', 'new-session', '-d', '-s', self.test_session],
-                      capture_output=True, timeout=5)
+        self.test_session = _create_test_session("test-duplicate-t-flag")
         self.tmux = get_tmux_utilities(self.test_session)
 
     def teardown_method(self):
@@ -158,9 +175,7 @@ class TestSessionExistenceCheckingBugFix:
 
     def setup_method(self):
         """Create test session"""
-        self.test_session = "test-existence-check"
-        subprocess.run(['tmux', 'new-session', '-d', '-s', self.test_session],
-                      capture_output=True, timeout=5)
+        self.test_session = _create_test_session("test-existence-check")
         self.tmux = get_tmux_utilities(self.test_session)
 
     def teardown_method(self):
@@ -219,13 +234,8 @@ class TestCleanupScopingBugFix:
 
     def setup_method(self):
         """Create test sessions"""
-        self.work_session = "autorun-work"
-        self.test_session = "autorun-test-1"
-
-        subprocess.run(['tmux', 'new-session', '-d', '-s', self.work_session],
-                      capture_output=True, timeout=5)
-        subprocess.run(['tmux', 'new-session', '-d', '-s', self.test_session],
-                      capture_output=True, timeout=5)
+        self.work_session = _create_test_session("autorun-work")
+        self.test_session = _create_test_session("autorun-test")
 
         self.tmux = get_tmux_utilities()
 
@@ -319,8 +329,8 @@ class TestSessionCleanupGuarantees:
             pass
         finally:
             # Cleanup happens regardless
-            result = subprocess.run(['tmux', 'kill-session', '-t', session],
-                                  capture_output=True, timeout=5)
+            subprocess.run(['tmux', 'kill-session', '-t', session],
+                           capture_output=True, timeout=5, check=False)
 
         # Verify session is dead
         check = subprocess.run(['tmux', 'has-session', '-t', session],
@@ -333,9 +343,7 @@ class TestCaptureOutputCorrectness:
 
     def setup_method(self):
         """Create test session"""
-        self.test_session = "test-capture-output"
-        subprocess.run(['tmux', 'new-session', '-d', '-s', self.test_session],
-                      capture_output=True, timeout=5)
+        self.test_session = _create_test_session("test-capture-output")
         self.tmux = get_tmux_utilities(self.test_session)
 
     def teardown_method(self):

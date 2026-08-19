@@ -852,6 +852,18 @@ def test_every_release_gate_environment_is_the_locked_one(relative):
     assert not unlocked, f"{relative} resolves outside the committed lock: {unlocked}"
 
 
+def test_quick_method_runs_tests_against_the_committed_lock():
+    """The first copy/paste test command is part of the release gate too."""
+    checklist = (REPO_ROOT / "docs" / "version_update_checklist.md").read_text(
+        encoding="utf-8"
+    )
+    quick_method = checklist.split("## Quick Method", 1)[1].split(
+        "## Additional Search Patterns", 1
+    )[0]
+
+    assert "uv run --project plugins/autorun --locked pytest" in quick_method
+
+
 def test_the_dev_environment_has_one_definition():
     """`uv sync --dev` and `autorun[dev]` must not be two different rooms.
 
