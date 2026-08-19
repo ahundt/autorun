@@ -2217,7 +2217,9 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     )
 
     # Build context-aware instructions based on the platform's native task surface.
-    instructions = _task_staleness_instructions(ctx)
+    instructions = _task_staleness_instructions(ctx) + task_lifecycle.task_tool_recovery_sentence(
+        ctx.cli_type
+    )
     agent_context = f" This reminder applies to subagent {ctx.agent_type or ctx.agent_id}." if ctx.agent_id else ""
 
     if reminder_count <= 1:
@@ -2419,7 +2421,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         threshold,
         overdue=reminder_count >= 2,
         no_tasks=no_tasks,
-    )
+    ) + task_lifecycle.task_tool_recovery_sentence(ctx.cli_type)
 
     # Also send via systemMessage as secondary channel (may reach AI if #25987 is fixed)
     ctx.add_chain_notification(msg, channel="both")

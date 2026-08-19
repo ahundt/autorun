@@ -943,6 +943,18 @@ CONFIG = {
     # Evidence: notes/2026-07-24-2045-claude-code-opus-5-premature-context-exhaustion.md
     # Set to False when Anthropic exposes token counts to hooks.
     "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED": True,
+    # BUG #80305: Claude Code 2.1.233+ gates TaskCreate/Get/Update/List off on
+    # newer flagship models unless CLAUDE_CODE_ENABLE_TODO_TOOLS=1 is present.
+    # BUG #80401: the same four tools can vanish mid-session after the
+    # claude.ai deferred-tool channel disconnects. The runtime workaround tells
+    # the model to load once through ToolSearch, then gives the exact next-
+    # session env fix rather than looping on tools that do not exist.
+    # https://github.com/anthropics/claude-code/issues/80305
+    # https://github.com/anthropics/claude-code/issues/80401
+    # Override either env var with false|0|never; true|1|auto affects Claude;
+    # always forces its message for diagnostics on another platform.
+    "AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED": True,
+    "AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUND_ENABLED": True,
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,

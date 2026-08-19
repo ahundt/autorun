@@ -44,6 +44,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 import time
 import re
 import uuid
@@ -63,6 +64,7 @@ from .session_manager import (
 from .config import (
     CONFIG,
     LOG_SNIPPET_MAX_LEN,
+    detect_cli_type,
     TASK_PAUSE_DEFAULT_TTL_SECONDS,
 )
 from .platforms import (
@@ -161,6 +163,58 @@ def _delegate_action(cli_type: str | None) -> str:
     return f"print {_delegate_marker_example()}"
 
 
+# --- BUG #80305/#80401 WORKAROUND START --- DELETE WHEN FIXED ---
+# Claude Code can gate TaskCreate/Get/Update/List off at process start (#80305)
+# or unregister the same deferred-tool bundle mid-session (#80401). A Stop or
+# staleness block that names only those tools is otherwise impossible to obey.
+# Disable with either matching AUTORUN_BUG_*_WORKAROUND_ENABLED=false flag.
+# Removal: delete this block, its two CONFIG keys, the two recovery call sites
+# in plugins.py, and the bracketed recovery tests after both bugs are fixed.
+# Keep the SessionStart deferred-tool load instruction: deferral is designed
+# Claude behavior, not either upstream bug.
+BUG_80305_FLAG = (
+    "AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED"
+)
+BUG_80401_FLAG = (
+    "AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUND_ENABLED"
+)
+
+
+def _workaround_flag_applies(flag: str, cli_type: str | None) -> bool:
+    """Resolve one bug flag as off, affected-platform auto, or always."""
+    affected = detect_cli_type({"cli_type": cli_type}) == "claude"
+    mode = os.environ.get(flag, "").strip().lower()
+    if mode == "always":
+        return True
+    if mode in {"false", "0", "never"}:
+        return False
+    if mode in {"true", "1", "auto"}:
+        return affected
+    if not CONFIG.get(flag, True):
+        return False
+    return affected
+
+
+def task_tool_recovery_sentence(cli_type: str | None) -> str:
+    """Reachable recovery when Claude's four mutable task tools are absent."""
+    if not (
+        _workaround_flag_applies(BUG_80305_FLAG, cli_type)
+        or _workaround_flag_applies(BUG_80401_FLAG, cli_type)
+    ):
+        return ""
+    return (
+        " If TaskCreate, TaskUpdate, TaskList, or TaskGet is unavailable or "
+        "vanished, use ToolSearch once with "
+        "`select:TaskCreate,TaskUpdate,TaskList,TaskGet`. If it returns no "
+        "match, do not retry unavailable Task tools in this session: tell the "
+        "user to set `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` and "
+        "`CLAUDE_CODE_ENABLE_TASKS=1`, then restart Claude Code."
+    )
+
+
+# --- BUG #80305/#80401 WORKAROUND END --- DELETE WHEN FIXED ---
+
+
 def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled: bool = False) -> str:
     """Return stop/resume actions in the platform's native task vocabulary."""
     sos = format_command_for_cli("/ar:sos", cli_type)
@@ -170,6 +224,7 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
     if staleness_reminders_disabled:
         tasks_off = format_command_for_cli("/ar:tasks off", cli_type)
         user_actions += f"; {tasks_off} only disables reminders"
+    recovery = task_tool_recovery_sentence(cli_type)
     if platform_for(cli_type).task_management_style == "plan_checklist":
         return (
             "Actions: 1. You must complete or remove each checklist item before stopping "
@@ -178,6 +233,7 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
             "4. Defer/delegate: keep a concrete follow-up item pending "
             "5. Discard obsolete work: remove it from the current plan list "
             f"6. User only: {user_actions} "
+            f"{recovery}"
         )
     return (
         f"Actions: 1. You must complete or discard each task before stopping "
@@ -186,6 +242,7 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
         f"4. Delegate to subagent first: {_delegate_action(cli_type)} (marks task non-blocking while subagent runs) "
         f"5. Or discard: {_ACT_DISCARD} "
         f"6. User only: {user_actions} "
+        f"{recovery}"
     )
 
 
@@ -3922,6 +3979,44 @@ def register_hooks(app_instance) -> None:
             _report_tracking_failure(ctx, e)
 
         return None  # Always allow tool to complete
+
+    @app_instance.on("SessionStart")
+    def request_claude_deferred_task_tools(ctx: EventContext) -> None:
+        """Ask Claude to load its deferred task tools once per fresh context."""
+        if (
+            not is_enabled()
+            or platform_for(ctx.cli_type).name != "claude"
+            or ctx.source not in {"startup", "clear"}
+        ):
+            return None
+
+        claimed = False
+        claim_value = f"{ctx.source}:v1"
+
+        def claim(metadata):
+            nonlocal claimed
+            if metadata.get("claude_task_tool_load_instruction") == claim_value:
+                return
+            metadata["claude_task_tool_load_instruction"] = claim_value
+            claimed = True
+
+        try:
+            TaskLifecycle(ctx=ctx).atomic_update_metadata(claim)
+        except Exception as exc:
+            # Loading advice is advisory. A state-store failure must not break
+            # Claude's SessionStart hook or suppress later lifecycle handlers.
+            logger.warning("Deferred task-tool load instruction was not claimed: %s", exc)
+            return None
+        if claimed:
+            ctx.add_chain_notification(
+                "Before tracked work, use ToolSearch once with "
+                "`select:TaskCreate,TaskUpdate,TaskList,TaskGet` to load Claude "
+                "Code's deferred task tools. If it returns no match, do not "
+                "loop; follow the unavailable-tool recovery in autorun's task "
+                "guidance.",
+                channel="ai",
+            )
+        return None
 
     @app_instance.on("SessionStart")
     def resume_incomplete_tasks(ctx: EventContext) -> Optional[Dict]:

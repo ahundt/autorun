@@ -1504,6 +1504,14 @@ ls -la ~/.claude/plugins/autorun/commands/
 
 **Plugin not working:** Test manually: `echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/autorun/commands/autorun`
 
+**Claude task tools missing or vanished:** Run `ToolSearch` once with
+`select:TaskCreate,TaskUpdate,TaskList,TaskGet`. If it returns no match, add
+`"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"` and
+`"CLAUDE_CODE_ENABLE_TASKS": "1"` under the `env` object in
+`~/.claude/settings.json`, then start a new Claude Code session. Hooks cannot
+change the current parent process. See
+[`plugins/autorun/TROUBLESHOOTING.md`](plugins/autorun/TROUBLESHOOTING.md#claude-task-tools-are-missing-or-vanished).
+
 **Plugin management (Claude Code):**
 ```bash
 /plugin marketplace add https://github.com/ahundt/autorun.git
@@ -1554,6 +1562,8 @@ All SDK bug workarounds (Claude Code, Gemini CLI, future CLIs) **MUST** follow a
 |-----|----------|-----|---------|--------|
 | [#4669](https://github.com/anthropics/claude-code/issues/4669): deny ignored at exit 0 | Claude Code | `AUTORUN_EXIT2_WORKAROUND` (legacy) | `auto` | stderr + exit 2 |
 | [#18534](https://github.com/anthropics/claude-code/issues/18534): additionalContext dropped | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED` | `True` | channel="ai" → "both" |
+| [#80305](https://github.com/anthropics/claude-code/issues/80305): mutable task tools gated off | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED` | `True` | one ToolSearch load attempt, then exact next-session env fix |
+| [#80401](https://github.com/anthropics/claude-code/issues/80401): mutable task tools vanish mid-session | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUND_ENABLED` | `True` | same no-loop recovery in Stop and staleness guidance |
 
 ## Contributing and Sharing
 

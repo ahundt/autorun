@@ -193,6 +193,153 @@ class TestNoCrossHarnessVocabularyLeak:
         )
 
 
+# --- BUG #80305/#80401 TESTS START --- DELETE WHEN FIXED ---
+_TASK_TOOL_BUG_FLAGS = (
+    "AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED",
+    "AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUND_ENABLED",
+)
+
+
+class TestClaudeTaskToolGateRecovery:
+    def test_claude_stop_block_names_one_load_attempt_and_restart_fix(
+        self, isolated_session, cfg, monkeypatch
+    ):
+        from autorun import config
+
+        for flag in _TASK_TOOL_BUG_FLAGS:
+            monkeypatch.delenv(flag, raising=False)
+            monkeypatch.setitem(config.CONFIG, flag, True)
+        mgr = TaskLifecycle(config=cfg, session_id="gated-stop")
+        _seed(mgr, "1", "Cannot update without task tools")
+
+        reason = mgr.handle_stop(_ctx("gated-stop", "Stop", "claude"))["reason"]
+
+        assert "ToolSearch" in reason and "select:TaskCreate,TaskUpdate,TaskList,TaskGet" in reason
+        assert "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" in reason
+        assert "CLAUDE_CODE_ENABLE_TASKS=1" in reason
+        assert "do not retry" in reason.lower()
+
+    def test_both_never_flags_remove_the_bug_workaround(
+        self, isolated_session, cfg, monkeypatch
+    ):
+        for flag in _TASK_TOOL_BUG_FLAGS:
+            monkeypatch.setenv(flag, "never")
+        mgr = TaskLifecycle(config=cfg, session_id="gated-off")
+        _seed(mgr, "1", "Ordinary task")
+
+        reason = mgr.handle_stop(_ctx("gated-off", "Stop", "claude"))["reason"]
+
+        assert "CLAUDE_CODE_ENABLE_TODO_TOOLS" not in reason
+
+    def test_unaffected_harness_gets_no_claude_recovery_by_default(
+        self, isolated_session, cfg, monkeypatch
+    ):
+        from autorun import config
+
+        for flag in _TASK_TOOL_BUG_FLAGS:
+            monkeypatch.delenv(flag, raising=False)
+            monkeypatch.setitem(config.CONFIG, flag, True)
+        mgr = TaskLifecycle(config=cfg, session_id="gated-codex")
+        _seed(mgr, "1", "Codex checklist")
+
+        reason = mgr.handle_stop(_ctx("gated-codex", "Stop", "codex"))["reason"]
+
+        assert "CLAUDE_CODE_ENABLE_TODO_TOOLS" not in reason
+
+    @pytest.mark.parametrize("flag", _TASK_TOOL_BUG_FLAGS)
+    def test_each_flag_honors_auto_unaffected_and_always(self, monkeypatch, flag):
+        from autorun import config, task_lifecycle as tl
+
+        monkeypatch.setitem(config.CONFIG, flag, True)
+        monkeypatch.setenv(flag, "auto")
+        assert "CLAUDE_CODE_ENABLE_TODO_TOOLS" in tl.task_tool_recovery_sentence("claude")
+
+        other = _TASK_TOOL_BUG_FLAGS[1] if flag == _TASK_TOOL_BUG_FLAGS[0] else _TASK_TOOL_BUG_FLAGS[0]
+        monkeypatch.setenv(other, "never")
+        assert tl.task_tool_recovery_sentence("codex") == ""
+
+        monkeypatch.setenv(flag, "always")
+        assert "CLAUDE_CODE_ENABLE_TODO_TOOLS" in tl.task_tool_recovery_sentence("codex")
+
+    def test_staleness_enforcement_also_names_recovery(self, monkeypatch):
+        from autorun import config, plugins, task_lifecycle as tl
+
+        for flag in _TASK_TOOL_BUG_FLAGS:
+            monkeypatch.delenv(flag, raising=False)
+            monkeypatch.setitem(config.CONFIG, flag, True)
+
+        text = plugins._task_staleness_instructions(
+            _ctx("stale-gated", "PreToolUse", "claude")
+        ) + tl.task_tool_recovery_sentence("claude")
+
+        assert "ToolSearch" in text and "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" in text
+
+    def test_always_flag_can_force_the_workaround_for_diagnostics(
+        self, isolated_session, cfg, monkeypatch
+    ):
+        monkeypatch.setenv(_TASK_TOOL_BUG_FLAGS[0], "always")
+        monkeypatch.setenv(_TASK_TOOL_BUG_FLAGS[1], "never")
+        mgr = TaskLifecycle(config=cfg, session_id="gated-always")
+        _seed(mgr, "1", "Diagnostic")
+
+        reason = mgr.handle_stop(_ctx("gated-always", "Stop", "codex"))["reason"]
+
+        assert "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" in reason
+
+
+# --- BUG #80305/#80401 TESTS END --- DELETE WHEN FIXED ---
+
+
+class TestClaudeDeferredTaskToolLoading:
+    def test_claude_session_start_asks_the_model_to_load_deferred_task_tools(
+        self, isolated_session
+    ):
+        from autorun import plugins
+
+        result = plugins.app.dispatch(_ctx("load-tasks", "SessionStart", "claude"))
+        text = (
+            result.get("systemMessage", "")
+            + result.get("reason", "")
+            + result.get("hookSpecificOutput", {}).get("additionalContext", "")
+        )
+
+        assert "ToolSearch" in text
+        assert "select:TaskCreate,TaskUpdate,TaskList,TaskGet" in text
+
+    def test_deferred_tool_instruction_is_once_per_fresh_context(
+        self, isolated_session
+    ):
+        from autorun import plugins
+
+        first = plugins.app.dispatch(_ctx("load-once", "SessionStart", "claude"))
+        second = plugins.app.dispatch(_ctx("load-once", "SessionStart", "claude"))
+
+        assert "ToolSearch" in str(first)
+        assert second is None or "ToolSearch" not in str(second)
+
+    def test_load_instruction_fails_open_when_its_claim_cannot_persist(
+        self, isolated_session, monkeypatch
+    ):
+        from autorun import plugins, task_lifecycle as tl
+
+        def unavailable(*_args, **_kwargs):
+            raise OSError("state unavailable")
+
+        monkeypatch.setattr(tl.TaskLifecycle, "atomic_update_metadata", unavailable)
+
+        result = plugins.app.dispatch(_ctx("load-fail-open", "SessionStart", "claude"))
+        assert result is None or "daemon failure" not in str(result).lower()
+
+    def test_non_claude_session_start_does_not_name_claude_tools(
+        self, isolated_session
+    ):
+        from autorun import plugins
+
+        result = plugins.app.dispatch(_ctx("load-codex", "SessionStart", "codex"))
+
+        assert result is None or "TaskCreate,TaskUpdate" not in str(result)
+
+
 # ── 3. SessionStart must not repeat an identical injection ───────────────────
 
 class TestSessionStartIsNotRepeated:
