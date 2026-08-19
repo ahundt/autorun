@@ -232,6 +232,31 @@ def test_no_task_tool_workaround_site_gates_on_a_harness_name():
     )
 
 
+@pytest.mark.parametrize(
+    "config_value,version,expected",
+    [
+        (">=2.1.233", "2.1.240", True),
+        (">=2.1.233", "2.1.100", False),
+        ("always", "1.0.0", True),
+        ("never", "2.1.240", False),
+    ],
+)
+def test_the_config_tier_understands_the_same_values_as_the_env_tier(
+    monkeypatch, config_value, version, expected
+):
+    """A range in CONFIG must mean what it means in the environment.
+
+    The two tiers are documented as one grammar. CONFIG was only ever tested
+    for truthiness, so a range written there was silently truthy -- the
+    workaround stayed on for every version, which is the opposite of what the
+    author asked for and gives no sign of being ignored.
+    """
+    flag = GRAMMAR_FLAGS[2]
+    monkeypatch.delenv(flag, raising=False)
+    monkeypatch.setitem(CONFIG, flag, config_value)
+    assert workaround_applies(flag, affected=True, version=version) is expected
+
+
 def test_only_one_module_implements_the_value_grammar():
     """Spec check: constrain the regression class.
 

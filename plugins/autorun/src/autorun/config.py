@@ -1313,6 +1313,43 @@ _WORKAROUND_AUTO = frozenset({"true", "1", "auto"})
 # which must not pay an import for a feature it never touches.
 _RANGE_LEADS = ("<", ">", "=", "!")
 
+#: Tells autorun which harness build it is running under when the harness does
+#: not say so itself. Highest precedence, because an operator who sets it knows
+#: something the process cannot observe.
+HARNESS_VERSION_ENV_VAR = "AUTORUN_HARNESS_VERSION"
+
+
+def harness_version(cli_type: str) -> "str | None":
+    """The running harness's version, or None when nothing reliable says.
+
+    Precedence: ``AUTORUN_HARNESS_VERSION``, then whatever the platform
+    registry declares in ``version_env_vars``.
+
+    None is a real answer, not a failure. Measured on a live machine: Claude
+    Code publishes no ``CLAUDE_CODE_VERSION``, its hook payload carries no
+    version field, and the only version-bearing variable present reports the
+    Agent SDK rather than the CLI. Guessing from a number that merely looks
+    related would silently change whether a permission workaround engages, so
+    unknown resolves to the behavior the flag had before ranges existed.
+    """
+    import os
+
+    override = os.environ.get(HARNESS_VERSION_ENV_VAR, "").strip()
+    if override:
+        return override
+
+    try:
+        from .platforms import get_platform
+
+        platform = get_platform(cli_type)
+    except Exception:
+        return None
+    for name in getattr(platform, "version_env_vars", ()) or ():
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return None
+
 
 def _parse_version_range(spec: str):
     """The specifier for ``spec``, or None when it cannot be used.
@@ -1373,8 +1410,17 @@ def workaround_applies(
     """
     import os
 
-    for key in (*legacy_flags, flag):
-        mode = os.environ.get(key, "").strip().lower()
+    configured = CONFIG.get(flag, True)
+    # A CONFIG entry may be a bool or any value from the same grammar. Both
+    # tiers are documented as one vocabulary, and a range written in CONFIG was
+    # previously only tested for truthiness -- so it stayed on for every
+    # version, which is the opposite of what its author asked for and gave no
+    # sign of being ignored.
+    tiers = [os.environ.get(key, "") for key in (*legacy_flags, flag)]
+    tiers.append(configured if isinstance(configured, str) else "")
+
+    for raw in tiers:
+        mode = raw.strip().lower()
         if not mode:
             continue
         if mode == _WORKAROUND_ALWAYS:
@@ -1400,7 +1446,7 @@ def workaround_applies(
                 return True
             return verdict
 
-    if not CONFIG.get(flag, True):
+    if not configured:
         return False
     return bool(affected)
 

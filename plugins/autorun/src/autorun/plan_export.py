@@ -275,7 +275,13 @@ def _claude_config_home() -> Path:
     AUTORUN_TEST_STATE_DIR before any autorun import; honoring it keeps every
     test run off the real user files, per plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md.
     """
-    test_dir = os.environ.get("AUTORUN_TEST_STATE_DIR")
+    # Deliberately NOT session_manager.state_directory: this resolves Claude's
+    # *config home*, not autorun's state directory, and the two differ by more
+    # than a suffix. Only the variable name is shared, imported rather than
+    # spelled again so a rename cannot leave this reading a dead key.
+    from .session_manager import STATE_DIR_ENV_VAR
+
+    test_dir = os.environ.get(STATE_DIR_ENV_VAR)
     if test_dir:
         return Path(test_dir) / "claude-home"
     return Path.home() / ".claude"

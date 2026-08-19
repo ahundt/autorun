@@ -73,6 +73,9 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "has_exit2_workaround": platform.has_exit2_workaround,
         "drops_additional_context": platform.drops_additional_context,
         "gates_mutable_task_tools": platform.gates_mutable_task_tools,
+        # A tuple in the registry; JSON has no tuple, and a snapshot compared
+        # across runs must not differ by container type.
+        "version_env_vars": list(platform.version_env_vars),
         "root_allow_decision": platform.hook_protocol.root_allow_decision,
         "root_block_decision": platform.hook_protocol.root_block_decision,
         "native_hook_events": sorted(platform.native_hook_events),

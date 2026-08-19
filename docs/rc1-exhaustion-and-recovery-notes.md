@@ -443,6 +443,93 @@ The 741 MB file is a hand-made incident backup with no retention policy; the
 30 MB `autorun.log` exceeds the 5 MB rotation ceiling, which means it is not
 going through the shared handler and is worth tracing separately.
 
+### #222 · FIXED · one owner for the state directory, default unchanged
+
+`session_manager.state_directory(explicit=None)` now decides where session
+state lives: explicit value, then `STATE_DIR_ENV_VAR`, then the default. The
+three other derivations are gone, and a spec check fails if a fifth appears —
+matching the literal path segments rather than a variable name, because the
+duplicates spelled it three different ways.
+
+The default is deliberately unchanged. Relocating it under `AUTORUN_HOME` would
+be more consistent — `~/.claude/sessions` is a directory Claude Code creates
+and prunes for its own purposes — but a live daemon holds that database open
+for every attached session, so it is a quiesced migration through the existing
+`StateMigrator` receipt machinery, not an edit to a default. What this change
+buys is that the migration is now a one-line change instead of a four-site one.
+
+The sweep also found a real bug rather than just duplication:
+`task_lifecycle.py:3619` printed `sudo chown -R $USER ~/.claude/sessions/` as a
+remedy while the line above it already used the resolved directory, so a
+session with the state directory redirected was told to fix a path unrelated to
+its error.
+
+### #223 · audit done, file tier scoped separately
+
+Measured across `src/autorun`: 50 `CONFIG.get` sites, 68 `os.environ.get`
+sites, 5 modules reading both.
+
+The important distinction the audit produced: of the environment variables
+read, 25 are **harness-supplied facts** — `CLAUDE_SESSION_ID`,
+`CODEX_PROJECT_DIR`, `PI_SESSION_ID` and so on. Those are inputs, not settings,
+and correctly have no CONFIG or file tier; giving them one would invite a user
+to "configure" something the harness dictates.
+
+That leaves roughly eight real settings (`AUTORUN_HOME`, `AUTORUN_DEBUG`,
+`AUTORUN_BUFFER_LIMIT`, `AUTORUN_DISABLE`, `AUTORUN_USE_DAEMON`,
+`AUTORUN_NO_TRUNCATE`, and the two guard-enabled flags). Several have no CONFIG
+entry at all and are env-only, so they resolve through two tiers rather than
+four.
+
+**The file tier does not exist as a general facility.** Three per-feature config
+files exist with three separate loaders —
+`~/.autorun/plan-export.config.json`, `plan-notify.config.json`,
+`task-lifecycle.config.json` — and none backs the CONFIG dict.
+
+Building it is a feature, not a fix: it changes how every setting resolves,
+which is the highest blast radius change available in a release candidate. It
+is tracked as its own task rather than landed unreviewed at the end of a long
+session.
+
+### #225 · DONE in a scope that does not guess
+
+`config.harness_version(cli_type)` resolves `AUTORUN_HARNESS_VERSION` first,
+then whatever the platform registry declares in the new
+`Platform.version_env_vars`. That tuple is **empty for every harness today**,
+and a spec check refuses any entry whose name contains "SDK".
+
+That refusal is the point. `CLAUDE_AGENT_SDK_VERSION` is sitting in the
+environment, looks usable, and shares its trailing component with the CLI
+build — which is exactly the sort of near-miss that gets registered by someone
+in a hurry. It reports the Agent SDK's version, not the CLI build a workaround
+is described against, and a permission gate must not turn on a resemblance.
+
+So ranges are usable today through the explicit override, auto-detection waits
+for a documented source, and "unknown" resolves to the pre-range behavior.
+
+### #226 · surveyed against the running build
+
+Installed here: **Claude Code 2.1.235**, above the 2.1.233 threshold in
+https://github.com/anthropics/claude-code/issues/80305.
+
+The deferred-task-tool behavior is not merely reported, it was observed in this
+session: `TaskCreate`/`TaskUpdate` arrived in the deferred-tool list and had to
+be loaded through `ToolSearch` before use. The existing workarounds cover it,
+and the version machinery can now express the bound rather than only describing
+it in prose.
+
+autorun registers eight Claude hook events (`PreToolUse`, `PostToolUse`,
+`SessionStart`, `Stop`, `SubagentStop`, `UserPromptSubmit`, `PreCompact`,
+`PostCompact`); `tests/harness_hook_events.py` owns that allowlist and passes.
+No further divergence was observable from this build; a wider survey needs
+upstream release notes rather than inference.
+
+The survey did surface a gap in the range feature itself: values were honored
+from the environment tier but a range written into CONFIG was only tested for
+truthiness, so it silently stayed on for every version — the opposite of what
+its author asked for, with no sign of being ignored. Both tiers now share one
+vocabulary.
+
 ### Cost of the new hot-path code, measured
 
 `workaround_applies` runs on the PreToolUse path, so its cost was measured

@@ -3616,7 +3616,11 @@ class TaskLifecycle:
                 print("Common Issues:")
                 print("  1. Permission denied:")
                 print(f"     → Check file ownership: ls -la {sessions_dir}")
-                print("     → Fix: sudo chown -R $USER ~/.claude/sessions/")
+                # Name the directory that actually failed, not the default. The
+                # line above already resolved it, and a session with the state
+                # directory redirected would otherwise be told to chown a path
+                # unrelated to its error.
+                print(f"     → Fix: sudo chown -R $USER {sessions_dir}")
                 print("  2. Lock timeout:")
                 print("     → Daemon actively using session (wait or refine pattern)")
                 print("     → Check: ps aux | grep autorun")

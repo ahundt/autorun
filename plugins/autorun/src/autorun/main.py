@@ -55,10 +55,10 @@ Removed (with canonical replacements):
 import os
 import sys
 import time
-from pathlib import Path
 import re as regex_module
 
 from .session_manager import session_state  # noqa: F401 - compatibility re-export
+from .session_manager import state_directory
 
 # Import centralized tmux utilities (TMUX_UTILS_AVAILABLE exported for tests)
 try:
@@ -106,7 +106,10 @@ except ImportError:
 # update_injection_outcome — REMOVED: ai_monitor injection no longer in production path
 
 # State management - core session infrastructure
-STATE_DIR = Path(os.environ.get("AUTORUN_TEST_STATE_DIR") or Path.home() / ".claude" / "sessions")
+# REQUIREMENT: resolve through session_manager.state_directory, never a local
+# copy. This line and ai_monitor.py's were character-identical. Enforced by
+# test_state_directory_has_one_owner.py.
+STATE_DIR = state_directory()
 if os.environ.get("AUTORUN_CREATE_LEGACY_STATE_DIR_ON_IMPORT") == "1":
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 

@@ -26,9 +26,14 @@ from contextlib import contextmanager
 # Import centralized tmux utilities for DRY compliance
 from .tmux_utils import get_tmux_utilities
 from .logging_utils import build_rotating_handler
-from .session_manager import session_state
+from .session_manager import session_state, state_directory
 
-STATE_DIR = Path(os.environ.get("AUTORUN_TEST_STATE_DIR") or Path.home() / ".claude" / "sessions")
+# REQUIREMENT: resolve through session_manager.state_directory, never a local
+# copy. This line and main.py's were character-identical, so the production
+# default lived in three places and the suite's isolation depended on each of
+# them honoring the same variable. Enforced by
+# test_state_directory_has_one_owner.py.
+STATE_DIR = state_directory()
 if os.environ.get("AUTORUN_CREATE_LEGACY_STATE_DIR_ON_IMPORT") == "1":
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 

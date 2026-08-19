@@ -954,6 +954,17 @@ class Platform:
     # affected family inherits the workaround by adding a registry row, the way
     # every other capability does.
     gates_mutable_task_tools: bool = False
+    #: Environment variables carrying THIS harness's own version, highest
+    #: confidence first. Empty means no reliable source is known, which is a
+    #: first-class answer: `config.harness_version` returns None and
+    #: version-ranged workarounds fall back to their pre-range behavior.
+    #:
+    #: REQUIREMENT: register a variable only when it is documented to report
+    #: the harness's own version. `CLAUDE_AGENT_SDK_VERSION` is present in a
+    #: Claude session and looks usable, but it reports the Agent SDK's version,
+    #: not the CLI build that a workaround is described against. Enforced by
+    #: test_harness_version_resolution.py.
+    version_env_vars: tuple = ()
 
     # === Hook response capability metadata ===
     supports_additional_context_events: frozenset[str] = field(default_factory=frozenset)

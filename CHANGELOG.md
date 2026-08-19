@@ -57,6 +57,26 @@ marketplace itself carries a separate `version` field.
   workaround.
 - `log_file_max_bytes` and `log_file_backup_count` in CONFIG, replacing two
   duplicated copies of the same literals.
+- `AUTORUN_HARNESS_VERSION` tells autorun which harness build it is running
+  under, which is what makes version-ranged workarounds usable. Automatic
+  detection is declared per harness in the platform registry and is empty for
+  every harness today: Claude Code publishes no version in its environment or
+  hook payload, and the SDK version that is present reports a different
+  component. An unknown version keeps the pre-range behavior rather than
+  guessing from a number that merely looks related.
+
+### Changed
+
+- `session_manager.state_directory` is the one place that decides where session
+  state lives. Four modules each re-derived it, two with character-identical
+  code, so the production default was stated in four places and the test
+  isolation depended on each of them honoring the same variable. The default is
+  unchanged: relocating it is a daemon-quiesced migration, not an edit. The
+  same sweep fixed a diagnostic that told users to `chown ~/.claude/sessions/`
+  even when the failing directory was somewhere else.
+- A version range written into a CONFIG entry now means what the same value
+  means in the environment. CONFIG was only tested for truthiness, so a range
+  there silently stayed on for every version.
 
 ### Changed
 

@@ -442,10 +442,49 @@ _stores: dict[str, "_JSONStore | SQLiteStore"] = {}
 _store: "_JSONStore | SQLiteStore | None" = None
 
 
+#: Redirects session state for tests and for isolated deployments. The name
+#: says "TEST" for historical reasons but it carries production duty: it is the
+#: only override the state directory has, and `conftest.py` relies on it for
+#: every worker's isolation.
+STATE_DIR_ENV_VAR = "AUTORUN_TEST_STATE_DIR"
+
+#: The default location of session state.
+#:
+#: REQUIREMENT: relocating this is a migration, not an edit. A live daemon
+#: holds this database open on behalf of every attached session, so changing
+#: where it looks while sessions are running is exactly the class of change the
+#: repository guidance warns about. Moving it under AUTORUN_HOME -- which would
+#: be more consistent, since ~/.claude/sessions is a directory Claude Code
+#: creates and prunes for its own purposes -- needs the daemon quiesced and the
+#: existing StateMigrator receipt machinery, not a new default here.
+_DEFAULT_STATE_DIR_PARTS = (".claude", "sessions")
+
+
+def state_directory(explicit: "str | Path | None" = None) -> Path:
+    """The one place that decides where session state lives.
+
+    Precedence: an explicit value from the caller, then ``STATE_DIR_ENV_VAR``,
+    then the default. Four modules used to re-derive this independently, two of
+    them with character-identical code, which meant the production default was
+    stated in four places and the suite's isolation depended on each of them
+    remembering the same variable.
+
+    Returns an expanded, absolute path. Resolution of symlinks is deliberately
+    left to `_state_dir_key`, which needs a canonical string for cache keys;
+    callers that only want a location should not have the target resolved out
+    from under them.
+    """
+    if explicit:
+        return Path(explicit).expanduser()
+    from_env = os.environ.get(STATE_DIR_ENV_VAR)
+    if from_env:
+        return Path(from_env).expanduser()
+    return Path.home().joinpath(*_DEFAULT_STATE_DIR_PARTS)
+
+
 def _state_dir_key(state_dir: "str | None" = None) -> str:
     """Return the canonical state directory for cache isolation."""
-    d = state_dir or os.environ.get("AUTORUN_TEST_STATE_DIR") or os.path.expanduser("~/.claude/sessions")
-    return str(Path(d).expanduser().resolve())
+    return str(state_directory(state_dir).resolve())
 
 
 def _build_store(key: str):
