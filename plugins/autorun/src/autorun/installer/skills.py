@@ -406,7 +406,7 @@ def bridge_intents(
 
     Refused, deliberately, when the destination ``skills/`` is itself a symlink:
     Claude Code stops loading user skills entirely when that directory is a link
-    (anthropics/claude-code#38051), so bridging into one would disable the very
+    (https://github.com/anthropics/claude-code/issues/38051), so bridging into one would disable the very
     skills it is trying to deliver.
 
     That refusal also skips the *retirement* of stale links inside that
@@ -581,7 +581,7 @@ def demo() -> None:
             assert not list(bridge_intents(
                 writer, Context(marketplace_root=root, home=linked_home),
                 shared_root_override=shared,
-            )), "claude-code#38051: never bridge into a symlinked skills directory"
+            )), "https://github.com/anthropics/claude-code/issues/38051: never bridge into a symlinked skills directory"
 
         # --- refusals that must happen BEFORE anything is written ----------
         # ForgeCode's real shape: reads the shared root, has no native route.

@@ -29,7 +29,8 @@ Exit code 2 = blocking ERROR causing "hook error"
 The JSON permissionDecision: "deny" blocks the tool, not exit code.
 
 References:
-- GitHub Issues: #4669, #18312, #13744, #20946
+- GitHub Issues: https://github.com/anthropics/claude-code/issues/4669, https://github.com/anthropics/claude-code/issues/18312,
+  https://github.com/anthropics/claude-code/issues/13744, https://github.com/anthropics/claude-code/issues/20946
 - Exit code semantics: https://claude.com/blog/how-to-configure-hooks
 - Hook docs: https://code.claude.com/docs/en/hooks
 """
@@ -344,7 +345,7 @@ def output_hook_response(response: dict | str, event: str = "unknown", cli_type:
     # Daemon sends {} when dispatch() returned None (no rules matched).
     # Output nothing to stdout → Claude Code ignores this hook entirely.
     # This allows parallel hooks (e.g. RTK) to apply updatedInput without conflict.
-    # Reference: Issue #10936 — any stderr at exit 0 shows as "Hook Error" in UI,
+    # Reference: Issue https://github.com/anthropics/claude-code/issues/10936 — any stderr at exit 0 shows as "Hook Error" in UI,
     # so we also avoid all stderr here. Just exit 0 silently.
     if not response:
         protocol = None

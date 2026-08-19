@@ -482,7 +482,7 @@ _MARKER_SESSION_KEYWORDS = ("agent_session_id", "session")
 # name in other Claude Code builds. Only these tools' results are parsed —
 # a Bash result merely QUOTING a spawn payload must never seed the ledger,
 # the same forgery discipline the marker parser applies. Parallel subagents
-# share the parent session id (anthropics/claude-code#7881), so this ledger
+# share the parent session id (https://github.com/anthropics/claude-code/issues/7881), so this ledger
 # is the only reliable identity source for the returned gate.
 # Spawn tool names are per-harness and live on Platform.agent_spawn_tools, the
 # same registry that owns task_create_tools and friends, so a new harness
@@ -2896,7 +2896,7 @@ class TaskLifecycle:
 
             # A marker with no explicit id claims the latest unclaimed spawn:
             # the ledger is the reliable identity source, since the AI rarely
-            # has the child id to transcribe (claude-code#7881 bars session
+            # has the child id to transcribe (https://github.com/anthropics/claude-code/issues/7881 bars session
             # identity too). No spawn recorded → today's manual semantics.
             ledger = list(metadata.get("agent_spawns", []))
             if session is None:

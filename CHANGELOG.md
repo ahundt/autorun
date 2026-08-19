@@ -10,6 +10,64 @@ marketplace itself carries a separate `version` field.
 
 ### Fixed
 
+- **A blocked session is told an exit it can actually take.** When the daemon
+  could not evaluate a permission gate, the deny said to run
+  `autorun --restart-daemon` and retry — a Bash call the same gate was
+  blocking, and a retry for a state that does not clear by waiting. The reason
+  now names `AUTORUN_DISABLE=1`, the one exit that does not require a tool
+  call. `hooks/hook_entry.py` already had this guidance; the client path, which
+  is the one a state-backend failure actually takes, had its own copy that
+  never received it. A test pins the two equal.
+- **A full disk no longer switches every hook off.** `Handler.handleError`
+  writes a traceback to `stderr` by default, and Claude Code discards the
+  response of any hook that writes to stderr, so an out-of-space log write
+  silently disabled command blocking, file policies and task enforcement while
+  the session still looked healthy. All logging now goes through one
+  exhaustion-tolerant handler; a spec check fails the build if a raw
+  `RotatingFileHandler` is constructed anywhere in `src/` or `hooks/`. It found
+  a third call site whose own comment already promised no stderr handler.
+- **A storage failure says what to do about it.** SQLite reports a full disk, a
+  missing directory and a permission problem with overlapping wording, so
+  "unable to open database file" was not actionable. The message now names the
+  plausible causes and states that recovery is automatic — nothing latches, and
+  the restart a reader would otherwise reach for is itself a blocked tool call.
+- **Bug-workaround flags resolve through one grammar.** Four hand-written
+  copies existed and two had drifted: one decided applicability with a
+  hardcoded `cli_type == "claude"` instead of asking the platform registry, and
+  one lowercased without stripping, so ` always ` worked for two flags and not
+  the third. The same fix closed a second site that gated the deferred
+  task-tool instruction by name.
+- **Recovery messages name paths that exist.** `core.py` pointed at
+  `plugins/autorun/scripts/restart_daemon.py`, which has never existed and
+  which an installed user has no checkout to run anyway. A spec check now
+  AST-walks every string in `src/` and `hooks/` and fails on a repo-relative
+  path that does not resolve.
+- **Orphaned SQLite stage sidecars are swept.** A `-wal`/`-shm` pair whose
+  staged database is gone proved nothing and no later run recognized it,
+  because each migration picks a fresh generation suffix. A failed migration's
+  stage is still kept as evidence.
+
+### Added
+
+- **Bug-workaround flags accept harness version ranges** (`>=2.1.233,<2.2`),
+  compared with `packaging` and resolved per invocation, since different
+  harness builds run concurrently on one machine. A range only ever narrows an
+  affected platform; an unknown version keeps the previous behavior and a
+  malformed range falls through like a typo, so neither can silently disable a
+  workaround.
+- `log_file_max_bytes` and `log_file_backup_count` in CONFIG, replacing two
+  duplicated copies of the same literals.
+
+### Changed
+
+- Upstream issue references carry full URLs. autorun integrates with several
+  projects whose issue numbers are sequential and overlapping, so a bare
+  `#80305` identified nothing; a spec check now requires any file naming an
+  issue number to resolve it.
+- The advisory-state sweep stops at the first live entry instead of scanning
+  every entry on every write. Advisory writes happen on the hook path, so the
+  cost of one write no longer grows with how many entries the daemon holds.
+
 - **An interrupted install no longer deletes a file or link it moved aside.**
   Recovery from a killed publication put the staged copy back when the target
   was gone, and parked it under `~/.autorun/installer/backups/` when the target

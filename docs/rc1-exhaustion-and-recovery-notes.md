@@ -377,6 +377,72 @@ possible split. Harness versions are dotted integers, which a zero-padded tuple
 comparison orders correctly; a build suffix (`2.1.240-beta.1`) compares on its
 leading numeric components rather than failing.
 
+### #217 · FIXED · storage failures say what to do, and nothing latches
+
+Refused deliberately, and recorded here so it is not "fixed" later: durable
+state does **not** fall back to an in-memory copy when the disk is unavailable.
+That sounds like resilience and is the opposite. One daemon serves many
+concurrent sessions and several processes share the database, so a memory copy
+outliving a failed write would make those processes disagree about a permission
+decision, and the disagreement would survive into the next restart as silent
+divergence. `test_state_persistence_failures.py` already states the rule —
+"memory must not outvote storage" — and it is right. Advisory counters are a
+separate matter and already live in memory under `volatile_state_max_*`.
+
+What exhaustion handling means here is narrower and honest:
+
+* a failed write still raises and still names what was lost (unchanged);
+* the failure now explains the likely cause and says recovery is automatic;
+* nothing latches — the first call after space returns succeeds.
+
+`SQLiteStore._storage_failure_advice` maps SQLite's wording to a remedy. The
+phrases overlap — a full disk, a missing directory and a permission problem can
+all surface as "unable to open database file" — so specific phrases match first
+and the ambiguous one names every plausible cause rather than asserting a wrong
+single one. Every entry says recovery is automatic, because the 2026-08-18
+incident cleared itself in ten minutes and nothing told the operator that was
+expected, while the restart they would otherwise reach for was itself a tool
+call the gate was denying.
+
+The no-latch property turned out to already hold; the test now pins it.
+
+### #218 · FIXED · the advisory-state sweep no longer scans what it keeps
+
+The bounds themselves were already enforced correctly, and eviction already
+refused to discard durable values. What was wrong was the cost:
+`_evict_volatile_over_limits` materialized a list over **every** volatile entry
+on every advisory write — up to 4096 — and advisory writes happen on the hook
+path, so one write's cost grew with how busy the daemon had been.
+
+`_track_volatile` pops a key before reinserting it, so the OrderedDict is in
+ascending order of last write and expired entries are always a prefix. The
+sweep now stops at the first live entry, making its cost proportional to what
+it removes. Measured by instrumenting `items()`: 10 entries visited before, 2
+after, for a write that expires nothing.
+
+### #220 · code scope FIXED, operational items left to the owner
+
+Bounded through CONFIG: `log_file_max_bytes` / `log_file_backup_count`, shared
+by all three logging call sites.
+
+Swept automatically: orphaned `daemon_state.sqlite3.stage.<generation>-wal` /
+`-shm` pairs whose stage database is gone. A *failed* migration's stage is
+still kept as evidence — only pairs that prove nothing are removed, since each
+migration picks a fresh generation suffix and no later run would recognize an
+old orphan.
+
+Not touched, because it is the owner's data and deleting it is their call:
+
+| Path | Size |
+|------|------|
+| `~/.autorun/hook_entry_debug.log.20260701-incident.bak` | 741.4 MB |
+| `~/.claude/sessions/autorun.log` | 30.4 MB |
+| `~/.claude/sessions/` entries | 12,691 |
+
+The 741 MB file is a hand-made incident backup with no retention policy; the
+30 MB `autorun.log` exceeds the 5 MB rotation ceiling, which means it is not
+going through the shared handler and is worth tracing separately.
+
 ### Cost of the new hot-path code, measured
 
 `workaround_applies` runs on the PreToolUse path, so its cost was measured

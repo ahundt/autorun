@@ -944,8 +944,8 @@ class Platform:
     installed_hook_events: frozenset[str] = field(default_factory=frozenset)
 
     # === Bug workaround applicability ===
-    has_exit2_workaround: bool = False  # Claude #4669
-    drops_additional_context: bool = False  # Claude #18534
+    has_exit2_workaround: bool = False  # Claude https://github.com/anthropics/claude-code/issues/4669
+    drops_additional_context: bool = False  # Claude https://github.com/anthropics/claude-code/issues/18534
     # TaskCreate/Get/Update/List can be gated off at process start, or
     # unregistered mid-session:
     #   https://github.com/anthropics/claude-code/issues/80305
@@ -1458,7 +1458,7 @@ QWEN = register(
         # SKILL_PROVIDER_CONFIG_DIRS = [".qwen", ".agents"] over os.homedir(),
         # so ~/.agents/skills is a user-scope discovery root alongside
         # ~/.qwen/skills (verified in the shipped 0.21.1 bundle; upstream
-        # QwenLM/qwen-code#2042, closed completed 2026-03-03).
+        # https://github.com/QwenLM/qwen-code/issues/2042, closed completed 2026-03-03).
         loads_shared_agents_skills=True,
         list_cmd=("qwen", "extensions", "list"),
         # Declared alongside loads_shared_agents_skills on purpose. The two are

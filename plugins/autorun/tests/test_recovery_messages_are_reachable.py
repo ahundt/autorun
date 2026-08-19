@@ -66,6 +66,40 @@ def _string_constants(tree):
             yield node
 
 
+#: An issue-shaped reference: a hash followed by four or more digits. Three
+#: digits or fewer are far more often an internal id, a port, or a size.
+_BARE_ISSUE = re.compile(r"#(\d{4,})\b")
+
+
+def test_every_file_naming_an_issue_number_also_carries_its_url():
+    """A bare "#80305" identifies nothing on its own.
+
+    autorun integrates with Claude Code, the Gemini family, Codex, Pi, Prime,
+    OpenCode and several libraries, all of which number issues sequentially
+    from one. The same number exists in most of those trackers and means
+    something different in each.
+
+    REQUIREMENT: a file may use the short form for readability, but it must
+    resolve it somewhere in the same file -- one URL in the region header is
+    enough. This is deliberately per-file rather than per-mention: requiring a
+    60-character URL at all 120 mention sites would cost more readability than
+    the ambiguity does, and a reader who has the file open has the answer.
+    """
+    unresolved = []
+    for path in _source_files():
+        text = path.read_text(encoding="utf-8")
+        for number in sorted(set(_BARE_ISSUE.findall(text))):
+            if f"/{number}" not in text:
+                unresolved.append(f"{path.relative_to(REPO_ROOT).as_posix()}: #{number}")
+
+    assert not unresolved, (
+        "these files name an issue number without giving its URL anywhere in "
+        "the file; the same number exists in several trackers autorun "
+        "integrates with, so the short form alone identifies nothing. Add the "
+        "full URL once per file:\n  " + "\n  ".join(unresolved)
+    )
+
+
 def test_every_repo_relative_path_named_in_source_exists():
     """Spec check: no source string may point at a file that is not there.
 

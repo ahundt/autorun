@@ -1433,8 +1433,11 @@ class SQLiteStore:
             os.makedirs(os.path.dirname(self._db_path) or ".", exist_ok=True)
         except OSError as exc:
             raise SessionBackendError(
-                f"Could not create the state directory for {self._db_path}: {exc}"
+                f"Could not create the state directory for {self._db_path}: "
+                f"{exc}.{self._storage_failure_advice(exc)}"
             ) from exc
+
+        self._sweep_orphaned_stage_sidecars()
 
         try:
             with _managed_connection(
@@ -1557,6 +1560,112 @@ class SQLiteStore:
 
     # --- connections -------------------------------------------------------
 
+    #: SQLite wording for conditions an operator can actually clear, paired
+    #: with the remedy. The mapping is ordered because the phrases overlap: a
+    #: full disk, a missing directory and a permission problem can all surface
+    #: as "unable to open database file", so the specific phrases are matched
+    #: first and the ambiguous one names every plausible cause rather than
+    #: asserting a single wrong one.
+    #:
+    #: REQUIREMENT: every entry says recovery is automatic. Outages here last
+    #: minutes to days, nothing latches (pinned by
+    #: test_nothing_latches_so_the_first_call_after_recovery_succeeds), and the
+    #: restart a reader would otherwise reach for is itself a tool call the
+    #: permission gate is denying at that moment.
+    _STORAGE_FAILURE_ADVICE = (
+        (
+            "disk is full",
+            "The filesystem holding it is out of space. Free space and the "
+            "next attempt recovers automatically; no restart is needed.",
+        ),
+        (
+            "readonly database",
+            "The database or its directory is read-only: check permissions "
+            "and ownership. The next attempt recovers automatically.",
+        ),
+        (
+            "permission denied",
+            "Check permissions and ownership on the file and its directory. "
+            "The next attempt recovers automatically.",
+        ),
+        (
+            "disk i/o error",
+            "The filesystem reported an I/O error, usually out of space or "
+            "failing storage. The next attempt recovers automatically.",
+        ),
+        (
+            "unable to open database file",
+            "Its directory may be missing or unwritable, or the filesystem "
+            "may be out of space or out of inodes. SQLite reports all three "
+            "the same way. The next attempt recovers automatically.",
+        ),
+    )
+
+    #: SQLite's own result codes, which are exact where the prose is not.
+    #: `sqlite3.Error.sqlite_errorname` exists from Python 3.11; on 3.10 the
+    #: attribute is absent and the message table above is the only signal.
+    #: Consulting it via getattr rather than a version branch keeps one code
+    #: path that simply has more to work with on newer interpreters.
+    _STORAGE_FAILURE_BY_ERRORNAME = {
+        "SQLITE_FULL": 0,      # index into _STORAGE_FAILURE_ADVICE
+        "SQLITE_READONLY": 1,
+        "SQLITE_PERM": 2,
+        "SQLITE_IOERR": 3,
+        "SQLITE_CANTOPEN": 4,
+    }
+
+    @classmethod
+    def _storage_failure_advice(cls, exc) -> str:
+        """A remedy sentence for a storage error, or "" when unrecognized."""
+        errorname = str(getattr(exc, "sqlite_errorname", "") or "")
+        for name, index in cls._STORAGE_FAILURE_BY_ERRORNAME.items():
+            # Extended codes suffix the primary one (SQLITE_IOERR_WRITE).
+            if errorname.startswith(name):
+                return " " + cls._STORAGE_FAILURE_ADVICE[index][1]
+
+        text = str(exc).lower()
+        for needle, advice in cls._STORAGE_FAILURE_ADVICE:
+            if needle in text:
+                return " " + advice
+        return ""
+
+    def _sweep_orphaned_stage_sidecars(self) -> None:
+        """Remove ``-wal``/``-shm`` pairs whose staged database is already gone.
+
+        ``StateMigrator._discard_stage_sidecars`` deliberately keeps a *failed*
+        migration's stage so a maintainer can inspect it, and that stays true:
+        a sidecar is only removed here when the ``.stage.<generation>`` file it
+        belongs to no longer exists, which makes it incomplete evidence rather
+        than evidence.
+
+        Nothing else would ever remove these. Each migration picks a fresh
+        generation suffix, so an interrupted publication leaves a pair that no
+        later run recognizes, and they accumulate for the life of the install.
+
+        Cost: one directory listing per store initialization, which happens
+        once per state directory per process, not per operation. Failures are
+        ignored -- a sweep that cannot run must never stop the store opening.
+        """
+        db_path = Path(self._db_path)
+        prefix = db_path.name + ".stage."
+        try:
+            entries = list(db_path.parent.iterdir())
+        except OSError:
+            return
+        for entry in entries:
+            name = entry.name
+            if not name.startswith(prefix):
+                continue
+            for suffix in ("-wal", "-shm"):
+                if not name.endswith(suffix):
+                    continue
+                if not entry.with_name(name[: -len(suffix)]).exists():
+                    try:
+                        entry.unlink()
+                    except OSError:
+                        pass
+                break
+
     def _connect(self, timeout: float):
         try:
             conn = sqlite3.connect(
@@ -1571,7 +1680,8 @@ class SQLiteStore:
             )
         except sqlite3.Error as exc:
             raise SessionBackendError(
-                f"Could not open state database {self._db_path}: {exc}"
+                f"Could not open state database {self._db_path}: {exc}."
+                f"{self._storage_failure_advice(exc)}"
             ) from exc
 
         try:
@@ -1583,7 +1693,8 @@ class SQLiteStore:
         except sqlite3.Error as exc:
             _close_connection(conn, exc)
             raise SessionBackendError(
-                f"Could not configure state connection for {self._db_path}: {exc}"
+                f"Could not configure state connection for {self._db_path}: "
+                f"{exc}.{self._storage_failure_advice(exc)}"
             ) from exc
         return conn
 

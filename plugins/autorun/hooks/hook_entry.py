@@ -911,7 +911,8 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -
         The JSON permissionDecision: "deny" blocks the tool, not exit code.
 
         References:
-        - GitHub Issues: #4669, #18312, #13744, #20946
+        - GitHub Issues: https://github.com/anthropics/claude-code/issues/4669, https://github.com/anthropics/claude-code/issues/18312,
+          https://github.com/anthropics/claude-code/issues/13744, https://github.com/anthropics/claude-code/issues/20946
         - Exit code semantics: https://claude.com/blog/how-to-configure-hooks
         - Hook docs: https://code.claude.com/docs/en/hooks
 

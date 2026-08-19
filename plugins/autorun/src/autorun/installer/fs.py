@@ -1625,7 +1625,7 @@ def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[di
     Sixteen hand-rolled read-modify-write pairs preceded this, half of them
     using bare ``write_text``. A torn write to ``hooks.json`` or
     ``marketplace.json`` makes the harness drop every hook in the file, which is
-    the failure mode behind claude-code#24115 and Codex's ``deny_unknown_fields``.
+    the failure mode behind https://github.com/anthropics/claude-code/issues/24115 and Codex's ``deny_unknown_fields``.
 
     An unreadable file raises rather than silently starting from ``default``:
     clobbering a document we could not parse is how a user's own registry

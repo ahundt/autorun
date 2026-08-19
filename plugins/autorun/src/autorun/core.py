@@ -908,7 +908,25 @@ class ThreadSafeDB:
         change what the daemon allows or blocks.
         """
         now = time.monotonic()
-        for key in [key for key, (written, _size) in self._volatile.items() if (now - written) > self._volatile_max_age_seconds]:
+        # ORDERING INVARIANT: `_track_volatile` pops a key before reinserting
+        # it, so this OrderedDict is in ascending order of last write and
+        # expired entries are always a prefix. Stopping at the first live entry
+        # makes the sweep cost proportional to what it removes rather than to
+        # how many entries the daemon happens to hold.
+        #
+        # REQUIREMENT: anything that reorders `_volatile` without preserving
+        # write order breaks this and must update the sweep too. The previous
+        # version materialized a list over every entry on every advisory write,
+        # which runs on the hook path, so the cost of one write grew with how
+        # busy the daemon had been. Pinned by
+        # test_volatile_state_bounds.py::test_the_age_sweep_visits_only_the_expired_prefix
+        # and ::test_the_prefix_sweep_drops_exactly_what_a_full_scan_would.
+        expired = []
+        for key, (written, _size) in self._volatile.items():
+            if (now - written) <= self._volatile_max_age_seconds:
+                break
+            expired.append(key)
+        for key in expired:
             self._drop_volatile(key)
 
         while len(self._volatile) > self._volatile_max_entries or self._volatile_bytes > self._volatile_max_bytes:
@@ -2294,7 +2312,8 @@ class EventContext:
         JSON continue: true lets AI continue
 
         References:
-        - GitHub Issues: #4669, #18312, #13744, #20946, #10964
+        - GitHub Issues: https://github.com/anthropics/claude-code/issues/4669, https://github.com/anthropics/claude-code/issues/18312,
+          https://github.com/anthropics/claude-code/issues/13744, https://github.com/anthropics/claude-code/issues/20946, https://github.com/anthropics/claude-code/issues/10964
         - Hook docs: https://code.claude.com/docs/en/hooks
         - plugins/autorun/AGENTS.md: "Hook error prevention" section
         """

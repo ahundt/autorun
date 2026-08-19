@@ -15,7 +15,7 @@ real ``hooks/`` directory. Its commands call the already-installed ``autorun``
 entry point; pointing uv at the generated extension was invalid because that
 directory deliberately has no ``pyproject.toml``.
 https://github.com/google-gemini/gemini-cli/issues/14449 (closed COMPLETED by
-PR #14460, which merged the convention this already targets).
+PR https://github.com/google-gemini/gemini-cli/pull/14460, which merged the convention this already targets).
 
 Claude's plugin loader scans the marketplace *source* ``hooks/`` as well as its
 cache, and its strict schema rejects Gemini event names with ``invalid_key``,

@@ -395,7 +395,52 @@ def test_daemon_failure_response_embeds_privacy_safe_versioned_event_code():
     )
     rendered = json.dumps(response)
     assert "[AR_EVENT_V1:daemon_dispatch_timeout]" in rendered
-    assert "command" not in rendered.lower()
+    # The template contributes fixed text plus the caller's own message, and
+    # nothing else. This used to assert `"command" not in rendered.lower()`,
+    # which is weaker than the privacy property it stood for: `message` is
+    # interpolated into the reason by design, so a caller passing
+    # `rm -rf /home/user/secret` would have leaked while that assertion passed,
+    # and the bare word occurs legitimately in autorun's own repair guidance.
+    # The real property is enforced at the call sites, below.
+    assert "handler timed out" in rendered
+
+
+def test_no_daemon_failure_call_site_passes_caller_tool_input():
+    """Spec check: privacy here is a property of the call sites.
+
+    ``build_daemon_failure_response`` echoes its ``message`` into a reason the
+    harness displays, so it cannot defend privacy by itself. What keeps tool
+    input out of that reason is that every caller passes a fixed description --
+    an event name, a timeout, an exception -- and never the payload.
+
+    REQUIREMENT for new call sites: describe the failure, never quote what the
+    user was running.
+    """
+    import ast
+
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    forbidden = ("tool_input", "tool_name", "tool_response", "payload", "stdin")
+    leaks = []
+    for path in sorted(source_root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "build_daemon_failure_response" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name != "build_daemon_failure_response":
+                continue
+            for argument in node.args[2:] + [k.value for k in node.keywords]:
+                segment = ast.get_source_segment(text, argument) or ""
+                if any(token in segment for token in forbidden):
+                    leaks.append(f"{path.name}:{argument.lineno}: {segment}")
+
+    assert not leaks, (
+        "a fail-closed reason is shown to the user and written to logs; it must "
+        "describe the failure, not quote the tool input that hit it:\n  "
+        + "\n  ".join(leaks)
+    )
 
 
 def test_cli_argument_choices_come_from_platform_registry():

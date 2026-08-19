@@ -1000,7 +1000,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if getattr(args, "cli", None):
         os.environ["AUTORUN_CLI_TYPE"] = args.cli
 
-    # Bug #4669 workaround configuration (set env var from CLI arg)
+    # Workaround configuration for
+    # https://github.com/anthropics/claude-code/issues/4669 (set env var from
+    # CLI arg). The `--exit2-mode` help text above uses the short "#4669" form
+    # to stay readable at the terminal; this is where a reader resolves it.
     if hasattr(args, "exit2_mode") and args.exit2_mode is not None:
         os.environ["AUTORUN_EXIT2_WORKAROUND"] = args.exit2_mode
 
