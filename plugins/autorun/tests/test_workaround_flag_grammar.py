@@ -102,10 +102,14 @@ def test_a_legacy_spelling_outranks_the_current_key(monkeypatch):
 
 
 def test_task_tool_applicability_comes_from_the_registry_not_a_name():
-    """The #80305/#80401 predicate must be a Platform field.
+    """The deferred-task-tool predicate must be a Platform field.
+
+    https://github.com/anthropics/claude-code/issues/80305
+    https://github.com/anthropics/claude-code/issues/80401
 
     A hardcoded ``== "claude"`` is what this project already fixed once for
-    #18534 and forbids in config.py's own comment. Pi, Prime and the
+    https://github.com/anthropics/claude-code/issues/18534 and forbids in
+    config.py's own comment. Pi, Prime and the
     Gemini-family harnesses are added as registry rows, so a name comparison
     silently excludes every future member of an affected family.
     """
@@ -120,7 +124,8 @@ def test_task_tool_applicability_comes_from_the_registry_not_a_name():
 # --- version ranges -----------------------------------------------------------
 #
 # Harness versions differ between concurrent sessions on one machine, so a
-# workaround's applicability is per invocation, not per install. #80305 is
+# workaround's applicability is per invocation, not per install.
+# https://github.com/anthropics/claude-code/issues/80305 is
 # already version-scoped in prose ("Claude Code 2.1.233+") with no way to say so.
 
 
@@ -158,7 +163,8 @@ def test_a_version_range_decides_an_affected_platform(monkeypatch, spec, version
 def test_a_range_never_applies_to_an_unaffected_platform(monkeypatch):
     """The range narrows an affected platform; it does not widen to others.
 
-    #80305 is a Claude bug. A Gemini session reporting 2.1.240 must not inherit
+    https://github.com/anthropics/claude-code/issues/80305 is a Claude bug.
+    A Gemini session reporting 2.1.240 must not inherit
     the workaround just because its version string satisfies the range.
     """
     flag = GRAMMAR_FLAGS[2]
@@ -193,6 +199,37 @@ def test_ranges_do_not_disturb_the_word_grammar(monkeypatch):
     assert workaround_applies(flag, affected=False, version="1.0.0") is True
     monkeypatch.setenv(flag, "never")
     assert workaround_applies(flag, affected=True, version="2.1.240") is False
+
+
+def test_no_task_tool_workaround_site_gates_on_a_harness_name():
+    """Spec check: both deferred-task-tool sites agree, and match the registry.
+
+    https://github.com/anthropics/claude-code/issues/80305
+    https://github.com/anthropics/claude-code/issues/80401
+
+    Two sites decide this one condition -- `_workaround_flag_applies`, which
+    resolves the flags, and the SessionStart handler that asks Claude to load
+    its deferred Task tools. Both shipped comparing the literal name "claude".
+    Fixing only the one that a failing test happened to cover would leave the
+    pair able to disagree, which is the failure mode this check exists for.
+
+    `hooks/hook_entry.py` is deliberately out of scope: it is stdlib-only by
+    design, runs when the package cannot be imported, and therefore cannot ask
+    the Platform registry anything.
+    """
+    source = (PACKAGE_SRC / "autorun" / "task_lifecycle.py").read_text(encoding="utf-8")
+    offenders = [
+        f"task_lifecycle.py:{number}: {line.strip()}"
+        for number, line in enumerate(source.splitlines(), 1)
+        if ('== "claude"' in line or '!= "claude"' in line)
+        and not line.lstrip().startswith(("#", '"', "'"))
+        and "``" not in line  # a docstring quoting the old code
+    ]
+    assert not offenders, (
+        "gate on a Platform capability field, not a harness name; a name "
+        "comparison silently excludes every future member of an affected "
+        f"family:\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_only_one_module_implements_the_value_grammar():

@@ -3985,10 +3985,19 @@ def register_hooks(app_instance) -> None:
 
     @app_instance.on("SessionStart")
     def request_claude_deferred_task_tools(ctx: EventContext) -> None:
-        """Ask Claude to load its deferred task tools once per fresh context."""
+        """Ask Claude to load its deferred task tools once per fresh context.
+
+        REQUIREMENT: gate on ``Platform.gates_mutable_task_tools``, not on a
+        harness name. This is the same condition ``_workaround_flag_applies``
+        resolves for
+        https://github.com/anthropics/claude-code/issues/80305 and
+        https://github.com/anthropics/claude-code/issues/80401, so a name
+        comparison here would put the two out of step the moment another
+        harness in the family deferred the same tools.
+        """
         if (
             not is_enabled()
-            or platform_for(ctx.cli_type).name != "claude"
+            or not platform_for(ctx.cli_type).gates_mutable_task_tools
             or ctx.source not in {"startup", "clear"}
         ):
             return None

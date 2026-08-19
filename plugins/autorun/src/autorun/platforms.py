@@ -946,10 +946,13 @@ class Platform:
     # === Bug workaround applicability ===
     has_exit2_workaround: bool = False  # Claude #4669
     drops_additional_context: bool = False  # Claude #18534
-    # Claude #80305/#80401: TaskCreate/Get/Update/List can be gated off at
-    # process start, or unregistered mid-session. Declared here rather than
-    # compared as a name so a new harness in an affected family inherits the
-    # workaround by adding a registry row, the way every other capability does.
+    # TaskCreate/Get/Update/List can be gated off at process start, or
+    # unregistered mid-session:
+    #   https://github.com/anthropics/claude-code/issues/80305
+    #   https://github.com/anthropics/claude-code/issues/80401
+    # Declared here rather than compared as a name so a new harness in an
+    # affected family inherits the workaround by adding a registry row, the way
+    # every other capability does.
     gates_mutable_task_tools: bool = False
 
     # === Hook response capability metadata ===

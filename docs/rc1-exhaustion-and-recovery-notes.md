@@ -393,6 +393,26 @@ with Claude Code 2.1.234, so the SDK patch number may track the CLI build. That
 is a pattern in two observations, not a documented contract, and a permission
 workaround must not be gated on a guessed correspondence.
 
+### D-3 · FIXED · the same hardcoded-name defect at a second site
+
+Found by auditing the rest of the 2026-08-19 changes rather than by a failing
+test. `task_lifecycle.py:3991`, the SessionStart handler that asks Claude to
+load its deferred Task tools, gated on
+`platform_for(ctx.cli_type).name != "claude"` — the same condition
+`_workaround_flag_applies` resolves, and the same defect, at a site the first
+fix did not touch.
+
+This is the lesson worth keeping: fixing only the copy that a failing test
+happened to cover leaves the pair able to disagree. Both now read
+`Platform.gates_mutable_task_tools`, and a spec check fails on any harness-name
+comparison in that module.
+
+The sweep classified every other `== "claude"` in the tree as correct:
+`hooks/hook_entry.py` is stdlib-only by design and cannot ask the registry
+anything, and the `installer/` sites compare a *config flavor* (ForgeCode uses
+Claude's settings format), which is a different concept that happens to share
+the word.
+
 Consequence for the design: the version source is per-harness data on the
 `Platform` registry plus an explicit `AUTORUN_HARNESS_VERSION` override at the
 top of the precedence chain, and "unknown" stays a first-class value that
