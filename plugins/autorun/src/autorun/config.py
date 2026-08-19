@@ -1205,6 +1205,84 @@ After every step and substep you must say "Wait," and execute this sequential th
     "codex_canonical_commands": (),
 }
 
+# ─── Settings precedence: CLI parameter > environment > config file > default ──
+#
+# The dict above is the DEFAULT tier. The file tier is overlaid onto it once,
+# here, rather than consulted at each of the ~50 `CONFIG.get` call sites: that
+# is what makes the tier arrive everywhere at once instead of wherever someone
+# remembered to add it, and it is why an absent file changes nothing.
+#
+# The environment tier stays above the file because the resolvers that read env
+# vars consult them before CONFIG, and that ordering is the point: a value
+# exported for one session must not be overridden by a file written for the
+# whole machine. The CLI tier sits above both, through the explicit parameters
+# and flags that already write env vars (`--exit2-mode`, `--cli`).
+#
+# REQUIREMENT: an unknown key or a wrong type is declined, not accepted. A
+# typo that silently became a setting would make `autorun --status` report a
+# value nothing reads, and these settings gate command blocking and file
+# policies -- declining to load is a safer failure than refusing to start.
+USER_CONFIG_FILENAME = "autorun.config.json"
+
+_DEFAULT_CONFIG = dict(CONFIG)
+
+
+def default_config() -> dict:
+    """The declared defaults, before any user config file is applied."""
+    return dict(_DEFAULT_CONFIG)
+
+
+def user_config_path():
+    """Where the optional user config file lives, under AUTORUN_HOME."""
+    from pathlib import Path
+    import os
+
+    home = os.environ.get("AUTORUN_HOME")
+    base = Path(home) if home else Path.home() / ".autorun"
+    return base / USER_CONFIG_FILENAME
+
+
+def apply_user_config(target: dict) -> dict:
+    """Overlay the user config file onto ``target`` and return it.
+
+    Only keys already declared in the defaults are accepted, and only when the
+    supplied value matches the declared type -- bools are excluded from the
+    int check because ``isinstance(True, int)`` is true and a flag written as
+    ``1`` should not silently satisfy a numeric setting.
+    """
+    import json
+
+    try:
+        raw = user_config_path().read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return target
+    try:
+        loaded = json.loads(raw)
+    except ValueError:
+        return target
+    if not isinstance(loaded, dict):
+        return target
+
+    for key, value in loaded.items():
+        if key not in _DEFAULT_CONFIG:
+            continue
+        declared = _DEFAULT_CONFIG[key]
+        if isinstance(declared, bool) != isinstance(value, bool):
+            continue
+        if isinstance(declared, (int, float)) and not isinstance(value, (int, float)):
+            continue
+        if isinstance(declared, str) and not isinstance(value, str):
+            continue
+        if isinstance(declared, dict) and not isinstance(value, dict):
+            continue
+        if isinstance(declared, (list, tuple)) and not isinstance(value, (list, tuple)):
+            continue
+        target[key] = value
+    return target
+
+
+apply_user_config(CONFIG)
+
 
 # =============================================================================
 # CLI Detection and Bug #4669 Workaround (v0.8.0+)

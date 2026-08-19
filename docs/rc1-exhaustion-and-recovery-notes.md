@@ -486,10 +486,30 @@ files exist with three separate loaders —
 `~/.autorun/plan-export.config.json`, `plan-notify.config.json`,
 `task-lifecycle.config.json` — and none backs the CONFIG dict.
 
-Building it is a feature, not a fix: it changes how every setting resolves,
-which is the highest blast radius change available in a release candidate. It
-is tracked as its own task rather than landed unreviewed at the end of a long
-session.
+**Update — built, after reconsidering the risk.** The argument above was
+weaker than it read. "Changes how every setting resolves" is true of the code
+path and false of the behavior: with no config file present, which is every
+existing install, resolution is byte-identical. Declining to build something
+explicitly asked for, on a risk that evaporates under inspection, is worse than
+building it carefully.
+
+`USER_CONFIG_FILENAME` (`autorun.config.json` under `AUTORUN_HOME`) is overlaid
+onto the defaults once, at import, rather than consulted at each of the ~50
+`CONFIG.get` sites. That is what makes the tier arrive everywhere at once
+instead of wherever someone remembered to add it. The environment stays above
+the file because the resolvers read env vars before CONFIG, which is the point
+of the ordering: a value exported for one session should not be overridden by a
+file written for the whole machine.
+
+Unknown keys and mismatched types are declined. Bools are excluded from the
+numeric check on purpose, since `isinstance(True, int)` is true and a flag
+written as `1` should not satisfy a numeric setting.
+
+One thing this cost, worth recording: the first version of the import-time test
+used `importlib.reload`, which rebinds `config.CONFIG` to a new dict while every
+module that already did `from .config import CONFIG` keeps the old one. It split
+the process into two configurations and broke six unrelated tests. The test runs
+in a subprocess now.
 
 ### #225 · DONE in a scope that does not guess
 

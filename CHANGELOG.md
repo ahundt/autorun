@@ -77,6 +77,15 @@ marketplace itself carries a separate `version` field.
 - A version range written into a CONFIG entry now means what the same value
   means in the environment. CONFIG was only tested for truthiness, so a range
   there silently stayed on for every version.
+- Settings resolve **CLI parameter > environment variable > config file >
+  default**. The file tier is new: an optional `autorun.config.json` under
+  `AUTORUN_HOME` is overlaid onto the defaults at import, so it reaches every
+  setting at once rather than wherever a call site remembered to consult it.
+  An absent file — the normal case — changes nothing. An unknown key or a
+  mismatched type is declined rather than accepted, because a typo that
+  silently became a setting would make `autorun --status` report a value
+  nothing reads, and an unreadable file leaves the defaults alone rather than
+  stopping autorun from starting.
 
 ### Changed
 
