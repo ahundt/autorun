@@ -595,6 +595,99 @@ def test_a_replacement_written_while_we_staged_is_kept_not_swapped_away(
     assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "THEIRS\n"
 
 
+def test_a_target_recreated_between_the_two_swap_renames_is_parked(
+    tmp_path, monkeypatch
+):
+    """A writer can fill the public name after the old tree is quarantined."""
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    from autorun.installer import fs
+
+    target = tmp_path / "dest" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("ours v1\n", encoding="utf-8")
+    real_replace = fs.os.replace
+    injected = False
+
+    def recreate_after_quarantine(src, dst):
+        nonlocal injected
+        result = real_replace(src, dst)
+        if Path(src) == target and not injected:
+            injected = True
+            target.mkdir()
+            (target / "SKILL.md").write_text("THEIRS BETWEEN RENAMES\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(fs.os, "replace", recreate_after_quarantine)
+
+    with fs._swapped(target) as staged:
+        staged.mkdir()
+        (staged / "SKILL.md").write_text("ours v2\n", encoding="utf-8")
+
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "ours v2\n"
+    parked = sorted((tmp_path / "ar-home" / "installer" / "backups").glob("demo-*"))
+    assert any(
+        (item / "SKILL.md").read_text(encoding="utf-8") == "THEIRS BETWEEN RENAMES\n"
+        for item in parked
+    ), parked
+
+
+def test_a_file_racing_the_final_publication_syscall_is_parked(tmp_path, monkeypatch):
+    """Regular files land with a no-replace operation, not ``os.replace``."""
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    from autorun.installer import fs
+
+    target = tmp_path / "dest" / "receipt.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("ours v1\n", encoding="utf-8")
+    real_link = fs.os.link
+    injected = False
+
+    def race_link(src, dst, **kwargs):
+        nonlocal injected
+        if Path(dst) == target and not injected:
+            injected = True
+            target.write_text("THEIRS AT LANDING\n", encoding="utf-8")
+        return real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(fs.os, "link", race_link)
+
+    with fs._swapped(target) as staged:
+        staged.write_text("ours v2\n", encoding="utf-8")
+
+    assert target.read_text(encoding="utf-8") == "ours v2\n"
+    parked = sorted(
+        (tmp_path / "ar-home" / "installer" / "backups").glob("receipt.json-*")
+    )
+    assert any(item.read_text(encoding="utf-8") == "THEIRS AT LANDING\n" for item in parked)
+
+
+def test_an_in_place_child_edit_while_we_stage_is_parked(tmp_path, monkeypatch):
+    """Changing a child does not change the parent directory's identity.
+
+    The replacement transaction must identify the contents it judged, not only
+    the top-level inode and mtime.  An editor commonly rewrites an existing
+    file in place while a large bundle is being staged; those bytes must be
+    recoverable after the shipped tree lands.
+    """
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    from autorun.installer import fs
+
+    target = tmp_path / "dest" / "demo"
+    target.mkdir(parents=True)
+    child = target / "SKILL.md"
+    child.write_text("ours v1\n", encoding="utf-8")
+
+    with fs._swapped(target) as staged:
+        staged.mkdir()
+        (staged / "SKILL.md").write_text("ours v2\n", encoding="utf-8")
+        child.write_text("THEIRS IN PLACE\n", encoding="utf-8")
+
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "ours v2\n"
+    parked = sorted((tmp_path / "ar-home" / "installer" / "backups").glob("demo-*"))
+    assert parked, "the in-place child edit was discarded with the swap stage"
+    assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "THEIRS IN PLACE\n"
+
+
 def test_an_unchanged_target_is_not_parked_on_every_publication(tmp_path, monkeypatch):
     """The ordinary upgrade must leave no backup behind.
 
@@ -617,6 +710,68 @@ def test_an_unchanged_target_is_not_parked_on_every_publication(tmp_path, monkey
     assert not (tmp_path / "ar-home" / "installer" / "backups").exists(), (
         "an ordinary replacement parked a backup"
     )
+
+
+def test_a_tree_edited_at_the_final_withdraw_rename_survives(tmp_path, monkeypatch):
+    """The object must be frozen before its contents authorize deletion."""
+    from autorun.installer import fs
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "SKILL.md").write_text("ours\n", encoding="utf-8")
+    target = tmp_path / "dest" / "demo"
+    fs.publish_tree(source, target, plugin="ar")
+
+    real_replace = fs.os.replace
+    raced = False
+
+    def edit_then_replace(src, dst):
+        nonlocal raced
+        if Path(src) == target and not raced:
+            raced = True
+            (target / "SKILL.md").write_text("THEIRS AT RENAME\n", encoding="utf-8")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(fs.os, "replace", edit_then_replace)
+
+    assert fs.withdrawn(target, plugin="ar") is False
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "THEIRS AT RENAME\n"
+
+
+def test_a_shared_file_edited_at_the_final_remove_survives(tmp_path, monkeypatch):
+    """A per-file retirement must judge the object it actually removes."""
+    from autorun.installer import fs
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "go.md").write_text("ours\n", encoding="utf-8")
+    shared = tmp_path / "commands"
+    fs.publish_files(source, shared, plugin="ar")
+    target = shared / "go.md"
+
+    real_replace = fs.os.replace
+    real_unlink = Path.unlink
+    raced = False
+
+    def edit_before_mutation(path):
+        nonlocal raced
+        if Path(path) == target and not raced:
+            raced = True
+            target.write_text("THEIRS AT REMOVE\n", encoding="utf-8")
+
+    def replace_after_edit(src, dst):
+        edit_before_mutation(src)
+        return real_replace(src, dst)
+
+    def unlink_after_edit(self, *args, **kwargs):
+        edit_before_mutation(self)
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(fs.os, "replace", replace_after_edit)
+    monkeypatch.setattr(Path, "unlink", unlink_after_edit)
+
+    assert fs.withdraw_files(shared, plugin="ar") == ()
+    assert target.read_text(encoding="utf-8") == "THEIRS AT REMOVE\n"
 
 
 def test_a_link_replaced_after_the_final_ownership_check_survives(tmp_path, monkeypatch):
@@ -835,8 +990,6 @@ def test_an_unreadable_parent_does_not_stop_a_publication(tmp_path, monkeypatch)
     cleanup pass must not turn a publication that would have worked into an
     error.
     """
-    from autorun.installer import fs
-
     source = tmp_path / "src" / "demo"
     source.mkdir(parents=True)
     (source / "SKILL.md").write_text("shipped\n", encoding="utf-8")

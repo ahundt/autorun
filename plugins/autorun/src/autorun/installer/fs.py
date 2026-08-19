@@ -698,6 +698,22 @@ def _resume_interrupted(target: Path) -> None:
     for stage in stages:
         if not stage.name.startswith(prefixes) or stage.is_symlink() or not stage.is_dir():
             continue
+        shared = stage / "shared"
+        if shared.is_dir() and not shared.is_symlink():
+            # ``withdraw_files`` freezes each recorded file under this tree
+            # before judging it.  A killed process can leave the marker or a
+            # user edit here, so put each object back unless the user has
+            # already filled its name; a collision is kept beside that name.
+            for frozen in sorted(shared.rglob("*"), reverse=True):
+                if frozen.is_dir() and not frozen.is_symlink():
+                    continue
+                relative = frozen.relative_to(shared)
+                destination = target / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists() or destination.is_symlink():
+                    os.replace(frozen, backup_path(destination))
+                else:
+                    os.replace(frozen, destination)
         previous = stage / "previous"
         if previous.exists() or previous.is_symlink():
             if not (target.exists() or target.is_symlink()):
@@ -722,19 +738,53 @@ def _default_backup_root() -> Path:
 
 
 def _identity(path: Path) -> tuple | None:
-    """What ``path`` is right now, or ``None`` if it is not there.
+    """Content identity for one file, link, or complete directory tree.
 
-    Inode and device survive a rename, so this identifies the same object
-    before and after ``os.replace`` moves it aside — which is what lets a
-    replacement be told from the thing that was replaced. Mode distinguishes a
-    directory from a file from a link at the same inode number on a different
-    device; size and mtime catch a same-inode rewrite in place.
+    A directory's own inode and mtime identify only its entry list.  Rewriting
+    an existing child in place does not change either, so the old shallow tuple
+    let a user's edit disappear during a long publication.  This snapshot
+    includes every descendant and hashes regular-file bytes.  An unreadable or
+    concurrently changing object returns ``None``; callers then preserve it
+    rather than treating an incomplete observation as permission to discard.
+
+    Runtime is ``O(entries + bytes)`` and peak memory is ``O(entries)``.  This
+    runs twice only for a path that is actually being replaced, where a full
+    tree copy and manifest hash are already required.
     """
+    entries: list[tuple] = []
+
+    def visit(current: Path, relative: str) -> None:
+        info = os.lstat(current)
+        common = (
+            relative,
+            info.st_mode,
+            info.st_ino,
+            info.st_dev,
+            info.st_mtime_ns,
+            info.st_size,
+        )
+        if stat.S_ISLNK(info.st_mode):
+            entries.append((*common, "link", os.readlink(current)))
+            return
+        if stat.S_ISREG(info.st_mode):
+            entries.append((*common, "file", _fingerprint(current)))
+            return
+        if stat.S_ISDIR(info.st_mode):
+            entries.append((*common, "directory"))
+            with os.scandir(current) as children:
+                names = sorted(child.name for child in children)
+            for name in names:
+                child = current / name
+                child_relative = f"{relative}/{name}" if relative else name
+                visit(child, child_relative)
+            return
+        entries.append((*common, "other"))
+
     try:
-        info = os.lstat(path)
+        visit(path, "")
     except OSError:
         return None
-    return (info.st_mode, info.st_ino, info.st_dev, info.st_mtime_ns, info.st_size)
+    return tuple(entries)
 
 
 @contextmanager
@@ -760,7 +810,8 @@ def _swapped(target: Path) -> Iterator[Path]:
     target.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
         _resume_interrupted(target)
-        judged = _identity(target)
+        judged_present = target.exists() or target.is_symlink()
+        judged = _identity(target) if judged_present else ()
         with tempfile.TemporaryDirectory(
             prefix=f"{_STAGE_PUBLISH}{target.name}-", dir=target.parent
         ) as tmp:
@@ -768,12 +819,72 @@ def _swapped(target: Path) -> Iterator[Path]:
             yield staged
             if target.exists() or target.is_symlink():
                 os.replace(target, backup)
-                if _identity(backup) != judged:
+                frozen = _identity(backup)
+                if judged is None or frozen is None or frozen != judged:
                     _park_backup(backup, _default_backup_root(), name=target.name)
+            collision_index = 0
+
+            def preserve_collision() -> None:
+                """Freeze and park an object written at the public name."""
+                nonlocal collision_index
+                collision = Path(tmp) / f"collision-{collision_index}"
+                collision_index += 1
+                os.replace(target, collision)
+                _park_backup(
+                    collision, _default_backup_root(), name=target.name
+                )
+
+            def land_staged() -> None:
+                """Publish without replacing a file or link that raced in.
+
+                Hard-linking a regular staged file and creating a staged
+                symlink's public twin both fail atomically when the name is
+                occupied.  Directory rename already refuses a non-empty
+                destination; an empty raced directory contains no bytes to
+                lose, and the explicit precheck avoids replacing the ordinary
+                case.  Every staged object is on this filesystem by design.
+                """
+                if staged.is_symlink():
+                    target.symlink_to(
+                        os.readlink(staged), target_is_directory=staged.is_dir()
+                    )
+                    staged.unlink()
+                elif staged.is_file():
+                    os.link(staged, target, follow_symlinks=False)
+                    staged.unlink()
+                else:
+                    os.replace(staged, target)
+
             try:
-                os.replace(staged, target)
+                # A writer can recreate ``target`` after the first rename and
+                # before this one.  Preserve that new object and retry rather
+                # than either deleting it or losing the frozen previous tree
+                # when rollback also finds the public name occupied.
+                for _attempt in range(3):
+                    try:
+                        if target.exists() or target.is_symlink():
+                            preserve_collision()
+                        land_staged()
+                        break
+                    except OSError:
+                        if not (target.exists() or target.is_symlink()):
+                            raise
+                        preserve_collision()
+                else:
+                    raise OSError(f"{target} was recreated during every swap attempt")
             except BaseException:
                 if backup.exists() or backup.is_symlink():
+                    if target.exists() or target.is_symlink():
+                        try:
+                            preserve_collision()
+                        except BaseException:
+                            # Temporary-directory cleanup must not erase the
+                            # original merely because its public name remains
+                            # contested.
+                            _park_backup(
+                                backup, _default_backup_root(), name=target.name
+                            )
+                            raise
                     os.replace(backup, target)
                 raise
 
@@ -938,44 +1049,83 @@ def withdrawn(
     if not target.is_dir() or target.is_symlink():
         return False
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
-        # Re-check ownership inside the lock: checking, releasing, then removing
-        # leaves a window in which a user-authored directory can take this path.
+        _resume_interrupted(target)
         if not target.is_dir() or target.is_symlink():
             return False
-        manifest = read_marker(target)
-        proven_legacy = False
+
+        # Native receipts can name the installed path, so collect that proof
+        # before the rename.  Its content snapshot binds the proof to the exact
+        # object subsequently quarantined; if anything changes in between, the
+        # proof is not used.
+        proof_snapshot = _identity(target) if ownership_proof is not None else None
+        pre_quarantine_proof = False
         if ownership_proof is not None:
             try:
-                proven_legacy = ownership_proof(target)
+                pre_quarantine_proof = ownership_proof(target)
             except (OSError, RuntimeError, ValueError):
-                proven_legacy = False
-        park = False
-        if manifest is None:
-            if not proven_legacy:
-                return False
-        else:
-            if plugin is not None and not owns(manifest, plugin):
-                return False
-            if any(compare(target, manifest)):
-                if manifest.files or not (
-                    proven_legacy or (force and backup_root is not None)
-                ):
-                    return False
-                park = not proven_legacy
-        if park:
-            assert backup_root is not None
-            _park_backup(target, backup_root)
+                pre_quarantine_proof = False
+
+        removed = False
         with tempfile.TemporaryDirectory(
             prefix=f"{_STAGE_WITHDRAW}{target.name}-", dir=target.parent
         ) as tmp:
-            quarantined = Path(tmp) / target.name
-            os.replace(target, quarantined)
+            # ``previous`` is the recovery name understood by
+            # ``_resume_interrupted``.  Rename first: every ownership and
+            # content decision below is about the object deletion will touch,
+            # while a new object written at ``target`` remains untouched.
+            quarantined = Path(tmp) / "previous"
+            try:
+                os.replace(target, quarantined)
+            except OSError:
+                return False
+
+            frozen_snapshot = _identity(quarantined)
+            proven_legacy = bool(
+                pre_quarantine_proof
+                and proof_snapshot is not None
+                and frozen_snapshot is not None
+                and proof_snapshot == frozen_snapshot
+            )
+            manifest = read_marker(quarantined)
+            park = False
+            allowed = True
+            if manifest is None:
+                allowed = proven_legacy
+            elif plugin is not None and not owns(manifest, plugin):
+                allowed = False
+            elif any(compare(quarantined, manifest)):
+                if manifest.files or not (
+                    proven_legacy or (force and backup_root is not None)
+                ):
+                    allowed = False
+                else:
+                    park = not proven_legacy
+
+            if not allowed:
+                if target.exists() or target.is_symlink():
+                    _park_backup(
+                        quarantined, _default_backup_root(), name=target.name
+                    )
+                else:
+                    os.replace(quarantined, target)
+                return False
+
+            if park:
+                assert backup_root is not None
+                _park_backup(quarantined, backup_root, name=target.name)
             try:
                 shutil.rmtree(quarantined)
             except BaseException:
-                os.replace(quarantined, target)
+                if quarantined.exists() or quarantined.is_symlink():
+                    if target.exists() or target.is_symlink():
+                        _park_backup(
+                            quarantined, _default_backup_root(), name=target.name
+                        )
+                    else:
+                        os.replace(quarantined, target)
                 raise
-    return True
+            removed = not (target.exists() or target.is_symlink())
+    return removed
 
 
 #: Suffix for a file autorun moved aside. Numbered when they stack, so a second
@@ -1416,28 +1566,56 @@ def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, 
     A file whose fingerprint no longer matches is left alone: the user edited
     it, so it is theirs now. Returns the names actually removed.
     """
-    # Two reads, the shape `withdrawn` uses. The first is a cheap negative that
-    # keeps a directory we do not own out of the lock entirely — taking it
-    # creates a lock file in the parent, so locking first turned a read-only
-    # parent holding someone else's `commands/` into a PermissionError that
-    # aborted the whole uninstall instead of skipping one directory. The second
-    # is the authoritative one: checking, releasing, then deleting leaves a
-    # window in which a concurrent install republishes what is about to go.
+    # The first read is only a cheap negative.  The marker and each recorded
+    # file are renamed into one recoverable stage before being judged, so a
+    # user's replacement at the public path can never be unlinked on the
+    # strength of an earlier fingerprint.
     if not _mine(directory, plugin):
         return ()
-    with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
-        manifest = read_marker(directory)
-        if manifest is None or (plugin is not None and not owns(manifest, plugin)):
+    actual = directory.resolve() if directory.is_symlink() else directory
+    with FileLock(str(actual.parent / INSTALL_LOCK_NAME)):
+        _resume_interrupted(actual)
+        marker = actual / OWNED_MARKER_NAME
+        if not marker.is_file() or marker.is_symlink():
             return ()
-        removed = tuple(
-            name
-            for name in sorted(manifest.files)
-            if manifest.state_of(directory, name) is FileState.UNCHANGED
-        )
-        for name in removed:
-            (directory / name).unlink(missing_ok=True)
-        (directory / OWNED_MARKER_NAME).unlink(missing_ok=True)
-    return removed
+        removed: list[str] = []
+        with tempfile.TemporaryDirectory(
+            prefix=f"{_STAGE_WITHDRAW}{actual.name}-", dir=actual.parent
+        ) as tmp:
+            shared = Path(tmp) / "shared"
+            shared.mkdir()
+            frozen_marker = shared / OWNED_MARKER_NAME
+            try:
+                os.replace(marker, frozen_marker)
+            except OSError:
+                return ()
+            manifest = read_marker(shared)
+            if manifest is None or (plugin is not None and not owns(manifest, plugin)):
+                if marker.exists() or marker.is_symlink():
+                    os.replace(frozen_marker, backup_path(marker))
+                else:
+                    os.replace(frozen_marker, marker)
+                return ()
+
+            for name in sorted(manifest.files):
+                path = actual / name
+                frozen = shared / name
+                frozen.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.replace(path, frozen)
+                except OSError:
+                    continue
+                if _fingerprint_if_present(frozen) == manifest.files[name]:
+                    frozen.unlink()
+                    removed.append(name)
+                elif path.exists() or path.is_symlink():
+                    os.replace(frozen, backup_path(path))
+                else:
+                    os.replace(frozen, path)
+            # The frozen marker is deliberately left in the temporary stage:
+            # normal cleanup retires our claim.  If the process is killed,
+            # ``_resume_interrupted`` restores it and every frozen file.
+        return tuple(removed)
 
 
 @contextmanager
