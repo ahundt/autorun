@@ -29,6 +29,79 @@ def test_client_recognizes_all_supported_tool_gate_events():
     assert is_tool_gate_event("UserPromptSubmit") is False
 
 
+def _fail_closed_reason(cli_type: str) -> str:
+    """The text a blocked reader actually sees, whatever the platform shape."""
+    response = build_daemon_failure_response(
+        "PreToolUse",
+        cli_type,
+        "Daemon error: Could not configure state connection for "
+        "daemon_state.sqlite3: unable to open database file",
+    )
+    hook_specific = response.get("hookSpecificOutput") or {}
+    return (
+        hook_specific.get("permissionDecisionReason")
+        or response.get("reason")
+        or response.get("systemMessage")
+        or ""
+    )
+
+
+def test_a_daemon_failure_names_an_exit_the_blocked_reader_can_actually_take():
+    """The reason must name AUTORUN_DISABLE, and must not say "then retry".
+
+    A daemon whose state backend cannot open does not clear by waiting, and
+    every tool call the reader could make to repair it -- including the
+    ``autorun --restart-daemon`` this message used to recommend -- is itself a
+    PreToolUse call this same gate denies. hook_entry.py:459-496 records that
+    deadlock, its cost, and why allowlisting the repair command is refused:
+    ``uv tool install autorun --with <package>`` would pass such a check and run
+    arbitrary build code. AUTORUN_DISABLE=1 is the one exit a human can take, so
+    naming it is the difference between a thirty-second recovery and a lost day.
+
+    Observed live on 2026-08-18: 67 "unable to open database file" entries in
+    daemon.log, no fail_closed_tool_gate trace in hook_entry_debug.log -- the
+    path that ran was this one, and its reason named neither the escape hatch
+    nor a reachable command.
+    """
+    for platform in hook_platforms():
+        reason = _fail_closed_reason(platform.name)
+        assert "AUTORUN_DISABLE" in reason, (
+            f"{platform.name}: the way out must be named in the reason, "
+            f"got {reason!r}"
+        )
+        assert "then retry" not in reason, (
+            f"{platform.name}: a state that never clears must not advise a "
+            f"retry, got {reason!r}"
+        )
+
+
+def test_a_lifecycle_failure_stays_open_and_does_not_carry_gate_guidance():
+    """Only tool gates fail closed; a lifecycle event must not be blocked."""
+    response = build_daemon_failure_response("SessionStart", "claude", "Daemon error: x")
+    assert response.get("continue") is True
+    assert "permissionDecision" not in (response.get("hookSpecificOutput") or {})
+
+
+def test_the_wrapper_and_the_client_agree_on_the_unrecoverable_guidance():
+    """One sentence, spelled in a stdlib-only hook and in the package.
+
+    hook_entry.py must keep its own copy: it runs precisely when the package
+    cannot be imported, so it cannot import this text. That makes drift the
+    real risk, which is what this test exists to catch -- the same shape as
+    test_the_wrapper_and_the_client_agree_on_the_deadline_variable.
+    """
+    import importlib.util
+
+    from autorun.client import UNRECOVERABLE_GUIDANCE
+
+    hook_path = Path(__file__).resolve().parents[1] / "hooks" / "hook_entry.py"
+    spec = importlib.util.spec_from_file_location("_hook_entry_guidance", hook_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module._INTERVENTION_GUIDANCE == UNRECOVERABLE_GUIDANCE
+
+
 def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     """Direct `autorun --cli codex` must not let ambient Gemini env win later."""
     monkeypatch.setenv("AUTORUN_CLI_TYPE", "codex")

@@ -1,0 +1,401 @@
+# Resource exhaustion and recovery paths — working notes
+
+Started 2026-08-19. Scope: make every path that fires in exceptional
+circumstances behave per the philosophy — especially out-of-disk,
+out-of-memory, and state-backend failure — and give duplicated owners one home.
+
+Status legend: `OPEN` · `IN PROGRESS` · `FIXED` · `WONTFIX (reason)`
+
+## How this started
+
+A live session on 2026-08-18 had every tool blocked. `~/.autorun/daemon.log`
+holds 67 occurrences of
+
+```
+SessionBackendError: Could not configure state connection for
+~/.claude/sessions/daemon_state.sqlite3: unable to open database file
+```
+
+between `01:40:51` and `01:50:42`. Disk was not full (123 GB free), the
+directory was intact (`700`, owned by the running user), the DB was intact
+(107 MB), and
+`ulimit -n` was 1048576. The incident cleared on its own after ~10 minutes.
+
+The interesting part is not the SQLite error. It is that the session could not
+recover from it, and that the message telling it how to recover named a command
+the same gate was blocking.
+
+## Verified failure chain
+
+1. `session_manager.py:1586` raises `SessionBackendError`.
+2. `core.py:3164` — a bare `except Exception` in the daemon request handler —
+   catches it and calls `build_daemon_failure_response(event, cli_type,
+   f"Daemon error: {e}")`.
+3. `client.py:244` `is_tool_gate_event("PreToolUse")` is True, so it fails
+   closed. Correct.
+4. `client.py:252-253` builds its own reason ending
+   ``Run `autorun --restart-daemon`, then retry.``
+
+No `fail_closed_tool_gate` string appears anywhere in
+`~/.autorun/hook_entry_debug.log`, which confirms the `hook_entry.py` path did
+not run. The path that ran was `client.py`.
+
+## Findings
+
+### F-1 · P0 · Fail-closed guidance has two owners and only one learned the lesson
+
+`hook_entry.py:459-496` documents this exact deadlock, names its cost, and
+deliberately rejects allowlisting the repair commands because
+`uv tool install autorun --with <package>` would pass such a check and execute
+arbitrary build code. It settles on `AUTORUN_DISABLE=1` as the human's escape
+hatch and encodes two named constants, `_RETRY_GUIDANCE` and
+`_INTERVENTION_GUIDANCE`.
+
+`client.py:253` is a second implementation that never received any of it:
+
+- ends in `then retry`, which `hook_entry.py:473-477` records as the advice that
+  "turned every attached session into a loop against a hook that could not
+  succeed";
+- never names `AUTORUN_DISABLE`, so the only working exit is invisible;
+- names a Bash command, which is itself a `PreToolUse` tool call and therefore
+  blocked by the gate emitting the message.
+
+`test_hook_bootstrap_deadlock.py:103` asserts
+`assert "AUTORUN_DISABLE" in reason, "the way out must be named in the reason"`
+— against `hook_entry` only. `test_client_fail_closed.py` covers event
+recognition, deadlines, budgets and PID liveness, and makes **no assertion about
+the reason text**. The property was tested on the module that did not fire.
+
+Status: OPEN → task #215
+
+### F-2 · P0 · Recovery messages name paths that do not exist
+
+`core.py:3157` tells the user to run
+`uv run python plugins/autorun/scripts/restart_daemon.py`.
+`plugins/autorun/scripts/` does not exist — the module is
+`src/autorun/restart_daemon.py`, and the supported command is
+`autorun --restart-daemon`. A PyPI install has no checkout at all, so a
+repo-relative path can never be right in a runtime message.
+
+Status: OPEN → task #216
+
+### F-3 · P0 · A full disk makes the logging system write to stderr, disabling every hook
+
+`logging_utils.py:5` opens with "CRITICAL: Never writes to stdout/stderr to
+avoid breaking Claude Code hooks." But nothing sets `logging.raiseExceptions =
+False` anywhere in the package (verified: no match in `src/` or `hooks/`;
+Python's default is `True`).
+
+On `ENOSPC` during emit, `RotatingFileHandler.emit` calls
+`Handler.handleError`, which prints a traceback to `sys.stderr` when
+`raiseExceptions` is true. Claude Code treats any hook stderr as a hook error
+and discards that hook's response — silently disabling every protection while
+the session still looks healthy.
+
+So the out-of-disk scenario does not merely degrade logging; it turns the
+safety system off.
+
+Status: OPEN → task #219
+
+### F-4 · P1 · `get_logger` constructs its handler with no error handling
+
+`configure_file_logging` wraps handler construction in `try/except OSError` and
+falls back to `NullHandler` (lines 81-89), with a docstring explaining why.
+`get_logger` line 123 constructs the same `RotatingFileHandler` with no guard.
+`get_logger(__name__)` is called at module scope across the package, so a full
+or unwritable disk raises during import — inside a hook, that is the
+"autorun cannot be imported" state that `hook_entry.py` treats as unrecoverable.
+
+Status: OPEN → task #219
+
+### F-5 · P1 · Rotation limits are duplicated magic values outside CONFIG
+
+`5 * 1024 * 1024` and `3` appear as signature defaults in
+`configure_file_logging` and again as literals in `get_logger` line 123.
+Neither is a CONFIG key, so the two copies can drift and neither is tunable
+alongside the existing `state_journal_size_limit_bytes` /
+`volatile_state_max_bytes` block.
+
+Status: OPEN → task #220
+
+### F-6 · P1 · State-directory resolution is duplicated across four modules
+
+| Site | Expression |
+|------|-----------|
+| `session_manager.py:447` | `state_dir or env AUTORUN_TEST_STATE_DIR or ~/.claude/sessions` |
+| `ai_monitor.py:30` | `env AUTORUN_TEST_STATE_DIR or ~/.claude/sessions` |
+| `main.py:109` | character-identical to `ai_monitor.py:30` |
+| `plan_export.py:278` | reads `AUTORUN_TEST_STATE_DIR` |
+
+`ai_monitor.py:30-32` and `main.py:109-111` are the same three lines twice,
+including the `AUTORUN_CREATE_LEGACY_STATE_DIR_ON_IMPORT` block.
+
+Two consequences. The production default is decided in four places, so
+answering "should the state DB live under `~/.autorun`?" is currently a
+four-site change instead of one. And the only override is an environment
+variable named `AUTORUN_TEST_STATE_DIR` — a test name carrying production duty.
+
+Compare `ipc.py:35-44`, which does own its directory:
+`AUTORUN_HOME` env → `~/.autorun` default.
+
+Status: OPEN → tasks #222, #223
+
+### F-7 · P1 · Config precedence is at most env → default
+
+`ipc._get_autorun_config_dir` resolves env → default. The bug-workaround policy
+documents env → CONFIG → default. Neither provides a CLI-parameter layer or a
+user config file, so the required
+`CLI param > env var > config file > default` chain does not exist as a single
+owner anywhere; each setting reimplements whatever subset it needs.
+
+Status: OPEN → task #223
+
+### F-8 · P2 · Guard remediation names tools that are absent from the session
+
+The `grep` guard says "Use the Grep tool instead"; the `find` guard says "Use
+the Glob tool instead". Neither tool exists in this session's tool set, so both
+messages send the reader to something unavailable. Same defect class as F-1 and
+F-2: remediation naming an unreachable remedy. Two independent instances
+observed in one session, so this is not a one-off.
+
+Status: OPEN → task #216
+
+### F-9 · P2 · Autorun's own artifacts grow without bound
+
+Observed on this machine:
+
+| Path | Size |
+|------|------|
+| `~/.autorun/hook_entry_debug.log.20260701-incident.bak` | 741.4 MB |
+| `~/.claude/sessions/autorun.log` | 30.4 MB |
+| `~/.autorun/daemon.log` + 3 rotations | ~19 MB |
+| `~/.claude/sessions/` entries | 12,691 |
+
+`daemon.log` is bounded by the 5 MB × 3 rotation. `autorun.log` at 30 MB is
+over that ceiling, so it is not going through the same handler. The 741 MB
+incident backup has no retention at all.
+
+Also present: `daemon_state.sqlite3.stage.<uuid>-shm` and `-wal` whose parent
+`.stage.<uuid>` file is gone. `_discard_stage_sidecars` documents that failure
+paths deliberately keep the stage as evidence, but nothing ever sweeps them, and
+here the main stage file is already missing — so the retained evidence is
+incomplete anyway.
+
+Growth control is what keeps the full-disk scenario rare rather than routine.
+
+Status: OPEN → task #220
+
+## Design decision: do not move the state DB default in this change
+
+The user asked whether the state DB and config dirs should live under
+`~/.autorun`. Consistency argues yes: `~/.autorun` already owns the socket,
+lock, logs and installer backups, while session state sits in
+`~/.claude/sessions/`, a directory Claude Code creates, writes session
+heartbeats into, and unlinks from.
+
+But relocating the *default* is a breaking change to running instances. The
+live daemon holds a 107 MB SQLite file open, shared by every attached session,
+and the root `AGENTS.md` records that one careless live change cost roughly 12%
+of a week's token budget. Changing where state lives while sessions are
+attached is exactly that class of change.
+
+Plan, in order:
+
+1. Give state-directory resolution **one owner** with the full precedence
+   chain, default unchanged. Nothing running is affected. (#222)
+2. Offer relocation as an explicit, daemon-quiesced migration reusing the
+   existing `StateMigrator` receipt machinery
+   (`_build_stage` → `_verify_stage` → `_publish` → `_retire_source`), never an
+   implicit move. (#222)
+
+Principle 12, Preserve User Intent, and the user's own instruction to take
+extreme care not to break running instances both point the same way here.
+
+## Verification baseline before any change
+
+| Gate | Result |
+|------|--------|
+| `pytest -m "not real_money"` | 6299 passed, 16 skipped, 26 deselected, 665.53s, exit 0 |
+| `ruff check --select E9,F63,F7,F82 .` | All checks passed |
+| CI on `ea85a0ba` | success |
+| Working tree | clean, nothing unpushed |
+
+All development runs sandboxed per the root `AGENTS.md`. The live installation
+is not touched without written instruction in the conversation.
+
+### Isolation practice used here
+
+Sandbox at `/tmp/arsb-s1` (short path: the socket would be 32 characters, well
+under the limit that makes a sandboxed hook report `autorun CLI timed out`).
+Every command runs under:
+
+```bash
+SB=/tmp/arsb-s1; env HOME="$SB/home" USERPROFILE="$SB/home" \
+  AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" \
+  UV_CACHE_DIR="$(uv cache dir)" <command>
+```
+
+`pytest` additionally isolates itself — `conftest.py:75-76` sets
+`AUTORUN_TEST_STATE_DIR` and `AUTORUN_HOME` per worker — so suite runs are
+covered twice over.
+
+Live daemon before this work: PID 99917, socket `~/.autorun/daemon.sock`,
+state DB 107.5 MB. Nothing in this batch restarts it, installs, or writes to
+the live trees.
+
+One lapse, recorded rather than hidden: an early unsandboxed
+`python -c "... setup_autorun_logging()"` smoke check created an empty
+`~/.claude/sessions/autorun_ai_monitor.log`. Zero bytes, a file autorun creates
+in normal operation, no daemon or install touched — but it should have gone
+through the sandbox, and everything after it did.
+
+## Progress
+
+### F-1 · FIXED · one owner for fail-closed recovery guidance
+
+`client.UNRECOVERABLE_GUIDANCE` now carries the sentence, and the reason reads
+"Repair with `autorun --restart-daemon` in a terminal" followed by it — naming
+`AUTORUN_DISABLE=1` and no longer advising a retry.
+`hooks/hook_entry.py:_INTERVENTION_GUIDANCE` keeps its own copy because it runs
+when the package cannot be imported; the two are pinned equal by
+`test_the_wrapper_and_the_client_agree_on_the_unrecoverable_guidance`,
+following the existing `DEADLINE_ENV_VAR` precedent. The shared sentence was
+generalized from "the same install fails the same way" to "the same failure
+repeats", since the client reaches it for a daemon state failure rather than a
+broken install.
+
+Also pinned: a lifecycle event still fails open and carries no gate guidance.
+
+Wording note — the phrase "repair command" was avoided because
+`test_client_fail_closed.py:398` asserts `"command" not in rendered.lower()` as
+a privacy guard. That predicate is weaker than the property it stands for (the
+message is echoed by design, so a real command would leak while it passed), but
+strengthening it is its own change: task #228, not a side effect of this one.
+
+### F-2 · FIXED · dead paths in runtime messages, plus a spec check
+
+`core.py` now names `autorun --restart-daemon` instead of
+`plugins/autorun/scripts/restart_daemon.py`, which never existed.
+
+The generalized check is
+`test_recovery_messages_are_reachable.py::test_every_repo_relative_path_named_in_source_exists`:
+it AST-walks every string constant in `src/` and `hooks/` and fails if a
+repo-relative path does not resolve. It found **seven** sites, not the one
+known instance — of which three were URL false positives (`docs/en/hooks`
+inside an anthropic docs link, now stripped before matching, because a check
+that cries wolf gets switched off) and two were real:
+`plan_export.py:272,579` cited `docs/RUNTIME_STATE_ISOLATION.md`, which only
+resolves from the plugin directory, now corrected to the repo-root path.
+
+### F-3, F-4, F-5 · FIXED · logging survives a full disk
+
+`_ExhaustionTolerantRotatingFileHandler` overrides `handleError` to return
+without writing, so `ENOSPC` during emit or rollover no longer prints a
+traceback to stderr. Narrower than setting `logging.raiseExceptions = False`,
+which is process-global.
+
+`build_rotating_handler` is now the single construction site: it returns a
+`NullHandler` when the path is unavailable rather than raising, which matters
+because `get_logger(__name__)` runs at module scope across the package — a
+raise there is a failed `import autorun...` inside a hook.
+
+Ceilings moved to CONFIG as `log_file_max_bytes` / `log_file_backup_count`;
+`configure_file_logging`'s unused `max_bytes`/`backup_count` parameters were
+deleted (its one caller, `daemon.py:27`, passed neither).
+
+The spec check
+`test_no_source_file_builds_a_rotating_handler_outside_the_one_builder`
+found a **third** raw handler that reading had missed: `ai_monitor.py:48`,
+whose own neighbouring comment reads "CRITICAL: No stderr handler - breaks
+Claude Code hooks" while installing one that would. Now routed through the
+shared builder.
+
+`hooks/hook_entry.py:_append_debug_log` was checked and is already safe: it has
+its own size cap and a bare `except Exception: pass`.
+
+Portability: the fix needs no platform branch and is worth more on Windows than
+on POSIX. Windows refuses to rename a file another process holds open
+(WinError 32), and several autorun processes share `daemon.log`, so rollover
+fails there routinely rather than only on a full disk — and every one of those
+failures previously printed to stderr.
+
+### D-1, D-2 · FIXED · one resolver for the bug-workaround flag grammar
+
+`config.workaround_applies(flag, *, affected, legacy_flags=())` is now the only
+implementation. `affected` is passed in by the caller from a `Platform` field
+so `config.py` needs no import of `platforms`; `legacy_flags` preserves
+`AUTORUN_EXIT2_WORKAROUND` outranking the newer #4669 key, so an explicit
+`--exit2-mode never` still wins.
+
+Both drifts are closed:
+
+* `task_lifecycle.py` asked `detect_cli_type(...) == "claude"`. Applicability
+  now comes from a new registry field, `Platform.gates_mutable_task_tools`,
+  declared beside `has_exit2_workaround` and `drops_additional_context` and
+  true only for Claude. A future harness in an affected family now inherits
+  the workaround by adding a registry row, which is how every other capability
+  already works.
+* `core.py` called `.lower()` without `.strip()`, so ` always ` silently did
+  nothing for #18534 while working for the other two flags.
+
+`test_workaround_flag_grammar.py` runs the whole value matrix against all four
+flags (67 cases), and its spec check asserts the disable-set literal appears in
+exactly one file, so a fifth copy fails the build.
+
+Adding the registry field was caught mid-change by an *existing* spec check,
+`test_capability_snapshot_covers_every_platform_field`, which requires every
+`Platform` field to be serialized in `capability_snapshot._jsonable_platform`.
+Worth recording as evidence that this style of check earns its keep: it turned
+a silently incomplete change into a failing test.
+
+This is also the prerequisite for version-ranged workarounds (#224): ranges get
+added to one resolver rather than to four copies.
+
+### #224 · DONE (grammar) · version ranges in the same flag values
+
+`workaround_applies(..., version=...)` accepts open and closed ranges as flag
+values: `>=2.1.233`, `>=2.1.233,<2.2`, `<2.2`, `==2.1.234`, `!=2.1.5`, comma
+separated. Semantics, each pinned by a test:
+
+| Case | Result |
+|------|--------|
+| range satisfied, platform affected | workaround applies |
+| range not satisfied | does not apply |
+| platform **not** affected | never applies — a range narrows, never widens |
+| version unknown or unparseable | today's behavior (`affected`) |
+| malformed spec (`>=abc`, `=>2.1`) | falls through to the next tier, like a typo |
+
+The last two are the load-bearing ones. Dropping a workaround because a harness
+did not report its version would be a regression wearing precision as a
+disguise, and a typo in a spec must not silently switch a safety workaround off
+— the same rule the word grammar already followed.
+
+**No new dependency.** `packaging` is importable in a development environment
+but is *not* in `[project] dependencies`, and the hook venv installs only those
+— so importing it would pass every test and fail in the hook, the worst
+possible split. Harness versions are dotted integers, which a zero-padded tuple
+comparison orders correctly; a build suffix (`2.1.240-beta.1`) compares on its
+leading numeric components rather than failing.
+
+### #225 · IN PROGRESS · what version each harness actually reports
+
+Measured on this machine rather than assumed:
+
+* There is **no `CLAUDE_CODE_VERSION`** in the environment.
+* The only version-bearing variable present is
+  `CLAUDE_AGENT_SDK_VERSION=0.3.234`.
+* `docs/claude-code-hooks-api.md` documents no version field in the hook
+  payload, and no captured payload in `~/.autorun/hook_entry_debug.log` carries
+  one.
+
+[Inference] `CLAUDE_AGENT_SDK_VERSION=0.3.234` shares its trailing component
+with Claude Code 2.1.234, so the SDK patch number may track the CLI build. That
+is a pattern in two observations, not a documented contract, and a permission
+workaround must not be gated on a guessed correspondence.
+
+Consequence for the design: the version source is per-harness data on the
+`Platform` registry plus an explicit `AUTORUN_HARNESS_VERSION` override at the
+top of the precedence chain, and "unknown" stays a first-class value that
+resolves to today's behavior. That way a session whose harness reports nothing
+usable behaves exactly as it does now, and the ranges only ever *narrow* a
+workaround where the version is actually known.

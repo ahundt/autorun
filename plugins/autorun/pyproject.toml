@@ -34,6 +34,12 @@ dependencies = [
     # each understood a different subset; command_docs.split_frontmatter is the
     # single reader now, and it imports this lazily so no hook pays for it.
     "pyyaml>=6.0",
+    # Version ranges in bug-workaround flags (">=2.1.233,<2.2") are compared
+    # with packaging's SpecifierSet/Version rather than a hand-rolled dotted
+    # compare, which gets pre-releases and epochs wrong. config.py imports it
+    # lazily, only when a flag actually holds a range, so the ordinary
+    # always/never/auto path pays no import on the hook's dispatch budget.
+    "packaging>=23.0",
 ]
 # Runtime policy: Python is the only runtime autorun installs. JavaScript runs
 # only inside OpenCode and Pi, whose own in-process extension loaders provide

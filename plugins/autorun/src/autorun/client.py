@@ -230,6 +230,38 @@ def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
         return event
 
 
+#: Guidance for a gate failure that waiting cannot clear.
+#:
+#: Shared verbatim with ``hooks/hook_entry.py:_INTERVENTION_GUIDANCE``. That
+#: module runs precisely when this package cannot be imported, so it must keep
+#: its own copy rather than import this one; drift between them is caught by
+#: test_client_fail_closed.py::test_the_wrapper_and_the_client_agree_on_the_
+#: unrecoverable_guidance, the same shape as the DEADLINE_ENV_VAR agreement.
+#:
+#: Two properties are load-bearing and are asserted, not merely intended.
+#:
+#: It must not say "then retry". A daemon whose state backend cannot open does
+#: not clear by waiting, and hook_entry.py:471-477 records what that advice
+#: cost: every attached session looping against a hook that could not succeed.
+#:
+#: It must name AUTORUN_DISABLE. Every tool call that could repair the daemon --
+#: including the ``autorun --restart-daemon`` named below -- is itself a
+#: PreToolUse call this gate denies, so without this the reader has no exit at
+#: all. Allowlisting the repair command instead was tried and refused, because
+#: ``uv tool install autorun --with <package>`` passes such a check and runs
+#: arbitrary build code; see hook_entry.py:479-484. Standing a broken safety
+#: gate down is a human's decision, and this env var is how a human makes it.
+#:
+#: Kept ASCII on purpose: the exit-2 deny path prints this to stderr as raw
+#: text, whose encoding belongs to whatever launched the harness.
+UNRECOVERABLE_GUIDANCE = (
+    "Retrying will not help: the same failure repeats. Repair it in a terminal "
+    "(run the repair step named in the error, or `autorun --status` for "
+    "diagnosis) and the next hook recovers on its own. Set AUTORUN_DISABLE=1 "
+    "to stand autorun down."
+)
+
+
 def build_daemon_failure_response(
     event: str,
     cli_type: str,
@@ -250,7 +282,9 @@ def build_daemon_failure_response(
         }
 
     reason = (
-        f"[autorun] {tagged_message}. Blocking tool use because autorun could not evaluate this permission gate. Run `autorun --restart-daemon`, then retry."
+        f"[autorun] {tagged_message}. Blocking tool use because autorun could "
+        f"not evaluate this permission gate. Repair with "
+        f"`autorun --restart-daemon` in a terminal. {UNRECOVERABLE_GUIDANCE}"
     )
     try:
         from .platforms import platform_for

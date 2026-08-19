@@ -44,7 +44,6 @@ import copy
 import hashlib
 import json
 import math
-import os
 import time
 import re
 import uuid
@@ -181,18 +180,22 @@ BUG_80401_FLAG = (
 
 
 def _workaround_flag_applies(flag: str, cli_type: str | None) -> bool:
-    """Resolve one bug flag as off, affected-platform auto, or always."""
-    affected = detect_cli_type({"cli_type": cli_type}) == "claude"
-    mode = os.environ.get(flag, "").strip().lower()
-    if mode == "always":
-        return True
-    if mode in {"false", "0", "never"}:
-        return False
-    if mode in {"true", "1", "auto"}:
-        return affected
-    if not CONFIG.get(flag, True):
-        return False
-    return affected
+    """Resolve one bug flag as off, affected-platform auto, or always.
+
+    REQUIREMENT: applicability comes from the Platform registry, not a harness
+    name. This previously read ``detect_cli_type(...) == "claude"``, which
+    config.py's own comment forbids ("Applicability is
+    Platform.has_exit2_workaround, never a hardcoded name") and which core.py
+    had already replaced for #18534 — so a new harness in an affected family
+    would have silently missed the workaround here alone.
+    """
+    from .config import workaround_applies
+    from .platforms import get_platform
+
+    platform = get_platform(detect_cli_type({"cli_type": cli_type}))
+    return workaround_applies(
+        flag, affected=bool(platform and platform.gates_mutable_task_tools)
+    )
 
 
 def task_tool_recovery_sentence(cli_type: str | None) -> str:

@@ -367,8 +367,7 @@ def _bug_18534_human_channels(cli_type: str) -> set:
       "false" / "0" / "never": workaround OFF for all CLIs (bug fixed)
     CONFIG dict value: True/False (used when env var is unset).
     """
-    import os
-    from .config import CONFIG
+    from .config import workaround_applies
     from .platforms import get_platform
 
     _KEY = "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"
@@ -380,15 +379,10 @@ def _bug_18534_human_channels(cli_type: str) -> set:
     platform = get_platform(cli_type)
     affected = bool(platform and platform.drops_additional_context)
 
-    env_val = os.environ.get(_KEY, "").lower()
-    if env_val == "always":
-        return base | {"ai"}
-    if env_val in {"false", "0", "never"}:
-        return base
-    if env_val in {"true", "1", "auto"}:
-        return base | {"ai"} if affected else base
-    # No env var set — fall back to CONFIG dict
-    if affected and CONFIG.get(_KEY, True):
+    # REQUIREMENT: resolve through the shared grammar, never a local copy. This
+    # site used to lowercase without stripping, so ` always ` worked for the
+    # other two flags and silently did nothing here.
+    if workaround_applies(_KEY, affected=affected):
         return base | {"ai"}
     return base
 
@@ -3153,8 +3147,14 @@ class AutorunDaemon:
             message = (
                 f"Daemon buffer overflow: Session transcript exceeded {current_mb}MB.\n\n"
                 f"SOLUTION: Increase buffer size with environment variable:\n"
+                # REQUIREMENT: name the installed entry point, never a
+                # repo-relative script. `plugins/autorun/scripts/` has never
+                # existed (the module is src/autorun/restart_daemon.py), and a
+                # user who installed from PyPI has no checkout to run it from
+                # either. Enforced by
+                # test_recovery_messages_are_reachable.py.
                 f"  export AUTORUN_BUFFER_LIMIT={READ_BUFFER_LIMIT * 2}  # {current_mb * 2}MB\n"
-                f"  # Then restart daemon: uv run python plugins/autorun/scripts/restart_daemon.py\n\n"
+                f"  # Then restart the daemon in a terminal: autorun --restart-daemon\n\n"
                 f"Current limit: {current_mb}MB (READ_BUFFER_LIMIT={READ_BUFFER_LIMIT:,} bytes)\n"
                 f"Details: {e}"
             )

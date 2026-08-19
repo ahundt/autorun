@@ -25,6 +25,7 @@ from contextlib import contextmanager
 
 # Import centralized tmux utilities for DRY compliance
 from .tmux_utils import get_tmux_utilities
+from .logging_utils import build_rotating_handler
 from .session_manager import session_state
 
 STATE_DIR = Path(os.environ.get("AUTORUN_TEST_STATE_DIR") or Path.home() / ".claude" / "sessions")
@@ -32,21 +33,27 @@ if os.environ.get("AUTORUN_CREATE_LEGACY_STATE_DIR_ON_IMPORT") == "1":
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 def setup_autorun_logging():
-    """Setup autorun logging with cross-user compatible location"""
-    # Use cross-user compatible log directory - works regardless of installation location
-    log_dir = STATE_DIR
-    log_dir.mkdir(parents=True, exist_ok=True)
+    """Setup autorun logging with cross-user compatible location.
 
-    # Setup logging to file with autorun prefix
+    REQUIREMENT: the handler must come from
+    ``logging_utils.build_rotating_handler``, never a stdlib
+    ``RotatingFileHandler``. The note below has always said "no stderr
+    handler", but a raw handler breaks that promise in the one case that
+    matters: on a full disk ``logging.Handler.handleError`` writes a traceback
+    to stderr, and any stderr from a hook makes Claude Code discard the hook
+    response and silently disable every protection. The shared builder also
+    absorbs an unwritable directory rather than raising, and owns the rotation
+    ceiling so this file cannot drift from the other two call sites.
+    """
     # CRITICAL: No stderr handler - breaks Claude Code hooks (any stderr = "hook error")
-    log_file = log_dir / "autorun_ai_monitor.log"
-    from logging.handlers import RotatingFileHandler
     logging.basicConfig(
         level=logging.INFO,
-        format='[%(asctime)s] %(process)d: %(message)s',
         handlers=[
-            RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
-        ]
+            build_rotating_handler(
+                '[%(asctime)s] %(process)d: %(message)s',
+                STATE_DIR / "autorun_ai_monitor.log",
+            )
+        ],
     )
 
 # Monitor state using filelock+JSON persistence (via session_manager)

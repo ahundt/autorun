@@ -946,6 +946,11 @@ class Platform:
     # === Bug workaround applicability ===
     has_exit2_workaround: bool = False  # Claude #4669
     drops_additional_context: bool = False  # Claude #18534
+    # Claude #80305/#80401: TaskCreate/Get/Update/List can be gated off at
+    # process start, or unregistered mid-session. Declared here rather than
+    # compared as a name so a new harness in an affected family inherits the
+    # workaround by adding a registry row, the way every other capability does.
+    gates_mutable_task_tools: bool = False
 
     # === Hook response capability metadata ===
     supports_additional_context_events: frozenset[str] = field(default_factory=frozenset)
@@ -1193,6 +1198,7 @@ CLAUDE = register(
         hook_protocol=CLAUDE_HOOKS,
         has_exit2_workaround=True,
         drops_additional_context=True,
+        gates_mutable_task_tools=True,
         config_dir="~/.claude/",
         config_dir_env_vars=("CLAUDE_CONFIG_DIR",),
         template_dir=None,  # hooks live at plugin root

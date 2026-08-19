@@ -815,6 +815,20 @@ CONFIG = {
     # one corrupt file cannot print megabytes. Raise it to see more names at
     # once. Bounds a message, never the data.
     "state_migration_max_reported_bad_keys": 20,
+    # ─── Logging: bound autorun's own log files ───
+    # One ceiling for both logging entry points, so `configure_file_logging`
+    # and `get_logger` cannot drift; they previously carried separate copies of
+    # the same two literals. Rotation bounds the log at
+    # max_bytes * (backup_count + 1) — nothing else prunes it.
+    #
+    # Bounding matters beyond tidiness: an unbounded log is how a full disk
+    # stops being rare. On a full disk `logging.Handler.handleError` prints to
+    # stderr, and any stderr from a hook makes Claude Code discard that hook's
+    # response, silently disabling every protection. `logging_utils` refuses
+    # that write; this keeps the situation from arising in the first place.
+    # Provisional: chosen to keep the log reclaimed, not by comparison.
+    "log_file_max_bytes": 5 * 1024 * 1024,
+    "log_file_backup_count": 3,
     # How many suffixed names an export tries before giving up. Reaching this
     # means something is wrong, not that the directory is busy.
     "plan_export_max_destination_attempts": 1000,
@@ -1271,6 +1285,126 @@ def detect_cli_type(payload: dict = None) -> str:
     return "claude"
 
 
+# ─── Bug workaround flag grammar (one owner for every workaround) ─────────────
+# REQUIREMENT: every AUTORUN_BUG_*_WORKAROUND_ENABLED flag resolves through
+# workaround_applies() below, and passes applicability from a Platform field
+# rather than comparing a harness name. Four hand-written copies of this
+# grammar existed and two had drifted: one decided applicability with
+# `detect_cli_type(...) == "claude"` (so a new harness in an affected family
+# would silently miss the workaround), and one lowercased without stripping (so
+# ` always ` worked for two flags and not the third). Enforced by
+# tests/test_workaround_flag_grammar.py.
+_WORKAROUND_ALWAYS = "always"
+_WORKAROUND_DISABLED = frozenset({"false", "0", "never"})
+_WORKAROUND_AUTO = frozenset({"true", "1", "auto"})
+
+# Version-range support. A workaround is often true of a range of harness
+# builds rather than of a harness ("Claude Code 2.1.233+ gates the Task tools
+# off"), and different builds run concurrently on one machine, so this resolves
+# per invocation rather than per install.
+#
+# Comparison is `packaging`'s, not ours: dotted-integer compares get
+# pre-releases, epochs and local versions wrong, and this decides whether a
+# safety workaround engages.
+#
+# REQUIREMENT: keep both imports lazy and inside the range branch. This
+# function runs on the PreToolUse path under the daemon's dispatch budget, and
+# nearly every invocation uses the word grammar (`always`/`never`/`auto`),
+# which must not pay an import for a feature it never touches.
+_RANGE_LEADS = ("<", ">", "=", "!")
+
+
+def _parse_version_range(spec: str):
+    """The specifier for ``spec``, or None when it cannot be used.
+
+    ``prereleases=True`` is deliberate: a beta harness build still carries the
+    upstream bug, and ``SpecifierSet`` excludes pre-releases by default, which
+    would silently drop the workaround exactly for the builds most likely to
+    have it.
+
+    None also covers `packaging` being absent from an older installed venv
+    predating this dependency. Both routes land the caller on the pre-range
+    behavior rather than failing a permission decision.
+    """
+    try:
+        from packaging.specifiers import InvalidSpecifier, SpecifierSet
+    except ImportError:
+        return None
+    try:
+        return SpecifierSet(spec, prereleases=True)
+    except InvalidSpecifier:
+        return None
+
+
+def _version_satisfies(specifier, version):
+    """True/False, or None when the version is missing or unparseable."""
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        return Version(str(version)) in specifier
+    except (InvalidVersion, TypeError, ValueError):
+        return None
+
+
+def workaround_applies(
+    flag: str, *, affected: bool, legacy_flags: tuple = (), version=None
+) -> bool:
+    """Report whether one bug workaround is active for this invocation.
+
+    Args:
+        flag: the key that is both env var and CONFIG entry.
+        affected: whether the detected platform has the upstream bug, read
+            from a ``Platform`` field by the caller. Passed in rather than
+            computed here so this module needs no import of ``platforms``.
+        legacy_flags: older spellings checked first, highest precedence. Only
+            #4669 has one (``AUTORUN_EXIT2_WORKAROUND``, written by
+            ``--exit2-mode``), so an explicit ``--exit2-mode never`` still wins
+            over the newer key.
+
+    Resolution order: legacy env vars, then the flag's env var, then the CONFIG
+    entry, then ``affected``.
+
+    Values at any tier: ``always`` (every platform), ``false``/``0``/``never``
+    (off), ``true``/``1``/``auto`` (affected platforms only).
+
+    An unrecognized spelling deliberately falls through to the next tier rather
+    than disabling: a typo in an env var must not silently switch a safety
+    workaround off.
+    """
+    import os
+
+    for key in (*legacy_flags, flag):
+        mode = os.environ.get(key, "").strip().lower()
+        if not mode:
+            continue
+        if mode == _WORKAROUND_ALWAYS:
+            return True
+        if mode in _WORKAROUND_DISABLED:
+            return False
+        if mode in _WORKAROUND_AUTO:
+            return bool(affected)
+        if mode.startswith(_RANGE_LEADS):
+            specifier = _parse_version_range(mode)
+            if specifier is None:
+                continue  # malformed spec: treat like a typo, try the next tier
+            if not affected:
+                # A range narrows an affected platform; it never widens the
+                # workaround to a harness that does not have the bug.
+                return False
+            verdict = _version_satisfies(specifier, version)
+            if verdict is None:
+                # Version unknown or unparseable. Keep the behavior this flag
+                # had before ranges existed rather than guessing: silently
+                # dropping a workaround a harness needs is a regression
+                # wearing precision as a disguise.
+                return True
+            return verdict
+
+    if not CONFIG.get(flag, True):
+        return False
+    return bool(affected)
+
+
 # --- BUG #4669 WORKAROUND START --- DELETE WHEN FIXED ---
 # Claude Code ignores permissionDecision:"deny" at exit 0 — the tool runs
 # anyway despite the JSON deny decision, so stderr + exit 2 is the only way
@@ -1309,28 +1443,12 @@ def should_use_exit2_workaround(payload: dict = None) -> bool:
         True  → Pathway A (JSON + stderr + exit 2)
         False → Pathway B (JSON + exit 0)
     """
-    import os
-
-    def _platform_is_affected() -> bool:
-        platform = _PLATFORMS.get(detect_cli_type(payload))
-        return bool(platform and platform.has_exit2_workaround)
-
-    for key in (BUG_4669_LEGACY_FLAG, BUG_4669_FLAG):
-        mode = os.environ.get(key, "").strip().lower()
-        if not mode:
-            continue
-        if mode == "always":
-            return True
-        if mode in {"false", "0", "never"}:
-            return False
-        if mode in {"true", "1", "auto"}:
-            return _platform_is_affected()
-        # An unrecognized spelling falls through to the next tier rather than
-        # aborting: a typo in an env var must not silently disable blocking.
-
-    if not CONFIG.get(BUG_4669_FLAG, True):
-        return False
-    return _platform_is_affected()
+    platform = _PLATFORMS.get(detect_cli_type(payload))
+    return workaround_applies(
+        BUG_4669_FLAG,
+        affected=bool(platform and platform.has_exit2_workaround),
+        legacy_flags=(BUG_4669_LEGACY_FLAG,),
+    )
 
 
 # --- BUG #4669 WORKAROUND END --- DELETE WHEN FIXED ---

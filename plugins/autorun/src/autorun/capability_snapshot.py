@@ -72,6 +72,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "command_display_prefix": platform.command_display_prefix,
         "has_exit2_workaround": platform.has_exit2_workaround,
         "drops_additional_context": platform.drops_additional_context,
+        "gates_mutable_task_tools": platform.gates_mutable_task_tools,
         "root_allow_decision": platform.hook_protocol.root_allow_decision,
         "root_block_decision": platform.hook_protocol.root_block_decision,
         "native_hook_events": sorted(platform.native_hook_events),

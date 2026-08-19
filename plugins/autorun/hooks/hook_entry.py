@@ -488,11 +488,18 @@ _RETRY_GUIDANCE = "This clears on its own; retry shortly."
 #: `_tolerate_stderr_encoding` sets errors="replace", so a stray character would
 #: degrade rather than crash, but a mangled character in the one message telling
 #: a user how to recover is a poor trade for typography.
+#: Shared verbatim with ``autorun.client.UNRECOVERABLE_GUIDANCE``. This module
+#: runs when the package cannot be imported, so it cannot import that constant
+#: and must keep its own copy; the two are held together by
+#: test_client_fail_closed.py::test_the_wrapper_and_the_client_agree_on_the_
+#: unrecoverable_guidance. Worded for any failure that repeats rather than for
+#: a broken install specifically, because the client reaches it for a daemon
+#: whose state backend will not open.
 _INTERVENTION_GUIDANCE = (
-    "Retrying will not help: the same install fails the same way. Repair it in "
-    "a terminal (run the repair command in the error, or `autorun --status` "
-    "for diagnosis) and the next hook recovers on its own. Set "
-    "AUTORUN_DISABLE=1 to stand autorun down."
+    "Retrying will not help: the same failure repeats. Repair it in a terminal "
+    "(run the repair step named in the error, or `autorun --status` for "
+    "diagnosis) and the next hook recovers on its own. Set AUTORUN_DISABLE=1 "
+    "to stand autorun down."
 )
 
 

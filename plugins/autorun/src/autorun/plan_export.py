@@ -273,7 +273,7 @@ def _claude_config_home() -> Path:
 
     Only Claude-owned paths (the plans directory) anchor here. Tests set
     AUTORUN_TEST_STATE_DIR before any autorun import; honoring it keeps every
-    test run off the real user files, per docs/RUNTIME_STATE_ISOLATION.md.
+    test run off the real user files, per plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md.
     """
     test_dir = os.environ.get("AUTORUN_TEST_STATE_DIR")
     if test_dir:
@@ -580,7 +580,7 @@ def _config_write_scope(ctx: "EventContext | None"):
 
     Every write below rewrites the whole file, so two sessions toggling pins
     at once would keep only whichever replaced last. Layering per
-    docs/RUNTIME_STATE_ISOLATION.md, all through existing sugar — no lock
+    plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md, all through existing sugar — no lock
     handling in the command code: ``ctx.state_synchronized`` orders daemon
     executor threads; ``session_state``'s file lock orders processes. The
     config file is ~1KB and written only on an explicit ``/ar:pe``, so
