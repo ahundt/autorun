@@ -616,3 +616,41 @@ top of the precedence chain, and "unknown" stays a first-class value that
 resolves to today's behavior. That way a session whose harness reports nothing
 usable behaves exactly as it does now, and the ranges only ever *narrow* a
 workaround where the version is actually known.
+
+### F-10 · FIXED · a probe imported autorun through the working directory
+
+Found by CI going red on `6d8f50d3`, the commit that added F-7's config file
+tier. All 11 matrix jobs failed on one test, `test_config_precedence_chain.py::
+test_the_live_config_reflects_the_file_at_import`, and the whole local suite
+passed.
+
+The test spawned `sys.executable -c "from autorun.config import CONFIG; ..."`
+with no `cwd`. `python -c` puts the *parent's* working directory at
+`sys.path[0]`, and CI runs pytest from `plugins/autorun/`, which holds
+`autorun.py` — the bootstrap launcher. A module shadows a package of the same
+name, so the probe imported the launcher, failed on `autorun.python_check`, and
+exited 1. The documented local command runs from the repository root, where
+nothing shadows the package, so the defect was invisible to every local run.
+
+Two things made it cost more than it should have:
+
+- The assertion was `assert result.returncode == 0, result.stderr`, and the
+  launcher prints its diagnostic to **stdout**. The CI failure therefore read
+  `AssertionError:` with an empty message and `assert 1 == 0`. The assertion now
+  reports returncode, stdout and stderr together.
+- The hazard was already known here. `test_task_14_cli_non_interactive.py:39`
+  defines `spawn_kwargs`, whose docstring is "Subprocess options that keep
+  `import autorun` off the launcher shim" and which supplies `cwd`. Two other
+  modules solve it the other way, passing `SRC_DIR` and inserting it at
+  `sys.path[0]`. The fix follows the second pattern; nothing needed inventing.
+
+The spec check is `test_cross_platform_spec.py::
+test_no_probe_imports_autorun_through_the_working_directory`, added as item 5 in
+that module because it shares the shape of the four Windows defects already
+there: correct where it was written, wrong in the environment that runs it, and
+silent at the point of the mistake. It resolves probe bodies held in a name,
+requires a real `from|import autorun` rather than the substring (which would
+have flagged `shutil.which('autorun')` in `error_handling.py`), and skips calls
+that spread `**kwargs`, since a shared helper supplying `cwd` is invisible to a
+source scan. Run against the tree it reported five sites; all five were
+false positives of those two kinds, which is why both exclusions exist.

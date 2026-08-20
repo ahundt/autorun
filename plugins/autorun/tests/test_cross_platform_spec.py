@@ -14,12 +14,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Spec checker: the four ways autorun silently stopped working on Windows.
+"""Spec checker: defects that are correct where they were written and wrong elsewhere.
 
-Each of these shipped, none raised, and every one was invisible until the
-Windows job ran a full suite for the first time. They share a shape: code that
-is correct on POSIX and quietly wrong elsewhere, with no error at the point of
-the mistake.
+Each of these shipped, none raised, and every one was invisible until some
+other environment ran the code for the first time -- the Windows job for 1-4,
+CI's working directory for 5. They share a shape: code that is right on the
+author's machine and quietly wrong on someone else's, with no error at the
+point of the mistake.
 
   1. A path interpolated into generated source without escaping. `C:\\Users\\x`
      inside a quoted literal makes `\\U` an invalid escape, so the generated
@@ -33,6 +34,9 @@ the mistake.
      meant to outlive its parent was reaped with it.
   4. A home redirect that sets only `HOME`. `Path.home()` reads `USERPROFILE`
      on Windows, so an "isolated" run read a sandbox and wrote a real home.
+  5. A `python -c` probe importing autorun with no sys.path insert. sys.path[0]
+     is the parent's cwd, and PLUGIN_ROOT holds autorun.py, which shadows the
+     package -- so the probe passed from the repository root and failed in CI.
 
 Every checker below is paired with a test that plants the defect and requires
 the checker to catch it. A source scanner that has quietly stopped matching
@@ -328,12 +332,144 @@ def test_the_home_checker_accepts_the_fixed_form():
     assert not home_writes_without_userprofile(fixed)
 
 
+# --- 5. `python -c` probes that let the working directory resolve autorun ----
+
+_IMPORTS_AUTORUN = re.compile(r"\b(?:from|import)\s+autorun\b")
+
+
+def _string_value(node: ast.AST) -> "str | None":
+    """The literal text of a string node, seeing through textwrap.dedent()."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Call):
+        callee = getattr(node.func, "attr", getattr(node.func, "id", ""))
+        if callee == "dedent" and node.args:
+            return _string_value(node.args[0])
+    return None
+
+
+def probes_importing_autorun_from_cwd(source: str, filename: str = "<test>") -> list[int]:
+    """Return line numbers of `-c` spawns that import autorun via the caller's cwd.
+
+    `python -c` puts the *parent's* working directory at sys.path[0]. CI runs
+    pytest from PLUGIN_ROOT, which holds autorun.py -- the bootstrap launcher,
+    a module that shadows the package of the same name. Such a probe therefore
+    imports the launcher, dies on `autorun.python_check`, and exits 1 with its
+    diagnostic on stdout, so an assertion that reports only stderr says nothing.
+
+    The trap is that this passes from the repository root, which is the
+    documented local command, and fails only in CI. Pass the source directory
+    explicitly and insert it at sys.path[0], or pin `cwd=`.
+    """
+    try:
+        tree = ast.parse(source, filename=filename)
+    except SyntaxError:
+        return []
+    # Probe bodies are usually held in a name; resolve assignments at any depth
+    # so a module constant and a function local are both visible.
+    assigned: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        text = _string_value(node.value)
+        if isinstance(target, ast.Name) and text is not None:
+            assigned[target.id] = text
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if getattr(node.func, "attr", getattr(node.func, "id", "")) not in {
+            "run", "Popen", "check_output", "check_call",
+        }:
+            continue
+        if not node.args or not isinstance(node.args[0], (ast.List, ast.Tuple)):
+            continue
+        elements = list(node.args[0].elts)
+        body = None
+        for index, element in enumerate(elements[:-1]):
+            if isinstance(element, ast.Constant) and element.value == "-c":
+                following = elements[index + 1]
+                body = _string_value(following)
+                if body is None and isinstance(following, ast.Name):
+                    body = assigned.get(following.id)
+                break
+        # Only a real import of the package can hit the shim. A probe that
+        # merely names "autorun" -- shutil.which('autorun') asks about the
+        # console script -- resolves nothing through sys.path.
+        if body is None or not _IMPORTS_AUTORUN.search(body):
+            continue
+        if "sys.path" in body:
+            continue
+        keywords = {keyword.arg for keyword in node.keywords}
+        # A ** spread is how the shared helper supplies cwd (spawn_kwargs in
+        # test_task_14_cli_non_interactive.py exists for this very hazard), and
+        # its contents are not visible here.
+        if "cwd" in keywords or None in keywords:
+            continue
+        offenders.append(node.lineno)
+    return offenders
+
+
+def test_no_probe_imports_autorun_through_the_working_directory():
+    offenders = []
+    for path in _isolation_sources():
+        for lineno in probes_importing_autorun_from_cwd(
+            path.read_text(encoding="utf-8"), str(path)
+        ):
+            offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{lineno}")
+    assert not offenders, (
+        "a `python -c` probe imports autorun with no sys.path insert and no "
+        "cwd=, so sys.path[0] is whatever directory pytest was started from. "
+        "From the repository root that finds the installed package and passes; "
+        "from plugins/autorun, which is where CI runs pytest, autorun.py "
+        "shadows the package and the probe exits 1 with its diagnostic on "
+        "stdout. Pass the source directory and insert it at sys.path[0]:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_probe_checker_catches_the_original_defect():
+    original = (
+        "subprocess.run(\n"
+        "    [sys.executable, '-c',\n"
+        "     \"from autorun.config import CONFIG; print(CONFIG['log_file_backup_count'])\"],\n"
+        "    capture_output=True, text=True,\n"
+        ")\n"
+    )
+    assert probes_importing_autorun_from_cwd(original), "checker missed the shipped defect"
+
+
+def test_the_probe_checker_catches_a_body_held_in_a_name():
+    """The defect survives being moved into a constant, so the checker must too."""
+    indirect = (
+        "_PROBE = 'from autorun.config import CONFIG\\nprint(CONFIG)\\n'\n"
+        "subprocess.run([sys.executable, '-c', _PROBE], capture_output=True)\n"
+    )
+    assert probes_importing_autorun_from_cwd(indirect), "checker missed the indirect form"
+
+
+def test_the_probe_checker_accepts_both_fixed_forms():
+    explicit_path = (
+        "_PROBE = 'import sys\\nsys.path.insert(0, sys.argv[1])\\n"
+        "from autorun.config import CONFIG\\n'\n"
+        "subprocess.run([sys.executable, '-c', _PROBE, str(SRC_DIR)], capture_output=True)\n"
+    )
+    pinned_cwd = (
+        "subprocess.run([sys.executable, '-c', 'import autorun'], cwd=str(tmp_path))\n"
+    )
+    assert not probes_importing_autorun_from_cwd(explicit_path)
+    assert not probes_importing_autorun_from_cwd(pinned_cwd)
+
+
 @pytest.mark.parametrize(
     "checker",
     [
         quoted_substitutions,
         posix_only_venv_paths,
         home_writes_without_userprofile,
+        probes_importing_autorun_from_cwd,
     ],
 )
 def test_every_checker_is_quiet_on_ordinary_code(checker):

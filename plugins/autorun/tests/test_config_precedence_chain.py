@@ -19,10 +19,34 @@ the machine.
 """
 
 import json
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 
 import pytest
 
 from autorun import config as config_module
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = PLUGIN_ROOT / "src"
+
+# The probe puts SRC_DIR first on sys.path instead of relying on the working
+# directory. `python -c` puts the *caller's* cwd at sys.path[0], and CI runs
+# pytest from PLUGIN_ROOT, which holds autorun.py -- the bootstrap launcher.
+# A module shadows a package of the same name, so an inherited-cwd import
+# resolves to the launcher, fails on `autorun.python_check`, and exits 1 with
+# its diagnostic on stdout. Keep the explicit path; do not "simplify" this to a
+# bare `from autorun...`, and pass every process's returncode/stdout/stderr into
+# the assertion so the next failure names itself.
+_IMPORT_PROBE = textwrap.dedent(
+    """
+    import sys
+    sys.path.insert(0, sys.argv[1])
+    from autorun.config import CONFIG
+    print(CONFIG["log_file_backup_count"])
+    """
+)
 
 
 @pytest.fixture
@@ -109,16 +133,11 @@ def test_the_live_config_reflects_the_file_at_import(config_home):
     splits the process into two configurations and breaks later tests -- which
     is exactly what it did when this test first used it.
     """
-    import subprocess
-    import sys
-
     _write(config_home, {"log_file_backup_count": 7})
     result = subprocess.run(
-        [sys.executable, "-c",
-         "from autorun.config import CONFIG; print(CONFIG['log_file_backup_count'])"],
+        [sys.executable, "-c", _IMPORT_PROBE, str(SRC_DIR)],
         capture_output=True, text=True, timeout=120,
     )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "7", (
-        f"the file tier is not applied at import: {result.stdout!r} {result.stderr!r}"
-    )
+    detail = f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert result.returncode == 0, detail
+    assert result.stdout.strip() == "7", f"the file tier is not applied at import: {detail}"
