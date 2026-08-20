@@ -743,3 +743,65 @@ decision rather than a guess:
 Neither can be validated from this machine: the failure needs Windows-runner
 load, which does not reproduce on an idle Mac. Choosing between them is the
 maintainer's call.
+
+### F-14 · ROOT-CAUSED · a forced install replaces Claude's plugin cache, venv and all
+
+The symptom that started this: after every `autorun --install --force`, the
+hook interpreter at `~/.claude/plugins/cache/autorun/ar/1.0.0rc1/.venv` could no
+longer `import autorun`, so the documented repair (`uv venv --clear` plus
+`uv pip install --reinstall`) had to be run again by hand each time.
+
+The first guess — "the installer resets the venv and should repopulate it" —
+was wrong, and two sandbox runs settled it. Preparing a cache directory with a
+sentinel file and recording its inode, then running a sandboxed
+`--install --force --claude`:
+
+    inode before        : 1352731716
+    inode after         : 1352732273
+    sentinel survives   : False
+    entries afterwards  : 41
+    dev detritus present: .coverage .pytest_cache .ruff_cache .venv
+                          __pycache__ demo examples htmlcov
+
+The directory is *replaced*, not filled, and what replaces it is a copy of the
+developer's working tree. The live cache shows the same contents, `.DS_Store`
+and `build/` included.
+
+Two facts rule autorun's own fallback out. `orchestrate.py:597` only calls
+`claude.cache_fallback` when `not cached.is_dir()`, and `fs.fill_tree` returns
+`None` the moment the target exists. Both were designed for exactly this:
+`claude.py:21` states "An existing cache is never replaced: Claude may have
+added its managed `.venv` there", and the installer's own trap list says a
+versioned harness cache belongs to the harness.
+
+[Inference, from those two guards plus the observed replacement] the actor is
+Claude's own CLI: `autorun --install` drives `claude plugin install`, and for a
+locally-sourced marketplace that copies the plugin directory — here the dev
+checkout — over its versioned cache. Autorun asks for the install; Claude
+performs the copy. That also explains why a user installing from a published
+wheel would see the venv reset but not the `htmlcov`/`.coverage` clutter, since
+a wheel carries none of it.
+
+Consequence, and it is a real one: any `--force` install leaves the Claude hook
+venv unable to import autorun. That is survivable — `hooks/hook_entry.py` is
+stdlib-only by design and the daemon does the policy work, and a probe taken in
+exactly that state still returned exit 2 with `permissionDecision: deny` for
+`cat` and exit 0 with zero stdout and zero stderr for `echo hi` — but it costs
+the package-import fallback for when the daemon is unreachable, which is the
+path F-11 was about.
+
+Open design decision, for the maintainer rather than a guess from here:
+
+- Stop re-running `claude plugin install` when the cache already matches what
+  is shipped, so the copy never happens. Smallest blast radius, but it means
+  autorun deciding when Claude's own registration is unnecessary.
+- Keep the copy and have the installer restore the venv afterwards. Contradicts
+  `claude.py`'s stated ownership rule, which exists to stop autorun writing
+  into a tree Claude prunes.
+- Leave the behaviour and make the docs say plainly that `--force` always
+  requires the venv repair. Cheapest, and it leaves a manual step in the
+  documented workflow that is easy to forget — it was forgotten twice today.
+
+Not attempted here: each candidate changes a live install path shared by every
+session on the machine, and the sandbox can prove the defect but not that a fix
+leaves Claude's own plugin bookkeeping intact.
