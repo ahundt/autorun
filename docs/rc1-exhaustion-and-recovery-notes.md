@@ -735,12 +735,41 @@ decision rather than a guess:
 - Raise the budgets under test. `test_client_fail_closed.py` and
   `test_core.py` assert the *relationships* client > max dispatch and wrapper >
   client, so raising one means moving all three of an interlocking ladder that
-  many tests depend on.
+  many tests depend on. "Many" is 72: a call graph trace of
+  `dispatch_timeout_for_event` reports 72 inbound callers, including
+  `AutorunDaemon.handle_client` (not just `_dispatch_with_timeout`) and whole
+  test classes — `test_core.TestDispatchTimeoutContainment`,
+  `test_stop_consecutive_bound`, `test_ai_monitor_integration`. A global change
+  is not a one-line change.
+- Give only these two tests a longer budget, through the config-file tier
+  rather than the shared default. Verified working: an `autorun.config.json` in
+  an isolated `AUTORUN_HOME` moved the PostToolUse dispatch budget from 2.0 to
+  30.0 and the claude client wait from 4.0 to 40.0 in a subprocess, touching no
+  other test. The trap is that the file tier *replaces* a dict rather than
+  merging it, so the override must supply every key — see F-15, where supplying
+  a partial one denies every tool.
 - Wait out the cooldown and ask once more. Bounded and honest for the
   containment case — a slow machine then passes, a genuinely broken handler is
-  contained again and fails — but the second failure is "no response at all",
-  which a containment-shaped retry does not cover, and a blanket retry would
-  mask real timeouts.
+  contained again and fails — but a blanket retry would mask real timeouts.
+
+Both failures are the same root cause, which an earlier draft of this note got
+wrong by treating them as two. The job log settles it. Test one printed all
+four of its PostToolUse results and every one was
+`[autorun] [AR_EVENT_V1:daemon_dispatch_contained] Daemon han…`, so the breaker
+was open across the whole test. Test two then failed on `resp1 is not None`,
+and that is *not* a swallowed PreToolUse: a contained PreToolUse would have
+been visible, because `output_hook_response` prints the JSON to stdout before
+the issue [#4669](https://github.com/anthropics/claude-code/issues/4669)
+pathway adds stderr and exit 2 — measured at 735 stdout bytes against 471 on
+stderr. `resp1` is None only on the `if not response:` branch
+(`client.py:344-363`), which exits 0 with no stdout when a handler returns no
+decision at all. So test two's PreToolUse ran fine and had nothing to enforce,
+because the three PostToolUse calls that were supposed to drive its staleness
+counter past the threshold had themselves been contained. One open breaker,
+two different-looking assertions.
+
+That matters for the choice above: a fix aimed at PostToolUse containment
+would repair both tests, and neither test needs a PreToolUse change.
 
 Neither can be validated from this machine: the failure needs Windows-runner
 load, which does not reproduce on an idle Mac. Choosing between them is the
@@ -816,3 +845,54 @@ Open design decision, for the maintainer rather than a guess from here:
 Not attempted here: each candidate changes a live install path shared by every
 session on the machine, and the sandbox can prove the defect but not that a fix
 leaves Claude's own plugin bookkeeping intact.
+
+### F-15 · OPEN · a partial dict in the user config file denies every tool
+
+Found while looking for a way to give F-13's two tests their own budget, and it
+is a defect in the config-file tier, not in F-13.
+
+`apply_user_config` (`config.py:1245-1281`) accepts a dict-valued setting by
+*replacing* it — `target[key] = value` — never by merging. Nothing warns about
+that, and one lookup cannot survive it. `client.py:105` reads
+
+```python
+return float(timeouts.get(cli_type, timeouts["claude"]))
+```
+
+so a config file that sets `daemon_client_response_timeouts_seconds` without a
+`"claude"` key raises `KeyError: 'claude'` for **every** harness, including the
+one the user configured. Measured in a sandbox with `{"gemini": 3.5}`:
+
+```
+gemini   -> KeyError: 'claude'
+claude   -> KeyError: 'claude'
+codex    -> KeyError: 'claude'
+```
+
+It does not crash the hook: the outer `except Exception` at `client.py:765`
+turns it into `build_daemon_failure_response(..., "daemon_unavailable_or_timeout")`,
+which for a tool-gate event fails **closed**. So the visible behaviour is that
+every tool use is denied, on every harness, with the message "Daemon
+unavailable or timed out: 'claude'" — from a config file that looks reasonable
+and passed the tier's type check.
+
+Two things suspected here that are *not* true, checked rather than assumed:
+
+- **A partial `default_integrations` does not drop the destructive-command
+  guards.** `rm`, `git reset --hard` and `git checkout .` stay guarded, because
+  the consumer at `integrations.py:270` iterates the module global
+  `DEFAULT_INTEGRATIONS`, and `apply_user_config` rebinds the CONFIG entry
+  rather than mutating that object. No security regression.
+- **`daemon_dispatch_timeouts_seconds` is benign under the same replacement**,
+  because `dispatch_timeout_for_event` defaults to 2.0 for an absent event
+  instead of indexing a sibling key.
+
+Why those two differ from the broken one is the rule worth keeping: a defaulted
+`.get()` survives a partial override and a bare `[...]` on a sibling key does
+not. `hook_wrapper_timeouts_seconds` has the same per-harness shape and should
+be checked against that rule before either fix lands.
+
+Separately, `default_integrations` is accepted by the file tier and read by
+nobody — `CONFIG["default_integrations"]` has no readers at all. That is the
+silent-no-op setting the tier's own REQUIREMENT comment (`config.py:1221-1224`)
+says the type check exists to prevent.
