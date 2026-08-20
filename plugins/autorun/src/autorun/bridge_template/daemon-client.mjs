@@ -140,10 +140,33 @@ export function createDaemonBridge({
       child.on("error", () =>
         finish(blockedBecause("autorun daemon and hook entry both unreachable")),
       );
-      child.on("close", () => {
+      child.on("close", (code) => {
+        // Silence is consent. hook_entry.py exits 0 and writes nothing when a
+        // tool is allowed; only a decision puts JSON on stdout. Handing "" to
+        // JSON.parse throws, and treating that throw as a malfunction turned
+        // every allow routed through this fallback into a deny reading
+        // "hook entry returned an invalid response". The fallback runs whenever
+        // the daemon is unreachable -- a restart, an install, a crash -- so a
+        // routine blip blocked every command the user ran.
+        //
+        // Do not "simplify" this back to a bare JSON.parse: the empty case and
+        // the unparseable case must stay distinct.
+        if (stdout.trim() === "") {
+          // Exit 2 carries a deny whose reason went to stderr (issue #4669
+          // workaround), and stderr is not captured here, so a silent exit 2
+          // is a decision we cannot read rather than an absent one.
+          finish(
+            code === 2
+              ? blockedBecause("hook entry denied without a readable reason")
+              : null,
+          );
+          return;
+        }
         try {
           finish(JSON.parse(stdout));
         } catch {
+          // Output that is present but unparseable is a real malfunction: a
+          // permission gate that cannot read its own verdict must not fail open.
           finish(blockedBecause("hook entry returned an invalid response"));
         }
       });

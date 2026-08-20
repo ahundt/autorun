@@ -1223,3 +1223,249 @@ def test_prime_backend_declares_an_e2e_contract():
     contract = BACKEND_E2E_CONTRACTS["prime"]
     assert contract.hook_process is PLATFORMS["prime"].has_hooks
     assert contract.isolation
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+def test_hook_entry_silence_is_an_allow_not_an_invalid_response(tmp_path):
+    """An empty stdout from the hook entry means "no decision", never a block.
+
+    The hook protocol says silence is consent: `hook_entry.py` exits 0 and
+    writes nothing when a tool is allowed, and only a deny puts JSON on stdout.
+    `askHookEntry` fed that empty string to `JSON.parse`, which throws, and the
+    catch turned every allow taken through the fallback path into
+    "[autorun] hook entry returned an invalid response" plus a deny.
+
+    The fallback runs whenever the daemon is unreachable -- during a restart,
+    an install, or a crash -- so this converted a routine daemon blip into Pi
+    blocking every command the user ran.
+    """
+    driver = tmp_path / "silent.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: "pi",
+  socketPath: {json.dumps(str(tmp_path / "absent.sock"))},
+  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  // Exits 0 with nothing on stdout, exactly as hook_entry.py does on an allow.
+  hookEntryCommand: [process.execPath, "-e", "process.exit(0)"],
+  timeoutMs: 5000,
+}});
+const response = await bridge.askToolGate({{
+  hook_event_name: "PreToolUse",
+  session_id: "pi-session",
+  tool_name: "bash",
+  tool_input: {{ command: "echo hello" }},
+}});
+console.log(JSON.stringify({{ denial: denialReason(response) }}));
+''',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["node", str(driver)], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    payload = json.loads(result.stdout)
+    assert payload["denial"] is None, (
+        "an allow taken through the hook-entry fallback was reported as a denial: "
+        f"{payload['denial']!r}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+def test_hook_entry_garbage_still_denies(tmp_path):
+    """Silence is an allow; noise is still a failure.
+
+    Widening the empty case must not turn the gate fail-open: output that is
+    present but unparseable means the hook really did malfunction, and a
+    permission gate that cannot read its own verdict has to block.
+    """
+    driver = tmp_path / "garbage.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: "pi",
+  socketPath: {json.dumps(str(tmp_path / "absent.sock"))},
+  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  hookEntryCommand: [process.execPath, "-e", "process.stdout.write('not json at all'); process.exit(0)"],
+  timeoutMs: 5000,
+}});
+const response = await bridge.askToolGate({{
+  hook_event_name: "PreToolUse",
+  session_id: "pi-session",
+  tool_name: "bash",
+  tool_input: {{ command: "echo hello" }},
+}});
+console.log(JSON.stringify({{ denial: denialReason(response) }}));
+''',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["node", str(driver)], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    payload = json.loads(result.stdout)
+    assert payload["denial"] is not None, "unparseable hook output must still block"
+    assert "invalid response" in payload["denial"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+def test_a_silent_exit_two_is_a_deny_not_an_allow(tmp_path):
+    """Widening the empty case must not swallow an exit-2 deny.
+
+    The issue #4669 workaround sends a denial reason to stderr and exits 2, and
+    this bridge spawns the hook with stderr ignored. Treating *every* empty
+    stdout as consent would turn that denial into an allow -- trading a
+    fail-closed bug for a fail-open one. The exit code is the surviving signal.
+    """
+    driver = tmp_path / "silent_deny.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: "pi",
+  socketPath: {json.dumps(str(tmp_path / "absent.sock"))},
+  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  hookEntryCommand: [process.execPath, "-e", "process.stderr.write('denied'); process.exit(2)"],
+  timeoutMs: 5000,
+}});
+const response = await bridge.askToolGate({{
+  hook_event_name: "PreToolUse",
+  session_id: "pi-session",
+  tool_name: "bash",
+  tool_input: {{ command: "rm -rf /" }},
+}});
+console.log(JSON.stringify({{ denial: denialReason(response) }}));
+''',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["node", str(driver)], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    payload = json.loads(result.stdout)
+    assert payload["denial"] is not None, "a silent exit-2 deny must not become an allow"
+
+
+# --- spec guard: silence from a spawned hook is consent, in every bridge -----
+
+
+def _close_handler_bodies(source: str) -> list[str]:
+    """Every `child.on("close", ...)` callback body, by paren balance.
+
+    Balance-counting rather than a regex: the body contains braces, quotes and
+    nested calls, and a regex that stops at the first `});` silently truncates
+    the handler, which would make the checker below pass by not looking.
+    """
+    bodies = []
+    marker = 'child.on("close"'
+    call = "child.on"
+    start = source.find(marker)
+    while start != -1:
+        # Count from the "(" that opens child.on(...), not from the end of the
+        # marker: starting inside the argument list makes the first ")" of the
+        # "() =>" parameter list close a group that was never opened, and every
+        # body comes back truncated to a few characters. The self-checks below
+        # exist because the first version of this scanner did exactly that.
+        opening = source.find("(", start + len(call) - 1)
+        if opening == -1:
+            break
+        depth = 0
+        for index in range(opening, len(source)):
+            character = source[index]
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0:
+                    bodies.append(source[start:index])
+                    break
+        start = source.find(marker, start + 1)
+    return bodies
+
+
+def spawned_output_parsed_without_an_empty_guard(source: str) -> list[str]:
+    """Return close-handler bodies that JSON.parse subprocess output unguarded.
+
+    A spawned hook that exits 0 with nothing on stdout has made no decision --
+    that is how the hook protocol spells "allow". `JSON.parse("")` throws, so a
+    handler that parses without first testing for emptiness reports a routine
+    allow as a malfunction, and in a permission gate a malfunction blocks.
+    """
+    offenders = []
+    for body in _close_handler_bodies(source):
+        if "JSON.parse" not in body:
+            continue
+        if 'trim() === ""' in body or ".length === 0" in body:
+            continue
+        offenders.append(body)
+    return offenders
+
+
+def test_no_bridge_treats_silence_from_a_spawned_hook_as_a_malfunction():
+    sources = sorted(
+        path
+        for path in (PLUGIN_ROOT / "src" / "autorun").rglob("*.mjs")
+        if "node_modules" not in path.parts
+    )
+    assert sources, "no .mjs bridge sources found -- the checker is scanning nothing"
+    offenders = []
+    for path in sources:
+        for body in spawned_output_parsed_without_an_empty_guard(
+            path.read_text(encoding="utf-8")
+        ):
+            offenders.append(f"{path.relative_to(PLUGIN_ROOT)}: {body[:120]}")
+    assert not offenders, (
+        "a close handler parses a spawned hook's stdout without testing for "
+        "emptiness first. An allow writes nothing, JSON.parse throws on \"\", "
+        "and the catch turns every allow taken through the fallback into a "
+        "deny -- which is what Pi reported as \"hook entry returned an invalid "
+        "response\". Test for empty stdout before parsing:\n" + "\n".join(offenders)
+    )
+
+
+def test_the_silence_checker_catches_the_original_defect():
+    original = """
+      child.on("close", () => {
+        try {
+          finish(JSON.parse(stdout));
+        } catch {
+          finish(blockedBecause("hook entry returned an invalid response"));
+        }
+      });
+    """
+    assert spawned_output_parsed_without_an_empty_guard(original), (
+        "checker missed the shipped defect"
+    )
+
+
+def test_the_silence_checker_accepts_the_fixed_form():
+    fixed = """
+      child.on("close", (code) => {
+        if (stdout.trim() === "") {
+          finish(code === 2 ? blockedBecause("denied") : null);
+          return;
+        }
+        try {
+          finish(JSON.parse(stdout));
+        } catch {
+          finish(blockedBecause("hook entry returned an invalid response"));
+        }
+      });
+    """
+    assert not spawned_output_parsed_without_an_empty_guard(fixed)
+
+
+def test_the_silence_checker_reads_a_whole_handler_body():
+    """A truncated body would make the checker pass without looking.
+
+    The guard sits after the JSON.parse in the fixed form, so a scanner that
+    stopped early would see the parse, miss the guard, and report a false
+    offender; one that stopped even earlier would miss both and report none.
+    """
+    bodies = _close_handler_bodies(
+        BRIDGE_SOURCE.read_text(encoding="utf-8")
+    )
+    assert bodies, "no close handler found in the shared bridge"
+    assert any("JSON.parse" in body and 'trim() === ""' in body for body in bodies), (
+        "the extracted handler body does not contain both the parse and its "
+        "guard, so the checker is reading a truncated body"
+    )

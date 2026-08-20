@@ -10,6 +10,19 @@ marketplace itself carries a separate `version` field.
 
 ### Fixed
 
+- **A daemon restart no longer makes Pi block every command.** The shared
+  JavaScript bridge fell back to spawning `hooks/hook_entry.py` whenever the
+  daemon was unreachable, then ran `JSON.parse` over its stdout. An allow
+  writes nothing and exits 0 — silence is how the hook protocol spells "no
+  decision" — so `JSON.parse("")` threw and the catch denied the tool with
+  "[autorun] hook entry returned an invalid response". Every restart, install
+  or crash therefore turned into a wall of blocks. Empty stdout is now a
+  non-decision; output that is present but unparseable still blocks, and a
+  silent exit 2 still denies so the issue
+  [#4669](https://github.com/anthropics/claude-code/issues/4669) workaround's
+  stderr-only reason is not lost. One fix covers Pi, Prime and OpenCode, which
+  share the bridge.
+
 - **A blocked session is told an exit it can actually take.** When the daemon
   could not evaluate a permission gate, the deny said to run
   `autorun --restart-daemon` and retry — a Bash call the same gate was
