@@ -13,6 +13,13 @@ from autorun import plugins
 
 # === Helpers ===
 
+# A grace window no single dispatch() can outlast, for tests whose subject is
+# "in grace implies survives cleanup" rather than "the window is 1.0 seconds".
+# The production default is SCOPED_ALLOW_DEFAULT_GRACE_SECONDS in config.py and
+# stays 1.0; tests that assert the *duration* must use that, not this.
+_GRACE_LONGER_THAN_ANY_DISPATCH = 3600.0
+
+
 def _make_ctx(cmd: str = "ls", session_id: str = None) -> EventContext:
     """Create isolated EventContext with in-memory ThreadSafeDB for tests."""
     return EventContext(
@@ -797,10 +804,20 @@ class TestEnforcementLazyCleanup:
         sid = f"test-grace-cleanup-{time.time()}"
         store = ThreadSafeDB()
 
-        # Create an allow that was just consumed (in grace period)
+        # Create an allow that was just consumed (in grace period).
+        #
+        # grace_seconds is set explicitly rather than inheriting the 1.0s
+        # production default (config.py:SCOPED_ALLOW_DEFAULT_GRACE_SECONDS).
+        # The property under test is "an allow inside its grace period survives
+        # cleanup", which must not depend on dispatch() returning within one
+        # second: on a loaded Windows runner it does not, the allow leaves its
+        # window legitimately, and the test failed for a reason it was never
+        # about. Size the window from what it guards -- one dispatch -- not
+        # from the wall clock.
         in_grace = ScopedAllow(
             pattern="git push", remaining_uses=0,
-            consumed_at=time.time(), last_call_id="abc123"
+            consumed_at=time.time(), last_call_id="abc123",
+            grace_seconds=_GRACE_LONGER_THAN_ANY_DISPATCH,
         )
         ctx = EventContext(
             session_id=sid, event="PreToolUse", tool_name="Bash",
