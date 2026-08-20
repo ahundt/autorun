@@ -713,8 +713,10 @@ command(s) — skipped, codex did not respond within the timeout".
 
 ### F-13 · OPEN · Windows CI trips the dispatch circuit breaker under load
 
-Two tests failed on the Windows job of run 32316628597 and pass everywhere
-else: `test_claude_e2e.py::TestClaudeHookEntryPoint::
+Two tests failed on the Windows job of
+[run 32323303786](https://github.com/ahundt/autorun/actions/runs/32323303786)
+(commit 45969fb9) and pass everywhere else:
+`test_claude_e2e.py::TestClaudeHookEntryPoint::
 test_staleness_reminder_in_system_message_posttooluse` (got
 `[AR_EVENT_V1:daemon_dispatch_contained]` in place of the reminder) and
 `::test_staleness_pretooluse_warn_then_deny` (got no response at all).
@@ -743,6 +745,15 @@ decision rather than a guess:
 Neither can be validated from this machine: the failure needs Windows-runner
 load, which does not reproduce on an idle Mac. Choosing between them is the
 maintainer's call.
+
+Observed frequency, so the decision has a rate and not just an anecdote. Across
+the eight most recent `main` runs this is the only one in which either test
+failed. Two of those runs also failed on Windows — 32299613738 (ae16706d) and
+32306046572 (6d8f50d3) — but neither log contains a failure of either test, so
+they are separate causes and not repeats of this one. The three runs after it
+(3a664573, 98978ce2, 0423c89a) completed every job, Windows included. One
+failure in eight is frequent enough to keep the item open and too infrequent to
+diagnose by re-running.
 
 ### F-14 · ROOT-CAUSED · a forced install replaces Claude's plugin cache, venv and all
 
