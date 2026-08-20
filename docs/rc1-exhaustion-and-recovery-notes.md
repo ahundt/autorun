@@ -654,3 +654,92 @@ have flagged `shutil.which('autorun')` in `error_handling.py`), and skips calls
 that spread `**kwargs`, since a shared helper supplying `cwd` is invisible to a
 source scan. Run against the tree it reported five sites; all five were
 false positives of those two kinds, which is why both exclusions exist.
+
+### F-11 · FIXED · the Pi bridge read hook silence as a malfunction
+
+Reported live: Pi began answering ordinary commands with "[autorun] hook entry
+returned an invalid response. Blocking tool use to avoid fail-open. ... then
+retry".
+
+`bridge_template/daemon-client.mjs:askHookEntry` spawns `hooks/hook_entry.py`
+whenever the daemon is unreachable, then ran `JSON.parse(stdout)` and denied on
+any throw. Measured against the live hook before changing anything: an allow
+exits 0 and writes **zero bytes**, because silence is how the hook protocol
+spells "no decision" — only a decision puts JSON on stdout. `JSON.parse("")`
+raises SyntaxError, so the catch converted every allow taken through the
+fallback into a deny.
+
+The trigger was this session's own install: each `autorun --install` restarts
+the daemon, and the cache-venv repair left it unreachable for a stretch. Any
+daemon restart, install, or crash produced the same wall of blocks.
+
+Empty stdout is now a non-decision. Two things were deliberately *not* widened:
+output that is present but unparseable still denies, because a permission gate
+that cannot read its own verdict must not fail open; and a silent exit 2 still
+denies, because the issue #4669 workaround puts the denial reason on stderr,
+which this bridge does not capture, so the exit code is the surviving signal.
+
+Verified end to end through the installed extension with the daemon
+deliberately unreachable: allow → no denial, `cat /etc/hosts` → still blocked
+with the real reason. One fix covers Pi, Prime and OpenCode, which share the
+transport; all three installed copies hash-match the source.
+
+Spec guard: `test_pi_bridge.py::spawned_output_parsed_without_an_empty_guard`
+extracts every `child.on("close", ...)` body by paren balance and fails on one
+that parses spawned output with no emptiness test. Its third self-check — that
+the extracted body is whole rather than truncated — caught a real bug in the
+first scanner, which counted parens from the wrong index and would have passed
+by not looking.
+
+### F-12 · FIXED · a hung harness CLI cost one timeout per command
+
+`autorun --install --force` on 2026-08-20 printed four consecutive
+`TimeoutExpired ... after 120 seconds` failures for four `codex plugin remove`
+calls: eight minutes. `codex --version` also times out with zero output on this
+machine, so the binary answers nothing at all.
+
+`registration.py`'s own module docstring already promised "a hung CLI still
+costs one timeout rather than several". The removal path did not honour it: it
+runs with `stop=False` so that withdrawing from a harness that no longer has
+the plugin is not an error, and a `TimeoutExpired` arrived as an ordinary
+failure. "Never stop at a failure" is about an absent plugin; it was never
+about a binary that does not respond.
+
+`Outcome` now carries `timed_out`, `_perform` sets it for `TimeoutExpired`
+only, and `_sequence` stops on it even when `stop` is False, appending an
+outcome that names how many commands were skipped. Measured after the fix: the
+same install takes 164 seconds and reports one timeout plus "3 further codex
+command(s) — skipped, codex did not respond within the timeout".
+
+### F-13 · OPEN · Windows CI trips the dispatch circuit breaker under load
+
+Two tests failed on the Windows job of run 32316628597 and pass everywhere
+else: `test_claude_e2e.py::TestClaudeHookEntryPoint::
+test_staleness_reminder_in_system_message_posttooluse` (got
+`[AR_EVENT_V1:daemon_dispatch_contained]` in place of the reminder) and
+`::test_staleness_pretooluse_warn_then_deny` (got no response at all).
+
+Mechanism, from `core.py:_dispatch_with_timeout`: when a handler exceeds
+`daemon_dispatch_timeouts_seconds` (PostToolUse 2.0, PreToolUse 3.0) the daemon
+opens a circuit for `daemon_dispatch_timeout_cooldown_seconds` (5.0) and later
+dispatches of that event return a contained response immediately. That Windows
+job ran the suite in 1618 seconds against roughly 330 on Linux, so a two-second
+handler budget is routinely exceeded for reasons unrelated to the behaviour
+under test. This is the breaker working, not a defect in the staleness feature.
+
+Not fixed, and deliberately so. The two candidate fixes both have costs worth a
+decision rather than a guess:
+
+- Raise the budgets under test. `test_client_fail_closed.py` and
+  `test_core.py` assert the *relationships* client > max dispatch and wrapper >
+  client, so raising one means moving all three of an interlocking ladder that
+  many tests depend on.
+- Wait out the cooldown and ask once more. Bounded and honest for the
+  containment case — a slow machine then passes, a genuinely broken handler is
+  contained again and fails — but the second failure is "no response at all",
+  which a containment-shaped retry does not cover, and a blanket retry would
+  mask real timeouts.
+
+Neither can be validated from this machine: the failure needs Windows-runner
+load, which does not reproduce on an idle Mac. Choosing between them is the
+maintainer's call.
