@@ -787,9 +787,16 @@ diagnose by re-running.
 ### F-14 · ROOT-CAUSED · a forced install replaces Claude's plugin cache, venv and all
 
 The symptom that started this: after every `autorun --install --force`, the
-hook interpreter at `~/.claude/plugins/cache/autorun/ar/1.0.0rc1/.venv` could no
-longer `import autorun`, so the documented repair (`uv venv --clear` plus
+hook interpreter at `~/.claude/plugins/cache/autorun/ar/<version>/.venv` could
+no longer `import autorun`, so the documented repair (`uv venv --clear` plus
 `uv pip install --reinstall`) had to be run again by hand each time.
+
+(The `<version>` segment is written as a placeholder on purpose. Spelling the
+literal version here would put this file on the release checklist enforced by
+`test_release_checklist_covers_every_file_carrying_the_version`, and a release
+would then bump the version inside a dated incident record — rewriting history
+to keep a guard quiet. The version is incidental: what the finding rests on is
+that the directory is replaced, whatever it is called.)
 
 The first guess — "the installer resets the venv and should repopulate it" —
 was wrong, and two sandbox runs settled it. Preparing a cache directory with a
