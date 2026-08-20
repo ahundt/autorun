@@ -1981,3 +1981,79 @@ def test_every_installer_module_self_check_passes(module, request):
         f"autorun.installer.{module}.demo() exited {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
+def test_an_unresponsive_binary_costs_one_timeout_not_one_per_command():
+    """A hung CLI is asked once, not once per command.
+
+    registration.py's own docstring promises "a hung CLI still costs one
+    timeout rather than several", and the remove path did not honour it: it
+    runs with stop=False so that withdrawing from a harness that no longer has
+    the plugin is not an error, and a TimeoutExpired arrived as an ordinary
+    failure. A real install on 2026-08-20 therefore spent four consecutive
+    120-second timeouts -- eight minutes -- on four `codex plugin remove`
+    calls, against a `codex` binary that did not answer `--version` either.
+
+    "Never stop at a failure" is about an absent plugin. It was never about a
+    binary that does not respond: the next command cannot succeed where the
+    previous one never returned.
+    """
+    import subprocess as _subprocess
+
+    from autorun.installer import registration
+
+    attempts: list[tuple[str, ...]] = []
+
+    def hangs(argv, **_kwargs):
+        attempts.append(tuple(argv))
+        raise _subprocess.TimeoutExpired(list(argv), 120)
+
+    entry = registration.Registration(
+        remove=(
+            ("codex", "plugin", "remove", "ar@personal"),
+            ("codex", "plugin", "remove", "autorun@personal"),
+            ("codex", "plugin", "remove", "ar@autorun"),
+            ("codex", "plugin", "remove", "autorun@autorun"),
+        ),
+        binary="codex",
+    )
+    outcomes = registration.withdraw_entry(entry, {"name": "ar"}, run=hangs)
+
+    assert len(attempts) == 1, (
+        "an unresponsive binary was invoked once per command; each call costs a "
+        f"full timeout: {attempts}"
+    )
+    assert any(not outcome.ok for outcome in outcomes)
+    assert any("skipped" in outcome.detail for outcome in outcomes), (
+        "the commands that were not run must be reported, not dropped silently: "
+        f"{[outcome.describe() for outcome in outcomes]}"
+    )
+
+
+def test_an_ordinary_failure_still_runs_every_removal():
+    """Only a timeout short-circuits; a plain failure must not.
+
+    Withdrawing from a harness that no longer has the plugin fails and must
+    still leave the remaining removals to run, which is the whole reason the
+    remove path uses stop=False.
+    """
+    import subprocess as _subprocess
+
+    from autorun.installer import registration
+
+    attempts: list[tuple[str, ...]] = []
+
+    def fails(argv, **_kwargs):
+        attempts.append(tuple(argv))
+        return _subprocess.CompletedProcess(list(argv), 1, "", "network unreachable")
+
+    entry = registration.Registration(
+        remove=(
+            ("codex", "plugin", "remove", "ar@personal"),
+            ("codex", "plugin", "remove", "autorun@personal"),
+        ),
+        binary="codex",
+    )
+    registration.withdraw_entry(entry, {"name": "ar"}, run=fails)
+
+    assert len(attempts) == 2, f"a plain failure must not stop the sweep: {attempts}"

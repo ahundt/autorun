@@ -253,6 +253,11 @@ class Outcome:
     step: str
     ok: bool
     detail: str = ""
+    #: The command did not return within its timeout, as opposed to returning a
+    #: failure. Callers use this to stop asking a binary that is not answering:
+    #: a plain failure says this command did not work, a timeout says this
+    #: *binary* is unresponsive and the next command will hang too.
+    timed_out: bool = False
 
     def describe(self) -> str:
         return f"{'ok  ' if self.ok else 'FAIL'} {self.step}{f' — {self.detail}' if self.detail else ''}"

@@ -295,7 +295,12 @@ def _perform(
             else run(filled)
         )
     except (OSError, subprocess.SubprocessError) as error:
-        return Outcome(step, False, f"{type(error).__name__}: {error}")
+        return Outcome(
+            step,
+            False,
+            f"{type(error).__name__}: {error}",
+            timed_out=isinstance(error, subprocess.TimeoutExpired),
+        )
     if _ran(result, absent=absent, already=already) and (
         not required_text
         or required_text.lower() in f"{result.stdout or ''}{result.stderr or ''}".lower()
@@ -325,7 +330,8 @@ def _sequence(
     prevent withdrawing from the next.
     """
     done: list[Outcome] = []
-    for argv in commands:
+    pending = list(commands)
+    for index, argv in enumerate(pending):
         outcome = _perform(
             argv, values, run, f"{harness}: {' '.join(argv[:3])}",
             absent=absent,
@@ -334,6 +340,24 @@ def _sequence(
             required_text=required_text,
         )
         done.append(outcome)
+        if outcome.timed_out:
+            # A binary that did not answer within its timeout will not answer
+            # the next command either, so stop even when ``stop`` is False.
+            # "Never stop at a failure" is about an absent plugin, not about an
+            # unresponsive binary: a real install spent four consecutive
+            # 120-second timeouts on four `codex plugin remove` calls against a
+            # `codex` that answered nothing at all, which is the eight minutes
+            # this module's docstring already promised not to spend.
+            remaining = len(pending) - index - 1
+            if remaining:
+                # Named, not dropped: a silent skip reads as "there was nothing
+                # to do here", which is a different and wrong report.
+                done.append(Outcome(
+                    f"{harness}: {remaining} further {argv[0]} command(s)",
+                    False,
+                    f"skipped, {argv[0]} did not respond within the timeout",
+                ))
+            break
         if stop and not outcome.ok:
             break
     return tuple(done)

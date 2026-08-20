@@ -10,6 +10,17 @@ marketplace itself carries a separate `version` field.
 
 ### Fixed
 
+- **An unresponsive harness CLI costs one timeout, not one per command.** The
+  removal path runs with "never stop at a failure" so that withdrawing from a
+  harness that no longer has the plugin is not an error, and a timeout arrived
+  as an ordinary failure. An install on a machine whose `codex` binary answered
+  nothing — not even `codex --version` — therefore spent four consecutive
+  120-second timeouts on four `codex plugin remove` calls, eight minutes that
+  told the user nothing the first failure had not. `Outcome` now distinguishes
+  a timeout from a failure, and the commands that were skipped are named rather
+  than dropped silently. This is the behavior `registration.py`'s own docstring
+  already promised.
+
 - **A daemon restart no longer makes Pi block every command.** The shared
   JavaScript bridge fell back to spawning `hooks/hook_entry.py` whenever the
   daemon was unreachable, then ran `JSON.parse` over its stdout. An allow
