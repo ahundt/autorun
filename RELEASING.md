@@ -294,6 +294,15 @@ release_version=$(rg -N -o -r '$1' '^version = "(.+)"' plugins/autorun/pyproject
 test -n "$release_version"
 release_tag="v$release_version"
 
+# The tag body below is the notes file byte-for-byte, and a pushed tag cannot be
+# moved. A version bump prepared days before the tag day therefore bakes a stale
+# date into the annotation and into the release page, permanently. 421732cc had
+# to move a release date for this reason; these two checks are what make the
+# next one fail loudly instead. `test_release_notes_name_upgrade_actions_date`
+# only requires the date to be in the past, which a stale date also satisfies.
+test "$(rg -N -o -r '$1' '^Date: (.+)$' "docs/releases/$release_version.md")" = "$(date +%F)"
+rg -N -q "^## \[$release_version\] - $(date +%F)\$" CHANGELOG.md
+
 # -F, not -m: the annotated tag carries the release body, so `git show` gives the
 # notes to anyone with a clone and they do not live only on GitHub.
 #
@@ -402,6 +411,15 @@ gh api --method POST \
 
 ### Stage 6: Create GitHub prerelease — **RELEASER public write**
 
+Every pushed `v*` tag gets a release page, release candidates included.
+`installer/entrypoint.py:_latest_version` enumerates
+`https://api.github.com/repos/ahundt/autorun/releases`, not tags, so a tag with
+no release page is invisible to `autorun --self-update` no matter how it is
+flagged, and it offers the reader no reviewed notes. This stage is idempotent
+and independent of the calendar: if a tag was pushed and the release page was
+never made, run it for that tag now rather than folding the tag into the next
+candidate.
+
 The `--prerelease` flag is part of updater correctness. It governs **self-update
 only**: `installer/entrypoint.py` sets `allow_prerelease` from whether the
 *installed* version contains a letter, then filters candidates on the release's
@@ -492,7 +510,8 @@ its contents have been inspected.
 | State | Recovery |
 |---|---|
 | Before the tag is pushed | Delete/recreate the local tag after the fix and repeat every exact-SHA gate. |
-| Remote tag exists, GitHub release absent | Stop. Do not move or delete the remote tag; fix on `main` and issue the next RC version. |
+| Remote tag exists, GitHub release absent, tag content correct | Finish Stage 6 for that tag, however late. Every pushed `v*` tag gets its release page, release candidates included. |
+| Remote tag exists but the code under it is wrong | Do not move or delete the remote tag. Publish its release page anyway so the tag is not a silent artifact, then fix on `main` and issue the next RC version. |
 | GitHub prerelease exists and is correct | Treat a retry as success; verify its tag, commit, draft flag, and prerelease flag. |
 | GitHub prerelease exists but content or artifacts are wrong | Do not replace immutable code under the tag. Correct prose in place only when code is unchanged; otherwise issue the next RC version. |
 | Any public step partially succeeds | Inventory remote tag and release state before retrying. Never assume a failed command made no public write. |
