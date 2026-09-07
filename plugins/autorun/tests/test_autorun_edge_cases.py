@@ -19,7 +19,7 @@ from autorun.plugins import (
     handle_activate,
     is_premature_stop
 )
-from autorun.core import EventContext
+from autorun.core import EventContext, ThreadSafeDB, app
 
 
 class TestEmergencyStop:
@@ -271,17 +271,50 @@ class TestHandleActivateEdgeCases:
             pytest.fail(f"Should not crash with TypeError: {e}")
 
     @pytest.mark.unit
-    def test_handle_activate_extracts_task_correctly(self):
-        """Test handle_activate correctly extracts task from prompt"""
-        ctx = EventContext(session_id="test", event="UserPromptSubmit")
-        ctx._prompt = "/ar:go Fix the login bug"
-        ctx.activation_prompt = "/ar:go Fix the login bug"
+    @pytest.mark.parametrize(
+        "spelling",
+        ("/ar:go", "/ar:run", "/ar:gp", "/ar:proc", "/autorun", "/autoproc"),
+    )
+    def test_activation_records_the_task_through_the_dispatcher(self, spelling):
+        """Every activation spelling stores the same task, via the real route.
+
+        The task comes from the matcher's argument tail, and only `dispatch`
+        fills that in — so a test that calls the handler with a hand-set
+        `activation_prompt` proves the handler works while saying nothing
+        about the path a user's prompt actually takes. Six spellings share one
+        handler, so an extraction that reads the wrong thing shows up here
+        rather than on whichever alias nobody tried.
+        """
+        ctx = EventContext(
+            session_id=f"activate-task-{spelling}",
+            event="UserPromptSubmit",
+            prompt=f"{spelling} Fix the login bug",
+            store=ThreadSafeDB(),
+            cli_type="claude",
+        )
         ctx.file_policy = "ALLOW"
 
-        result = handle_activate(ctx)
+        app.dispatch(ctx)
 
         assert ctx.autorun_task == "Fix the login bug", "Should extract task correctly"
-        assert ctx.autorun_active == True, "Should activate"
+        assert ctx.autorun_active is True, "Should activate"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("spelling", ("/ar:go", "/autorun"))
+    def test_activation_without_a_task_records_an_empty_one(self, spelling):
+        ctx = EventContext(
+            session_id=f"activate-no-task-{spelling}",
+            event="UserPromptSubmit",
+            prompt=spelling,
+            store=ThreadSafeDB(),
+            cli_type="claude",
+        )
+        ctx.file_policy = "ALLOW"
+
+        app.dispatch(ctx)
+
+        assert ctx.autorun_task == ""
+        assert ctx.autorun_active is True
 
 
 class TestPrematureStopDetection:

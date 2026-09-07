@@ -100,6 +100,104 @@ class TestSpellingSupersetIsSharedByEveryPlatform:
         assert app._find_command("ar-st") is not None
 
 
+class TestOneOwnerForTheArgumentTail:
+    """``CommandMatch.arguments`` is what every handler reads its tail from.
+
+    ``_find_command`` reaches it two ways. The exact ``command_mappings``
+    lookup hands back ``""``, which is only right because a key can never
+    carry a tail; the alias loop slices whatever follows the spelling. Both
+    have to agree, or the same typed command means different things depending
+    on which branch caught it.
+    """
+
+    def test_no_command_mapping_key_carries_an_argument(self):
+        """The assumption the empty-tail branch rests on, stated out loud.
+
+        A key such as ``"/ar:go fast"`` would be matched whole by the exact
+        lookup, which passes ``arguments=""`` — so ``fast`` would vanish,
+        while the very same words typed as ``/ar:go fast now`` would miss the
+        exact lookup, fall to the alias loop, and arrive as ``fast now``. One
+        command, two meanings, decided by whether a trailing word happened to
+        be present.
+        """
+        from autorun.config import CONFIG
+
+        spaced = sorted(k for k in CONFIG["command_mappings"] if any(c.isspace() for c in k))
+        assert not spaced, (
+            "command_mappings keys must be a single token, because the exact "
+            "lookup in AutorunApp._find_command hands handlers an empty "
+            f"argument tail: {spaced}. Register the multi-word form as an "
+            "alias instead, so the tail is sliced rather than dropped."
+        )
+
+    @pytest.mark.parametrize("prefix", SUPERSET_PREFIXES)
+    @pytest.mark.parametrize(
+        ("spelling", "tail"),
+        (
+            ("go", "build the parser"),
+            ("run", "build the parser"),
+            ("help", "go"),
+            ("no", "rm -rf"),
+            ("ok", "git push 3 5m"),
+        ),
+    )
+    def test_every_spelling_hands_the_same_tail_to_the_handler(self, prefix, tail, spelling):
+        """Acceptance is a superset, so the tail must not depend on spelling."""
+        match = app._find_command(f"{prefix}{spelling} {tail}", "claude")
+        assert match is not None, f"{prefix}{spelling} does not dispatch"
+        assert match.arguments == tail
+
+    @pytest.mark.parametrize("spelling", ("go", "help", "no", "st"))
+    def test_a_bare_command_has_an_empty_tail(self, spelling):
+        match = app._find_command(f"/ar:{spelling}", "claude")
+        assert match is not None
+        assert match.arguments == ""
+
+    def test_every_place_that_runs_a_handler_prepares_the_context_the_same_way(self):
+        """Handlers read the match off the context, so someone has to put it there.
+
+        ``dispatch`` is not the only caller: Codex's transcript fallback
+        replays a command it found in the rollout by building its own context
+        and calling ``match.handler``. When such a caller sets some of the
+        fields by hand, the handler silently sees a default for the rest — the
+        tail arrives empty, no error is raised, and the command quietly does
+        the wrong thing. ``apply_command_match`` is the one place that answers
+        "what does a handler get", and every caller has to use it.
+        """
+        import ast
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parents[1] / "src" / "autorun"
+        offenders = []
+        for path in sorted(src.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                runs_handler = any(
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "handler"
+                    for call in ast.walk(node)
+                )
+                if not runs_handler:
+                    continue
+                prepares = any(
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Name)
+                    and call.func.id == "apply_command_match"
+                    for call in ast.walk(node)
+                )
+                if not prepares:
+                    offenders.append(f"{path.name}:{node.lineno} {node.name}")
+
+        assert not offenders, (
+            "these call a matched command's handler without going through "
+            "apply_command_match, so whatever it plumbs next will be missing "
+            f"on their path: {offenders}"
+        )
+
+
 class TestNonCommandPromptsPassThroughUntouched:
     """Accepting more spellings widens the false-positive surface. A prompt
     that merely starts with ``ar`` is ordinary text: no handler may claim it."""

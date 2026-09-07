@@ -36,7 +36,7 @@ import pytest
 from autorun import plugins as _plugins  # noqa: F401  (registers command handlers)
 from autorun.command_docs import command_help_inventory, iter_command_docs
 from autorun.config import CONFIG
-from autorun.core import EventContext, ThreadSafeDB, app
+from autorun.core import EventContext, ThreadSafeDB, app, apply_command_match
 from autorun.platforms import PLATFORMS
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +57,15 @@ NATIVE_DISPLAY_PREFIXES = {
 
 
 def _run_help(prompt, cli_type="claude"):
+    """Render help against the handler, with the context dispatch would build.
+
+    Reading the rendered text off ``dispatch`` is not an option: the response
+    schema is per-harness, and Codex, Antigravity and ForgeCode do not carry it
+    in ``systemMessage``. So this calls the handler directly and uses
+    ``apply_command_match`` — the same function dispatch uses — to prepare the
+    context. Setting those fields by hand here is what let the helper fall out
+    of step when handlers began reading ``ctx.command_arguments``.
+    """
     match = app._find_command(prompt, cli_type)
     assert match is not None, f"{prompt!r} does not dispatch on {cli_type}"
     ctx = EventContext(
@@ -66,7 +75,7 @@ def _run_help(prompt, cli_type="claude"):
         cli_type=cli_type,
         store=ThreadSafeDB(),
     )
-    ctx.activation_prompt = match.activation_prompt
+    apply_command_match(ctx, match)
     return match.handler(ctx)
 
 
@@ -246,6 +255,42 @@ class TestHelpForOneCommand:
         rendered = _run_help("/ar:help nosuchcommand")
         assert "nosuchcommand" in rendered
         assert "/ar:status" in rendered
+
+
+class TestHelpTopicComesFromTheDispatcher:
+    """The topic is the matcher's argument tail, read through the real route.
+
+    ``_run_help`` above stands in for ``dispatch``; these go through the
+    dispatcher itself, so a topic that only survives the stand-in would show
+    up here. The spellings a user might type for the topic are also part of
+    the contract: someone asking about ``/ar:go`` is as likely to type the
+    slash as not.
+    """
+
+    @staticmethod
+    def _dispatch(prompt, cli_type="claude"):
+        ctx = EventContext(
+            session_id=f"help-dispatch-{cli_type}-{prompt}",
+            event="UserPromptSubmit",
+            prompt=prompt,
+            cli_type=cli_type,
+            store=ThreadSafeDB(),
+        )
+        return app.dispatch(ctx).get("systemMessage", "")
+
+    @pytest.mark.parametrize("topic", ("go", "/ar:go", "ar:go", "  go  "))
+    def test_a_named_topic_renders_one_command_however_it_is_spelled(self, topic):
+        rendered = self._dispatch(f"/ar:help {topic}")
+        assert "/ar:go" in rendered
+        assert "/ar:status" not in rendered, (
+            "a resolved topic renders that one command, not the whole list"
+        )
+
+    @pytest.mark.parametrize("prompt", ("/ar:help", "ar", "/ar", "ar:"))
+    def test_no_topic_renders_the_whole_list(self, prompt):
+        rendered = self._dispatch(prompt)
+        assert "/ar:status" in rendered
+        assert "/ar:go" in rendered
 
 
 class TestHelpIsInEveryHarnessCatalog:

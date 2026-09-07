@@ -75,6 +75,9 @@ class TestPlanCommandHandlers:
             assert pointer.is_file(), f"Missing commands/{short}.md"
             text = pointer.read_text(encoding="utf-8")
             assert name in text, f"{short}.md does not name the {name} skill"
+            assert text.count("$ARGUMENTS") == 1, (
+                f"{short}.md must project invocation arguments exactly once"
+            )
             assert len(text.splitlines()) < 25, f"{short}.md grew a second copy"
 
     @pytest.mark.unit
@@ -88,7 +91,9 @@ class TestPlanCommandHandlers:
 
         # Test with mock context
         class MockContext:
-            pass
+            command_arguments = ""
+            cli_type = "claude"
+            active_tools = None
 
         ctx = MockContext()
         result = handler(ctx)
@@ -102,7 +107,7 @@ class TestPlanCommandHandlers:
     @pytest.mark.unit
     def test_planprocess_handler_activates_three_stage_execution_and_keeps_path(self):
         from autorun.core import EventContext, ThreadSafeDB
-        from autorun.plugins import _make_plan_handler
+        from autorun.plugins import app
 
         ctx = EventContext(
             session_id="planprocess-activation",
@@ -111,9 +116,7 @@ class TestPlanCommandHandlers:
             store=ThreadSafeDB(),
             cli_type="pi",
         )
-        ctx.activation_prompt = ctx.prompt
-
-        result = _make_plan_handler("planprocess")(ctx)
+        result = app.dispatch(ctx)["systemMessage"]
 
         assert ctx.plan_active is True
         assert ctx.plan_arguments == "notes/approved-plan.md"
@@ -123,6 +126,64 @@ class TestPlanCommandHandlers:
         assert ctx.plan_awaiting_execution_tasks is True
         assert ctx.plan_awaiting_planning_tasks is False
         assert "Development Planning" in result
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("spelling", "skill_name"),
+        (
+            ("/ar:pn", "plannew"),
+            ("/ar:plannew", "plannew"),
+            ("/ar:pr", "planrefine"),
+            ("/ar:planrefine", "planrefine"),
+            ("/ar:pu", "planupdate"),
+            ("/ar:planupdate", "planupdate"),
+            ("/ar:pp", "planprocess"),
+            ("/ar:planprocess", "planprocess"),
+        ),
+    )
+    def test_every_plan_alias_projects_arguments_once(self, spelling, skill_name):
+        """The matcher owns the tail; every plan handler consumes that one value."""
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun.plugins import app
+
+        argument = 'Build café release notes with "quoted" text and `fences`'
+        ctx = EventContext(
+            session_id=f"plan-arguments-{skill_name}-{spelling}",
+            event="UserPromptSubmit",
+            prompt=f"{spelling} {argument}",
+            store=ThreadSafeDB(),
+            cli_type="pi",
+        )
+
+        result = app.dispatch(ctx)
+        text = result["systemMessage"]
+
+        import json
+
+        assert ctx.command_arguments == argument
+        assert ctx.plan_arguments == argument
+        assert text.count(json.dumps(argument, ensure_ascii=False)) == 1
+        assert "## Current invocation" in text
+        assert skill_name in text.lower()
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("prompt", ("/ar:pn", "/ar:plannew", "ar:pn", "ar pn"))
+    def test_plan_alias_without_arguments_has_empty_shared_tail(self, prompt):
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun.plugins import app
+
+        ctx = EventContext(
+            session_id=f"plan-no-arguments-{prompt}",
+            event="UserPromptSubmit",
+            prompt=prompt,
+            store=ThreadSafeDB(),
+            cli_type="pi",
+        )
+
+        text = app.dispatch(ctx)["systemMessage"]
+
+        assert ctx.command_arguments == ""
+        assert "## Current invocation" not in text
 
     @pytest.mark.unit
     def test_plan_handlers_registered(self):
@@ -144,7 +205,9 @@ class TestPlanCommandHandlers:
         handler = _make_plan_handler("nonexistent.md")
 
         class MockContext:
-            pass
+            command_arguments = ""
+            cli_type = "claude"
+            active_tools = None
 
         ctx = MockContext()
         result = handler(ctx)

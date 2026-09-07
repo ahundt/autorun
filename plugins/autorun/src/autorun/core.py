@@ -165,6 +165,21 @@ class CommandMatch:
     alias: str
     activation_prompt: str
     starts_agent_turn: bool = False
+    arguments: str = ""
+
+
+def apply_command_match(ctx, match: "CommandMatch") -> None:
+    """Put everything a matched command's handler reads onto ``ctx``.
+
+    Command handlers do not receive the match; they read it off the context,
+    so this is what stands between "the matcher found it" and "the handler can
+    see it". Keeping it in one function means a handler and a test that
+    prepares a context for that handler cannot end up disagreeing about which
+    fields exist — which is how ``command_arguments`` came to be populated on
+    the dispatch path and nowhere else.
+    """
+    ctx.activation_prompt = match.activation_prompt
+    object.__setattr__(ctx, "_command_arguments", match.arguments)
 
 
 # === LEGACY GEMINI CLI PAYLOAD NORMALIZATION ===
@@ -1642,6 +1657,7 @@ class EventContext:
         "_session_identity_authority",
         "_event",
         "_prompt",
+        "_command_arguments",
         "_tool_name",
         "_tool_input",
         "_tool_result",
@@ -1744,6 +1760,7 @@ class EventContext:
         )
         object.__setattr__(self, "_event", event)
         object.__setattr__(self, "_prompt", prompt)
+        object.__setattr__(self, "_command_arguments", "")
         object.__setattr__(self, "_tool_name", tool_name)
         object.__setattr__(self, "_tool_input", tool_input or {})
         object.__setattr__(self, "_tool_result", tool_result)
@@ -1854,6 +1871,11 @@ class EventContext:
     @property
     def prompt(self) -> str:
         return self._prompt
+
+    @property
+    def command_arguments(self) -> str:
+        """Argument tail from the matched command, excluding its spelling."""
+        return self._command_arguments
 
     @property
     def tool_name(self) -> str:
@@ -2683,6 +2705,7 @@ class AutorunApp:
                 command,
                 canonical_prompt,
                 command_starts_agent_turn(handler),
+                "",
             )
 
         # Check direct aliases
@@ -2693,6 +2716,7 @@ class AutorunApp:
                     alias,
                     canonical_prompt,
                     command_starts_agent_turn(handler),
+                    canonical_prompt[len(alias) :].lstrip(),
                 )
 
         return None
@@ -2753,7 +2777,7 @@ class AutorunApp:
                 return result
             match = self._find_command(ctx.prompt.strip(), ctx.cli_type)
             if match:
-                ctx.activation_prompt = match.activation_prompt
+                apply_command_match(ctx, match)
                 response_text = match.handler(ctx)
                 # Stop/estop handlers set _halt_ai=True to kill AI loop
                 halt = getattr(ctx, "_halt_ai", False)

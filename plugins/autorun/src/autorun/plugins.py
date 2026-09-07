@@ -28,6 +28,7 @@ Plugins:
 - AI Monitor Integration: External tmux observer (optional)
 """
 
+import json
 import re
 import fnmatch
 import shlex
@@ -40,6 +41,7 @@ from typing import Optional, Dict, Callable
 
 from .core import (
     app,
+    apply_command_match,
     EventContext,
     logger,
     format_command_for_cli,
@@ -661,6 +663,24 @@ def _make_block_op(scope: str, op: str):
     """
 
     def handler(ctx: EventContext) -> str:
+        # This is the one command family that does NOT read ctx.command_arguments,
+        # and the reason is the line rule below rather than an oversight.
+        #
+        # The matcher's tail is everything after the spelling, later lines
+        # included, because a command whose argument is prose (/ar:pn <plan
+        # description>) needs that. A scope pattern is the opposite: it must
+        # stop at the line the command was typed on. Codex sends the whole
+        # prompt body on UserPromptSubmit, so "ar:ok git push" followed by
+        # three lines of instructions once registered the entire body as the
+        # allowed pattern. test_codex_native_multiline_ar_ok_uses_only_first_line
+        # is that regression, and it still fails if this loop is deleted.
+        #
+        # Reading the tail from ctx.command_arguments and re-applying the line
+        # rule to it would be equivalent, but command_arguments is filled in by
+        # dispatch, and roughly fifteen tests in test_plugins.py call these
+        # handlers straight out of app.command_handlers with only a prompt set.
+        # Converting is a test-coupling change, not a behavior one; it is worth
+        # doing when those tests move to app.dispatch, not before.
         prompt = ctx.activation_prompt or ctx.prompt
         if op in {"block", "allow"}:
             for line in prompt.splitlines():
@@ -835,7 +855,11 @@ def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
         transcript_path=ctx.transcript_path,
         store=getattr(ctx, "_store", None),
     )
-    fallback_ctx.activation_prompt = match.activation_prompt
+    # Same preparation dispatch does. Every command this path can replay reads
+    # activation_prompt today, so setting only that worked; it would stop
+    # working silently the first time one of them reads command_arguments
+    # instead, and /ar:task already takes a subcommand.
+    apply_command_match(fallback_ctx, match)
     try:
         result = match.handler(fallback_ctx)
     except Exception as exc:
@@ -960,8 +984,10 @@ def handle_help(ctx: EventContext) -> str:
     """
     entries = _help_entries()
     skills = _help_skills()
-    topic = (ctx.activation_prompt or "").split(maxsplit=1)
-    requested = topic[1].strip().lstrip("/").removeprefix("ar:").strip() if len(topic) > 1 else ""
+    # The matcher owns the tail. Turning that tail into a command name is
+    # help's own job: someone asking about /ar:go is as likely to type the
+    # prefix as not, and only help has to accept both.
+    requested = ctx.command_arguments.strip().lstrip("/").removeprefix("ar:").strip()
 
     lines = [f"autorun commands — {platform_for(ctx.cli_type).command_invocation_hint}"]
     if not entries:
@@ -1366,9 +1392,13 @@ def _is_procedural_mode(prompt: str) -> bool:
 )
 def handle_activate(ctx: EventContext) -> str:
     """Activate autorun with task description."""
-    # Bug #10 Fix: Ensure prompt is string to avoid TypeError on None
+    # The matcher already sliced the tail off the spelling it matched; re-splitting
+    # the prompt here would be a second parser to keep in step with that one.
+    task = ctx.command_arguments
+    # Bug #10 Fix: Ensure prompt is string to avoid TypeError on None. The mode
+    # test matches on the command spelling rather than the tail, so it keeps
+    # reading the whole prompt.
     prompt = ctx.activation_prompt or ctx.prompt or ""
-    task = prompt.split(maxsplit=1)[1] if " " in prompt else ""
 
     is_procedural = _is_procedural_mode(prompt)
 
@@ -3020,13 +3050,17 @@ def _make_plan_handler(skill_name: str):
 
         # Set plan_active and task creation nag for all plan commands.
         ctx.plan_active = True
+        arguments = ctx.command_arguments
+        # One plan key, shared with task linkage and plan approval. planprocess
+        # writes it even when empty: an explicit process command with no path
+        # must not inherit a stale key from an unrelated earlier plan command,
+        # while the other plan commands leave a key already in flight alone.
+        if arguments or skill_name == "planprocess":
+            ctx.plan_arguments = arguments
         if skill_name == "planprocess":
-            prompt = ctx.activation_prompt or ctx.prompt or ""
-            plan_path = prompt.split(maxsplit=1)[1].strip() if " " in prompt else ""
-            ctx.plan_arguments = plan_path
             ctx.autorun_active = True
             ctx.autorun_stage = EventContext.STAGE_1
-            ctx.autorun_task = f"Execute plan {plan_path}" if plan_path else "Execute the approved plan"
+            ctx.autorun_task = f"Execute plan {arguments}" if arguments else "Execute the approved plan"
             ctx.autorun_mode = "standard"
             ctx.recheck_count = 0
             ctx.hook_call_count = 0
@@ -3054,7 +3088,13 @@ def _make_plan_handler(skill_name: str):
             _frontmatter, body = split_frontmatter(
                 md_path.read_text(encoding="utf-8"), source=str(md_path)
             )
-            return body
+            if not arguments:
+                return body
+            return (
+                f"{body}\n\n## Current invocation\n\n"
+                "Apply this procedure to the user-supplied argument string "
+                f"below:\n\n{json.dumps(arguments, ensure_ascii=False)}"
+            )
         except Exception as e:
             return f"❌ Error reading plan skill: {e}"
 

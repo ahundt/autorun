@@ -84,6 +84,20 @@ def test_a_body_without_arguments_is_unchanged():
     assert parsed["prompt"].strip() == "No placeholder here"
 
 
+@pytest.mark.parametrize("short", ("pn", "pr", "pu", "pp"))
+def test_every_plan_pointer_renders_one_family_argument_placeholder(short):
+    from autorun.command_docs import read_command_doc
+
+    path = Path(__file__).resolve().parents[1] / "commands" / f"{short}.md"
+    doc = read_command_doc(path)
+    parsed = tomllib.loads(
+        render_toml_command(Command(doc.name, doc.description, doc.body))
+    )
+
+    assert parsed["prompt"].count("{{args}}") == 1
+    assert "$ARGUMENTS" not in parsed["prompt"]
+
+
 # ─── Plugin-root substitution ────────────────────────────────────────────────
 
 
