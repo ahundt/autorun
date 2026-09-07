@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -19,14 +21,52 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 CI only
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_DOC_PARTS = {".git", ".venv", "notes", "rejected_plans", "worktrees"}
+# Release-inventory scope. Kept apart from EXCLUDED_DOC_PARTS on purpose: that
+# one answers "is this maintained documentation", this one answers "must this
+# move at release time". Both used to name the worktree directory and disagreed
+# about its spelling ("worktrees" against ".worktrees"), which is why nested
+# checkouts are excluded by their .git rather than by name in _own_files.
+_EXCLUDED_INVENTORY_PARTS = {
+    ".git", "notes", ".venv", "__pycache__", "htmlcov", "build", ".worktrees",
+}
+
+
+def _own_files(root: Path, excluded_dir_names: set[str]) -> Iterator[Path]:
+    """Walk a repository's own files, never a checkout that happens to live in it.
+
+    A nested checkout carries a ``.git`` at its own root: a directory for a
+    clone, a file for a git worktree. Claude Code puts an agent's isolated
+    worktree at ``.claude/worktrees/agent-<id>/``, so the whole repository
+    appears a second time inside itself, and a scan that walks blindly counts
+    every copied CHANGELOG.md and pyproject.toml as a file of this repository.
+    That turned the release inventory below red for as long as an agent
+    worktree existed — a passing suite became a failing one because of a
+    feature that touches no source at all.
+
+    The two callers keep their own name lists because they mean different
+    things (generated docs versus release-inventory scope), but "this is
+    somebody else's checkout" is one rule, and it is this one. Pruning in
+    ``os.walk`` rather than filtering ``rglob`` output also means a large
+    nested tree is never descended into.
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        here = Path(dirpath)
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in excluded_dir_names and not (here / name / ".git").exists()
+        ]
+        for name in filenames:
+            yield here / name
 
 
 def _maintained_docs() -> list[Path]:
     """Return shipped Markdown while excluding historical and generated copies."""
     return sorted(
         path
-        for path in REPO_ROOT.rglob("*.md")
-        if path.name != "CHANGELOG.md"
+        for path in _own_files(REPO_ROOT, EXCLUDED_DOC_PARTS)
+        if path.suffix == ".md"
+        and path.name != "CHANGELOG.md"
         and not EXCLUDED_DOC_PARTS.intersection(path.parts)
     )
 
@@ -659,13 +699,10 @@ def test_release_checklist_covers_every_file_carrying_the_version():
 
     listed = _checklist_paths()
     uncovered = []
-    for path in REPO_ROOT.rglob("*"):
+    for path in _own_files(REPO_ROOT, _EXCLUDED_INVENTORY_PARTS):
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(REPO_ROOT)
-        parts = set(rel.parts)
-        if parts & {".git", "notes", ".venv", "__pycache__", "htmlcov", "build", ".worktrees"}:
-            continue
         if rel.suffix not in {".md", ".toml", ".json", ".py"}:
             continue
         try:
@@ -680,6 +717,63 @@ def test_release_checklist_covers_every_file_carrying_the_version():
         f"these files contain the current version {version!r} but are absent from "
         "RELEASING.md, so the next release will leave them "
         "stale:\n  " + "\n  ".join(sorted(uncovered))
+    )
+
+
+@pytest.mark.parametrize("nested_git", ("dir", "file"))
+@pytest.mark.parametrize(
+    "location",
+    (
+        ".claude/worktrees/agent-abc123",  # what Claude Code actually creates
+        "vendor/some-other-repo",  # any nested clone, named nothing special
+    ),
+)
+def test_a_checkout_inside_the_repository_is_not_scanned_as_part_of_it(
+    tmp_path, nested_git, location
+):
+    """A copy of this repository inside it is somebody else's, not ours.
+
+    Both shapes appear in practice: ``dir`` is a nested clone, ``file`` is a
+    git worktree, which is what Claude Code creates at
+    ``.claude/worktrees/agent-<id>/`` when an agent runs isolated. Either way
+    the copy holds a CHANGELOG.md and a pyproject.toml carrying this version,
+    and counting them made the release-inventory check below report every one
+    as an uninventoried file.
+
+    ``_EXCLUDED_INVENTORY_PARTS`` is the set that matters: it names
+    ``.worktrees`` and so never covered ``.claude/worktrees``, which is why
+    the real failure happened under that set and not under the doc one. The
+    ``vendor/`` case pins that the rule is "has its own .git" rather than a
+    second directory name to remember — an earlier draft of this test put the
+    copy only where a name list already excluded it, and passed with the fix
+    removed.
+
+    Built in tmp_path rather than under the real root: writing a fake checkout
+    into this repository would be visible to the other xdist workers scanning
+    it at the same time, so the test would corrupt the runs it shares a repo
+    with. The predicate exercised is the one the scan uses.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("mine\n", encoding="utf-8")
+    nested = tmp_path / location
+    (nested / "docs").mkdir(parents=True)
+    (nested / "CHANGELOG.md").write_text("theirs\n", encoding="utf-8")
+    (nested / "docs" / "deep.md").write_text("theirs too\n", encoding="utf-8")
+    if nested_git == "dir":
+        (nested / ".git").mkdir()
+        (nested / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    else:
+        (nested / ".git").write_text("gitdir: /elsewhere/.git/worktrees/agent\n", encoding="utf-8")
+
+    found = {
+        path.relative_to(tmp_path).as_posix()
+        for path in _own_files(tmp_path, _EXCLUDED_INVENTORY_PARTS)
+    }
+
+    assert "CHANGELOG.md" in found, "the repository's own files must still be scanned"
+    intruders = sorted(p for p in found if p.startswith(f"{location}/"))
+    assert not intruders, (
+        "files inside a nested checkout were scanned as if they belonged to "
+        f"this repository: {intruders}"
     )
 
 
