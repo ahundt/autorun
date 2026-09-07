@@ -14,7 +14,7 @@ const TaskCreateParameters = {
     description: { type: "string", description: "Concrete completion requirements" },
     activeForm: { type: "string", description: "Present-progress activity label" },
   },
-  required: ["subject", "description", "activeForm"],
+  required: ["subject"],
   additionalProperties: false,
 };
 const TaskUpdateFields = {
@@ -94,8 +94,8 @@ export function createTaskId(): string {
     : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-async function mintTaskId(ctx: ExtensionContext): Promise<string> {
-  const response = await bridge.askDaemon(operationFrame(ctx, "task_next_id_v1"));
+async function mintTaskId(ctx: ExtensionContext, pi: ExtensionAPI): Promise<string> {
+  const response = await bridge.askDaemon(operationFrame(ctx, "task_next_id_v1", pi));
   const operation = response?._autorun_bridge;
   const minted = operation?.operation === "task_next_id_v1" ? operation.task_id : undefined;
   return typeof minted === "string" && minted.trim() ? minted : createTaskId();
@@ -134,26 +134,68 @@ function boundedTranscript(ctx: ExtensionContext): unknown[] {
   return recent;
 }
 
-function frame(ctx: ExtensionContext, event: string): Record<string, unknown> {
+function runtimeMetadata(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+  // Pi core declares `getActiveTools(): string[]` on ExtensionAPI (verified in
+  // @earendil-works/pi-coding-agent dist/core/extensions/types.d.ts), and has
+  // since long before this extension existed. The defensive check keeps
+  // synthetic/third-party ExtensionAPI shims fail-open.
+  if (typeof pi.getActiveTools === "function") {
+    try {
+      metadata.active_tools = pi.getActiveTools();
+    } catch {
+      // Capability telemetry must not break command or lifecycle delivery.
+    }
+  }
+  // PI_SUBAGENT_* is a convention of the third-party `pi-subagents` package
+  // (github.com/nicobailon/pi-subagents), not a Pi core guarantee: core sets
+  // no environment on the children its bundled subagent example spawns. So
+  // absence is the normal case, and it has to degrade to "this is a top-level
+  // agent" rather than to a wrong identity. Do not promote these reads to a
+  // required contract without checking that source again.
+  if (process.env.PI_SUBAGENT_CHILD !== "1") return metadata;
+
+  const runId = process.env.PI_SUBAGENT_RUN_ID?.trim() || sessionId(ctx);
+  const childIndex = process.env.PI_SUBAGENT_CHILD_INDEX?.trim();
+  metadata.agent_id = childIndex ? `${runId}:${childIndex}` : runId;
+  const agentType = process.env.PI_SUBAGENT_CHILD_AGENT?.trim();
+  if (agentType) metadata.agent_type = agentType;
+  return metadata;
+}
+
+function frame(
+  ctx: ExtensionContext,
+  event: string,
+  pi: ExtensionAPI,
+): Record<string, unknown> {
   return {
     hook_event_name: event,
     session_id: sessionId(ctx),
     transcript_path: ctx.sessionManager.getSessionFile(),
     session_transcript: boundedTranscript(ctx),
     cwd: ctx.cwd,
+    ...runtimeMetadata(ctx, pi),
   };
 }
 
 // In-process task operations (mint, get, list, reproject) read task state
 // only, so they send no transcript: a mint costs a few hundred bytes on the
 // socket instead of the bounded 64 KiB projection that policy events carry.
-function operationFrame(ctx: ExtensionContext, operation: string): Record<string, unknown> {
+function operationFrame(
+  ctx: ExtensionContext,
+  operation: string,
+  pi: ExtensionAPI,
+): Record<string, unknown> {
   return {
     hook_event_name: "AutorunOperation",
     session_id: sessionId(ctx),
     transcript_path: ctx.sessionManager.getSessionFile(),
     cwd: ctx.cwd,
     inprocess_operation: operation,
+    ...runtimeMetadata(ctx, pi),
   };
 }
 
@@ -177,7 +219,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
       }
     }
     await bridge.askDaemon({
-      ...operationFrame(ctx, "task_reproject_v1"),
+      ...operationFrame(ctx, "task_reproject_v1", pi),
       task_records: taskRecords,
     });
   }
@@ -206,7 +248,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_callId, params: any, signal, _onUpdate, ctx) {
       throwIfAborted(signal);
-      const id = await mintTaskId(ctx);
+      const id = await mintTaskId(ctx, pi);
       throwIfAborted(signal);
       const task = { id, ...params, status: "pending" };
       return textResult(`Created task ${task.id}: ${task.subject}`, { task });
@@ -240,7 +282,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_callId, _params, signal, _onUpdate, ctx) {
       throwIfAborted(signal);
-      const response = await bridge.askDaemon(operationFrame(ctx, "task_list_v1"));
+      const response = await bridge.askDaemon(operationFrame(ctx, "task_list_v1", pi));
       throwIfAborted(signal);
       const operation = response?._autorun_bridge;
       if (operation?.operation !== "task_list_v1" || !Array.isArray(operation.tasks)) {
@@ -264,7 +306,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     async execute(_callId, params: any, signal, _onUpdate, ctx) {
       throwIfAborted(signal);
       const response = await bridge.askDaemon({
-        ...operationFrame(ctx, "task_get_v1"),
+        ...operationFrame(ctx, "task_get_v1", pi),
         task_id: params.taskId,
       });
       throwIfAborted(signal);
@@ -281,14 +323,18 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   pi.registerCommand("ar", {
     description: "Run an autorun control command, for example /ar st or /ar go <task>",
     handler: async (args, ctx) => {
-      const response = await bridge.runCommandResponse(args, ctx.cwd, sessionId(ctx));
+      const response = await bridge.runCommandResponse(
+        args, ctx.cwd, sessionId(ctx), runtimeMetadata(ctx, pi),
+      );
       deliverCommandResponse(response, ctx);
     },
   });
 
   pi.on("input", async (event, ctx) => {
     if (!/^\/?ar[:\-]/i.test(event.text.trim())) return { action: "continue" };
-    const response = await bridge.runCommandResponse(event.text, ctx.cwd, sessionId(ctx));
+    const response = await bridge.runCommandResponse(
+      event.text, ctx.cwd, sessionId(ctx), runtimeMetadata(ctx, pi),
+    );
     // A prefix is not a command. `ar-` is a registered spelling here, so the
     // guard is right to look, but claiming the input on the prefix alone
     // swallowed ordinary prose: `ar-archive the release notes` never reached
@@ -305,12 +351,12 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (event, ctx) => {
     continuationInFlight = false;
     await reprojectTaskReceipts(ctx);
-    await bridge.askDaemon({ ...frame(ctx, "SessionStart"), source: event.reason });
+    await bridge.askDaemon({ ...frame(ctx, "SessionStart", pi), source: event.reason });
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
     const response = await bridge.askDaemon({
-      ...frame(ctx, "UserPromptSubmit"),
+      ...frame(ctx, "UserPromptSubmit", pi),
       prompt: event.prompt,
     });
     const content = responseMessage(response);
@@ -320,7 +366,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event, ctx) => {
     const response = await bridge.askToolGate({
-      ...frame(ctx, "PreToolUse"),
+      ...frame(ctx, "PreToolUse", pi),
       tool_name: event.toolName,
       tool_input: event.input,
     });
@@ -334,7 +380,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
         ? event.details
         : undefined;
     const response = await bridge.askDaemon({
-      ...frame(ctx, "PostToolUse"),
+      ...frame(ctx, "PostToolUse", pi),
       tool_name: event.toolName,
       tool_input: event.input,
       tool_result: taskResult ?? {
@@ -389,12 +435,12 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_before_compact", async (_event, ctx) => {
-    await bridge.askDaemon(frame(ctx, "PreCompact"));
+    await bridge.askDaemon(frame(ctx, "PreCompact", pi));
   });
 
   pi.on("session_compact", async (_event, ctx) => {
     continuationInFlight = false;
-    await bridge.askDaemon(frame(ctx, "PostCompact"));
+    await bridge.askDaemon(frame(ctx, "PostCompact", pi));
   });
 
   pi.on("session_tree", async (_event, ctx) => {
@@ -408,7 +454,8 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
 
   pi.on("agent_settled", async (_event, ctx) => {
     if (continuationInFlight || ctx.hasPendingMessages()) return;
-    const response = await bridge.askDaemon(frame(ctx, "Stop"));
+    const event = process.env.PI_SUBAGENT_CHILD === "1" ? "SubagentStop" : "Stop";
+    const response = await bridge.askDaemon(frame(ctx, event, pi));
     if (response?.decision !== "block") return;
     const reason = responseMessage(response);
     if (!reason || ctx.hasPendingMessages()) return;
@@ -421,6 +468,6 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     continuationInFlight = false;
-    await bridge.askDaemon(frame(ctx, "SessionEnd"));
+    await bridge.askDaemon(frame(ctx, "SessionEnd", pi));
   });
 }

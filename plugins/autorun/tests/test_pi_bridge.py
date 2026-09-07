@@ -41,6 +41,33 @@ def test_pi_platform_declares_native_runtime_contract():
     assert pi.task_review_tools == frozenset({"TaskList", "TaskGet"})
 
 
+def test_pi_active_tools_normalization_distinguishes_unknown_empty_and_known():
+    from autorun.core import EventContext, normalize_hook_payload
+
+    base = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "capability-normalization",
+        "cli_type": "pi",
+    }
+    assert normalize_hook_payload(base)["active_tools"] is None
+    assert normalize_hook_payload({**base, "active_tools": []})["active_tools"] == frozenset()
+    assert normalize_hook_payload(
+        {**base, "active_tools": ["read", "TaskUpdate", "read"]}
+    )["active_tools"] == frozenset({"read", "TaskUpdate"})
+    for malformed in ("read", [1], ["  "], ["read", 1], ["read", ""]):
+        assert normalize_hook_payload(
+            {**base, "active_tools": malformed}
+        )["active_tools"] is None
+
+    ctx = EventContext(
+        session_id="known-empty-tools",
+        event="PreToolUse",
+        cli_type="pi",
+        active_tools=frozenset(),
+    )
+    assert ctx.active_tools == frozenset()
+
+
 def test_pi_has_one_installer_step_row_and_dedicated_extension_step():
     from autorun.installer import steps
     from autorun.platforms import PLATFORMS
@@ -186,7 +213,13 @@ def test_pi_print_mode_command_is_visible_without_calling_a_model(tmp_path, monk
     assert "extension error" not in result.stderr.lower()
 
 
-def _run_pi_adapter_driver(tmp_path: Path, responses: list[dict], script: str) -> tuple[dict, list[dict]]:
+def _run_pi_adapter_driver(
+    tmp_path: Path,
+    responses: list[dict],
+    script: str,
+    *,
+    cli_type: str = "pi",
+) -> tuple[dict, list[dict]]:
     """Execute the staged TypeScript adapter against a synthetic daemon."""
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("synthetic server uses AF_UNIX")
@@ -219,7 +252,7 @@ def _run_pi_adapter_driver(tmp_path: Path, responses: list[dict], script: str) -
     source = source.replace("__AUTORUN_SOCKET__", json.dumps(str(socket_path)))
     source = source.replace("__AUTORUN_PORT_FILE__", json.dumps(str(tmp_path / "none.port")))
     source = source.replace("__AUTORUN_HOOK_ENTRY_COMMAND__", "[]")
-    source = source.replace("__AUTORUN_CLI_TYPE__", json.dumps("pi"))
+    source = source.replace("__AUTORUN_CLI_TYPE__", json.dumps(cli_type))
     (extension_dir / "index.ts").write_text(source, encoding="utf-8")
     shutil.copy2(BRIDGE_SOURCE, extension_dir / "daemon-client.mjs")
     driver = tmp_path / "driver.mjs"
@@ -238,6 +271,36 @@ def _run_pi_adapter_driver(tmp_path: Path, responses: list[dict], script: str) -
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_pi_active_tool_introspection_failure_keeps_bridge_events_live(tmp_path):
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{}, {}],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map();
+const pi = {
+  registerCommand() {}, registerTool() {}, sendMessage() {},
+  on(name, handler) { handlers.set(name, handler); },
+  getActiveTools() { throw new Error("introspection unavailable"); },
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "rpc", isIdle: () => true, hasPendingMessages: () => false,
+  ui: { notify() {} },
+  sessionManager: {
+    getSessionId: () => "pi-session", getSessionFile: () => undefined,
+    getBranch: () => [], buildSessionContext: () => ({ messages: [] }),
+  },
+};
+await handlers.get("session_start")({ reason: "startup" }, ctx);
+console.log(JSON.stringify({ survived: true }));
+''',
+    )
+
+    assert result == {"survived": True}
+    assert all("active_tools" not in frame for frame in frames)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
 def test_pi_callbacks_separate_display_work_and_continuation_channels(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -253,6 +316,7 @@ const sent = [], users = [], notices = [];
 const pi = {
   registerCommand(name, value) { commands.set(name, value); },
   registerTool() {}, on(name, handler) { handlers.set(name, handler); },
+  getActiveTools() { return ["read", "bash", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]; },
   sendMessage(message, options) { sent.push({ message, options }); },
   sendUserMessage(message, options) { users.push({ message, options }); },
 };
@@ -283,6 +347,92 @@ console.log(JSON.stringify({ sent, users, notices }));
     assert frames[0]["inprocess_capabilities"] == [
         "response_projection_v2", "task_operations_v1"
     ]
+    assert frames[0]["active_tools"] == [
+        "read", "bash", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    ]
+    assert "agent_id" not in frames[0]
+    assert "agent_type" not in frames[0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
+def test_restricted_child_frames_effective_tools_identity_and_subagent_stop(tmp_path, cli_type):
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{}, {}],
+        '''process.env.PI_SUBAGENT_CHILD = "1";
+process.env.PI_SUBAGENT_RUN_ID = "run-42";
+process.env.PI_SUBAGENT_CHILD_AGENT = "worker";
+process.env.PI_SUBAGENT_CHILD_INDEX = "3";
+const { default: extension } = await import("__EXTENSION__");
+const handlers = new Map();
+const pi = {
+  registerCommand() {}, registerTool() {}, on(name, handler) { handlers.set(name, handler); },
+  getActiveTools() { return ["read", "grep", "find", "bash", "contact_supervisor"]; },
+  sendMessage() { throw new Error("a SubagentStop must not request a continuation"); },
+  sendUserMessage() {},
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "interactive",
+  isIdle: () => true, hasPendingMessages: () => false,
+  ui: { notify() {} },
+  sessionManager: {
+    getSessionId: () => "child-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }), getBranch: () => [],
+  },
+};
+await handlers.get("before_agent_start")({ prompt: "continue" }, ctx);
+await handlers.get("agent_settled")({}, ctx);
+console.log(JSON.stringify({ ok: true }));
+''',
+        cli_type=cli_type,
+    )
+
+    assert result == {"ok": True}
+    assert [frame["hook_event_name"] for frame in frames] == [
+        "UserPromptSubmit", "SubagentStop",
+    ]
+    for frame in frames:
+        assert frame["active_tools"] == [
+            "read", "grep", "find", "bash", "contact_supervisor",
+        ]
+        assert frame["agent_id"] == "run-42:3"
+        assert frame["agent_type"] == "worker"
+        assert frame["cli_type"] == cli_type
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+def test_parent_session_metadata_alone_does_not_classify_main_as_child(tmp_path):
+    _result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{}],
+        '''process.env.PI_SUBAGENT_PARENT_SESSION = "parent-only";
+delete process.env.PI_SUBAGENT_CHILD;
+const { default: extension } = await import("__EXTENSION__");
+const handlers = new Map();
+const pi = {
+  registerCommand() {}, registerTool() {}, on(name, handler) { handlers.set(name, handler); },
+  getActiveTools() { return []; }, sendMessage() {}, sendUserMessage() {},
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "interactive", isIdle: () => true,
+  hasPendingMessages: () => false, ui: { notify() {} },
+  sessionManager: {
+    getSessionId: () => "main-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }), getBranch: () => [],
+  },
+};
+await handlers.get("agent_settled")({}, ctx);
+console.log(JSON.stringify({ ok: true }));
+''',
+    )
+
+    assert frames[0]["hook_event_name"] == "Stop"
+    assert frames[0]["active_tools"] == []
+    assert "agent_id" not in frames[0]
+    assert "agent_type" not in frames[0]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
@@ -620,12 +770,12 @@ const ctx = {
   },
 };
 const created = await tools.get("TaskCreate").execute(
-  "call-create", { subject: "Build", description: "Do it", activeForm: "Building" },
+  "call-create", { subject: "Build" },
   new AbortController().signal, undefined, ctx,
 );
 const receipt = await handlers.get("tool_result")({
   toolName: "TaskCreate",
-  input: { subject: "Build", description: "Do it", activeForm: "Building" },
+  input: { subject: "Build" },
   content: created.content, details: created.details, isError: false,
 }, ctx);
 const listed = await tools.get("TaskList").execute(
@@ -643,7 +793,7 @@ console.log(JSON.stringify({
 
     assert result["names"] == ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
     assert result["modes"] == ["sequential", "sequential", "sequential", "sequential"]
-    assert result["createRequired"] == ["subject", "description", "activeForm"]
+    assert result["createRequired"] == ["subject"]
     # The daemon mints the id, so it is the session's next sequential integer
     # (Claude Code shape: TaskUpdate(taskId=7)), not a 35-character random string.
     assert result["created"]["details"]["task"]["id"] == "7"
@@ -1135,6 +1285,7 @@ def test_prime_platform_is_a_pi_variant_with_its_own_identity():
     assert prime.autorun_to_harness_cli_events == pi.autorun_to_harness_cli_events
     assert prime.native_hook_events == pi.native_hook_events
     assert prime.installed_hook_events == pi.installed_hook_events
+    assert "SubagentStop" in pi.installed_hook_events
     assert prime.command_display_prefix == pi.command_display_prefix
     assert prime.memory_filename == pi.memory_filename
     assert prime.memory_template == pi.memory_template

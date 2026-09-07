@@ -784,6 +784,7 @@ def _make_post_tool_ctx(
     tool_input: dict | None = None,
     agent_id: str | None = None,
     agent_type: str | None = None,
+    active_tools: frozenset[str] | None = None,
     store: ThreadSafeDB | None = None,
 ) -> EventContext:
     """Build PostToolUse EventContext for staleness tests."""
@@ -797,6 +798,7 @@ def _make_post_tool_ctx(
         cli_type=cli_type,
         agent_id=agent_id,
         agent_type=agent_type,
+        active_tools=active_tools,
     )
     ctx.autorun_active = autorun_active
     ctx.task_staleness_enabled = task_staleness_enabled
@@ -1144,6 +1146,141 @@ def test_task_staleness_agent_scope(monkeypatch, scope, agent_id, expected):
     assert ("TASK UPDATE REQUIRED" in str(result)) is expected
 
 
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
+@pytest.mark.parametrize("scope", ["all", "subagent", "user"])
+def test_restricted_pi_family_child_never_arms_staleness(monkeypatch, cli_type, scope):
+    monkeypatch.setitem(CONFIG, "task_staleness_initial_threshold", 1)
+    monkeypatch.setitem(CONFIG, "task_staleness_agent_scope", scope)
+    ctx = _make_post_tool_ctx(
+        "bash",
+        f"test-restricted-scope-{cli_type}-{scope}",
+        cli_type=cli_type,
+        agent_id="restricted-child",
+        agent_type="worker",
+        active_tools=frozenset({"read", "bash", "contact_supervisor"}),
+    )
+    plugins._task_progress_state_set(ctx, "task_staleness_enforce_next", True)
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert "TASK UPDATE" not in str(result)
+    assert plugins._task_progress_state_get(
+        ctx, "task_staleness_enforce_next", None
+    ) is False
+
+
+@pytest.mark.parametrize(
+    "active_tools",
+    (frozenset({"read", "bash"}), frozenset({"read", "bash", "TaskUpdate"})),
+)
+def test_pi_plan_reminder_requires_create_capability(active_tools):
+    ctx = _make_post_tool_ctx(
+        "bash",
+        "test-restricted-plan-reminder",
+        cli_type="pi",
+        agent_id="restricted-plan-child",
+        agent_type="worker",
+        active_tools=active_tools,
+    )
+    ctx.plan_awaiting_planning_tasks = True
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert "PLANNING TASKS REQUIRED" not in str(result)
+    # The agent-scoped key, not the plain session field: cadence for an agent
+    # lives under "<session>:task-staleness-agent:<agent_id>", so
+    # ctx.task_staleness_enforce_next reads a key nothing here writes and
+    # answers False whether or not the reminder armed.
+    assert plugins._task_progress_state_get(
+        ctx, "task_staleness_enforce_next", None
+    ) is False
+
+
+def test_pi_existing_task_reminder_requires_update_capability(monkeypatch):
+    monkeypatch.setitem(CONFIG, "task_staleness_initial_threshold", 1)
+    sid = "test-existing-tasks-create-only"
+    _make_pending_task(sid)
+    ctx = _make_post_tool_ctx(
+        "bash",
+        sid,
+        cli_type="pi",
+        active_tools=frozenset({"read", "bash", "TaskCreate"}),
+    )
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert "TASK UPDATE" not in str(result)
+    assert plugins._task_progress_state_get(
+        ctx, "task_staleness_enforce_next", None
+    ) is False
+
+
+def test_capable_child_plan_reminder_keeps_parent_cadence_unchanged():
+    sid = "test-child-plan-reminder-state"
+    store = ThreadSafeDB()
+    parent = _make_post_tool_ctx("bash", sid, cli_type="pi", store=store)
+    child = _make_post_tool_ctx(
+        "bash",
+        sid,
+        cli_type="pi",
+        agent_id="child-plan-reminder",
+        agent_type="worker",
+        active_tools=frozenset({"read", "bash", "TaskCreate", "TaskUpdate"}),
+        store=store,
+    )
+    plugins._task_progress_state_set(parent, "task_staleness_enforce_next", False)
+    plugins._task_progress_state_set(parent, "task_staleness_reminder_count", 9)
+    child.plan_awaiting_planning_tasks = True
+
+    plugins.app.dispatch(child)
+
+    assert plugins._task_progress_state_get(
+        parent, "task_staleness_enforce_next", None
+    ) is False
+    assert plugins._task_progress_state_get(
+        parent, "task_staleness_reminder_count", None
+    ) == 9
+    assert plugins._task_progress_state_get(
+        child, "task_staleness_enforce_next", None
+    ) is True
+
+    plugins._task_progress_state_set(parent, "task_staleness_enforce_next", True)
+    progress = _make_post_tool_ctx(
+        "TaskCreate",
+        sid,
+        cli_type="pi",
+        agent_id="child-plan-reminder",
+        agent_type="worker",
+        active_tools=frozenset({"read", "bash", "TaskCreate", "TaskUpdate"}),
+        store=store,
+    )
+    plugins.app.dispatch(progress)
+
+    assert plugins._task_progress_state_get(
+        child, "task_staleness_enforce_next", None
+    ) is False
+    assert plugins._task_progress_state_get(
+        parent, "task_staleness_enforce_next", None
+    ) is True
+
+
+def test_pi_no_tasks_reminder_requires_create_capability(monkeypatch):
+    monkeypatch.setitem(CONFIG, "task_staleness_initial_threshold", 1)
+    ctx = _make_post_tool_ctx(
+        "bash",
+        "test-no-tasks-update-only",
+        cli_type="pi",
+        active_tools=frozenset({"read", "bash", "TaskUpdate"}),
+    )
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert "NO TASKS EXIST" not in str(result)
+    assert plugins._task_progress_state_get(
+        ctx, "task_staleness_enforce_next", None
+    ) is False
+
+
 def test_primary_and_subagent_cadence_counters_are_independent(monkeypatch):
     monkeypatch.setitem(CONFIG, "task_staleness_initial_threshold", 2)
     sid = "test-stale-independent-agents"
@@ -1181,6 +1318,244 @@ def test_clear_restarts_initial_phase_but_resume_and_compact_preserve_it():
         assert ctx.tool_calls_since_task_update == (0 if resets else 9)
 
 
+def test_restricted_pi_session_start_does_not_arm_immediate_task_denial():
+    sid = "test-restricted-session-start"
+    _make_pending_task(sid)
+    ctx = EventContext(
+        session_id=sid,
+        event="SessionStart",
+        source="startup",
+        store=ThreadSafeDB(),
+        cli_type="pi",
+        agent_id="restricted-resume-child",
+        agent_type="worker",
+        active_tools=frozenset({"read", "bash"}),
+    )
+
+    result = plugins.app.dispatch(ctx)
+
+    assert result is None or "outstanding incomplete tasks" not in str(result)
+    # Agent-scoped, like the capable sibling below. The plain
+    # ctx.task_staleness_enforce_next field is a different key once agent_id is
+    # set, so asserting on it would answer False no matter what ran.
+    assert plugins._task_progress_state_get(
+        ctx, "task_staleness_enforce_next", None
+    ) is False
+
+
+def test_capable_child_session_start_uses_agent_local_cadence_state():
+    sid = "test-capable-child-session-start"
+    _make_pending_task(sid)
+    store = ThreadSafeDB()
+    parent = EventContext(
+        session_id=sid, event="SessionStart", store=store, cli_type="pi"
+    )
+    plugins._task_progress_state_set(parent, "task_staleness_reminder_count", 7)
+    plugins._task_progress_state_set(parent, "task_staleness_enforce_next", True)
+    child = EventContext(
+        session_id=sid,
+        event="SessionStart",
+        source="startup",
+        store=store,
+        cli_type="pi",
+        agent_id="capable-resume-child",
+        agent_type="worker",
+        active_tools=frozenset({"read", "bash", "TaskUpdate"}),
+    )
+
+    result = plugins.app.dispatch(child) or {}
+
+    assert "outstanding incomplete tasks" in str(result)
+    assert plugins._task_progress_state_get(
+        parent, "task_staleness_reminder_count", None
+    ) == 7
+    assert plugins._task_progress_state_get(
+        parent, "task_staleness_enforce_next", None
+    ) is True
+    assert plugins._task_progress_state_get(
+        child, "task_staleness_reminder_count", None
+    ) == 1
+    assert plugins._task_progress_state_get(
+        child, "task_staleness_enforce_next", None
+    ) is True
+
+
+#: Cadence state that moved to the agent-scoped session id. Every other
+#: task_staleness_* field is still an ordinary session setting reached as an
+#: attribute, so this list is deliberately two names rather than a prefix.
+AGENT_SCOPED_CADENCE_FIELDS = ("task_staleness_enforce_next", "task_staleness_reminder_count")
+
+
+def test_cadence_fields_are_reached_only_through_the_agent_scoped_helpers():
+    """Two spellings of one key, and only one of them knows about agents.
+
+    ``EventContext`` still generates a property for both names from its session
+    defaults, and that property reads ``<session>``. The helpers read
+    ``<session>:task-staleness-agent:<agent_id>`` whenever an agent is running.
+    The two therefore agree in exactly the case a test is most likely to be
+    written for — no agent_id — and disagree silently in the case the fields
+    exist to serve. Nothing raises; the reader just gets someone else's cadence.
+
+    So the rule is not "prefer the helper", it is "the attribute is not a way to
+    reach this state at all". Assert that, rather than asserting the helpers are
+    used somewhere, which would still pass with one attribute access left in.
+    """
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "src" / "autorun"
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in AGENT_SCOPED_CADENCE_FIELDS:
+                offenders.append(f"{path.name}:{node.lineno} .{node.attr}")
+
+    assert not offenders, (
+        "these reach agent-scoped cadence state through the plain session "
+        "property, which is a different key once agent_id is set; use "
+        "task_lifecycle.task_progress_state_get/_set instead: " + ", ".join(offenders)
+    )
+
+
+@pytest.mark.parametrize(
+    ("active_tools", "blocked"),
+    [
+        (frozenset({"read", "bash"}), False),
+        (frozenset({"read", "bash", "TaskCreate"}), False),
+        (frozenset({"read", "bash", "TaskUpdate"}), True),
+        (None, True),
+    ],
+)
+def test_stop_gate_respects_known_task_progress_capability(active_tools, blocked):
+    sid = f"test-stop-capability-{blocked}-{active_tools is None}"
+    _make_pending_task(sid)
+    ctx = EventContext(
+        session_id=sid,
+        event="Stop",
+        store=ThreadSafeDB(),
+        cli_type="pi",
+        active_tools=active_tools,
+    )
+
+    result = _TaskLifecycle(session_id=sid).handle_stop(ctx) or {}
+
+    assert (result.get("decision") == "block") is blocked
+
+
+def test_subagent_stop_is_terminal_for_the_complete_stop_chain():
+    ctx = EventContext(
+        session_id="test-terminal-subagent-stop",
+        event="SubagentStop",
+        store=ThreadSafeDB(),
+        cli_type="pi",
+        agent_id="child-terminal",
+        agent_type="worker",
+        active_tools=frozenset({"read", "bash"}),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_1
+    ctx.autorun_task = "Child work"
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert result.get("decision") != "block"
+    assert result.get("systemMessage", "") == ""
+
+
+def test_subagent_stop_stays_terminal_if_tasks_enable_after_disabled_registration(monkeypatch):
+    from autorun.core import AutorunApp
+
+    enabled = {"value": False}
+    fresh_app = AutorunApp()
+    monkeypatch.setattr(
+        plugins.task_lifecycle, "is_enabled", lambda: enabled["value"]
+    )
+    plugins.task_lifecycle.register_hooks(fresh_app)
+    enabled["value"] = True
+
+    @fresh_app.on("Stop")
+    def later_blocker(ctx):
+        return ctx.continue_running("later handler must not block a child")
+
+    ctx = EventContext(
+        session_id="test-registration-transition-subagent-stop",
+        event="SubagentStop",
+        store=ThreadSafeDB(),
+        cli_type="pi",
+        agent_id="child-registration-disabled",
+        active_tools=frozenset({"read", "bash"}),
+    )
+
+    result = fresh_app.dispatch(ctx) or {}
+
+    assert result.get("decision") != "block"
+    assert "later handler" not in str(result)
+
+
+def test_subagent_stop_is_terminal_when_task_lifecycle_is_disabled(monkeypatch):
+    monkeypatch.setattr(plugins.task_lifecycle, "is_enabled", lambda: False)
+    ctx = EventContext(
+        session_id="test-disabled-lifecycle-subagent-stop",
+        event="SubagentStop",
+        store=ThreadSafeDB(),
+        cli_type="pi",
+        agent_id="child-disabled-lifecycle",
+        active_tools=frozenset({"read", "bash"}),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_1
+    ctx.autorun_task = "Child work"
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert result.get("decision") != "block"
+    assert result.get("systemMessage", "") == ""
+
+
+def test_subagent_stop_is_terminal_when_task_lifecycle_raises(monkeypatch):
+    class BrokenLifecycle:
+        def __init__(self, **_kwargs):
+            raise RuntimeError("broken lifecycle")
+
+    monkeypatch.setattr(plugins.task_lifecycle, "is_enabled", lambda: True)
+    monkeypatch.setattr(plugins.task_lifecycle, "TaskLifecycle", BrokenLifecycle)
+    ctx = EventContext(
+        session_id="test-broken-lifecycle-subagent-stop",
+        event="SubagentStop",
+        store=ThreadSafeDB(),
+        cli_type="pi",
+        agent_id="child-broken-lifecycle",
+        active_tools=frozenset({"read", "bash"}),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_1
+    ctx.autorun_task = "Child work"
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert result.get("decision") != "block"
+    assert result.get("systemMessage", "") == ""
+
+
+def test_incapable_main_stop_still_reaches_non_task_autorun_stage_gate():
+    ctx = EventContext(
+        session_id="test-incapable-main-stage-stop",
+        event="Stop",
+        store=ThreadSafeDB(),
+        cli_type="pi",
+        active_tools=frozenset({"read", "bash"}),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_1
+    ctx.autorun_task = "Main work"
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert result.get("decision") == "block"
+    assert "STAGE" in str(result)
+
+
 # ── PreToolUse warn-then-deny enforcement (v0.10.2) ─────────────────────────
 
 
@@ -1192,6 +1567,10 @@ def _make_pre_tool_ctx(
     task_staleness_reminder_count: int = 0,
     cli_type: str = "claude",
     tool_input: dict | None = None,
+    agent_id: str | None = None,
+    agent_type: str | None = None,
+    active_tools: frozenset[str] | None = None,
+    store: ThreadSafeDB | None = None,
 ) -> EventContext:
     """Build PreToolUse EventContext for enforcement tests."""
     ctx = EventContext(
@@ -1200,11 +1579,18 @@ def _make_pre_tool_ctx(
         prompt="",
         tool_name=tool_name,
         tool_input=tool_input or {},
-        store=ThreadSafeDB(),
+        store=store if store is not None else ThreadSafeDB(),
         cli_type=cli_type,
+        agent_id=agent_id,
+        agent_type=agent_type,
+        active_tools=active_tools,
     )
-    ctx.task_staleness_enforce_next = task_staleness_enforce_next
-    ctx.task_staleness_reminder_count = task_staleness_reminder_count
+    plugins._task_progress_state_set(
+        ctx, "task_staleness_enforce_next", task_staleness_enforce_next
+    )
+    plugins._task_progress_state_set(
+        ctx, "task_staleness_reminder_count", task_staleness_reminder_count
+    )
     return ctx
 
 
@@ -1250,6 +1636,135 @@ def test_enforce_staleness_deny_on_second_offense():
     )
     reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
     assert "REQUIRED" in reason or "blocked" in reason.lower(), f"Deny reason should contain REQUIRED or 'blocked'. Got: {reason!r}"
+
+
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
+def test_restricted_pi_family_child_is_not_denied_an_impossible_task_call(cli_type):
+    ctx = _make_pre_tool_ctx(
+        "bash",
+        f"test-restricted-child-{cli_type}",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+        cli_type=cli_type,
+        agent_id="run-42:3",
+        agent_type="worker",
+        active_tools=frozenset({"read", "grep", "find", "bash", "contact_supervisor"}),
+    )
+
+    result = plugins.app.dispatch(ctx)
+
+    assert result is None or (
+        result.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+    )
+    assert plugins._task_progress_state_get(
+        ctx, "task_staleness_enforce_next", None
+    ) is False
+
+
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
+def test_capable_pi_family_session_keeps_second_offense_denial(cli_type):
+    ctx = _make_pre_tool_ctx(
+        "bash",
+        f"test-capable-session-{cli_type}",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+        cli_type=cli_type,
+        active_tools=frozenset({"read", "bash", "TaskCreate", "TaskUpdate", "TaskList"}),
+    )
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+
+def test_an_unknown_tool_surface_is_not_charged_for_a_task_state_read(monkeypatch):
+    """Seven of the nine harnesses never report a tool surface; none should pay.
+
+    Only the Pi-family bridge sends `active_tools`. For everyone else it is
+    None, and `task_progress_capability_available` answers True from that alone
+    — before it looks at the roles. Refining CREATE versus UPDATE first means
+    constructing a TaskLifecycle (a config-file read) and taking the session
+    lock for `get_incomplete_tasks`, then discarding the answer.
+
+    The second half keeps the first honest: skipping the read *always* would
+    also satisfy an assertion that it never happens, and would quietly undo the
+    role refinement this function exists to perform.
+    """
+    constructions = []
+    real = plugins.task_lifecycle.TaskLifecycle
+
+    class Counting(real):
+        def __init__(self, *args, **kwargs):
+            constructions.append(kwargs.get("ctx"))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(plugins.task_lifecycle, "TaskLifecycle", Counting)
+
+    unknown = _make_pre_tool_ctx(
+        "bash", "test-capability-unknown", cli_type="claude", active_tools=None
+    )
+    assert plugins._required_task_mutation_available(unknown) is True
+    assert constructions == [], (
+        "An unreported tool surface read task state to pick a role that "
+        "task_progress_capability_available then ignored."
+    )
+
+    # TaskUpdate only, in a session with nothing listed: the refinement has to
+    # run, find no tasks, ask for CREATE, and answer no. Asserting True here
+    # would pass even if the read were skipped entirely.
+    known = _make_pre_tool_ctx(
+        "bash",
+        "test-capability-known",
+        cli_type="pi",
+        active_tools=frozenset({"read", "bash", "TaskUpdate"}),
+    )
+    assert plugins._required_task_mutation_available(known) is False
+    assert len(constructions) == 1, (
+        "A reported tool surface skipped the task-state read, so CREATE and "
+        "UPDATE are no longer told apart."
+    )
+
+
+def test_known_restricted_and_capable_agent_enforcement_is_thread_local():
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = ThreadSafeDB()
+    capable = _make_pre_tool_ctx(
+        "bash",
+        "test-capability-thread-isolation",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+        cli_type="pi",
+        active_tools=frozenset({"bash", "TaskCreate", "TaskUpdate"}),
+        store=store,
+    )
+    restricted = _make_pre_tool_ctx(
+        "bash",
+        "test-capability-thread-isolation",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+        cli_type="pi",
+        agent_id="child-thread",
+        agent_type="worker",
+        active_tools=frozenset({"bash"}),
+        store=store,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        capable_result, restricted_result = list(
+            pool.map(plugins.app.dispatch, (capable, restricted))
+        )
+
+    assert capable_result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert restricted_result is None or (
+        restricted_result.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+    )
+    assert plugins._task_progress_state_get(
+        capable, "task_staleness_reminder_count", None
+    ) == 2
+    assert plugins._task_progress_state_get(
+        restricted, "task_staleness_enforce_next", None
+    ) is False
 
 
 def test_enforce_staleness_deny_on_third_offense():
@@ -1697,6 +2212,38 @@ def test_plan_acceptance_sets_execution_reminder_and_clears_planning():
     ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     assert ctx3.plan_awaiting_planning_tasks is False
     assert ctx3.plan_awaiting_execution_tasks is True
+
+
+def test_pi_plan_acceptance_without_create_capability_skips_task_arming():
+    sid = "test-incapable-plan-acceptance"
+    store = ThreadSafeDB()
+    ctx = EventContext(
+        session_id=sid,
+        event="PostToolUse",
+        prompt="",
+        tool_name="ExitPlanMode",
+        tool_input={},
+        tool_result="User has approved your plan. You can now start coding.",
+        store=store,
+        cli_type="pi",
+        active_tools=frozenset({"read", "bash", "TaskUpdate"}),
+    )
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    reloaded = EventContext(
+        session_id=sid,
+        event="PostToolUse",
+        store=store,
+        cli_type="pi",
+        active_tools=frozenset({"read", "bash", "TaskUpdate"}),
+    )
+    assert reloaded.autorun_active is True
+    assert reloaded.plan_awaiting_execution_tasks is False
+    assert plugins._task_progress_state_get(
+        reloaded, "task_staleness_enforce_next", False
+    ) is False
+    assert "EXECUTION TASKS REQUIRED" not in str(result)
 
 
 def test_execution_reminder_fires_until_task_create():

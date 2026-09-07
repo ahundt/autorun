@@ -59,7 +59,15 @@ from .config import (
     PATTERN_DISPLAY_MAX_LEN,
     CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS,
 )
-from .platforms import is_task_progress_tool, is_task_tool, platform_for
+from .platforms import (
+    TASK_CREATE_CAPABILITY_ROLES,
+    TASK_UPDATE_CAPABILITY_ROLES,
+    is_task_progress_tool,
+    is_task_tool,
+    platform_for,
+    task_capability_is_known,
+    task_progress_capability_available,
+)
 from .session_manager import SessionPersistenceError, session_state
 from .scoped_allow import (
     ScopeSpec,
@@ -1778,54 +1786,55 @@ def _task_staleness_scope(ctx: EventContext) -> str:
 
 
 def _task_staleness_applies(ctx: EventContext) -> bool:
+    if not task_progress_capability_available(ctx.cli_type, ctx.active_tools):
+        return False
     scope = _task_staleness_scope(ctx)
     return scope == "all" or scope == _task_staleness_agent_kind(ctx)
 
 
-def _task_staleness_state_session_id(ctx: EventContext) -> str:
-    """Keep cadence agent-local without splitting shared task lifecycle state."""
-    if not ctx.agent_id:
-        return ctx.session_id
-    return f"{ctx.session_id}:task-staleness-agent:{ctx.agent_id}"
+def _required_task_roles(*, no_tasks: bool) -> "frozenset[str]":
+    """Which mutation the next Task call has to be, given what is outstanding.
+
+    With nothing listed the AI has to create; with work already listed it has
+    to update. Both staleness pathways ask this — check_task_staleness when it
+    arms a crossing, _required_task_mutation_available when PreToolUse acts on
+    one — and a disagreement between them would let through exactly the call
+    the other just demanded.
+    """
+    return TASK_CREATE_CAPABILITY_ROLES if no_tasks else TASK_UPDATE_CAPABILITY_ROLES
 
 
-def _task_progress_state_get(ctx: EventContext, name: str, default=None):
-    return ctx.state_get(
-        name,
-        default,
-        session_id=_task_staleness_state_session_id(ctx),
+def _required_task_mutation_available(ctx: EventContext) -> bool:
+    """Match enforcement to creating new tasks or updating existing ones."""
+    if not task_capability_is_known(ctx.active_tools):
+        # Seven of the nine harnesses never report a tool surface, so refining
+        # the role would take the session lock for get_incomplete_tasks and
+        # then hand the answer to a check that already said yes from the
+        # unknown alone.
+        return True
+    required_roles = TASK_CREATE_CAPABILITY_ROLES
+    if not (ctx.plan_awaiting_planning_tasks or ctx.plan_awaiting_execution_tasks):
+        try:
+            manager = task_lifecycle.TaskLifecycle(ctx=ctx)
+            required_roles = _required_task_roles(
+                no_tasks=not manager.get_incomplete_tasks(exclude_blocking=True)
+            )
+        except Exception:  # noqa: BLE001 - unknown state preserves legacy behavior
+            # Unknown task state preserves legacy progress-tool behavior.
+            return task_progress_capability_available(ctx.cli_type, ctx.active_tools)
+    return task_progress_capability_available(
+        ctx.cli_type,
+        ctx.active_tools,
+        required_roles,
     )
 
 
-def _task_progress_state_set(ctx: EventContext, name: str, value) -> None:
-    ctx.state_set(
-        name,
-        value,
-        session_id=_task_staleness_state_session_id(ctx),
-    )
-
-
-def _task_progress_state_update(ctx: EventContext, name: str, updater, default=None):
-    return ctx.state_update_volatile(
-        name,
-        updater,
-        default,
-        session_id=_task_staleness_state_session_id(ctx),
-    )
-
-
-def _task_progress_state_update_durable(
-    ctx: EventContext,
-    name: str,
-    updater,
-    default=None,
-):
-    return ctx.state_update(
-        name,
-        updater,
-        default,
-        session_id=_task_staleness_state_session_id(ctx),
-    )
+# Compatibility aliases keep existing callers/tests on one lifecycle-owned,
+# agent-local cadence implementation rather than duplicating state-key logic.
+_task_progress_state_get = task_lifecycle.task_progress_state_get
+_task_progress_state_set = task_lifecycle.task_progress_state_set
+_task_progress_state_update = task_lifecycle.task_progress_state_update
+_task_progress_state_update_durable = task_lifecycle.task_progress_state_update_durable
 
 
 def _positive_task_threshold(value, fallback: int) -> int:
@@ -1889,14 +1898,22 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     if not any(ind in ctx.tool_result_str.lower() for ind in approval_indicators):
         return None
 
+    can_create_tasks = task_progress_capability_available(
+        ctx.cli_type,
+        ctx.active_tools,
+        TASK_CREATE_CAPABILITY_ROLES,
+    )
+
     if ctx.autorun_active:
         # Autorun already running (e.g. re-entering plan mode mid-session).
         # Still set execution task reminder and notify, but don't re-initialize.
         ctx.plan_awaiting_planning_tasks = False
-        ctx.plan_awaiting_execution_tasks = True
-        reminder = _get_task_creation_reminder(ctx)
+        ctx.plan_awaiting_execution_tasks = can_create_tasks
+        reminder = _get_task_creation_reminder(ctx) if can_create_tasks else ""
         if reminder:
             ctx.add_chain_notification(reminder, channel="both")
+        if not can_create_tasks:
+            _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
         ctx.add_chain_notification("Plan accepted (autorun already active)", channel="human")
         return None
 
@@ -1909,7 +1926,8 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     ctx.recheck_count = 0
     ctx.hook_call_count = 0
     ctx.plan_awaiting_planning_tasks = False  # Planning phase done
-    ctx.plan_awaiting_execution_tasks = True  # Now need [TDD]/[EXEC] tasks
+    # Only demand [TDD]/[EXEC] tasks when this agent can create them.
+    ctx.plan_awaiting_execution_tasks = can_create_tasks
 
     injection = build_injection_prompt(ctx)
 
@@ -1919,7 +1937,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
         try:
             manager = task_lifecycle.TaskLifecycle(ctx=ctx)
             task_injection = manager.get_plan_approval_injection(ctx)
-            if task_injection:
+            if can_create_tasks and task_injection:
                 injection += "\n" + task_injection
             plan_key = getattr(ctx, "plan_arguments", "") or ""
             if plan_key:
@@ -1930,9 +1948,9 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
 
     # Fix 8: Configurable TDD scaffolding
     plan_cfg = task_lifecycle.PlanNotifyConfig.load()
-    if plan_cfg.tdd_scaffolding:
+    if can_create_tasks and plan_cfg.tdd_scaffolding:
         injection += _get_tdd_scaffolding_message(ctx)
-    if plan_cfg.task_update_enforcement:
+    if can_create_tasks and plan_cfg.task_update_enforcement:
         _initial, threshold = _task_staleness_thresholds(ctx)
         _task_progress_state_set(
             ctx,
@@ -1946,15 +1964,15 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
         )
 
     # v0.10: Append execution task reminder (DRY helper shared with remind_until_tasks_created)
-    reminder = _get_task_creation_reminder(ctx)
+    reminder = _get_task_creation_reminder(ctx) if can_create_tasks else ""
     if reminder:
         injection += reminder
 
     # Fix 7: Chain notifications (PATHWAY 2) — don't stop chain
     user_lines = [f"Plan accepted - {task_count} task(s) linked"]
-    if plan_cfg.tdd_scaffolding:
+    if can_create_tasks and plan_cfg.tdd_scaffolding:
         user_lines.append("  TDD scaffolding: enabled")
-    if plan_cfg.task_update_enforcement:
+    if can_create_tasks and plan_cfg.task_update_enforcement:
         user_lines.append("  Task update enforcement: enabled")
     user_msg = "\n".join(user_lines)
 
@@ -2218,6 +2236,9 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
         return None
     if not _task_progress_state_get(ctx, "task_staleness_enforce_next", False):
         return None
+    if not _required_task_mutation_available(ctx):
+        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        return None
 
     # Always let Task tools through and reset all counters
     if is_task_tool(_task_cli_hint(ctx), ctx.tool_name):
@@ -2431,6 +2452,15 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         except Exception:
             pass  # Fail-open — skip lifecycle check on error
 
+    required_roles = _required_task_roles(no_tasks=no_tasks)
+    if not task_progress_capability_available(
+        ctx.cli_type,
+        ctx.active_tools,
+        required_roles,
+    ):
+        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        return None
+
     reminder_count = _task_progress_state_update_durable(
         ctx,
         "task_staleness_reminder_count",
@@ -2480,6 +2510,13 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
     """
     if task_enforcement_is_paused(ctx):
         return None
+    if not task_progress_capability_available(
+        ctx.cli_type,
+        ctx.active_tools,
+        TASK_CREATE_CAPABILITY_ROLES,
+    ):
+        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        return None
     awaiting_planning = ctx.plan_awaiting_planning_tasks
     awaiting_execution = ctx.plan_awaiting_execution_tasks
 
@@ -2493,7 +2530,7 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
         if awaiting_execution:
             ctx.plan_awaiting_execution_tasks = False
         ctx.plan_task_reminder_count = 0
-        ctx.task_staleness_enforce_next = False
+        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
         return None
 
     # DRY helper selects message based on flags (execution priority over planning)
@@ -2505,7 +2542,7 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
             # Deliver via PreToolUse on the very next tool call.
             # PostToolUse systemMessage is ephemeral — AI ignores it.
             # PreToolUse allow(reason) or deny(reason) is the only reliable path.
-            ctx.task_staleness_enforce_next = True
+            _task_progress_state_set(ctx, "task_staleness_enforce_next", True)
         # channel="both": systemMessage + additionalContext (SDK #18534 workaround)
         ctx.add_chain_notification(msg, channel="both")
     return None
@@ -3073,9 +3110,17 @@ def _make_plan_handler(skill_name: str):
                 has_tasks = len(task_lifecycle.TaskLifecycle(ctx=ctx).tasks) > 0
             except Exception:
                 pass
-        ctx.plan_awaiting_planning_tasks = (
-            skill_name != "planprocess" and not has_tasks
+        can_create_tasks = task_progress_capability_available(
+            ctx.cli_type,
+            ctx.active_tools,
+            TASK_CREATE_CAPABILITY_ROLES,
         )
+        ctx.plan_awaiting_planning_tasks = (
+            can_create_tasks and skill_name != "planprocess" and not has_tasks
+        )
+        if not can_create_tasks:
+            ctx.plan_awaiting_execution_tasks = False
+            _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
 
         if not md_path.exists():
             return f"❌ Error: plan skill not found: {skill_name}"

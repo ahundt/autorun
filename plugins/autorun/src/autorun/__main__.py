@@ -944,6 +944,7 @@ def run_direct(payload: dict | None = None) -> int:
         source=normalized["source"],
         agent_id=normalized["agent_id"],
         agent_type=normalized["agent_type"],
+        active_tools=normalized["active_tools"],
         transcript_path=normalized.get("transcript_path"),
         agent_transcript_path=normalized.get("agent_transcript_path"),
         stop_hook_active=normalized["stop_hook_active"],

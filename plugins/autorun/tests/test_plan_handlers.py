@@ -186,6 +186,42 @@ class TestPlanCommandHandlers:
         assert "## Current invocation" not in text
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("spelling", ("/ar:pn", "/ar:pp"))
+    @pytest.mark.parametrize(
+        "active_tools",
+        (frozenset({"read", "bash"}), frozenset({"read", "bash", "TaskUpdate"})),
+    )
+    def test_pi_plan_command_without_create_capability_does_not_arm_task_nag(
+        self, spelling, active_tools
+    ):
+        from autorun import plugins
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun.plugins import app
+
+        ctx = EventContext(
+            session_id=f"restricted-plan-command-{spelling}",
+            event="UserPromptSubmit",
+            prompt=f"{spelling} notes/plan.md",
+            store=ThreadSafeDB(),
+            cli_type="pi",
+            agent_id="restricted-plan-child",
+            agent_type="worker",
+            active_tools=active_tools,
+        )
+
+        app.dispatch(ctx)
+
+        assert ctx.plan_awaiting_planning_tasks is False
+        assert ctx.plan_awaiting_execution_tasks is False
+        # Read the key the handler writes. `ctx.task_staleness_enforce_next` is
+        # the plain session field, and cadence for an agent lives under
+        # "<session>:task-staleness-agent:<agent_id>", so the property reads a
+        # key nothing here ever sets and reports False either way.
+        assert plugins._task_progress_state_get(
+            ctx, "task_staleness_enforce_next", None
+        ) is False
+
+    @pytest.mark.unit
     def test_plan_handlers_registered(self):
         """Test plan handlers are registered with app.command()"""
         # Import the app to check registrations

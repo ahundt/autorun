@@ -538,6 +538,14 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         else None
     )
 
+    raw_active_tools = payload.get("active_tools")
+    active_tools = None
+    if isinstance(raw_active_tools, list) and all(
+        isinstance(name, str) and bool(name.strip())
+        for name in raw_active_tools
+    ):
+        active_tools = frozenset(name.strip() for name in raw_active_tools)
+
     return {
         "cli_type": cli_type,
         "hook_event_name": event,
@@ -554,6 +562,9 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         # session, so it must never be used alone as the discriminator.
         "agent_id": payload.get("agent_id"),
         "agent_type": payload.get("agent_type"),
+        # Effective model-facing tools when an in-process bridge can report
+        # them. None means unknown; an empty frozenset means known-empty.
+        "active_tools": active_tools,
         # Current Claude Code Stop payload fields (v2.1.145+). Preserve them
         # without interpretation so Stop policies can prefer structured state
         # over transcript inference while older harnesses keep safe defaults.
@@ -1673,6 +1684,7 @@ class EventContext:
         "_source",
         "_agent_id",
         "_agent_type",
+        "_active_tools",
         "_agent_transcript_path",
         "_chain_notifications",
         "_transcript_path",
@@ -1743,6 +1755,7 @@ class EventContext:
         source: str = "startup",
         agent_id: str | None = None,
         agent_type: str | None = None,
+        active_tools: "frozenset[str] | None" = None,
         transcript_path: str = None,
         agent_transcript_path: str = None,
         stop_hook_active: bool = False,
@@ -1793,6 +1806,11 @@ class EventContext:
         object.__setattr__(self, "_source", source)
         object.__setattr__(self, "_agent_id", agent_id or None)
         object.__setattr__(self, "_agent_type", agent_type or None)
+        object.__setattr__(
+            self,
+            "_active_tools",
+            None if active_tools is None else frozenset(active_tools),
+        )
         object.__setattr__(self, "_agent_transcript_path", agent_transcript_path or None)
         object.__setattr__(self, "_stop_hook_active", bool(stop_hook_active))
         object.__setattr__(self, "_last_assistant_message", last_assistant_message or "")
@@ -1937,6 +1955,11 @@ class EventContext:
     def agent_type(self) -> "str | None":
         """Harness agent type; not by itself proof that this is a subagent."""
         return self._agent_type
+
+    @property
+    def active_tools(self) -> "frozenset[str] | None":
+        """Effective model-facing tools, or None when the bridge cannot know."""
+        return self._active_tools
 
     @property
     def agent_transcript_path(self) -> "str | None":
@@ -3073,6 +3096,7 @@ class AutorunDaemon:
                 source=normalized["source"],
                 agent_id=normalized["agent_id"],
                 agent_type=normalized["agent_type"],
+                active_tools=normalized["active_tools"],
                 transcript_path=normalized.get("transcript_path"),
                 agent_transcript_path=normalized.get("agent_transcript_path"),
                 stop_hook_active=normalized["stop_hook_active"],

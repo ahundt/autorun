@@ -18,6 +18,7 @@ time rather than at `claude plugin list` / `gemini extensions install` time.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -276,6 +277,67 @@ class TestSharedContract:
         md_files = list(commands_dir.glob("*.md"))
         assert len(md_files) > 10, (
             f"Expected many .md command files in {commands_dir}, found {len(md_files)}"
+        )
+
+    def test_a_normalized_field_reaches_both_dispatch_entry_points_or_neither(self):
+        """One hook payload, two entry points, and nothing may reach only one.
+
+        `AutorunDaemon.handle_client` and `__main__.run_direct` each spell out
+        their own `EventContext(...)` from the same `normalize_hook_payload`
+        result. That is two copies of one mapping, and they drift silently:
+        `active_tools` was added to the daemon copy alone, so Pi's reported
+        tool surface was `None` on every daemonless hook
+        (`AUTORUN_USE_DAEMON=0`, and the fallback whenever the daemon is
+        unreachable). Capability gating then read "unknown", kept the legacy
+        behavior, and a child with no task tool was still ordered to call one.
+        Nothing failed; the feature was simply absent on that path.
+
+        This is the trap plugins/autorun/AGENTS.md states as "new hook-stdin
+        data needs a slot, a property, an `__init__` kwarg, and every
+        `EventContext(...)` call site updated" — written after
+        `transcript_path` did the same thing.
+
+        Comparing keyword *names* alone would not state the property: both
+        sites pass `store` and `session_id`, and only the daemon has a
+        `server_url`, all legitimately. What must match is narrower and exact:
+        the keywords whose value is read out of `normalized`.
+        """
+        def payload_derived_keywords(path: Path) -> dict[str, set[str]]:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            found = {}
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and node.func.id == "EventContext"):
+                    continue
+                keywords = {
+                    keyword.arg
+                    for keyword in node.keywords
+                    if keyword.arg
+                    and any(
+                        isinstance(inner, ast.Name) and inner.id == "normalized"
+                        for inner in ast.walk(keyword.value)
+                    )
+                }
+                if keywords:
+                    found[f"{path.name}:{node.lineno}"] = keywords
+            return found
+
+        sites = {}
+        for module in ("core.py", "__main__.py"):
+            sites.update(payload_derived_keywords(PLUGIN_ROOT / "src" / "autorun" / module))
+
+        assert len(sites) == 2, (
+            "Expected exactly two payload-derived EventContext sites (the "
+            f"daemon and the daemonless entry point), found: {sorted(sites)}. "
+            "A third copy is a third thing to keep in step."
+        )
+        (left, left_keywords), (right, right_keywords) = sorted(sites.items())
+        assert left_keywords == right_keywords, (
+            "A normalized payload field reaches one hook entry point and not "
+            f"the other.\n  only in {left}: {sorted(left_keywords - right_keywords)}"
+            f"\n  only in {right}: {sorted(right_keywords - left_keywords)}\n"
+            "Whatever it feeds is silently inactive on the path that lost it."
         )
 
     def test_both_cli_event_sets_contain_session_start(self):

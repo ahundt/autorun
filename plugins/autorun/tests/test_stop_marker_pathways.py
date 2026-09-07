@@ -357,6 +357,37 @@ class TestTheGateIsUnchangedWithoutAMarker:
 
         assert TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx) is None
 
+    def test_the_dispatch_chain_settles_subagentstop_rather_than_forwarding_it(
+        self, isolated_state, cfg, monkeypatch
+    ):
+        """Returning None is the manager's contract, not the chain's.
+
+        The test above pins what a direct caller gets, and pass-through is the
+        right answer there. Through ``app.dispatch`` the same None means "ask
+        the next Stop handler", and the next one is ``plugins.autorun_injection``,
+        which re-injects a stage instruction whenever autorun is active — into a
+        child whose parent is already waiting on it. So the chain has to settle
+        the event, and asserting the manager returns None cannot see that:
+        it passes either way.
+        """
+        from autorun import plugins, task_lifecycle as tl
+
+        monkeypatch.setattr(tl.TaskLifecycleConfig, "load",
+                            staticmethod(lambda *a, **k: cfg))
+        session_id = "subagent-stop-chain"
+        seed = TaskLifecycle(config=cfg, session_id=session_id)
+        seed.create_task("77", {"subject": "Work"}, "created")
+        seed.update_task("77", {"status": "in_progress"}, "started")
+
+        ctx = _stop_context(session_id, "no marker", event="SubagentStop")
+
+        result = plugins.app.dispatch(ctx)
+
+        assert _blocked_text(result) == "", (
+            f"a SubagentStop came back blocking: {result!r}"
+        )
+        assert CONFIG["stage2_instruction"] not in str(result)
+
 
 class TestBothPathwaysAgree:
     def test_the_post_tool_use_pathway_still_applies_the_marker(

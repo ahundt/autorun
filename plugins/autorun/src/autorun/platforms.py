@@ -1162,6 +1162,8 @@ _OPENCODE_TOOLS = {
 }
 
 # Pi's built-ins are lowercase and include first-class grep/find/ls tools.
+# Autorun's extension registers Claude-shaped Task* tools, so guidance uses
+# their actual model-facing names and JSON-schema fields.
 _PI_TOOLS = {
     "grep": "grep",
     "glob": "find",
@@ -1170,12 +1172,12 @@ _PI_TOOLS = {
     "edit": "edit",
     "bash": "bash",
     "ls": "ls",
-    "task_create": "autorun task markers",
-    "task_update": "autorun task markers",
-    "task_list": "autorun task status",
-    "task_progress": "autorun task markers",
-    "task_title": "task title",
-    "task_id_param": "task id",
+    "task_create": "TaskCreate",
+    "task_update": "TaskUpdate",
+    "task_list": "TaskList",
+    "task_progress": "TaskUpdate",
+    "task_title": "subject",
+    "task_id_param": "taskId",
 }
 
 # Codex hook events use Claude-like shell/edit matcher names, but the current
@@ -1624,6 +1626,7 @@ PI = register(
             "PostToolUse": "PostToolUse",
             "UserPromptSubmit": "UserPromptSubmit",
             "Stop": "Stop",
+            "SubagentStop": "agent_settled",
             "SessionStart": "SessionStart",
             "SessionEnd": "SessionEnd",
             "PreCompact": "PreCompact",
@@ -1652,6 +1655,7 @@ PI = register(
                 "PreCompact",
                 "PostCompact",
                 "Stop",
+                "SubagentStop",
                 "SessionEnd",
             }
         ),
@@ -2033,6 +2037,45 @@ def is_task_tool(cli_type: str | None, tool_name: str | None) -> bool:
 def is_task_progress_tool(cli_type: str | None, tool_name: str | None) -> bool:
     """True when tool_name can create/update task state for cli_type."""
     return task_tool_role(cli_type, tool_name) in {"create", "update", "bulk", "plan"}
+
+
+TASK_CREATE_CAPABILITY_ROLES = frozenset({"create", "bulk", "plan"})
+TASK_UPDATE_CAPABILITY_ROLES = frozenset({"update", "bulk", "plan"})
+TASK_PROGRESS_CAPABILITY_ROLES = (
+    TASK_CREATE_CAPABILITY_ROLES | TASK_UPDATE_CAPABILITY_ROLES
+)
+
+
+def task_capability_is_known(active_tools: frozenset[str] | None) -> bool:
+    """Whether a session reported which tools its model can actually call.
+
+    Only the Pi-family bridge reports one (``pi.getActiveTools()``); the other
+    seven registered harnesses send nothing, and a payload that fails
+    ``normalize_hook_payload``'s shape check arrives as ``None`` too. Both mean
+    unknown, and unknown must keep the legacy behavior rather than guess — so
+    the two spellings of "unknown" live here, once, rather than at each caller.
+    A known-empty ``frozenset()`` is an answer, not a missing one.
+    """
+    return isinstance(active_tools, frozenset)
+
+
+def task_progress_capability_available(
+    cli_type: str | None,
+    active_tools: frozenset[str] | None,
+    required_roles: frozenset[str] = TASK_PROGRESS_CAPABILITY_ROLES,
+) -> bool:
+    """Whether a reported tool surface can perform a required task mutation.
+
+    ``required_roles`` keeps create-only reminders distinct from gates that
+    require updating existing tasks. An unknown capability preserves legacy
+    behavior; an explicit empty set is known-empty.
+    """
+    if not task_capability_is_known(active_tools):
+        return True
+    return any(
+        task_tool_role(cli_type, tool_name) in required_roles
+        for tool_name in active_tools
+    )
 
 
 def agent_spawn_tools_for(cli_type: "str | None") -> frozenset[str]:

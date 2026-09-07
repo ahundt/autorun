@@ -67,10 +67,12 @@ from .config import (
     TASK_PAUSE_DEFAULT_TTL_SECONDS,
 )
 from .platforms import (
+    TASK_UPDATE_CAPABILITY_ROLES,
     SessionIdentityResolutionError,
     agent_spawn_tools_for,
     platform_for,
     resolve_standalone_session_identity,
+    task_progress_capability_available,
     task_tool_role,
 )
 from .task_pause import (
@@ -93,6 +95,44 @@ _SESSION_START_CLAIM_DIGEST_HEX_CHARS: int = 16
 _DELEGATION_RECEIPT_SESSION = "__task_delegation_receipts__"
 _DELEGATION_RECEIPTS_FIELD = "receipts"
 _MAX_RESOLVED_DELEGATION_RECEIPTS = 256
+
+
+def task_progress_state_session_id(ctx: EventContext) -> str:
+    """Scope enforcement cadence to one agent while tasks remain session-wide."""
+    if not ctx.agent_id:
+        return ctx.session_id
+    return f"{ctx.session_id}:task-staleness-agent:{ctx.agent_id}"
+
+
+def task_progress_state_get(ctx: EventContext, name: str, default=None):
+    return ctx.state_get(name, default, session_id=task_progress_state_session_id(ctx))
+
+
+def task_progress_state_set(ctx: EventContext, name: str, value) -> None:
+    ctx.state_set(name, value, session_id=task_progress_state_session_id(ctx))
+
+
+def task_progress_state_update(ctx: EventContext, name: str, updater, default=None):
+    return ctx.state_update_volatile(
+        name,
+        updater,
+        default,
+        session_id=task_progress_state_session_id(ctx),
+    )
+
+
+def task_progress_state_update_durable(
+    ctx: EventContext,
+    name: str,
+    updater,
+    default=None,
+):
+    return ctx.state_update(
+        name,
+        updater,
+        default,
+        session_id=task_progress_state_session_id(ctx),
+    )
 
 
 def _safe_path_component(value: str) -> str:
@@ -2103,6 +2143,14 @@ class TaskLifecycle:
                 return None
             return ctx.continue_running(pause_injection)
 
+        if not task_progress_capability_available(
+            ctx.cli_type,
+            ctx.active_tools,
+            TASK_UPDATE_CAPABILITY_ROLES,
+        ):
+            task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+            return None
+
         # Find blocking tasks. Parked and delegated work is retained and shown
         # separately below without making Stop block on it.
         # REMOVED: self.prune_old_tasks() - manual pruning only
@@ -2200,8 +2248,9 @@ class TaskLifecycle:
         # Only blocking work arms PreToolUse enforcement. Paused/delegated work
         # is surfaced for recovery but remains genuinely non-blocking.
         if incomplete:
-            ctx.task_staleness_enforce_next = True
-            ctx.task_staleness_reminder_count = 1  # Skip allow, go straight to deny
+            task_progress_state_set(ctx, "task_staleness_enforce_next", True)
+            # Skip allow and go straight to deny on the first unrelated tool.
+            task_progress_state_set(ctx, "task_staleness_reminder_count", 1)
 
         # Keep AI running with injected prompt — AI sees this immediately
         return ctx.continue_running(injection)
@@ -2234,6 +2283,14 @@ class TaskLifecycle:
                 self._return_delegations(ctx)
             except Exception as exc:  # noqa: BLE001 - the gate must stay non-blocking
                 logger.warning("Could not process returned delegations: %s", exc)
+            return None
+        if not task_progress_capability_available(
+            ctx.cli_type,
+            ctx.active_tools,
+            TASK_UPDATE_CAPABILITY_ROLES,
+        ):
+            # Skip only this Task-specific gate. Later Stop handlers may still
+            # enforce autorun stages that require no task mutation tool.
             return None
         if task_pause_allows_stop(ctx):
             return ctx.allow()
@@ -3799,7 +3856,18 @@ def register_hooks(app_instance) -> None:
     Uses class-based handlers for DRY code organization.
     Follows plan_export.py pattern for consistency.
     """
-    if not is_enabled():
+    lifecycle_hooks_registered = is_enabled()
+
+    @app_instance.on("Stop")
+    def keep_subagent_stop_terminal_when_tasks_unregistered(
+        ctx: EventContext,
+    ) -> dict | None:
+        """Preserve child liveness when this app has no lifecycle Stop gate."""
+        if ctx.event == "SubagentStop" and not lifecycle_hooks_registered:
+            return ctx.allow()
+        return None
+
+    if not lifecycle_hooks_registered:
         return
 
     def reset_stop_sequence(ctx: EventContext) -> None:
@@ -4052,18 +4120,28 @@ def register_hooks(app_instance) -> None:
     def prevent_premature_stop(ctx: EventContext) -> Optional[Dict]:
         """Prevent AI from stopping if tasks are incomplete (PRIMARY GOAL)."""
         if not is_enabled():
-            return None
+            # Subagent settlement is a whole-chain liveness invariant, not a
+            # task-enforcement feature toggle.
+            return ctx.allow() if ctx.event == "SubagentStop" else None
 
         try:
             manager = TaskLifecycle(ctx=ctx)
-            return manager.handle_stop(ctx)
+            result = manager.handle_stop(ctx)
+            # The manager keeps SubagentStop pass-through semantics for direct
+            # callers, but the registered app chain must be terminal here so no
+            # later Stop policy can deadlock a parent waiting on this child.
+            if ctx.event == "SubagentStop" and result is None:
+                return ctx.allow()
+            return result
         except Exception as e:
             logger.warning(
                 f"Stop hook error (fail-open: allowing stop): {e}. "
                 f"Session: {getattr(ctx, 'session_id', '?')}. "
                 f"If tasks exist but stop was allowed, this exception is the cause."
             )
-            return None  # Fail-open - allow stop on errors
+            # For SubagentStop, pass-through is not enough because later Stop
+            # handlers may block; terminate the chain with an explicit allow.
+            return ctx.allow() if ctx.event == "SubagentStop" else None
 
     # NOTE: inject_plan_tasks was removed -- plan task injection is now merged into
     # detect_plan_approval() in plugins.py to avoid first-non-None chain ordering
