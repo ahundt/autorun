@@ -2,7 +2,7 @@
 name: pdf-extractor
 description: This skill should be used when the user asks to "extract text from PDF", "convert PDF to text", "parse PDF", "read PDF contents", "extract data from documents", "batch PDF extraction", "PDF to markdown", "OCR PDF", "get text from PDF files", "I have a PDF", "can you read this PDF", "what's in this PDF", "summarize this PDF", "open PDF file", "extract from [filename].pdf", or needs to process PDF documents for data extraction. Handles single-file extraction, batch processing, and OCR for scanned documents with automatic backend selection.
 metadata:
-  version: 1.0.0rc1
+  version: 1.0.0rc2
   example-prompt: "Extract text from document.pdf"
 ---
 

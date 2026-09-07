@@ -6,6 +6,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
+## [1.0.0rc2] - 2026-09-01
+
+A defect-fix candidate on 1.0.0rc1. No command was added or renamed and the
+task state format is unchanged. The PyPI distribution is still `autorun-ai`,
+with the extraction backends still behind `autorun-ai[pdf]`, and it still needs
+the pin — an unqualified `uv tool install` skips prereleases:
+`uv tool install 'autorun-ai==1.0.0rc2'`.
+
+### Fixed
+
+- **A Pi or Prime agent without task tools is no longer required to call
+  one.** The task gates demanded a `TaskCreate`/`TaskUpdate` call from every
+  session, restricted children included, so a child whose tool surface holds
+  neither had no compliant action and every following tool call was denied.
+  The Pi extension now reports `pi.getActiveTools()` with each frame, and each
+  gate skips a session whose reported surface cannot perform the mutation that
+  gate is about to require. Seven of the nine registered harnesses report
+  nothing and keep the previous behavior; a reported empty set is an answer,
+  not a missing one.
+
+- **The same gate on the daemonless path.** `run_direct`, which serves hooks
+  when `AUTORUN_USE_DAEMON=0` or the daemon is unreachable, built its context
+  without the reported tool surface, so the fix above read "unknown" there and
+  denied the restricted child anyway.
+  `test_a_normalized_field_reaches_both_dispatch_entry_points_or_neither` now
+  fails on any payload field that reaches one dispatch entry point and not the
+  other.
+
+- **A finished subagent no longer receives the parent's stage instructions.**
+  `SubagentStop` passed through the task lifecycle Stop gate to the autorun
+  stage handler, which re-injected the three-stage continuation prompt into a
+  child whose parent was already waiting on it. The registered chain settles
+  `SubagentStop` itself; `TaskLifecycle.handle_stop` keeps pass-through for
+  direct callers, and each property has its own test.
+
+- **Pi's `TaskCreate` requires only a subject.** `description` and
+  `activeForm` were required by the tool schema, models omitted them, and the
+  call failed with no task created. Both fields remain available but optional.
+
+- **A nested worktree no longer fails the release-consistency scan.** A
+  `git worktree` under `.claude/worktrees/` put a second checkout's copies of
+  every version-carrying file inside the tree,
+  and `test_release_checklist_covers_every_file_carrying_the_version` reported
+  them as uninventoried. Both scans now prune any directory holding its own
+  `.git`, which covers nested clones and submodules as well.
+
+### Changed
+
+- **One owner for a command's argument tail.** Plan commands returned the
+  skill body without the invocation arguments; plan execution, help and
+  activation parsed their own tails. They now read `ctx.command_arguments`,
+  filled once by the matcher. `apply_command_match` prepares the context on
+  dispatch and transcript-replay paths. Plan responses include the argument
+  string once, and the short command documents carry `$ARGUMENTS`.
+
 ## [1.0.0rc1] - 2026-08-23
 
 ### Fixed

@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 # blocked by administrators, most plausibly because `autorun` collides with the
 # Windows autorun.inf convention. Only the PyPI-facing name moved.
 name = "autorun-ai"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 description = "Task lifecycle and safety hooks for AI coding harnesses"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"

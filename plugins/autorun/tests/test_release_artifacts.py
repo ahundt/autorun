@@ -171,7 +171,7 @@ def test_release_archives_repeat_bytes_in_one_toolchain_and_are_clean(release_bu
         assert "extract-pdfs = pdf_extraction.cli:main" in entry_points
         metadata = json.loads(archive.read("autorun/metadata.json"))
         assert metadata == {
-            "version": "1.0.0rc1",
+            "version": "1.0.0rc2",
             "commit": commit,
             "build_time": "2023-11-14T22:13:20Z",
         }
@@ -232,11 +232,11 @@ def test_autorun_wheel_install_status_bootstrap_and_uninstall(release_bundle):
     scripts, isolated = _venv(root, wheel, env, label="cli")
     autorun = scripts / ("autorun.exe" if os.name == "nt" else "autorun")
 
-    assert "1.0.0rc1" in _run([autorun, "--version"], cwd=root, env=isolated).stdout
+    assert "1.0.0rc2" in _run([autorun, "--version"], cwd=root, env=isolated).stdout
     _run([autorun, "--install-dry-run", "--claude"], cwd=root, env=isolated)
     _run([autorun, "--install", "--claude", "--force"], cwd=root, env=isolated)
     status_result = _run([autorun, "--status", "--claude"], cwd=root, env=isolated)
-    assert "version=1.0.0rc1" in status_result.stdout
+    assert "version=1.0.0rc2" in status_result.stdout
     assert "commit=" in status_result.stdout
     assert "package=" in status_result.stdout
     _run([autorun, "--no-bootstrap"], cwd=root, env=isolated)
@@ -274,7 +274,7 @@ def test_documented_vcs_subdirectory_installs_autorun_entrypoint(release_bundle)
         env=env,
     )
     autorun = python.parent / ("autorun.exe" if os.name == "nt" else "autorun")
-    assert "1.0.0rc1" in _run([autorun, "--version"], cwd=root, env=env).stdout
+    assert "1.0.0rc2" in _run([autorun, "--version"], cwd=root, env=env).stdout
 
 
 def test_pdf_help_and_backend_inventory_are_lightweight(release_bundle):

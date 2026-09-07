@@ -380,7 +380,7 @@ autorun --restart-daemon
 # Verify installation
 gemini extensions list
 autorun --status --gemini
-# Should show: ar@1.0.0rc1
+# Should show: ar@1.0.0rc2
 
 # Test in Gemini CLI
 gemini

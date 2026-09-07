@@ -606,7 +606,7 @@ inside the `autorun-ai` distribution as `pdf_extraction` behind the `pdf` extra.
 |------|-------|
 | `README.md` | Section headers, install verification examples |
 | `CHANGELOG.md` | Add the dated release section |
-| `docs/releases/1.0.0rc1.md` | Canonical GitHub Release body; replace this path and its heading for the next release |
+| `docs/releases/1.0.0rc2.md` | Canonical GitHub Release body; replace this path and its heading for the next release |
 | `AGENTS.md` | 2 refs — `## autorun Plugin (vX.Y.Z)` and `## pdf-extractor Plugin (vX.Y.Z)`. `CLAUDE.md` and `GEMINI.md` are symlinks to it; edit this file, never a link |
 | `plugins/autorun/AGENTS.md` | 1 ref — the illustrative plugin-cache path `<version>/` |
 | `plugins/autorun/HOOK_ARCHITECTURE.md` | Version references in docs |

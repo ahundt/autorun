@@ -25,7 +25,7 @@ The optional local daemon shares state safely across hook processes; direct
 mode exercises the same handlers without the daemon.
 """
 
-__version__ = "1.0.0rc1"
+__version__ = "1.0.0rc2"
 __author__ = "Andrew Hundt"
 __email__ = "ATHundt@gmail.com"
 

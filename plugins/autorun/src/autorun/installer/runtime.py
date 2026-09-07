@@ -527,8 +527,8 @@ def _as_tuple(version: str) -> tuple:
     Two failures this avoids, both live:
 
     The comparison it replaces is ``tuple(int(x) for x in v.split("."))``, which
-    raises ``ValueError`` on ``1.0.0rc1`` — the version actually installed right
-    now — so self-update cannot compare anything on a prerelease build.
+    raises ``ValueError`` on any release candidate, so self-update cannot
+    compare anything while the shipped version carries an ``rc`` suffix.
 
     Mixing ``int`` and ``str`` in one tuple is the other trap: ``(1, 0, "0rc1")``
     against ``(1, 0, 1)`` raises ``TypeError`` at the first differing position.
@@ -695,8 +695,9 @@ def demo() -> None:
     assert Version("1.0.9", "1.0.10").update_available, "1.0.10 must outrank 1.0.9"
     assert Version("v1.0.0", "v1.2.0").update_available, "a leading v is tolerated"
 
-    # Prereleases: the installed version right now is 1.0.0rc1, and the
-    # comparison this replaces raises ValueError on it.
+    # Prereleases: the shipped version is a release candidate, and the
+    # comparison this replaces raises ValueError on one. These pairs are fixed
+    # test data, not version references -- see Gotcha 5 in RELEASING.md.
     assert Version("1.0.0rc1", "1.0.0").update_available, "a release beats its rc"
     assert Version("1.0.0rc1", "1.0.1").update_available
     assert not Version("1.0.0", "1.0.0rc1").update_available, "an rc never beats the release"
