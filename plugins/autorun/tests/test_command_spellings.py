@@ -371,3 +371,42 @@ class TestCodexTranscriptScannerSharesTheSameNormalization:
             )
             is None
         )
+
+    def test_policy_fallback_preserves_request_capability_and_identity(self):
+        from autorun import plugins
+        from autorun.core import EventContext, ThreadSafeDB
+
+        source = EventContext(
+            session_id="fallback-capabilities",
+            event="PreToolUse",
+            tool_name="apply_patch",
+            store=ThreadSafeDB(),
+            cli_type="codex",
+            cwd="/tmp/project",
+            permission_mode="plan",
+            source="resume",
+            agent_id="child-7",
+            agent_type="worker",
+            active_tools=frozenset({"apply_patch"}),
+            transcript_path="/tmp/parent.jsonl",
+            agent_transcript_path="/tmp/child.jsonl",
+            stop_hook_active=True,
+            last_assistant_message="working",
+            background_tasks=[{"id": "bg"}],
+            session_crons=[{"id": "cron"}],
+            session_identity_authority="hook_payload",
+            server_url="http://127.0.0.1:9",
+        )
+
+        fallback = plugins._transcript_policy_context(source, "ar:tasks off")
+
+        assert fallback.event == "UserPromptSubmit"
+        assert fallback.prompt == "ar:tasks off"
+        for name in (
+            "session_id", "cli_type", "cwd", "permission_mode", "source",
+            "agent_id", "agent_type", "active_tools", "transcript_path",
+            "agent_transcript_path", "stop_hook_active", "last_assistant_message",
+            "background_tasks", "session_crons", "session_identity_authority",
+            "server_url",
+        ):
+            assert getattr(fallback, name) == getattr(source, name), name

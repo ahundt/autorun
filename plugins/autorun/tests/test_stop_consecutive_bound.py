@@ -74,6 +74,9 @@ def _stop_context(manager: TaskLifecycle, store: ThreadSafeDB) -> EventContext:
         session_transcript=[],
         store=store,
         cli_type="codex",
+        # This module tests bounded-stop sequencing, not Codex's unknown-tool
+        # fail-open policy. Model an authoritative checklist-tool receipt.
+        active_tools=frozenset({"update_plan"}),
         deadline_monotonic=time.monotonic() + dispatch_timeout_for_event("Stop"),
     )
 
@@ -304,6 +307,7 @@ def test_productive_stop_tool_cycles_never_reach_bound(tmp_path, monkeypatch):
                 tool_result="contents",
                 store=store,
                 cli_type="codex",
+                active_tools=frozenset({"update_plan"}),
             )
         )
         assert manager.session_metadata["stop_block_count"] == 0
@@ -381,6 +385,7 @@ def test_session_start_resets_sequence_before_resume_enforcement(
             event="SessionStart",
             store=store,
             cli_type="codex",
+            active_tools=frozenset({"update_plan"}),
         )
     )
 
@@ -509,6 +514,9 @@ def test_all_registered_harnesses_encode_block_then_bounded_allow(
             session_transcript=[],
             store=store,
             cli_type=cli_type,
+            active_tools=(
+                frozenset({"update_plan"}) if cli_type == "codex" else None
+            ),
             stop_hook_active=stop_hook_active,
         )
 

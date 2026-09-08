@@ -51,6 +51,8 @@ def test_capability_snapshot_records_multi_harness_task_surfaces():
 
     assert platforms["claude"]["task_management_style"] == "task_tools"
     assert platforms["codex"]["task_management_style"] == "plan_checklist"
+    assert platforms["codex"]["task_enforcement_requires_tool_evidence"] is True
+    assert platforms["claude"]["task_enforcement_requires_tool_evidence"] is False
     assert platforms["gemini"]["task_management_style"] == "bulk_todos"
     assert platforms["qwen"]["task_management_style"] == "bulk_todos"
     assert platforms["opencode"]["task_management_style"] == "bulk_todos"

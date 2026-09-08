@@ -228,6 +228,7 @@ def test_stale_task_actions_use_codex_command_syntax(tmp_path):
         session_id=_sid(tmp_path),
         event="Stop",
         cli_type="codex",
+        active_tools=frozenset({"update_plan"}),
         store=ThreadSafeDB(),
     )
 

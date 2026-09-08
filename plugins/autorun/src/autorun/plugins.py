@@ -66,6 +66,7 @@ from .platforms import (
     is_task_tool,
     platform_for,
     task_capability_is_known,
+    task_enforcement_capability_available,
     task_progress_capability_available,
 )
 from .session_manager import SessionPersistenceError, session_state
@@ -826,6 +827,39 @@ def _claim_transcript_policy_command(ctx: EventContext, marker: str) -> bool:
         return False
 
 
+def _transcript_policy_context(ctx: EventContext, prompt: str) -> EventContext:
+    """Project one hook request into a prompt-command context without losing facts.
+
+    Codex transcript fallback changes only the event and prompt. Capability,
+    agent identity, request mode, lifecycle metadata, state backend, deadline,
+    and response route remain properties of the same request. Keeping this copy
+    in one constructor prevents a newly capability-gated command from silently
+    reverting to an unknown main-session context on this secondary entry path.
+    """
+    return EventContext(
+        session_id=ctx.session_id,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        cli_type=ctx.cli_type,
+        cwd=ctx.cwd,
+        deadline_monotonic=ctx.deadline_monotonic,
+        permission_mode=ctx.permission_mode,
+        source=ctx.source,
+        agent_id=ctx.agent_id,
+        agent_type=ctx.agent_type,
+        active_tools=ctx.active_tools,
+        transcript_path=ctx.transcript_path,
+        agent_transcript_path=ctx.agent_transcript_path,
+        stop_hook_active=ctx.stop_hook_active,
+        last_assistant_message=ctx.last_assistant_message,
+        background_tasks=list(ctx.background_tasks),
+        session_crons=list(ctx.session_crons),
+        session_identity_authority=ctx.session_identity_authority,
+        server_url=ctx.server_url,
+        store=getattr(ctx, "_store", None),
+    )
+
+
 def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
     """Process one exact autorun policy command from Codex transcripts.
 
@@ -852,17 +886,7 @@ def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
     if not _claim_transcript_policy_command(ctx, command.marker):
         return None
 
-    fallback_ctx = EventContext(
-        session_id=ctx.session_id,
-        event="UserPromptSubmit",
-        prompt=command.prompt,
-        cli_type=ctx.cli_type,
-        cwd=ctx.cwd,
-        permission_mode=ctx.permission_mode,
-        source=ctx.source,
-        transcript_path=ctx.transcript_path,
-        store=getattr(ctx, "_store", None),
-    )
+    fallback_ctx = _transcript_policy_context(ctx, command.prompt)
     # Same preparation dispatch does. Every command this path can replay reads
     # activation_prompt today, so setting only that worked; it would stop
     # working silently the first time one of them reads command_arguments
@@ -1807,11 +1831,14 @@ def _required_task_roles(*, no_tasks: bool) -> "frozenset[str]":
 def _required_task_mutation_available(ctx: EventContext) -> bool:
     """Match enforcement to creating new tasks or updating existing ones."""
     if not task_capability_is_known(ctx.active_tools):
-        # Seven of the nine harnesses never report a tool surface, so refining
-        # the role would take the session lock for get_incomplete_tasks and
-        # then hand the answer to a check that already said yes from the
-        # unknown alone.
-        return True
+        # Most harnesses preserve legacy enforcement from this cheap check.
+        # A platform whose task tool is conditional can require positive
+        # evidence here without taking the session lock merely to choose a
+        # create-versus-update role that remains unknown either way.
+        return task_enforcement_capability_available(
+            ctx.cli_type,
+            ctx.active_tools,
+        )
     required_roles = TASK_CREATE_CAPABILITY_ROLES
     if not (ctx.plan_awaiting_planning_tasks or ctx.plan_awaiting_execution_tasks):
         try:
@@ -1821,8 +1848,11 @@ def _required_task_mutation_available(ctx: EventContext) -> bool:
             )
         except Exception:  # noqa: BLE001 - unknown state preserves legacy behavior
             # Unknown task state preserves legacy progress-tool behavior.
-            return task_progress_capability_available(ctx.cli_type, ctx.active_tools)
-    return task_progress_capability_available(
+            return task_enforcement_capability_available(
+                ctx.cli_type,
+                ctx.active_tools,
+            )
+    return task_enforcement_capability_available(
         ctx.cli_type,
         ctx.active_tools,
         required_roles,
@@ -1898,7 +1928,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     if not any(ind in ctx.tool_result_str.lower() for ind in approval_indicators):
         return None
 
-    can_create_tasks = task_progress_capability_available(
+    can_create_tasks = task_enforcement_capability_available(
         ctx.cli_type,
         ctx.active_tools,
         TASK_CREATE_CAPABILITY_ROLES,
@@ -2453,7 +2483,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
             pass  # Fail-open — skip lifecycle check on error
 
     required_roles = _required_task_roles(no_tasks=no_tasks)
-    if not task_progress_capability_available(
+    if not task_enforcement_capability_available(
         ctx.cli_type,
         ctx.active_tools,
         required_roles,
@@ -2510,7 +2540,7 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
     """
     if task_enforcement_is_paused(ctx):
         return None
-    if not task_progress_capability_available(
+    if not task_enforcement_capability_available(
         ctx.cli_type,
         ctx.active_tools,
         TASK_CREATE_CAPABILITY_ROLES,
@@ -3110,7 +3140,7 @@ def _make_plan_handler(skill_name: str):
                 has_tasks = len(task_lifecycle.TaskLifecycle(ctx=ctx).tasks) > 0
             except Exception:
                 pass
-        can_create_tasks = task_progress_capability_available(
+        can_create_tasks = task_enforcement_capability_available(
             ctx.cli_type,
             ctx.active_tools,
             TASK_CREATE_CAPABILITY_ROLES,

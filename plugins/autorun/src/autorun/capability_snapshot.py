@@ -63,6 +63,9 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "task_review_tools": sorted(platform.task_review_tools),
         "task_bulk_tools": sorted(platform.task_bulk_tools),
         "task_plan_tools": sorted(platform.task_plan_tools),
+        "task_enforcement_requires_tool_evidence": (
+            platform.task_enforcement_requires_tool_evidence
+        ),
         "task_record_source": platform.task_record_source,
         "agent_spawn_tools": sorted(platform.agent_spawn_tools),
         "aggregates_conductor_tasks": platform.aggregates_conductor_tasks,

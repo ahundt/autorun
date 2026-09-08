@@ -260,6 +260,27 @@ class TestCodexPlanChecklistSync:
         assert tasks["plan-2"]["status"] == "deleted"
         assert tasks["external"]["status"] == "pending"
 
+    def test_empty_update_plan_deletes_only_checklist_projection(
+        self,
+        isolated_config,
+        isolated_session_manager,
+    ):
+        session_id = f"test-codex-empty-plan-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+        manager.create_task("external", {"subject": "External explicit task"}, "created")
+        manager.handle_plan_checklist(
+            self._ctx(
+                session_id,
+                [{"step": "Last checklist item", "status": "in_progress"}],
+            )
+        )
+
+        manager.handle_plan_checklist(self._ctx(session_id, []))
+
+        tasks = manager.tasks
+        assert tasks["plan-1"]["status"] == "deleted"
+        assert tasks["external"]["status"] == "pending"
+
     def test_update_plan_is_session_scoped(self, isolated_config, isolated_session_manager):
         session_a = f"test-codex-plan-session-a-{time.time()}"
         session_b = f"test-codex-plan-session-b-{time.time()}"

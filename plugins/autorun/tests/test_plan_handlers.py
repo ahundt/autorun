@@ -94,6 +94,7 @@ class TestPlanCommandHandlers:
             command_arguments = ""
             cli_type = "claude"
             active_tools = None
+            permission_mode = "default"
 
         ctx = MockContext()
         result = handler(ctx)
@@ -222,6 +223,39 @@ class TestPlanCommandHandlers:
         ) is False
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("spelling", ("/ar:pn", "/ar:pp"))
+    @pytest.mark.parametrize("permission_mode", ("default", "plan", "bypassPermissions"))
+    def test_codex_without_tool_inventory_does_not_arm_update_plan_nag(
+        self, spelling, permission_mode
+    ):
+        from autorun import plugins
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun.plugins import app
+
+        ctx = EventContext(
+            session_id=f"codex-plan-mode-{spelling}",
+            event="UserPromptSubmit",
+            prompt=f"{spelling} notes/plan.md",
+            store=ThreadSafeDB(),
+            cli_type="codex",
+            permission_mode=permission_mode,
+        )
+
+        result = app.dispatch(ctx)
+        text = (
+            result.get("systemMessage", "")
+            + result.get("reason", "")
+            + result.get("hookSpecificOutput", {}).get("additionalContext", "")
+        )
+
+        assert ctx.plan_awaiting_planning_tasks is False
+        assert ctx.plan_awaiting_execution_tasks is False
+        assert plugins._task_progress_state_get(
+            ctx, "task_staleness_enforce_next", None
+        ) is False
+        assert "update_plan` is unavailable in Codex Plan mode" in text
+
+    @pytest.mark.unit
     def test_plan_handlers_registered(self):
         """Test plan handlers are registered with app.command()"""
         # Import the app to check registrations
@@ -244,6 +278,7 @@ class TestPlanCommandHandlers:
             command_arguments = ""
             cli_type = "claude"
             active_tools = None
+            permission_mode = "default"
 
         ctx = MockContext()
         result = handler(ctx)

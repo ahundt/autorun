@@ -658,6 +658,25 @@ def test_core_aliases_derived_from_platforms():
 # them apart is what lets `auto` be decided per harness instead of guessed.
 
 
+def test_codex_requires_effective_tool_evidence_before_task_only_enforcement():
+    from autorun.platforms import (
+        TASK_PROGRESS_CAPABILITY_ROLES,
+        task_enforcement_capability_available,
+    )
+
+    assert task_enforcement_capability_available(
+        "codex", None, TASK_PROGRESS_CAPABILITY_ROLES
+    ) is False
+    assert task_enforcement_capability_available(
+        "codex", frozenset({"update_plan"}), TASK_PROGRESS_CAPABILITY_ROLES
+    ) is True
+    # Codex's command-hook inventory gap is not a reason to change another
+    # harness's established unknown-capability behavior.
+    assert task_enforcement_capability_available(
+        "claude", None, TASK_PROGRESS_CAPABILITY_ROLES
+    ) is True
+
+
 def test_shared_agents_skills_capability_is_declared_per_platform():
     """Only harnesses whose own docs describe ~/.agents/skills may claim it."""
     claiming = {p.name for p in PLATFORMS.values() if p.loads_shared_agents_skills}

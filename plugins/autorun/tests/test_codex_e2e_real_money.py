@@ -27,7 +27,6 @@ import pytest
 
 from autorun.task_lifecycle import TaskLifecycleConfig
 from e2e_support import (
-    assert_bounded_stop_hook_result,
     find_task_recovery_marker,
     live_model_env,
     requires_real_money,
@@ -339,7 +338,7 @@ class TestCodexHookEntryPoint:
         # The block text must survive on the one field Codex actually reads.
         assert hook_output.get("permissionDecisionReason")
 
-    def test_bounded_stop_sequence_retains_tasks_and_resets_on_next_prompt(
+    def test_unknown_tool_inventory_skips_task_stop_blocks_and_retains_tasks(
         self,
         tmp_path,
     ):
@@ -350,7 +349,18 @@ class TestCodexHookEntryPoint:
             session_id=f"e2e-codex-stop-{uuid.uuid4().hex[:8]}",
             cwd=tmp_path,
         )
-        assert_bounded_stop_hook_result("codex", result)
+        # Codex command-hook stdin has no effective tool inventory. Task-only
+        # Stop enforcement therefore fails open rather than requiring an
+        # update_plan call that may be unavailable in the current mode.
+        assert all(not response for response in result.blocked_responses)
+        assert not result.yielded_response
+        assert not result.next_turn_response
+        assert "Retain this task across the bounded Stop yield" in json.dumps(
+            result.status_before
+        )
+        assert "Retain this task across the bounded Stop yield" in json.dumps(
+            result.status_after
+        )
 
 
 @paid_codex_e2e

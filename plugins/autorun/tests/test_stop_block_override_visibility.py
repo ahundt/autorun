@@ -83,6 +83,9 @@ def _make_stop_ctx(session_id: str, cli_type: str, store=None) -> EventContext:
         session_transcript=[],
         store=store or ThreadSafeDB(),
         cli_type=cli_type,
+        active_tools=(
+            frozenset({"update_plan"}) if cli_type == "codex" else None
+        ),
     )
 
 

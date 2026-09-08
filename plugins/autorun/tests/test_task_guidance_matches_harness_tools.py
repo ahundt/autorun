@@ -78,6 +78,10 @@ def _ctx(session_id: str, event: str, cli_type: str = "claude", source: str = "s
         store=ThreadSafeDB(),
         source=source,
         cli_type=cli_type,
+        # Codex command hooks cannot report this inventory in production; tests
+        # that exercise Codex guidance rather than the unknown-capability path
+        # model a future authoritative receipt explicitly.
+        active_tools=(frozenset({"update_plan"}) if cli_type == "codex" else None),
     )
     ctx.autorun_active = False
     ctx.autorun_stage = EventContext.STAGE_INACTIVE
@@ -104,6 +108,27 @@ def test_every_plan_skill_explains_pi_durable_note_workflow():
         assert "**IMPORTANT:** If not already in plan mode, use `EnterPlanMode` tool NOW." not in text, name
         assert "**Call ExitPlanMode when ALL planning tasks are complete**" not in text, name
         assert "call the **ExitPlanMode** tool" not in text, name
+
+
+def test_every_plan_skill_makes_native_task_tracking_capability_conditional():
+    """Raw skill loading must survive optional extensions and mode changes.
+
+    A rendered autorun command can inspect Pi's effective tools, but a harness
+    may load SKILL.md directly before or without that extension.  The portable
+    instruction therefore has to make availability override every later
+    TaskCreate example rather than asserting that one install-specific tool
+    surface always exists.
+    """
+    for name in PLAN_SKILLS:
+        text = (plugin_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+        availability_rule = "Native task tracking is conditional"
+        mandatory_example = "ALL plan steps require TaskCreate"
+
+        assert availability_rule in text, name
+        assert text.index(availability_rule) < text.index(mandatory_example), name
+        assert "Pi's native autorun `TaskCreate`, `TaskUpdate`, and `TaskList` tools still enforce" not in text, name
+        assert "do not call or retry an unavailable task tool" in text, name
+        assert "`update_plan` is unavailable in Codex Plan mode" in text, name
 
 
 # ── 1. Delegation guidance must be performable on the running harness ─────────

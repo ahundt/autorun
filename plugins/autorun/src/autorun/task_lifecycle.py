@@ -72,7 +72,7 @@ from .platforms import (
     agent_spawn_tools_for,
     platform_for,
     resolve_standalone_session_identity,
-    task_progress_capability_available,
+    task_enforcement_capability_available,
     task_tool_role,
 )
 from .task_pause import (
@@ -2008,9 +2008,12 @@ class TaskLifecycle:
             logger.warning(f"handle_plan_checklist: tool_input is not a dict: {type(ctx.tool_input)}")
             return
 
-        plan = ctx.tool_input.get("plan", [])
-        if not isinstance(plan, list) or not plan:
-            logger.debug("handle_plan_checklist: no plan list found in input")
+        if "plan" not in ctx.tool_input:
+            logger.debug("handle_plan_checklist: no plan field found in input")
+            return
+        plan = ctx.tool_input["plan"]
+        if not isinstance(plan, list):
+            logger.debug("handle_plan_checklist: plan field is not a list")
             return
 
         raw_result = ctx.tool_result
@@ -2143,7 +2146,7 @@ class TaskLifecycle:
                 return None
             return ctx.continue_running(pause_injection)
 
-        if not task_progress_capability_available(
+        if not task_enforcement_capability_available(
             ctx.cli_type,
             ctx.active_tools,
             TASK_UPDATE_CAPABILITY_ROLES,
@@ -2284,7 +2287,7 @@ class TaskLifecycle:
             except Exception as exc:  # noqa: BLE001 - the gate must stay non-blocking
                 logger.warning("Could not process returned delegations: %s", exc)
             return None
-        if not task_progress_capability_available(
+        if not task_enforcement_capability_available(
             ctx.cli_type,
             ctx.active_tools,
             TASK_UPDATE_CAPABILITY_ROLES,

@@ -1570,6 +1570,7 @@ def _make_pre_tool_ctx(
     agent_id: str | None = None,
     agent_type: str | None = None,
     active_tools: frozenset[str] | None = None,
+    permission_mode: str = "default",
     store: ThreadSafeDB | None = None,
 ) -> EventContext:
     """Build PreToolUse EventContext for enforcement tests."""
@@ -1584,6 +1585,7 @@ def _make_pre_tool_ctx(
         agent_id=agent_id,
         agent_type=agent_type,
         active_tools=active_tools,
+        permission_mode=permission_mode,
     )
     plugins._task_progress_state_set(
         ctx, "task_staleness_enforce_next", task_staleness_enforce_next
@@ -1799,12 +1801,15 @@ def test_enforce_staleness_allows_task_tools():
         assert ctx.task_staleness_enforce_next is False, f"enforce_next should clear after {tool}. Got: {ctx.task_staleness_enforce_next}"
 
 
-def test_enforce_staleness_allows_codex_update_plan():
+@pytest.mark.parametrize("permission_mode", ("default", "plan", "bypassPermissions"))
+def test_enforce_staleness_allows_codex_update_plan(permission_mode):
     """Codex update_plan passes through enforcement and resets counters."""
     ctx = _make_pre_tool_ctx(
         "update_plan",
         "test-enforce-codex-plan",
         cli_type="codex",
+        active_tools=frozenset({"update_plan"}),
+        permission_mode=permission_mode,
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=5,
         tool_input={"plan": [{"step": "Update native checklist", "status": "in_progress"}]},
@@ -1817,12 +1822,35 @@ def test_enforce_staleness_allows_codex_update_plan():
     assert ctx.task_staleness_enforce_next is False
 
 
+@pytest.mark.parametrize("permission_mode", ("default", "plan", "bypassPermissions"))
+def test_codex_without_tool_inventory_clears_impossible_update_plan_denial(
+    permission_mode,
+):
+    """A current-tool hook cannot prove that update_plan is also callable."""
+    ctx = _make_pre_tool_ctx(
+        "apply_patch",
+        f"test-codex-no-checklist-{permission_mode}",
+        cli_type="codex",
+        permission_mode=permission_mode,
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+    )
+
+    result = plugins.app.dispatch(ctx)
+
+    assert result is None or "update_plan" not in str(result)
+    assert plugins._task_progress_state_get(
+        ctx, "task_staleness_enforce_next", None
+    ) is False
+
+
 def test_codex_staleness_warning_mentions_update_plan():
     """Codex staleness instructions must name update_plan, not Claude TaskCreate."""
     ctx = _make_pre_tool_ctx(
         "Read",
         "test-enforce-codex-warning",
         cli_type="codex",
+        active_tools=frozenset({"update_plan"}),
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=1,
     )
@@ -2272,10 +2300,10 @@ def test_codex_execution_reminder_uses_update_plan():
     """Codex execution reminders should use update_plan checklist wording."""
     sid = "test-codex-exec-reminder"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex")
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex", active_tools=frozenset({"update_plan"}))
     ctx.plan_awaiting_execution_tasks = True
 
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex")
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex", active_tools=frozenset({"update_plan"}))
     result = plugins.app.dispatch(ctx2) or {}
     text = str(result)
     assert "EXECUTION TASKS REQUIRED" in text

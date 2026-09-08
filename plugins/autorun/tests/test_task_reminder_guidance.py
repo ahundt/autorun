@@ -38,6 +38,7 @@ from autorun.platforms import PLATFORMS
 
 HOOK_PLATFORMS = [
     "claude", "gemini", "qwen", "antigravity", "codex", "pi", "prime",
+    "opencode",
 ]
 
 # Claude Code and autorun's Pi/Prime TaskUpdate schemas declare addBlocks and
@@ -121,6 +122,11 @@ class TestDenyGuidanceFollowsTheSameRule:
     @pytest.mark.parametrize("cli_type", sorted(set(HOOK_PLATFORMS) - DEPENDENCY_CAPABLE))
     def test_other_harnesses_get_no_dependency_instruction(self, cli_type):
         assert "blockedby" not in self._instructions(cli_type).lower()
+
+
+def test_forgecode_remains_advisory_without_task_gate_guidance():
+    assert PLATFORMS["forgecode"].has_hooks is False
+    assert PLATFORMS["forgecode"].task_management_style == "none"
 
 
 def test_every_shared_pi_task_create_call_satisfies_the_required_subject_schema():

@@ -868,6 +868,12 @@ class Platform:
     task_review_tools: frozenset[str] = field(default_factory=frozenset)
     task_bulk_tools: frozenset[str] = field(default_factory=frozenset)
     task_plan_tools: frozenset[str] = field(default_factory=frozenset)
+    # True when task-only enforcement needs request-local proof that a mutable
+    # task tool exists. Use this only when the harness can omit the registered
+    # tool and its command-hook protocol supplies no effective tool inventory;
+    # unknown then fails open for task-only gates while unrelated autorun gates
+    # remain active. Voluntary observed task calls are still tracked.
+    task_enforcement_requires_tool_evidence: bool = False
     # Optional provenance applied by the shared task lifecycle to records from
     # this harness's native task tools. Empty preserves caller metadata.
     task_record_source: str = ""
@@ -1544,6 +1550,12 @@ CODEX = register(
         native_shell_read_commands=frozenset({"cat", "head", "tail"}),
         task_management_style="plan_checklist",
         task_plan_tools=frozenset({"update_plan"}),
+        # Codex command-hook stdin exposes permission policy, not the current
+        # collaboration mode or effective tool list. update_plan is absent on
+        # some desktop surfaces and rejected in Plan mode, so assuming it is
+        # callable can deadlock the next unrelated tool behind an impossible
+        # checklist-only denial.
+        task_enforcement_requires_tool_evidence=True,
         agent_spawn_tools=frozenset({"spawn_agent"}),
         policy_commands_arrive_in_transcript=True,
         fingerprint_ignores_session_id=True,
@@ -2064,17 +2076,42 @@ def task_progress_capability_available(
     active_tools: frozenset[str] | None,
     required_roles: frozenset[str] = TASK_PROGRESS_CAPABILITY_ROLES,
 ) -> bool:
-    """Whether a reported tool surface can perform a required task mutation.
+    """Whether this request can perform a required task mutation.
 
-    ``required_roles`` keeps create-only reminders distinct from gates that
-    require updating existing tasks. An unknown capability preserves legacy
-    behavior; an explicit empty set is known-empty.
+    ``active_tools`` is the strongest evidence when an in-process bridge can
+    report it. Codex ``permission_mode`` is deliberately absent from this
+    contract because current Codex derives it from approval policy, not
+    collaboration mode. Current Codex command hooks expose neither
+    collaboration mode nor an effective tool list;
+    :func:`task_enforcement_capability_available` applies that platform's
+    positive-evidence rule to task-only gates. This lower-level availability
+    check preserves legacy unknown behavior, and an explicit empty set remains
+    known-empty.
     """
     if not task_capability_is_known(active_tools):
         return True
     return any(
         task_tool_role(cli_type, tool_name) in required_roles
         for tool_name in active_tools
+    )
+
+
+def task_enforcement_capability_available(
+    cli_type: str | None,
+    active_tools: frozenset[str] | None,
+    required_roles: frozenset[str] = TASK_PROGRESS_CAPABILITY_ROLES,
+) -> bool:
+    """Whether task-only reminders or gates have enough capability evidence."""
+    platform = platform_for(cli_type)
+    if (
+        not task_capability_is_known(active_tools)
+        and platform.task_enforcement_requires_tool_evidence
+    ):
+        return False
+    return task_progress_capability_available(
+        cli_type,
+        active_tools,
+        required_roles,
     )
 
 
