@@ -306,7 +306,6 @@ class TestDaemonSocketFrames:
         result = _run_shim(tmp_path, socket_path, "veto")
         thread.join(timeout=25)
 
-        assert result.returncode == 0, result.stderr
         assert "blocked by autorun test" in result.stdout
 
         events = [frame["hook_event_name"] for frame in frames]
@@ -328,7 +327,6 @@ class TestDaemonSocketFrames:
         """
         result = _run_shim(tmp_path, tmp_path / "nothing.sock", "veto")
 
-        assert result.returncode == 0, result.stderr
         assert "denied:" in result.stdout, result.stdout
         assert "autorun" in result.stdout.lower()
         assert "restart-daemon" in result.stdout, "the block must name the way out"
@@ -353,7 +351,6 @@ class TestDaemonSocketFrames:
         result = _run_shim(tmp_path, socket_path, "command")
         thread.join(timeout=25)
 
-        assert result.returncode == 0, result.stderr
         assert "AutoFile policy: allow-all" in result.stdout
 
         (frame,) = frames
@@ -370,7 +367,6 @@ class TestDaemonSocketFrames:
         """
         result = _run_shim(tmp_path, tmp_path / "nothing.sock", "command")
 
-        assert result.returncode == 0, result.stderr
         assert "unreachable" in result.stdout
         assert "restart-daemon" in result.stdout
 
@@ -387,7 +383,6 @@ class TestDaemonSocketFrames:
         result = _run_shim(tmp_path, socket_path, "todo")
         thread.join(timeout=25)
 
-        assert result.returncode == 0, result.stderr
         assert [frame["hook_event_name"] for frame in frames] == [
             "OpenCodeAttach",
             "PostToolUse",
@@ -420,7 +415,6 @@ class TestDaemonSocketFrames:
             hook_entry_command='["/bin/sleep", "300"]',
         )
 
-        assert result.returncode == 0, result.stderr
         assert "denied:" in result.stdout, result.stdout
         assert "timed out" in result.stdout, result.stdout
 
@@ -542,7 +536,7 @@ try {
 """,
         encoding="utf-8",
     )
-    return subprocess.run(
+    result = subprocess.run(
         ["bun", "run", str(driver), mode],
         capture_output=True,
         text=True,
@@ -550,3 +544,12 @@ try {
         cwd=str(tmp_path),
         env={**os.environ, "NO_COLOR": "1"},
     )
+    # Every driver path above exits 0, so a non-zero code means Bun itself
+    # failed and stdout is empty. Asserting it here rather than in each caller
+    # keeps the crash readable: a Bun segfault on Windows once surfaced as
+    # `assert 'blocked over tcp' in ''`, which points at the bridge instead of
+    # at the interpreter that died. Callers assert on stdout only.
+    assert result.returncode == 0, (
+        f"bun exited {result.returncode} for mode {mode!r}; stderr:\n{result.stderr}"
+    )
+    return result

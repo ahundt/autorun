@@ -45,6 +45,15 @@ jobs:
         # OpenCode executes autorun's in-process veto under Bun. The official
         # action makes those tests a release gate instead of optional skips.
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          # Pinned for the same reason every uv command here passes --locked:
+          # without it the action installs whatever Bun is latest, so a Bun
+          # release can turn this gate red with no change to autorun. Bun 1.4.2
+          # segfaults on Windows x64 running the bridge driver
+          # (panic(main thread): Segmentation fault at address 0x1600000002),
+          # which blocked the v1.0.0rc2 tag. 1.4.0 is the newest version this
+          # matrix has been green on, Windows included.
+          bun-version: "1.4.0"
 
       - name: Verify Python version
         run: |
@@ -174,6 +183,9 @@ jobs:
 
       - name: Install Bun for the OpenCode bridge contract
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          # Same pin as the matrix job above; both must move together.
+          bun-version: "1.4.0"
 
       - name: Install test dependencies
         run: uv sync --project plugins/autorun --locked --dev --all-extras

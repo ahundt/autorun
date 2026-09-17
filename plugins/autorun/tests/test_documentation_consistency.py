@@ -1208,6 +1208,49 @@ def test_ci_actions_are_pinned_to_full_commits():
     assert not mutable, "CI actions use mutable refs:\n  " + "\n  ".join(mutable)
 
 
+def test_setup_bun_pins_the_runtime_not_only_the_action():
+    """Pinning the action is weaker than pinning the toolchain it installs.
+
+    ``test_ci_actions_are_pinned_to_full_commits`` above proves every ``uses:``
+    is a 40-hex commit, and that assertion passed on the day Bun 1.4.2 shipped
+    and segfaulted the Windows job -- because setup-bun carried no
+    ``bun-version`` and installed whatever was latest. The action was pinned;
+    the runtime was not, so a third-party release turned a release gate red
+    with no change to autorun. Every uv command in this repo passes
+    ``--locked`` for the same reason.
+    """
+    workflows = REPO_ROOT / ".github" / "workflows"
+    unpinned, versions = [], set()
+    for path in sorted(workflows.glob("*.yml")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines, 1):
+            if "uses:" not in line or "oven-sh/setup-bun" not in line:
+                continue
+            # The pin belongs to this step, so stop at the next "- name:".
+            pin = None
+            for follower in lines[number : number + 15]:
+                if re.match(r"\s*-\s+name:", follower):
+                    break
+                found = re.search(r'bun-version:\s*"?([^"\s]+)"?', follower)
+                if found:
+                    pin = found.group(1)
+                    break
+            if pin is None:
+                unpinned.append(f"{path.relative_to(REPO_ROOT)}:{number}")
+            else:
+                versions.add(pin)
+
+    assert versions, "no setup-bun step found; this gate is watching nothing"
+    assert not unpinned, (
+        "setup-bun installs the latest Bun unless bun-version is set, so any "
+        "Bun release can fail CI on unchanged code:\n  " + "\n  ".join(unpinned)
+    )
+    assert len(versions) == 1, (
+        f"setup-bun steps disagree on the Bun version: {sorted(versions)}; "
+        "the matrix job and the coverage job must run the same runtime"
+    )
+
+
 def test_each_autorun_spelling_keeps_its_own_job():
     """Five things are spelled "autorun"; exactly one of them is "autorun-ai".
 
