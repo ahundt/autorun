@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0rc2] - 2026-09-01
+## [1.0.0rc2] - 2026-09-16
 
 A defect-fix candidate on 1.0.0rc1. No command was added or renamed and the
 task state format is unchanged. The PyPI distribution is still `autorun-ai`,
@@ -33,6 +33,22 @@ the pin — an unqualified `uv tool install` skips prereleases:
   `test_a_normalized_field_reaches_both_dispatch_entry_points_or_neither` now
   fails on any payload field that reaches one dispatch entry point and not the
   other.
+
+- **A Codex session is no longer held behind a checklist tool it cannot
+  call.** `update_plan` is absent on some Codex surfaces and rejected in Plan
+  mode, and Codex command-hook stdin reports approval policy rather than an
+  effective tool list. autorun read that unknown capability as availability, so
+  a task-only gate could deny every following tool call until a checklist
+  arrived that the session had no way to produce. A harness that can omit its
+  registered task tool without reporting the omission now needs positive
+  evidence before a task-only gate enforces. Unknown fails open for those gates
+  only: the stage markers and the destructive-command guards stay active.
+
+- **Clearing a Codex checklist now registers.** `update_plan` carrying an empty
+  `plan` list was indistinguishable from a call with no `plan` field at all and
+  was discarded, leaving the previous tasks recorded after the model had
+  cleared them. An empty list is now stored as a known-empty snapshot, and a
+  missing `plan` field remains the only ignored shape.
 
 - **A finished subagent no longer receives the parent's stage instructions.**
   `SubagentStop` passed through the task lifecycle Stop gate to the autorun
