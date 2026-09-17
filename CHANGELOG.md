@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0rc2] - 2026-09-16
+## [1.0.0rc2] - 2026-09-17
 
 A defect-fix candidate on 1.0.0rc1. No command was added or renamed and the
 task state format is unchanged. The PyPI distribution is still `autorun-ai`,
