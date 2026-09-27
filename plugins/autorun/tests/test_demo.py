@@ -383,12 +383,19 @@ def _isolated_daemon_env() -> dict:
     autorun's cold start rather than another file's leftovers.
     """
     if not _DEMO_HOME:
-        # Short, because the POSIX socket path lives under it and sun_path is
-        # 104 bytes on macOS; a long temp path overflows and reads as a hook
-        # timeout. Left on disk deliberately: the daemon outlives this call,
-        # and deleting the directory under a live daemon is worse than a few
-        # kilobytes in the system temp area, which the OS reclaims.
-        _DEMO_HOME.append(tempfile.mkdtemp(prefix="ardemo_"))
+        # Inside this worker's runtime root (/tmp/ar_test_*, set by
+        # conftest.py), for two reasons. The root is short, and the POSIX
+        # socket path lives under it (sun_path is 104 bytes on macOS; a long
+        # temp path overflows and reads as a hook timeout). And it is what
+        # makes cleanup reach this daemon: pytest_sessionfinish stops every
+        # daemon whose AUTORUN_HOME is under that root, then deletes the root.
+        # A home in the system temp area, as this once was, fell outside both,
+        # so each run left a daemon running with its parent gone.
+        _DEMO_HOME.append(
+            tempfile.mkdtemp(
+                prefix="demo_", dir=os.environ.get("AUTORUN_TEST_RUNTIME_DIR")
+            )
+        )
     return dict(os.environ, AUTORUN_HOME=_DEMO_HOME[0])
 
 

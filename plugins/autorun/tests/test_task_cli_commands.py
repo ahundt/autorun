@@ -35,6 +35,7 @@ CLI Usage (Modern Subcommand Structure):
     autorun task gc --no-archive             # Skip archiving (DANGEROUS)
 """
 
+import os
 import sys
 import json
 import time
@@ -226,8 +227,15 @@ def test_cli_status_table_format():
 
 def test_cli_status_no_session_id_fails():
     """Test cli_status fails gracefully when session ID missing."""
-    # No CLAUDE_SESSION_ID env var
-    with patch.dict('os.environ', {}, clear=True):
+    # No CLAUDE_SESSION_ID env var. Keep only the isolation variables: an
+    # environment with no AUTORUN_HOME or HOME resolves the developer's real
+    # directories through the password database.
+    isolation = {
+        name: os.environ[name]
+        for name in ("AUTORUN_HOME", "AUTORUN_TEST_STATE_DIR", "AUTORUN_TEST_RUNTIME_DIR")
+        if name in os.environ
+    }
+    with patch.dict('os.environ', isolation, clear=True):
         exit_code, output = capture_stdout(
             TaskLifecycle.cli_status,
             session_id=None,

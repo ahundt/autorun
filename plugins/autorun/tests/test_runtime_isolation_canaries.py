@@ -158,19 +158,35 @@ class TestImportOrdering:
             f"outside {root}."
         )
 
-    def test_without_the_variables_a_child_resolves_the_live_directory(self):
+    def test_without_the_variables_a_child_resolves_the_live_directory(self, tmp_path):
         """Proves the check above tests something real.
 
-        With the variables removed the same probe must fall back to the real
-        location. If it did not, the containment assertion would pass even
-        when isolation was broken.
+        With the variables removed the same probe must fall back to the
+        home-directory default. If it did not, the containment assertion would
+        pass even when isolation was broken.
+
+        The child gets a stand-in HOME. Both defaults hang off it: state
+        resolves to ~/.claude/sessions, and importing autorun creates
+        ~/.autorun (core.py calls ipc.ensure_config_dir() at import). With the
+        real HOME this control created the developer's live ~/.autorun on every
+        run; the stand-in keeps the same fallback observable without that write.
         """
+        stand_in_home = tmp_path / "home"
+        stand_in_home.mkdir()
         env = {k: v for k, v in os.environ.items()
                if k not in REQUIRED_ISOLATION_VARS}
+        env["HOME"] = env["USERPROFILE"] = str(stand_in_home)
         result = _run_probe(env)
 
         resolved = Path(result["state_dir"])
         assert _runtime_root() not in resolved.parents, (
             "Removing the isolation variables changed nothing, so the "
             "containment check cannot detect a real leak."
+        )
+        assert stand_in_home.resolve() in resolved.parents, (
+            f"Without the variables state resolved to {resolved}, not the "
+            f"home-directory default under {stand_in_home}."
+        )
+        assert (stand_in_home / ".autorun").is_dir(), (
+            "the import-time default directory was expected under the stand-in home"
         )
