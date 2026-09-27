@@ -18,7 +18,7 @@ committing to it, the commands suit inspection and repetition.
 | Step | What it does |
 |---|---|
 | [Before you start](#before-you-start) | Register the PyPI and TestPyPI pending publishers and the two GitHub environments. Once per project. **RELEASER** |
-| [Stage 1](#stage-1-version-bump) | Bump the version everywhere the [version sites](#current-inventory) table lists, and commit locally. |
+| [Stage 1](#stage-1-version-bump-and-release-notes) | Bump the version at every [version site](#current-inventory), write the CHANGELOG section, generate the notes, and rehearse the upgrade in a scratch home. |
 | [Stage 2](#stage-2-pre-flight-checks) | Run every gate against one candidate SHA. Nothing public happens yet. |
 | [Stage 3](#stage-3-push-the-candidate-and-wait-for-ci--releaser-public-write) | Push the candidate and wait for exact-SHA CI. **RELEASER** |
 | [Rehearsal](#rehearse-on-testpypi-before-any-tag) | `gh workflow run publish.yml` uploads to TestPyPI only, proving OIDC before the tag. |
@@ -105,8 +105,68 @@ enforces on both files: a candidate is validated against the graph `uv.lock`
 commits, never against a fresh resolution that the release will not ship. A
 command that must run outside the lock has to say why, on the line.
 
-### Stage 1: Version bump
-Follow the file lists above and commit locally. Do not push yet.
+### Stage 1: Version bump and release notes
+
+1. Bump the version at every [version site](#current-inventory) and commit
+   locally. Do not push yet.
+2. Write the release's section in `CHANGELOG.md`. It is the only hand-written
+   copy of the notes: `scripts/release_notes.py` renders it into
+   `docs/releases/<version>.md`, which becomes the tag annotation and the
+   GitHub Release body, and neither can be corrected in the tag once pushed.
+   The script rejects a section that breaks these rules:
+   1. A summary paragraph comes first: what users get, in two or three
+      sentences.
+   2. The first heading is `### Upgrading from <previous>`, where `<previous>`
+      is the next dated section below, the last release users could install.
+      Fold a version that was never published into the release that ships it.
+   3. The remaining headings, each optional, in this order: Highlights, Added,
+      Changed, Deprecated, Removed, Fixed, Security, For contributors.
+   4. Items are numbered, not bulleted, and do not open with a bold heading.
+3. Generate the notes; the script inserts the version-pinned upgrade commands
+   at the top of the Upgrading section and the comparison link at the end:
+
+   ```bash
+   uv run --project plugins/autorun --locked python scripts/release_notes.py
+   ```
+
+4. Review what the script cannot check:
+   1. Each Fixed item states the symptom a user saw, then what happens now, in
+      one or two sentences. A fix that changes behavior a user relies on goes
+      under Changed.
+   2. Test names, function names, and internals go under For contributors.
+   3. A fix to something no published release contained is folded into the
+      entry for the change itself.
+   4. Every claim matches the code. Settle each one against the source or a
+      sandboxed run before shortening it.
+   5. Give only the generated file to a reader without project context, such
+      as a fresh subagent, and fix every place they had to guess. Run the
+      `streamline-text` skill this plugin ships for brevity, and the
+      `public-facing-writing` audit if you have it installed.
+5. **An upgrade is the generated command.** A change that would need anything
+   more from users (a config edit, a rename, a migration) blocks the release
+   until it ships an automatic migration or a compatibility alias. Only when
+   neither is possible does the step go under Upgrading, with the reason.
+6. Rehearse that upgrade from the previous release in a scratch home. Keep
+   the path short: the sandbox daemon's socket lives under it.
+
+   ```bash
+   previous=1.0.0rc1   # the <previous> of step 2
+   sb=$(mktemp -d /tmp/arup.XXXX)
+   mkdir -p "$sb/home/.claude" "$sb/home/.codex" "$sb/home/.pi/agent"
+   sbx() { env HOME="$sb/home" USERPROFILE="$sb/home" CLAUDE_CONFIG_DIR="$sb/home/.claude" \
+     PI_CODING_AGENT_DIR="$sb/home/.pi/agent" AUTORUN_HOME="$sb/ar" AUTORUN_TEST_STATE_DIR="$sb/st" \
+     UV_TOOL_DIR="$sb/tools" UV_TOOL_BIN_DIR="$sb/bin" PATH="$sb/bin:$PATH" "$@"; }
+   uv build --package autorun-ai --wheel -o "$sb/dist"
+   sbx uv tool install "autorun-ai==$previous" && sbx autorun --install
+   sbx uv tool install --force "$sb"/dist/autorun_ai-*.whl && sbx autorun --install
+   sbx autorun --version     # expect the candidate version
+   sbx autorun --status      # every tree "already current"; hook files always
+                             # read "would merge" here, even when unchanged
+   pkill -f "$sb/tools/autorun-ai"   # the sandbox daemon, and only it
+   ```
+
+   A harness whose CLI is not on `PATH` is skipped; put a stub on
+   `$sb/bin` to exercise its publish step.
 
 ### Stage 2: Pre-flight checks
 
@@ -246,6 +306,10 @@ test "$(gh run view "$run_id" --json jobs --jq \
 
 # If it fails, check logs
 gh run view "$run_id" --log-failed
+
+# A green run can still carry deprecation and tool warnings that fail the next
+# one. Read them before tagging.
+gh run view "$run_id" --log | rg -i 'warn|deprecat' | sort -u
 ```
 
 The workflow file is part of the release trust boundary. Every external
@@ -345,6 +409,9 @@ release_tag="v$release_version"
 # only requires the date to be in the past, which a stale date also satisfies.
 test "$(rg -N -o -r '$1' '^Date: (.+)$' "docs/releases/$release_version.md")" = "$(date +%F)"
 rg -N -q "^## \[$release_version\] - $(date +%F)\$" CHANGELOG.md
+# The notes must still be the CHANGELOG section rendered; moving the date means
+# regenerating them.
+uv run --project plugins/autorun --locked python scripts/release_notes.py --check
 
 # -F, not -m: the annotated tag carries the release body, so `git show` gives the
 # notes to anyone with a clone and they do not live only on GitHub.
@@ -649,7 +716,7 @@ inside the `autorun-ai` distribution as `pdf_extraction` behind the `pdf` extra.
 |------|-------|
 | `README.md` | Section headers, install verification examples |
 | `CHANGELOG.md` | Add the dated release section |
-| `docs/releases/1.0.0rc3.md` | GitHub Release body and tag annotation, generated from the CHANGELOG section; regenerate, never edit |
+| `docs/releases/1.0.0rc3.md` | GitHub Release body and tag annotation, generated by `scripts/release_notes.py` from the CHANGELOG section; regenerate, never edit |
 | `AGENTS.md` | 2 refs — `## autorun Plugin (vX.Y.Z)` and `## pdf-extractor Plugin (vX.Y.Z)`. `CLAUDE.md` and `GEMINI.md` are symlinks to it; edit this file, never a link |
 | `plugins/autorun/AGENTS.md` | 1 ref — the illustrative plugin-cache path `<version>/` |
 | `plugins/autorun/HOOK_ARCHITECTURE.md` | Version references in docs |
