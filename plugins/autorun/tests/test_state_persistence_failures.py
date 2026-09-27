@@ -550,8 +550,13 @@ class TestTheLockBudgetFitsTheRequestsOwnDeadline:
         ctx.state_get("field", None)
         ctx.state_set("field", 1)
         ctx.state_update("field", lambda value: (value or 0) + 1, 0)
+        # Attribute assignment is the commonest write of all
+        # (ctx.autorun_active = True). It passed no timeout, so it waited the
+        # 0.5 s floor with seconds of its deadline unspent, and a contended
+        # write was dropped: "Could not acquire state lock ... after 0.5s".
+        ctx.autorun_active = True
 
-        assert [name for name, _timeout in seen] == ["get", "set", "update"]
+        assert [name for name, _timeout in seen] == ["get", "set", "update", "set"]
         assert all(
             timeout > core.HOOK_STATE_LOCK_TIMEOUT for _name, timeout in seen
         ), seen

@@ -2360,7 +2360,13 @@ class EventContext:
         session_id = object.__getattribute__(self, "_session_id")
         if store:
             key = f"{session_id}:{name}"
-            store.set(key, value)
+            if isinstance(store, ThreadSafeDB):
+                # The request's deadline sets the lock budget, as in
+                # state_set; the store's own floor gave up after 0.5 s with
+                # seconds of the handler's allowance unspent.
+                store.set(key, value, timeout=state_lock_timeout(self, floor=store._state_timeout))
+            else:
+                store.set(key, value)
 
     # === Computed Properties (not persisted) ===
     @property
