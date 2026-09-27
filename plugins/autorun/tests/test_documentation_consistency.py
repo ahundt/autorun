@@ -323,7 +323,8 @@ def test_release_checklist_names_only_files_that_exist():
 
 
 _LINE_CONTINUATION_RE = re.compile(r"\\\s*\n\s*")
-_TAG_COMMAND_RE = re.compile(r"^\s*git tag -a .*$", re.MULTILINE)
+# Leading assignments (TZ=America/New_York) still make it the tag command.
+_TAG_COMMAND_RE = re.compile(r"^\s*(?:[A-Z_]+=\S+\s+)*git tag -a .*$", re.MULTILINE)
 
 
 def _shell_commands(text: str) -> list[str]:

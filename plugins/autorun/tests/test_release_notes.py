@@ -96,6 +96,40 @@ def test_the_section_date_must_be_a_real_day_that_has_come(stamp, complaint):
     assert any(complaint in problem for problem in problems), problems
 
 
+@pytest.mark.parametrize(
+    ("instant", "day"),
+    [
+        # Every tag so far carries a New York offset and its CHANGELOG date is
+        # that New York day, wherever the releaser happened to be.
+        ("2026-09-28T03:30:00+00:00", "2026-09-27"),  # 23:30 EDT
+        ("2026-09-28T09:00:00+09:00", "2026-09-27"),  # a releaser in Tokyo
+        ("2026-01-15T04:59:00+00:00", "2026-01-14"),  # 23:59 EST
+        ("2026-01-15T05:00:00+00:00", "2026-01-15"),
+    ],
+)
+def test_the_release_day_is_the_new_york_day(instant, day):
+    from datetime import datetime
+
+    assert release_notes.release_day(datetime.fromisoformat(instant)).isoformat() == day
+
+
+def test_a_date_later_than_the_new_york_day_is_in_the_future(monkeypatch):
+    from datetime import date
+
+    monkeypatch.setattr(release_notes, "release_day", lambda now=None: date(2026, 9, 27))
+    section = release_notes.Section("0.0.1rc2", "2026-09-28", GOOD)
+    problems = release_notes.structure_problems(section, "0.0.1rc1")
+    assert any("in the future" in problem for problem in problems), problems
+
+
+def test_today_prints_the_release_day(monkeypatch, capsys):
+    from datetime import date
+
+    monkeypatch.setattr(release_notes, "release_day", lambda now=None: date(2026, 9, 27))
+    assert release_notes.main(["--today"]) == 0
+    assert capsys.readouterr().out == "2026-09-27\n"
+
+
 def test_fenced_lines_are_not_mistaken_for_list_items_or_headings():
     body = GOOD.replace(
         "1. Restart running sessions.\n",

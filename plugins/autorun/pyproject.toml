@@ -230,4 +230,7 @@ dev = [
     # second. Workers are separate processes, so conftest.py's per-process
     # mkdtemp already isolates their runtime state.
     "pytest-xdist>=3.6.0",
+    # scripts/release_notes.py dates releases in America/New_York, and Windows
+    # ships no zone database for zoneinfo to read.
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]

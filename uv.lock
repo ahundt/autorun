@@ -219,6 +219,7 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -249,6 +250,7 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.15.1" },
     { name = "pytest-timeout", specifier = ">=2.1.0" },
     { name = "pytest-xdist", specifier = ">=3.6.0" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
 ]
 
 [[package]]

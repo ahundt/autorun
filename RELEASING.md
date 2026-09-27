@@ -109,8 +109,9 @@ command that must run outside the lock has to say why, on the line.
 
 1. Bump the version at every [version site](#current-inventory).
 2. Write the release's section in `CHANGELOG.md`, headed
-   `## [<version>] - YYYY-MM-DD` with today's date; Stage 4 requires the date
-   to be the tag day, so move it then if the tag slips. The section is the only
+   `## [<version>] - YYYY-MM-DD` with today's date in New York, which
+   `scripts/release_notes.py --today` prints wherever you are; Stage 4 requires
+   the date to be the tag day, so move it then if the tag slips. The section is the only
    hand-written copy of the notes: `scripts/release_notes.py` renders it into
    `docs/releases/<version>.md`, which becomes the tag annotation and the
    GitHub Release body, and the annotation cannot be corrected once pushed. The
@@ -429,8 +430,11 @@ release_tag="v$release_version"
 # to move a release date for this reason; these two checks are what make the
 # next one fail loudly instead. `release_notes.py --check` only requires the
 # date to be real and not in the future, which a stale date also satisfies.
-test "$(rg -N -o -r '$1' '^Date: (.+)$' "docs/releases/$release_version.md")" = "$(date +%F)"
-rg -N -q "^## \[$release_version\] - $(date +%F)\$" CHANGELOG.md
+# The tag day is the New York calendar day, not this machine's: `date +%F`
+# would stamp a different day when the releaser is travelling.
+release_day=$(uv run --project plugins/autorun --locked python scripts/release_notes.py --today)
+test "$(rg -N -o -r '$1' '^Date: (.+)$' "docs/releases/$release_version.md")" = "$release_day"
+rg -N -q "^## \[$release_version\] - $release_day\$" CHANGELOG.md
 # The notes must still be the CHANGELOG section rendered; moving the date means
 # regenerating them.
 uv run --project plugins/autorun --locked python scripts/release_notes.py --check
@@ -443,8 +447,9 @@ uv run --project plugins/autorun --locked python scripts/release_notes.py --chec
 # so plain -F silently removes the title, every '##' section heading, and the
 # '#' comments inside the install snippet, then collapses blank runs. Measured
 # on this file: 155 lines in, 137 out, all 10 '#' lines gone. With verbatim the
-# annotation is byte-identical to the source.
-git tag -a "$release_tag" "$release_sha" --cleanup=verbatim \
+# annotation is byte-identical to the source. TZ records the tag time with a
+# New York offset, like every earlier tag, wherever this machine is.
+TZ=America/New_York git tag -a "$release_tag" "$release_sha" --cleanup=verbatim \
   -F "docs/releases/$release_version.md"
 
 # Prove the round trip before pushing, while the tag is still local and cheap to

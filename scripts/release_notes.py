@@ -20,8 +20,9 @@ import re
 import sys
 import textwrap
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "https://github.com/ahundt/autorun"
@@ -39,6 +40,18 @@ HEADINGS = (
     "Security",
     "For contributors",
 )
+
+# Release dates are New York calendar days: every tag so far carries a New
+# York offset, and its CHANGELOG date is that day. Deriving the day from the
+# releaser's machine would change it with wherever they happen to be.
+RELEASE_TIMEZONE = "America/New_York"
+
+
+def release_day(now: datetime | None = None) -> date:
+    """The calendar day a release tagged at ``now`` (default: this moment) carries."""
+    zone = ZoneInfo(RELEASE_TIMEZONE)
+    return (now.astimezone(zone) if now else datetime.now(zone)).date()
+
 
 _SECTION_RE = re.compile(r"^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})[^\n]*$", re.MULTILINE)
 _VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
@@ -110,9 +123,10 @@ def structure_problems(section: Section, previous: str) -> list[str]:
     except ValueError:
         problems.append(f"the date {section.date!r} is not a real calendar date")
     else:
-        if stamped > date.today():
+        if stamped > release_day():
             problems.append(
-                f"the date {section.date} is in the future; use the day the release is tagged"
+                f"the date {section.date} is in the future; use the New York day the release "
+                "is tagged (scripts/release_notes.py --today)"
             )
     lines = _outside_fences(section.body)
     headings = [line[4:].strip() for line in lines if line.startswith("### ")]
@@ -248,7 +262,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="write nothing; fail if the section is malformed or the notes file differs",
     )
+    parser.add_argument(
+        "--today",
+        action="store_true",
+        help=f"print today's release date (the {RELEASE_TIMEZONE} day) and exit",
+    )
     args = parser.parse_args(argv)
+    if args.today:
+        print(release_day().isoformat())
+        return 0
     path, expected, problems = build()
     relative = path.relative_to(REPO_ROOT)
     for problem in problems:
