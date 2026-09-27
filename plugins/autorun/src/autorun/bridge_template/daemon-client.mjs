@@ -170,6 +170,13 @@ export function createDaemonBridge({
           finish(blockedBecause("hook entry returned an invalid response"));
         }
       });
+      // A hook entry may exit before reading stdin (an allow needs no input).
+      // Writing to its closed pipe then raises EPIPE on child.stdin, and an
+      // unhandled stream error takes down the whole extension process: Bun on
+      // Linux did so right after this fallback had answered correctly. The
+      // verdict comes from the exit status and stdout in "close" above, so a
+      // failed write carries no information of its own.
+      child.stdin.on("error", () => {});
       child.stdin.end(JSON.stringify({ ...payload, cli_type: cliType }) + "\n");
     });
   }

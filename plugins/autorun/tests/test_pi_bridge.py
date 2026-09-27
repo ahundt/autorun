@@ -1411,6 +1411,41 @@ def test_prime_backend_declares_an_e2e_contract():
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
+def test_a_hook_entry_that_exits_without_reading_does_not_crash_the_bridge(tmp_path):
+    """A closed stdin pipe is not an error the extension may die of.
+
+    The hook entry can exit before reading its payload. Writing to the closed
+    pipe raises EPIPE on child.stdin; unhandled, Bun on Linux ended the whole
+    process with exit 1 right after printing the correct verdict. A payload
+    larger than any pipe buffer makes the write fail on every platform.
+    """
+    driver = tmp_path / "early_exit.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: "pi",
+  socketPath: {json.dumps(str(tmp_path / "absent.sock"))},
+  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  hookEntryCommand: [process.execPath, "-e", "process.exit(0)"],
+  timeoutMs: 5000,
+}});
+const response = await bridge.askToolGate({{
+  hook_event_name: "PreToolUse",
+  session_id: "pi-session",
+  tool_name: "bash",
+  tool_input: {{ command: "x".repeat(1 << 20) }},
+}});
+console.log(JSON.stringify({{ denial: denialReason(response) }}));
+''',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        _javascript_command(driver), capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[-400:]!r}"
+    assert json.loads(result.stdout)["denial"] is None
+
+
 def test_hook_entry_silence_is_an_allow_not_an_invalid_response(tmp_path):
     """An empty stdout from the hook entry means "no decision", never a block.
 
