@@ -223,6 +223,43 @@ def test_qwen_workspace_settings_override_the_user_file(tmp_path, monkeypatch):
     assert task_tools_proven_by_settings("qwen", str(project)) == frozenset()
 
 
+def test_reading_the_qwen_switch_keeps_the_installer_off_the_hook_path(tmp_path):
+    """Every Qwen hook reads the switch, inside a 4 s budget; the installer's
+    walk, parsers and URL handling must not load with it."""
+    import json
+    import os
+    import subprocess
+
+    home = tmp_path / "qwen-home"
+    _qwen_settings(home, '{"tools": {"todoWrite": {"enabled": true}}}')
+    src = Path(__file__).resolve().parents[1] / "src"
+    code = (
+        f"import sys, json; sys.path.insert(0, {str(src)!r}); "
+        "from autorun.core import task_tools_proven_by_settings; "
+        "before = set(sys.modules); "
+        "assert task_tools_proven_by_settings('qwen', None); "
+        "print(json.dumps(sorted(set(sys.modules) - before)))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "QWEN_HOME": str(home)},
+        cwd=tmp_path,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+    loaded = set(json.loads(completed.stdout))
+    heavy = {
+        "argparse",
+        "urllib.request",
+        "autorun.installer.fs",
+        "autorun.installer.settings",
+        "autorun.installer.traversal",
+    }
+    assert not loaded & heavy, sorted(loaded & heavy)
+
+
 def test_a_settings_change_is_seen_without_a_restart(tmp_path, monkeypatch):
     """The read is cached by modification time and size, not forever."""
     from autorun.core import task_tools_proven_by_settings

@@ -28,7 +28,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Sequence
 from urllib.parse import unquote, urlparse
-from urllib.request import url2pathname
 
 __all__ = [
     "MARKETPLACE_MANIFEST",
@@ -173,6 +172,8 @@ def _url_to_path(url: str) -> Path | None:
     authority — so the authority is joined here rather than handed back to a
     decoder whose answer changes with the interpreter version.
     """
+    from urllib.request import url2pathname  # heavy; install-time only
+
     parsed = urlparse(url)
     decoded = url2pathname(parsed.path)
     host = parsed.netloc

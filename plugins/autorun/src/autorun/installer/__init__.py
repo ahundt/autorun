@@ -19,20 +19,30 @@ The layering, shortest first:
 
 from __future__ import annotations
 
-from .discovery import marketplace_root, plugin_dir, resolve_plugins
-from .fs import (
-    Decision,
-    Verdict,
-    decide,
-    json_document,
-    publish_files,
-    publish_tree,
-    read_marker,
-    withdraw_files,
-    withdrawn,
-)
-from .settings import INSTALL_SETTINGS, build_parser, resolve_all
-from .traversal import Context, Intent, Mode, Target, report, run, targets
+from importlib import import_module
+
+# Loaded on first use (PEP 562). Hook code reads ``installer.discovery`` on
+# every event, and importing a submodule runs this file first; eager re-exports
+# would load the install walk, its parsers and urllib.request into each hook.
+_EXPORTS = {
+    "marketplace_root": "discovery", "plugin_dir": "discovery", "resolve_plugins": "discovery",
+    "Decision": "fs", "Verdict": "fs", "decide": "fs", "json_document": "fs",
+    "publish_files": "fs", "publish_tree": "fs", "read_marker": "fs",
+    "withdraw_files": "fs", "withdrawn": "fs",
+    "INSTALL_SETTINGS": "settings", "build_parser": "settings", "resolve_all": "settings",
+    "Context": "traversal", "Intent": "traversal", "Mode": "traversal",
+    "Target": "traversal", "report": "traversal", "run": "traversal", "targets": "traversal",
+}
+
+
+def __getattr__(name: str):
+    module = _EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(f".{module}", __name__), name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     # the walk
