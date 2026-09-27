@@ -72,6 +72,10 @@ Whether autorun enforces task tracking after the upgrade:
 5. The instructions behind `/ar:plannew` and the other plan commands tell the
    agent to use task tools only when the session has them. They previously said
    Pi's task tools were always present.
+6. When autorun blocks a stop, it now tells an agent that believes a task
+   cannot be done to re-check that first, and that discarding the task with a
+   stated reason is then allowed. Agents had looped on such tasks, reading the
+   instructions as "only completed tasks may be cleared".
 
 ### Fixed
 
