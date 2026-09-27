@@ -323,7 +323,9 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
             "2. Review/update: {task_progress} with the current plan list "
             '3. Finish work: {task_progress} with finished items status="completed" '
             "4. Defer/delegate: keep a concrete follow-up item pending "
-            "5. Discard obsolete work: remove it from the current plan list "
+            "5. Truly blocked? re-check that first (reread the error, try another "
+            "approach); then, as a permitted last resort, remove the item from the "
+            "current plan list and state why "
             f"6. User only: {user_actions} "
             f"{recovery}"
         )
@@ -332,7 +334,9 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
         f"2. Review: {_ACT_REVIEW} "
         f"3. Do the work, then: {_ACT_COMPLETE} "
         f"4. Delegate to subagent first: {_delegate_action(cli_type)} (marks task non-blocking while subagent runs) "
-        f"5. Or discard: {_ACT_DISCARD} "
+        f"5. Truly blocked? re-check that first (reread the error, try another "
+        f"approach); then, as a permitted last resort, discard: {_ACT_DISCARD} "
+        f"and state why "
         f"6. User only: {user_actions} "
         f"{recovery}"
     )

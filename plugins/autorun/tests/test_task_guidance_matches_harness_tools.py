@@ -494,3 +494,24 @@ class TestDelegateMarkerReachesHookChain:
         plugins.delegate_marked_tasks(ctx)
 
         assert TaskLifecycle(config=cfg, session_id="hook-deleg-guard").tasks["4"]["status"] == "completed"
+
+
+@pytest.mark.parametrize("cli_type", ["claude", "codex"])
+def test_the_discard_escape_is_a_permitted_last_resort_after_rechecking(cli_type):
+    """An agent that believes a task cannot be done must not feel trapped.
+
+    The Stop block says every task must be completed or discarded, and the
+    discard call is listed, but as a bare alternative the agent read the list
+    as "only completed tasks may be cleared" and looped on a task it assumed was
+    impossible. The action has to say to re-check that assumption first, and
+    that discarding with a stated reason is then allowed.
+    """
+    from autorun.task_lifecycle import _task_actions_fragment
+
+    text = _task_actions_fragment(cli_type)
+    work = text.index("Do the work") if cli_type == "claude" else text.index("Finish work")
+    escape = text.index("last resort")
+    assert work < escape, "the escape comes after doing the work"
+    assert "re-check" in text, "check the can't-be-done assumption first"
+    assert "permitted" in text, "discarding is allowed, not a rule violation"
+    assert "state why" in text, "the discard carries its reason"
