@@ -12,7 +12,7 @@ Coding agents have started shipping without their task tools by default, and
 autorun's task gates could then deny every tool call until the agent made a
 task call it had no way to make. This hit Claude Code on current models, Qwen
 Code, Gemini CLI, Codex, and Pi or Prime Agent subagents without task tools. The
-gates now enforce only where the session can make that call, and
+gates now enforce only where autorun can tell the session has the tool, and
 `autorun --install` turns the tools back on where the agent has a setting for
 it. 1.0.0rc2 reached TestPyPI but was never released, so its changes ship here.
 
@@ -22,14 +22,25 @@ it. 1.0.0rc2 reached TestPyPI but was never released, so its changes ship here.
 restarts the autorun daemon, and turns on the task tools of Claude Code, Qwen
 Code and Codex through one setting each, unless you set them yourself (see
 Changed).
-`autorun --status` then lists each setting as `current`, or as kept when the
-value is yours. Upgrading the package without it leaves every harness on
-1.0.0rc1. A Claude Code marketplace-only install never runs
-`autorun --install`: add `"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"` to the `env`
-object of `~/.claude/settings.json` yourself, creating `env` if it is missing.
-If your Qwen or Codex settings file cannot be parsed, the install leaves it
-alone and its output names the setting to add. Task state, configuration, and `/ar` commands
-carry over unchanged.
+`autorun --status` then lists each setting as `current`, or as
+`kept your setting` when the value is yours. Upgrading the package without it
+leaves every harness on 1.0.0rc1. For a Claude Code marketplace-only install,
+the setting to add is `"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"` in the `env` object
+of `~/.claude/settings.json` (create `env` if it is missing). If your Qwen or
+Codex settings file cannot be parsed (for example, a settings file with
+comments), the install leaves it alone and its output names the setting to add.
+Task state, configuration, and `/ar` commands carry over unchanged.
+
+Whether autorun enforces task tracking after the upgrade:
+
+1. Claude Code: yes, once `autorun --install` has set
+   `CLAUDE_CODE_ENABLE_TODO_TOOLS`. Without it, yes from a session's first task
+   call, which only sessions on older models can make.
+2. Qwen Code: yes while `tools.todoWrite.enabled` is `true`, or from a session's
+   first `todo_write` call.
+3. Gemini CLI: from a session's first `write_todos` call.
+4. Codex: no. autorun records Codex checklists but never requires them.
+5. Pi and Prime Agent: yes, in any session that has the task tools.
 
 ### Changed
 
@@ -38,17 +49,16 @@ carry over unchanged.
    offer TaskCreate and the other task tools only to older models without it. A
    value you already set is kept, and `autorun --uninstall` removes only the one
    autorun added. To keep the tools off, set it to `"0"`; deleting the line does
-   not opt out, because the next install adds it back. A session without it
-   gets task gates once it has made a task call, which a session on an older
-   model does; until then autorun does not enforce task tracking and says so
-   when the session starts.
+   not opt out, because the next install adds it back. Claude Code versions
+   before 2.1.268 ignore the setting. A session that starts without task
+   tracking enforced is told so.
 2. Qwen Code: `autorun --install` sets `tools.todoWrite.enabled` to `true` in
-   `~/.qwen/settings.json` the same way, because Qwen Code 0.24.0 and later
+   `~/.qwen/settings.json`, keeping a value you set, because Qwen Code 0.24.0 and later
    register `todo_write` only with it, and autorun now counts `todo_write` as
    task progress. autorun enforces Qwen task tracking only while that setting
    is `true` or the session has made a task call; set it to `false` to keep the
-   tool off. A settings file with comments is left untouched, and the install
-   output names the setting to add.
+   tool off. A settings file that cannot be parsed, such as one with comments,
+   is left untouched, and the install output names the setting to add.
 3. Gemini CLI 0.36.0 and later give the default model no `write_todos`, so
    autorun requires it only once the session has called it.
 4. Codex: `autorun --install` sets `[tools.update_plan] enabled = true` in
@@ -57,9 +67,11 @@ carry over unchanged.
    for or requires `update_plan` calls: Plan mode rejects the tool even when it
    is on, and Codex hooks cannot tell, so a required call could leave every
    following tool call denied. autorun still records the checklists an agent
-   keeps, and stage markers and destructive-command guards still apply.
-5. The plan skills tell the agent to use task tools only when the session has
-   them. They previously said Pi's task tools were always present.
+   keeps, and its stage completion markers and destructive-command guards
+   still apply.
+5. The instructions behind `/ar:plannew` and the other plan commands tell the
+   agent to use task tools only when the session has them. They previously said
+   Pi's task tools were always present.
 
 ### Fixed
 
@@ -87,10 +99,8 @@ carry over unchanged.
 8. `autorun --uninstall` removes the `autorun` marketplace entry it added to
    Claude Code's settings when you uninstall every autorun plugin. It stayed
    behind before; a partial uninstall still keeps it for the other plugins.
-9. The Pi, Prime Agent and OpenCode extensions no longer exit when the autorun
-   daemon is unreachable and the hook entry finishes without reading its input,
-   as it does for an allowed tool. Writing to its closed input could end the
-   extension process right after it had allowed the call.
+9. The Pi, Prime Agent and OpenCode extensions no longer exit right after
+   allowing a tool call while the autorun daemon is unreachable.
 
 ### For contributors
 

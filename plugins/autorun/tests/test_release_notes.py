@@ -112,6 +112,8 @@ def test_the_upgrade_commands_lead_the_upgrade_section():
     first_step = rendered.index("1. Restart running sessions.")
     assert upgrading < command < first_step
     assert rendered.index("## Fixed") > first_step
+    marketplace = rendered.index("claude plugin update ar@autorun")
+    assert upgrading < marketplace < command, "marketplace-only readers learn first"
     assert "`autorun --version` prints `autorun 0.0.1rc2`" in _prose(rendered)
     pdf = rendered.index("'autorun-ai[pdf]==0.0.1rc2'")
     assert command < pdf < first_step, "the PDF variant must show before the steps"
@@ -132,7 +134,7 @@ def test_only_a_prerelease_explains_its_version_pin():
 
 def test_wrapping_never_splits_a_code_span():
     text = release_notes.upgrade_commands("0.0.1rc2")
-    for span in ("`claude plugin update ar@autorun`", "`uv tool list --show-extras`"):
+    for span in ("`uv tool list --show-extras`", "`=={}`".format("0.0.1rc2")):
         assert span in text, f"{span} was split across lines"
 
 

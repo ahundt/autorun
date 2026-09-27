@@ -152,18 +152,14 @@ def upgrade_commands(version: str) -> str:
     loads, which the package upgrade alone leaves at the old version.
     """
     pin = (
-        " Keep the version pin: once a stable release exists, `uv` installs that"
-        " instead of this candidate."
+        f" Keep the version pin (`=={version}`): once a stable release exists, "
+        "`uv` installs that instead of this candidate."
         if is_prerelease(version)
         else ""
     )
     steps = (
         f"Check that `autorun --version` prints `autorun {version}`.{pin}",
         "Restart open agent sessions. Each one reads its hooks only when it starts.",
-        "If you installed only through the Claude Code marketplace, run "
-        "`claude plugin update ar@autorun` and restart Claude Code instead of "
-        "the commands above. That route does not run `autorun --install`, so any "
-        "setting this section says the install changes is yours to add.",
         "New installs use the same commands. The README covers other harnesses and "
         f"options: <{REPOSITORY}#readme>.",
     )
@@ -183,9 +179,20 @@ def upgrade_commands(version: str) -> str:
         ).replace("\0", " ")
         for number, step in enumerate(steps, 1)
     )
+    marketplace = textwrap.fill(
+        "If you installed only through the Claude Code marketplace, skip these "
+        "commands: run `claude plugin update ar@autorun`, then restart Claude "
+        "Code. That route does not run `autorun --install`, so any setting this "
+        "section says the install changes is yours to add.",
+        width=80,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
     return (
-        "Run one of these. Use the second if you installed the PDF backends\n"
-        "(`uv tool list --show-extras` lists `pdf`); the first removes them.\n"
+        f"{marketplace}\n"
+        "\n"
+        "Otherwise run one of these. Use the second if you installed the PDF\n"
+        "backends (`uv tool list --show-extras` lists `pdf`); the first removes them.\n"
         "\n"
         "```bash\n"
         f"uv tool install --force 'autorun-ai=={version}' && autorun --install\n"
