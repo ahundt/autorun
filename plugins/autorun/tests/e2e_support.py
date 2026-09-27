@@ -164,7 +164,11 @@ def isolated_hook_env(
     env = os.environ.copy()
     switch = PLATFORMS[cli].task_tool_switch if cli in PLATFORMS else None
     if switch is not None and switch.env:
-        env[switch.env] = "1"
+        # Drop what the developer's own shell exported (a run from inside a
+        # Claude Code session inherits its values) before stating the switch.
+        for name in switch.forwarded_env():
+            env.pop(name, None)
+        env[switch.env] = str(switch.value)
     env.update(
         {
             "AUTORUN_PLUGIN_ROOT": str(plugin_root),

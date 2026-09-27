@@ -545,10 +545,13 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         for name in raw_active_tools
     ):
         active_tools = frozenset(name.strip() for name in raw_active_tools)
-    if active_tools is None:
+    if active_tools is None and not payload.get("agent_id"):
         # A harness that reports no tool list may still have switched its task
         # tools on in a way the hook process can see. The set then names only
         # those task tools: it is evidence for task gates, not an inventory.
+        # Main sessions only: a subagent inherits the parent's environment but
+        # may be defined without the task tools (a Claude custom agent's
+        # `tools:` list), so for it the switch proves nothing.
         from .platforms import task_tools_proven_by_switch
 
         active_tools = task_tools_proven_by_switch(

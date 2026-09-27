@@ -245,13 +245,21 @@ def task_tool_recovery_sentence(cli_type: str | None) -> str:
         or _workaround_flag_applies(BUG_80401_FLAG, cli_type)
     ):
         return ""
+    from .platforms import get_platform
+
+    # The settings come from the registry's switch, so this sentence and the
+    # installer name the same variables: the switch on, and each variable that
+    # would otherwise swap the Task tools for TodoWrite set back to 1.
+    switch = get_platform("claude").task_tool_switch
+    settings = " and ".join(
+        [f"`{switch.env}={switch.value}`", *(f"`{name}=1`" for name in switch.env_off)]
+    )
     return (
         " If TaskCreate, TaskUpdate, TaskList, or TaskGet is unavailable or "
         "vanished, use ToolSearch once with "
         "`select:TaskCreate,TaskUpdate,TaskList,TaskGet`. If it returns no "
         "match, do not retry unavailable Task tools in this session: tell the "
-        "user to set `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` and "
-        "`CLAUDE_CODE_ENABLE_TASKS=1`, then restart Claude Code."
+        f"user to set {settings}, then restart Claude Code."
     )
 
 

@@ -2128,14 +2128,17 @@ TASK_PROGRESS_CAPABILITY_ROLES = (
 
 
 def task_capability_is_known(active_tools: frozenset[str] | None) -> bool:
-    """Whether a session reported which tools its model can actually call.
+    """Whether a session's task-tool capability is known.
 
-    Only the Pi-family bridge reports one (``pi.getActiveTools()``); the other
-    seven registered harnesses send nothing, and a payload that fails
-    ``normalize_hook_payload``'s shape check arrives as ``None`` too. Both mean
-    unknown, and unknown must keep the legacy behavior rather than guess — so
-    the two spellings of "unknown" live here, once, rather than at each caller.
-    A known-empty ``frozenset()`` is an answer, not a missing one.
+    ``active_tools`` comes from one of two places. The Pi-family bridge reports
+    the session's whole tool list (``pi.getActiveTools()``). For a harness that
+    reports nothing, a main session whose own task-tool switch is on gets the
+    harness's registered task tools (:func:`task_tools_proven_by_switch`): a set
+    that is complete for task roles and says nothing about any other tool, so
+    ask it task questions only. Everything else, including a payload that fails
+    ``normalize_hook_payload``'s shape check, arrives as ``None``: unknown, and
+    the two spellings of that live here once rather than at each caller. A
+    known-empty ``frozenset()`` is an answer, not a missing one.
     """
     return isinstance(active_tools, frozenset)
 

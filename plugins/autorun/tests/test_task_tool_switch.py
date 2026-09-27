@@ -121,6 +121,25 @@ def test_normalize_turns_a_forwarded_switch_into_evidence(payload_extra, known):
         assert normalized["active_tools"] is None
 
 
+def test_a_subagent_gets_no_evidence_from_the_parents_switch():
+    """A subagent inherits the parent's environment, not necessarily its tools.
+
+    A Claude custom agent whose `tools:` list leaves out TaskCreate still sees
+    CLAUDE_CODE_ENABLE_TODO_TOOLS=1. Treating that as evidence would demand a
+    tool it cannot call, the failure rc3 fixes for Pi children.
+    """
+    normalized = normalize_hook_payload(
+        {
+            "hook_event_name": "PostToolUse",
+            "session_id": "s",
+            "cli_type": "claude",
+            "agent_id": "agent-1",
+            **CLAUDE_SWITCH_ON,
+        }
+    )
+    assert normalized["active_tools"] is None
+
+
 def test_a_reported_tool_list_outranks_a_switch():
     """Pi reports what the session really has; a stray variable cannot widen it."""
     normalized = normalize_hook_payload(
