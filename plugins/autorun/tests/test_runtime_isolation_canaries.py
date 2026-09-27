@@ -34,11 +34,7 @@ SRC_DIR = PLUGIN_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-REQUIRED_ISOLATION_VARS = (
-    "AUTORUN_HOME",
-    "AUTORUN_TEST_STATE_DIR",
-    "AUTORUN_TEST_RUNTIME_DIR",
-)
+from isolated_environ import REQUIRED_ISOLATION_VARS  # noqa: E402
 
 
 def _runtime_root() -> Path:

@@ -764,6 +764,8 @@ _LIVE_INSTALL_GLOBS = (
     "~/.claude/plugins/cache/autorun/*/*/.venv/**/site-packages/autorun/**/*.py",
     "~/.claude/plugins/cache/autorun/*/*/.venv/**/site-packages/filelock/**/*.py",
     "~/.claude/settings.json",
+    # The installer writes Qwen's task-tool switch here (platforms.TaskToolSwitch).
+    "~/.qwen/settings.json",
     "~/.codex/hooks.json",
     "~/.agents/plugins/marketplace.json",
 )
@@ -829,6 +831,7 @@ def pytest_sessionstart(session):
     DaemonManager.snapshot_production_pids()
     if _live_install_canary_enabled(session.config):
         session.config._autorun_live_install = _live_install_fingerprint()
+        session.config._autorun_real_home_existed = os.path.exists(_REAL_AUTORUN_HOME)
 
 
 def _check_live_install_unchanged(session) -> None:
@@ -864,9 +867,40 @@ def _check_live_install_unchanged(session) -> None:
     session.exitstatus = 1
 
 
+#: autorun's default state directory in the real home. Read with expanduser
+#: here, before any test redirects HOME, and only ever checked for existence.
+_REAL_AUTORUN_HOME = os.path.expanduser("~/.autorun")
+
+
+def _check_real_autorun_home_not_created(session) -> None:
+    """Report a run that created the real ~/.autorun; never touch it.
+
+    Only the transition from absent to present is evidence. On a machine with
+    autorun installed the directory already exists and its live daemon writes
+    there during the run, legitimately, so an existing directory is not
+    examined at all.
+    """
+    existed = getattr(session.config, "_autorun_real_home_existed", None)
+    if existed is not False or not os.path.exists(_REAL_AUTORUN_HOME):
+        return
+    print(
+        "\n"
+        "========================= REAL ~/.autorun CREATED ==========================\n"
+        f"{_REAL_AUTORUN_HOME} did not exist when the run started and does now.\n"
+        "Something resolved autorun's directory with AUTORUN_HOME unset: a\n"
+        "`patch.dict(os.environ, {}, clear=True)` (use\n"
+        "isolated_environ.isolation_only()), a subprocess env built without\n"
+        "AUTORUN_HOME, or a child process given the real HOME. It was left in\n"
+        "place; remove it once you have checked that no live autorun uses it.\n"
+        "============================================================================="
+    )
+    session.exitstatus = 1
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Clean up test sessions and test-spawned daemons after pytest finishes."""
     _check_live_install_unchanged(session)
+    _check_real_autorun_home_not_created(session)
     cleanup_test_sessions()
     DaemonManager.cleanup()
 

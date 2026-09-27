@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from isolated_environ import isolation_only
 
 
 def get_hook_entry_module():
@@ -870,7 +871,7 @@ class TestCanBootstrap:
         hook_entry = get_hook_entry_module()
 
         with mock.patch.object(hook_entry.shutil, "which", return_value="/usr/bin/uv"):
-            with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.dict(os.environ, isolation_only(), clear=True):
                 can_run, reason = hook_entry.can_bootstrap()
 
         assert can_run is False

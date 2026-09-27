@@ -35,6 +35,8 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
+from isolated_environ import isolation_only
+
 # Import the core module components
 from autorun.core import (
     LazyTranscript,
@@ -2293,13 +2295,13 @@ class TestResolveSessionKey:
 
     def test_fallback_to_session_id(self):
         """Should fall back to session_id when no env var."""
-        with patch.dict("os.environ", {}, clear=True):
+        with patch.dict("os.environ", isolation_only(), clear=True):
             result = resolve_session_key(12345, "/tmp", "fallback-session")
             assert result == "fallback-session"
 
     def test_identity_layer_disabled_by_default(self):
         """JSONL scanning should be disabled without AUTORUN_USE_IDENTITY."""
-        with patch.dict("os.environ", {}, clear=True):
+        with patch.dict("os.environ", isolation_only(), clear=True):
             result = resolve_session_key(12345, "/tmp", "fallback")
             # Should go directly to fallback without trying JSONL scan
             assert result == "fallback"

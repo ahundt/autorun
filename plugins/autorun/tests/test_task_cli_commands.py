@@ -51,6 +51,7 @@ plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from isolated_environ import isolation_only
 
 
 # ============================================================================
@@ -227,15 +228,8 @@ def test_cli_status_table_format():
 
 def test_cli_status_no_session_id_fails():
     """Test cli_status fails gracefully when session ID missing."""
-    # No CLAUDE_SESSION_ID env var. Keep only the isolation variables: an
-    # environment with no AUTORUN_HOME or HOME resolves the developer's real
-    # directories through the password database.
-    isolation = {
-        name: os.environ[name]
-        for name in ("AUTORUN_HOME", "AUTORUN_TEST_STATE_DIR", "AUTORUN_TEST_RUNTIME_DIR")
-        if name in os.environ
-    }
-    with patch.dict('os.environ', isolation, clear=True):
+    # No CLAUDE_SESSION_ID env var; everything else cleared but isolation.
+    with patch.dict('os.environ', isolation_only(), clear=True):
         exit_code, output = capture_stdout(
             TaskLifecycle.cli_status,
             session_id=None,
