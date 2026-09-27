@@ -354,6 +354,74 @@ class TestNoRegressions:
         assert sleeps == [0.1]
         assert order == ["spawn"]
 
+    @pytest.mark.parametrize(("child_exit", "spawns"), [(None, 1), (1, 6)])
+    def test_a_booting_daemon_is_waited_for_not_duplicated(
+        self, tmp_path, monkeypatch, child_exit, spawns
+    ):
+        """One cold start, one daemon, unless the one it started has died.
+
+        A daemon takes its flock only after importing autorun. Until then every
+        0.1 s retry saw no lock and no record and spawned another; on a 4-core
+        Windows runner, where that import takes most of a second, the
+        duplicates competed with the real daemon until a 4 s hook budget ran
+        out. A child that has already exited is still replaced.
+        """
+        import io
+        import json
+        import sys
+
+        from autorun import client, ipc
+
+        payload = {"hook_event_name": "SessionStart", "session_id": "cold", "cli_type": "gemini"}
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+        monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", tmp_path / "daemon.pid")
+
+        class Reader:
+            async def readuntil(self, _separator):
+                return b"{}\n"
+
+        class Writer:
+            def write(self, _data):
+                pass
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+            async def wait_closed(self):
+                pass
+
+        attempts = 0
+
+        async def connect(**_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts <= 6:
+                raise ConnectionRefusedError
+            return Reader(), Writer()
+
+        async def no_sleep(_delay):
+            pass
+
+        class Child:
+            def poll(self):
+                return child_exit
+
+        started = []
+        monkeypatch.setattr(ipc, "connect", connect)
+        monkeypatch.setattr(client.asyncio, "sleep", no_sleep)
+        monkeypatch.setattr(
+            client.subprocess, "Popen", lambda *_a, **_k: started.append(Child()) or started[-1]
+        )
+
+        with pytest.raises(SystemExit) as exited:
+            client.run_client()
+        assert exited.value.code == 0
+        assert len(started) == spawns
+
     def test_client_closes_its_daemon_connection(self, monkeypatch):
         import io
         import json

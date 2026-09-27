@@ -703,6 +703,13 @@ def run_client() -> int:
                     # Config dir doesn't exist (first run) — spawn daemon
                     should_spawn = True
 
+            # The daemon takes its flock only after importing autorun, so the
+            # checks above cannot see one this client started a moment ago.
+            # Spawning again on every retry started one duplicate per 0.1 s;
+            # on Windows, where that import takes most of a second, they
+            # competed with the real daemon until the hook budget ran out.
+            if should_spawn and any(process.poll() is None for process in spawned):
+                should_spawn = False
             if should_spawn:
                 logger.info("Daemon not running, auto-starting...")
                 src_dir = Path(__file__).parent.parent
