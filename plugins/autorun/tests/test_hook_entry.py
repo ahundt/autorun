@@ -732,6 +732,7 @@ class TestHookEntryExecutionPriority:
         # rotation happened against the real profile and the assertions below
         # looked at an empty tmp_path.
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / ".autorun"))
         monkeypatch.setattr(hook_entry, "DEBUG_LOG_MAX_BYTES", 100)
 
         log_dir = tmp_path / ".autorun"
@@ -745,6 +746,25 @@ class TestHookEntryExecutionPriority:
         assert rotated_log.exists()
         assert rotated_log.read_text(encoding="utf-8") == "x" * 200
         assert active_log.read_text(encoding="utf-8") == "new bounded entry\n"
+
+    def test_debug_log_follows_autorun_home_not_the_user_home(self, tmp_path, monkeypatch):
+        """A redirected AUTORUN_HOME must keep the debug log out of the real home.
+
+        Test hooks run with AUTORUN_HOME in a temp directory and HOME unchanged;
+        the log used to read Path.home() and so wrote the developer's live
+        ~/.autorun/hook_entry_debug.log on every test run.
+        """
+        hook_entry = load_hook_entry_module()
+        user_home = tmp_path / "home"
+        runtime = tmp_path / "runtime" / "nested"
+        monkeypatch.setenv("HOME", str(user_home))
+        monkeypatch.setenv("USERPROFILE", str(user_home))
+        monkeypatch.setenv("AUTORUN_HOME", str(runtime))
+
+        hook_entry._append_debug_log("isolated entry")
+
+        assert (runtime / "hook_entry_debug.log").read_text(encoding="utf-8") == "isolated entry\n"
+        assert not (user_home / ".autorun").exists()
 
 
 # =============================================================================

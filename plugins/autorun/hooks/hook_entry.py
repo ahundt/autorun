@@ -85,8 +85,14 @@ _DETACHED_PROCESS_FLAGS = (
 
 
 def _debug_log_path() -> Path:
-    """Return the bounded hook debug log path."""
-    return Path.home() / ".autorun" / "hook_entry_debug.log"
+    """Return the bounded hook debug log path, under AUTORUN_HOME like the rest.
+
+    This read ``Path.home()`` directly, so every hook a test launched with a
+    redirected AUTORUN_HOME but the real HOME appended to the live
+    ``~/.autorun/hook_entry_debug.log``: the one runtime file that ignored the
+    isolation contract.
+    """
+    return _autorun_home() / "hook_entry_debug.log"
 
 
 def _short_debug_value(value: str, limit: int = DEBUG_VALUE_MAX_CHARS) -> str:
@@ -110,7 +116,7 @@ def _append_debug_log(message: str) -> None:
     """
     try:
         debug_log = _debug_log_path()
-        debug_log.parent.mkdir(exist_ok=True)
+        debug_log.parent.mkdir(parents=True, exist_ok=True)
         if debug_log.exists() and debug_log.stat().st_size > DEBUG_LOG_MAX_BYTES:
             rotated = debug_log.with_suffix(debug_log.suffix + ".1")
             try:
@@ -743,7 +749,9 @@ def _emit_cli_result(result: subprocess.CompletedProcess[str]) -> int | None:
 
 def _autorun_home() -> Path:
     """Return the runtime directory the daemon publishes itself in."""
-    return Path(os.environ.get("AUTORUN_HOME", Path.home() / ".autorun"))
+    # Empty means unset, as in ipc._get_autorun_config_dir: Path("") is the
+    # current directory, which would scatter runtime files into the project.
+    return Path(os.environ.get("AUTORUN_HOME") or Path.home() / ".autorun")
 
 
 def _daemon_socket_path() -> Path:
@@ -1021,8 +1029,7 @@ def is_bootstrap_running() -> bool:
 def _bootstrap_path(name: str) -> Path:
     if name == "bootstrap.lock" and BOOTSTRAP_LOCKFILE:
         return Path(BOOTSTRAP_LOCKFILE)
-    root = Path(os.environ.get("AUTORUN_HOME", str(Path.home() / ".autorun")))
-    return root / name
+    return _autorun_home() / name
 
 
 def _bootstrap_fingerprint(plugin_root: Path) -> str:
