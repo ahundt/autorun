@@ -6,76 +6,67 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0rc2] - 2026-09-27
+## [1.0.0rc3] - 2026-09-27
 
-A defect-fix candidate on 1.0.0rc1. No command was added or renamed and the
-task state format is unchanged. The PyPI distribution is still `autorun-ai`,
-with the extraction backends still behind `autorun-ai[pdf]`, and it still needs
-the pin — an unqualified `uv tool install` skips prereleases:
-`uv tool install 'autorun-ai==1.0.0rc2'`.
+autorun's task gates hold back an agent's tool calls until it records its
+tasks. They could block a session that had no way to record tasks, denying
+every tool call from then on: a Pi or Prime Agent subagent without task tools,
+or a Codex session without a usable `update_plan`. This release fixes both, and
+includes the other changes from 1.0.0rc2, which reached TestPyPI but was never
+released.
 
-### Fixed
+### Upgrading from 1.0.0rc1
 
-- **A Pi or Prime agent without task tools is no longer required to call
-  one.** The task gates demanded a `TaskCreate`/`TaskUpdate` call from every
-  session, restricted children included, so a child whose tool surface holds
-  neither had no compliant action and every following tool call was denied.
-  The Pi extension now reports `pi.getActiveTools()` with each frame, and each
-  gate skips a session whose reported surface cannot perform the mutation that
-  gate is about to require. Seven of the nine registered harnesses report
-  nothing and keep the previous behavior; a reported empty set is an answer,
-  not a missing one.
-
-- **The same gate on the daemonless path.** `run_direct`, which serves hooks
-  when `AUTORUN_USE_DAEMON=0` or the daemon is unreachable, built its context
-  without the reported tool surface, so the fix above read "unknown" there and
-  denied the restricted child anyway.
-  `test_a_normalized_field_reaches_both_dispatch_entry_points_or_neither` now
-  fails on any payload field that reaches one dispatch entry point and not the
-  other.
-
-- **A Codex session is no longer held behind a checklist tool it cannot
-  call.** `update_plan` is absent on some Codex surfaces and rejected in Plan
-  mode, and Codex command-hook stdin reports approval policy rather than an
-  effective tool list. autorun read that unknown capability as availability, so
-  a task-only gate could deny every following tool call until a checklist
-  arrived that the session had no way to produce. A harness that can omit its
-  registered task tool without reporting the omission now needs positive
-  evidence before a task-only gate enforces. Unknown fails open for those gates
-  only: the stage markers and the destructive-command guards stay active.
-
-- **Clearing a Codex checklist now registers.** `update_plan` carrying an empty
-  `plan` list was indistinguishable from a call with no `plan` field at all and
-  was discarded, leaving the previous tasks recorded after the model had
-  cleared them. An empty list is now stored as a known-empty snapshot, and a
-  missing `plan` field remains the only ignored shape.
-
-- **A finished subagent no longer receives the parent's stage instructions.**
-  `SubagentStop` passed through the task lifecycle Stop gate to the autorun
-  stage handler, which re-injected the three-stage continuation prompt into a
-  child whose parent was already waiting on it. The registered chain settles
-  `SubagentStop` itself; `TaskLifecycle.handle_stop` keeps pass-through for
-  direct callers, and each property has its own test.
-
-- **Pi's `TaskCreate` requires only a subject.** `description` and
-  `activeForm` were required by the tool schema, models omitted them, and the
-  call failed with no task created. Both fields remain available but optional.
-
-- **A nested worktree no longer fails the release-consistency scan.** A
-  `git worktree` under `.claude/worktrees/` put a second checkout's copies of
-  every version-carrying file inside the tree,
-  and `test_release_checklist_covers_every_file_carrying_the_version` reported
-  them as uninventoried. Both scans now prune any directory holding its own
-  `.git`, which covers nested clones and submodules as well.
+`autorun --install` republishes the hooks and extensions each harness loads and
+restarts the autorun daemon. Upgrading the package without it leaves every
+harness on 1.0.0rc1. Task state, configuration, and `/ar` commands carry over
+unchanged.
 
 ### Changed
 
-- **One owner for a command's argument tail.** Plan commands returned the
-  skill body without the invocation arguments; plan execution, help and
-  activation parsed their own tails. They now read `ctx.command_arguments`,
-  filled once by the matcher. `apply_command_match` prepares the context on
-  dispatch and transcript-replay paths. Plan responses include the argument
-  string once, and the short command documents carry `$ARGUMENTS`.
+1. On Codex, autorun no longer asks for or requires `update_plan` calls. Codex
+   hooks do not report which tools a session has, and `update_plan` is missing
+   on some Codex surfaces and rejected in Plan mode, so a required call could
+   leave every following tool call denied. autorun still records the checklists
+   an agent keeps, and stage markers and destructive-command guards still
+   apply.
+2. The plan skills tell the agent to use task tools only when the session has
+   them. They previously said Pi's task tools were always present.
+
+### Fixed
+
+1. A Pi or Prime Agent subagent without `TaskCreate` or `TaskUpdate` is no
+   longer blocked. The task gates required one of those calls, so every tool
+   call after that was denied. The gates now skip a session that lacks the tool
+   they would require. Claude Code and the other harnesses do not report their
+   sessions' tools, so their gates work as before.
+2. Clearing a Codex checklist now clears autorun's record of it. An
+   `update_plan` call with an empty list was ignored, so autorun kept the old
+   tasks.
+3. A subagent that has finished is no longer told to keep working. autorun sent
+   it the instructions for continuing through its stages while the parent
+   session was already waiting for its result.
+4. Pi's `TaskCreate` needs only a subject. It required `description` and
+   `activeForm`, models often left them out, and the call failed without
+   creating a task.
+5. Plan commands keep the text typed after them. `/ar:pn add a login page` could
+   produce plan instructions without "add a login page". The same applied to
+   `/ar:pr`, `/ar:pu`, `/ar:pp`, and their long names such as `/ar:plannew`.
+
+### For contributors
+
+1. The release-consistency scans skip nested checkouts (any directory with its
+   own `.git`), so a `git worktree` under `.claude/worktrees/` no longer fails
+   them.
+2. The TestPyPI rehearsal installs the uploaded wheel and sdist by exact URL
+   after matching their SHA-256 digests to the build. The 1.0.0rc2 rehearsal
+   failed because `uv` resolved 1.0.0rc1 from PyPI instead.
+3. Pi bridge tests run under Bun and fall back to Node; CI pins the Bun version.
+4. `scripts/release_notes.py` generates `docs/releases/<version>.md` from the
+   release's CHANGELOG section and checks that section's structure.
+5. RELEASING.md tags with `--cleanup=verbatim` so the annotation keeps the
+   notes' headings, rehearses the sdist as well as the wheel, and requires the
+   release date to be the tag day.
 
 ## [1.0.0rc1] - 2026-08-23
 

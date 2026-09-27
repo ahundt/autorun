@@ -524,7 +524,9 @@ def test_release_notes_name_upgrade_actions_date_and_diff():
         "future; set it to the day the release is tagged"
     )
     assert f"Date: {headings[0]}" in notes
-    assert "## Upgrade notes" in notes
+    # The upgrade section's heading, order and commands are checked where they
+    # are produced: test_release_notes.py runs scripts/release_notes.py --check.
+    assert re.search(r"^## Upgrading from \S+$", notes, re.MULTILINE)
     assert re.search(rf"compare/v\S+\.\.\.v{re.escape(version)}", notes), (
         "the release body must carry a comparison link readers can follow"
     )
@@ -628,14 +630,21 @@ def test_root_readme_starts_with_published_install_and_no_generated_banner():
     assert "Gemini_Generated_Image" not in readme
 
 
-def test_current_changelog_covers_pi_and_published_distributions():
-    """The current release entry must describe capability and distribution surfaces."""
+def test_current_release_notes_cover_pi_and_published_distributions():
+    """The current release must describe capability and distribution surfaces.
+
+    The distribution names belong in the release body's install commands, which
+    scripts/release_notes.py derives from the version; requiring them in every
+    CHANGELOG section as well only forced the same boilerplate into each one.
+    """
     version = _declared_version("plugins/autorun/pyproject.toml", "version")
     changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     section = changelog.split(f"## [{version}]", 1)[1].split("\n## [", 1)[0]
+    assert "Pi" in section, f"CHANGELOG.md [{version}] omits Pi"
 
-    for required in ("Pi", "PyPI", "`autorun-ai`", "`autorun-ai[pdf]`"):
-        assert required in section, f"CHANGELOG.md [{version}] omits {required}"
+    notes = (REPO_ROOT / "docs" / "releases" / f"{version}.md").read_text(encoding="utf-8")
+    for required in (f"'autorun-ai=={version}'", f"'autorun-ai[pdf]=={version}'"):
+        assert required in notes, f"docs/releases/{version}.md omits {required}"
 
 
 def test_published_distributions_have_project_urls():

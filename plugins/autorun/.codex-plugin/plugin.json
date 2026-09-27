@@ -1,6 +1,6 @@
 {
   "name": "ar",
-  "version": "1.0.0rc2",
+  "version": "1.0.0rc3",
   "description": "Lifecycle safety hooks and reusable automation skills for AI coding assistants",
   "author": {
     "name": "Andrew Hundt",
