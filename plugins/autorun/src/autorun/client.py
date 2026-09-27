@@ -152,6 +152,13 @@ from .config import HOOK_DEADLINE_PAYLOAD_KEY as DEADLINE_PAYLOAD_KEY  # noqa: E
 #: longer is a stale record, and no daemon flock is held either way.
 _STALE_PID_PATIENCE_ATTEMPTS = 10
 
+#: How many attempts a daemon this client spawned gets to take its flock
+#: before one more is started (2 s at DAEMON_START_RETRY_SECONDS). Cold starts
+#: measured 0.6-1.2 s on a Windows runner; one alive but stuck past this (an
+#: antivirus scan, a hung import) would otherwise hold the client until its
+#: budget ran out.
+_SPAWNED_DAEMON_PATIENCE_ATTEMPTS = 20
+
 
 def daemon_record_is_live(lock_path) -> bool:
     """Whether daemon.lock names a process that is really this daemon.
@@ -540,6 +547,8 @@ def run_client() -> int:
     # reported that no daemon answered, never that the daemon it started was
     # already dead or why.
     spawned: list = []
+    # forward() attempt number of the latest spawn; a list for the nested scope.
+    last_spawn_attempt: list = []
     deadline = payload[DEADLINE_PAYLOAD_KEY]
 
     def _spawn_outcome() -> str:
@@ -708,7 +717,11 @@ def run_client() -> int:
             # Spawning again on every retry started one duplicate per 0.1 s;
             # on Windows, where that import takes most of a second, they
             # competed with the real daemon until the hook budget ran out.
-            if should_spawn and any(process.poll() is None for process in spawned):
+            if (
+                should_spawn
+                and any(process.poll() is None for process in spawned)
+                and depth - last_spawn_attempt[-1] < _SPAWNED_DAEMON_PATIENCE_ATTEMPTS
+            ):
                 should_spawn = False
             if should_spawn:
                 logger.info("Daemon not running, auto-starting...")
@@ -739,6 +752,7 @@ def run_client() -> int:
                     )
                 except OSError:
                     startup_log = None
+                last_spawn_attempt.append(depth)
                 try:
                     spawned.append(
                         subprocess.Popen(

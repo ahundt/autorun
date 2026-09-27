@@ -354,9 +354,18 @@ class TestNoRegressions:
         assert sleeps == [0.1]
         assert order == ["spawn"]
 
-    @pytest.mark.parametrize(("child_exit", "spawns"), [(None, 1), (1, 6)])
+    @pytest.mark.parametrize(
+        ("child_exit", "refusals", "spawns"),
+        [
+            (None, 6, 1),
+            (1, 6, 6),
+            # A child alive but hung before its flock (a stuck import, an
+            # antivirus scan) gets 2 s, then one more daemon is started.
+            (None, 25, 2),
+        ],
+    )
     def test_a_booting_daemon_is_waited_for_not_duplicated(
-        self, tmp_path, monkeypatch, child_exit, spawns
+        self, tmp_path, monkeypatch, child_exit, refusals, spawns
     ):
         """One cold start, one daemon, unless the one it started has died.
 
@@ -399,7 +408,7 @@ class TestNoRegressions:
         async def connect(**_kwargs):
             nonlocal attempts
             attempts += 1
-            if attempts <= 6:
+            if attempts <= refusals:
                 raise ConnectionRefusedError
             return Reader(), Writer()
 
