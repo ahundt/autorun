@@ -198,6 +198,44 @@ def test_a_hooks_merge_keeps_the_users_own_entries(tmp_path):
     assert json.loads(hooks.read_text())["hooks"]["Stop"] == [theirs]
 
 
+def test_a_hooks_preview_says_current_only_when_an_install_would_write_nothing(tmp_path):
+    """`autorun --status` right after an install must not list a pending merge.
+
+    PREVIEW used to report "would merge" for every hooks file without reading
+    it, so a status run straight after a successful install printed
+    `would merge ~/.codex/hooks.json (...)`, which reads as a step still to do.
+    """
+    import json
+
+    hooks = tmp_path / "hooks.json"
+    command = "uv run hook_entry.py --cli codex"
+    entry = steps.Hooks(hooks, {"Stop": (command,), "PreToolUse": (command,)})
+    note = entry.describe()
+
+    assert steps.apply_hooks([entry], Mode.PREVIEW) == [f"would merge {note}"], "no file yet"
+    assert not hooks.exists(), "preview created the file"
+
+    steps.apply_hooks([entry], Mode.INSTALL)
+    written = hooks.read_bytes()
+    assert steps.apply_hooks([entry], Mode.PREVIEW) == [f"current {note}"]
+    assert hooks.read_bytes() == written, "preview rewrote a current file"
+
+    # A changed command is a real pending merge again.
+    moved = steps.Hooks(hooks, {"Stop": ("uv run moved.py --cli codex",), "PreToolUse": (command,)})
+    assert steps.apply_hooks([moved], Mode.PREVIEW) == [f"would merge {moved.describe()}"]
+
+    # So is an event autorun still registers somewhere it no longer ships.
+    fewer = steps.Hooks(hooks, {"Stop": (command,)})
+    assert steps.apply_hooks([fewer], Mode.PREVIEW) == [f"would merge {fewer.describe()}"]
+
+    # A file the merge refuses is the preflight's to report; preview neither
+    # raises nor calls it current.
+    document = json.loads(written)
+    document["unexpected"] = True
+    hooks.write_text(json.dumps(document), encoding="utf-8")
+    assert steps.apply_hooks([entry], Mode.PREVIEW) == [f"would merge {note}"]
+
+
 def test_an_eighth_harness_needs_no_module_edited(sandbox):
     """The claim the whole design rests on, tested rather than asserted.
 

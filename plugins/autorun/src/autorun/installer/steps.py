@@ -483,14 +483,22 @@ def apply_hooks(entries: Iterable[Hooks], mode: Mode) -> list[str]:
     """
     notes: list[str] = []
     for entry in entries:
-        if mode is Mode.PREVIEW:
-            notes.append(f"would merge {entry.describe()}")
-            continue
         if mode is Mode.UNINSTALL and not entry.path.is_file():
             continue
         events = {} if mode is Mode.UNINSTALL else entry.events
         # Every event is swept either way, including ones no longer shipped.
         wanted = {name: events.get(name, ()) for name in entry.events}
+        if mode is Mode.PREVIEW:
+            # Compare, the way the tree walk reports "already current": a note
+            # that always read "would merge" looked like a pending step on a
+            # file the last install had just written. A file the merge cannot
+            # read is reported by the preflight (validate_hooks), not here.
+            try:
+                current = codex.hooks_current(entry.path, wanted)
+            except (OSError, ValueError):
+                current = False
+            notes.append(f"{'current' if current else 'would merge'} {entry.describe()}")
+            continue
         codex.merge_hooks(entry.path, wanted)
         notes.append(f"{'withdrew' if mode is Mode.UNINSTALL else 'merged'} {entry.describe()}")
     return notes
@@ -933,6 +941,8 @@ def demo() -> None:
         apply_hooks([entry], Mode.INSTALL)
         after = json.loads(hooks.read_text())["hooks"]["Stop"]
         assert theirs in after and len(after) == 2
+        # Right after an install, the preview has nothing left to merge.
+        assert apply_hooks([entry], Mode.PREVIEW) == [f"current {entry.describe()}"]
 
         apply_hooks([entry], Mode.UNINSTALL)
         assert json.loads(hooks.read_text())["hooks"]["Stop"] == [theirs], "ours gone, theirs kept"

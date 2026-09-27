@@ -44,6 +44,7 @@ __all__ = [
     "validate_marketplace",
     "wrap",
     "merge_hooks",
+    "hooks_current",
     "shadowing_override",
     "marketplace_entry",
     "publish_marketplace",
@@ -202,17 +203,53 @@ def merge_hooks(
     """
     with json_document(path, lambda: {"hooks": {}}) as document:
         _validate_hooks_document(path, document)
-        if description and "description" not in document:
-            document["description"] = description
-        events = document.setdefault("hooks", {})
-        for event in [*events, *(e for e in ours if e not in events)]:
-            entries = events.get(event, [])
-            kept = [e for e in (without_ours(e, mark) for e in entries) if e is not WHOLLY_OURS]
-            commands = ours.get(event, ())
-            events[event] = [*kept, wrap(commands)] if commands else kept
-            if not events[event]:
-                del events[event]
+        _merge_into(document, ours, description=description, mark=mark)
     return tuple(ours)
+
+
+def hooks_current(
+    path: Path,
+    ours: Mapping[str, Sequence[str]],
+    *,
+    description: str = "",
+    mark: str = COMMAND_MARK,
+) -> bool:
+    """Whether :func:`merge_hooks` would leave ``path`` exactly as it is.
+
+    Reads only. The merge runs on a parsed copy and is compared the way
+    ``json_document`` decides whether to write, so "current" here means an
+    install would write nothing. A missing file is not current: the install
+    creates it. Raises what reading or validating the file raises.
+    """
+    if not path.is_file():
+        return False
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    _validate_hooks_document(path, document)
+    before = json.dumps(document, sort_keys=True)
+    _merge_into(document, ours, description=description, mark=mark)
+    return json.dumps(document, sort_keys=True) == before
+
+
+def _merge_into(
+    document: dict,
+    ours: Mapping[str, Sequence[str]],
+    *,
+    description: str,
+    mark: str,
+) -> None:
+    """Apply the merge to a parsed hooks document in place; the one copy of it."""
+    if description and "description" not in document:
+        document["description"] = description
+    events = document.setdefault("hooks", {})
+    for event in [*events, *(e for e in ours if e not in events)]:
+        entries = events.get(event, [])
+        kept = [e for e in (without_ours(e, mark) for e in entries) if e is not WHOLLY_OURS]
+        commands = ours.get(event, ())
+        events[event] = [*kept, wrap(commands)] if commands else kept
+        if not events[event]:
+            del events[event]
 
 
 def shadowing_override(codex_dir: Path) -> Path | None:

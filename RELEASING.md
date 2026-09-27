@@ -178,8 +178,7 @@ command that must run outside the lock has to say why, on the line.
    sbx uv tool install --force "$sb"/dist/autorun_ai-*.whl
    sbx autorun --install
    sbx autorun --version     # expect the candidate version
-   # Every tree should read "already current". Hook files always read
-   # "would merge" here, even when nothing would change.
+   # Every tree should read "already current" and each hooks file "current".
    sbx autorun --status
    pkill -f "$sb/tools/autorun-ai" || true   # the sandbox daemon, and only it
    echo "inspect, then remove: $sb"
