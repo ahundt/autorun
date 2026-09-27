@@ -161,7 +161,9 @@ def upgrade_commands(version: str) -> str:
         f"Check that `autorun --version` prints `autorun {version}`.{pin}",
         "Restart open agent sessions. Each one reads its hooks only when it starts.",
         "If you installed only through the Claude Code marketplace, run "
-        "`claude plugin update ar@autorun` and restart Claude Code instead.",
+        "`claude plugin update ar@autorun` and restart Claude Code instead of "
+        "the commands above. That route does not run `autorun --install`, so any "
+        "setting this section says the install changes is yours to add.",
         "New installs use the same commands. The README covers other harnesses and "
         f"options: <{REPOSITORY}#readme>.",
     )

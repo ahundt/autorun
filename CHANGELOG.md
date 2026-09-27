@@ -20,12 +20,15 @@ it. 1.0.0rc2 reached TestPyPI but was never released, so its changes ship here.
 
 `autorun --install` republishes the hooks and extensions each harness loads,
 restarts the autorun daemon, and turns on Claude Code's and Qwen Code's task
-tools unless you set those switches yourself (see Changed); `autorun --status`
-then lists each setting as `current`. Upgrading the package without it leaves
-every harness on 1.0.0rc1. A Claude Code marketplace-only install never runs
-`autorun --install`, so add `"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"` to the
-`env` object of `~/.claude/settings.json` yourself. Task state,
-configuration, and `/ar` commands carry over unchanged.
+tools through two settings, unless you set them yourself (see Changed).
+`autorun --status` then lists each setting as `current`, or as kept when the
+value is yours. Upgrading the package without it leaves every harness on
+1.0.0rc1. A Claude Code marketplace-only install never runs
+`autorun --install`: add `"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"` to the `env`
+object of `~/.claude/settings.json` yourself, creating `env` if it is missing.
+If your Qwen settings file has comments, the install leaves it alone and its
+output names the setting to add. Task state, configuration, and `/ar` commands
+carry over unchanged.
 
 ### Changed
 
@@ -36,11 +39,11 @@ configuration, and `/ar` commands carry over unchanged.
    autorun added. To keep the tools off, set it to `"0"`; deleting the line does
    not opt out, because the next install adds it back. In a session without it,
    autorun does not enforce task tracking and says so when the session starts.
-2. Qwen Code: `autorun --install` sets `tools.todoWrite.enabled` in
+2. Qwen Code: `autorun --install` sets `tools.todoWrite.enabled` to `true` in
    `~/.qwen/settings.json` the same way, because Qwen Code 0.24.0 and later
    register `todo_write` only with it, and autorun now counts `todo_write` as
    task progress. autorun enforces Qwen task tracking only while that setting
-   is `true`. A settings file with comments is left untouched, and the install
+   is `true`; set it to `false` to keep the tool off. A settings file with comments is left untouched, and the install
    output names the setting to add.
 3. Gemini CLI 0.36.0 and later give the default model no `write_todos`, so
    autorun no longer requires it there.
