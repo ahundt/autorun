@@ -102,7 +102,9 @@ def test_the_upgrade_commands_lead_the_upgrade_section():
     first_step = rendered.index("1. Restart running sessions.")
     assert upgrading < command < first_step
     assert rendered.index("## Fixed") > first_step
-    assert "autorun --version    # expect: autorun 0.0.1rc2" in rendered
+    assert "`autorun --version` prints `autorun 0.0.1rc2`" in _prose(rendered)
+    pdf = rendered.index("'autorun-ai[pdf]==0.0.1rc2'")
+    assert command < pdf < first_step, "the PDF variant must show before the steps"
     assert "compare/v0.0.1rc1...v0.0.1rc2" in rendered
 
 
@@ -111,17 +113,78 @@ def _prose(text: str) -> str:
 
 
 def test_only_a_prerelease_explains_its_version_pin():
-    assert "skips release candidates" in _prose(release_notes.upgrade_commands("0.0.1rc2"))
-    assert "skips release candidates" not in _prose(release_notes.upgrade_commands("0.0.1"))
+    assert "Keep the version pin" in _prose(release_notes.upgrade_commands("0.0.1rc2"))
+    assert "Keep the version pin" not in _prose(release_notes.upgrade_commands("0.0.1"))
     for version in ("0.0.1rc2", "0.0.1"):
         text = release_notes.upgrade_commands(version)
         assert f"'autorun-ai[pdf]=={version}'" in text, "the PDF extra must be named again"
 
 
 def test_wrapping_never_splits_a_code_span():
-    for line in release_notes.upgrade_commands("0.0.1rc2").splitlines():
-        if not line.startswith("```"):
-            assert line.count("`") % 2 == 0, f"a code span is split across lines: {line!r}"
+    text = release_notes.upgrade_commands("0.0.1rc2")
+    for span in ("`claude plugin update ar@autorun`", "`uv tool list --show-extras`"):
+        assert span in text, f"{span} was split across lines"
+
+
+def test_a_mistyped_level_two_heading_is_reported_not_dropped():
+    changelog = (
+        "## [0.0.2] - 2026-01-02\n\nSummary.\n\n### Upgrading from 0.0.1\n\n"
+        "Nothing.\n\n## Fixed\n\n1. Kept.\n\n## [0.0.1] - 2026-01-01\n\nOld.\n"
+    )
+    newest, previous = release_notes.sections(changelog)
+    assert "1. Kept." in newest.body
+    problems = release_notes.structure_problems(newest, previous.version)
+    assert any("heading level" in problem for problem in problems), problems
+
+
+def test_headings_inside_fences_are_neither_checked_nor_promoted():
+    body = GOOD.replace(
+        "1. A symptom, then what happens now.\n",
+        "1. A symptom, then what happens now.\n\n   ~~~text\n   ### not a heading\n   - x\n   ~~~\n",
+    )
+    assert _problems(body) == []
+    section = release_notes.Section("0.0.1rc2", "2026-09-27", body)
+    assert "   ### not a heading" in release_notes.render(section, "0.0.1rc1")
+
+
+def test_dev_releases_count_as_prereleases():
+    assert release_notes.is_prerelease("0.0.1.dev3")
+    assert not release_notes.is_prerelease("0.0.1")
+
+
+def _write_repo(root: Path, changelog: str) -> None:
+    (root / "plugins" / "autorun").mkdir(parents=True)
+    (root / "plugins" / "autorun" / "pyproject.toml").write_text('version = "0.0.2"\n')
+    (root / "docs" / "releases").mkdir(parents=True)
+    (root / "CHANGELOG.md").write_text(changelog)
+
+
+def test_build_refuses_a_missing_or_duplicate_section_or_no_previous(tmp_path):
+    for name, changelog in {
+        "missing": "## [0.0.1] - 2026-01-01\n\nOld.\n",
+        "duplicate": "## [0.0.2] - 2026-01-02\n\nA.\n\n## [0.0.2] - 2026-01-02\n\nB.\n",
+        "no-previous": "## [0.0.2] - 2026-01-02\n\nOnly.\n",
+    }.items():
+        _write_repo(tmp_path / name, changelog)
+        with pytest.raises(SystemExit):
+            release_notes.build(tmp_path / name)
+
+
+def test_check_fails_on_a_stale_file_and_passes_once_regenerated(tmp_path, monkeypatch):
+    changelog = "## [0.0.2] - 2026-01-02\n\n" + GOOD.replace("0.0.1rc1", "0.0.1") + "\n## [0.0.1] - 2026-01-01\n\nOld.\n"
+    _write_repo(tmp_path, changelog)
+    monkeypatch.setattr(release_notes, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(release_notes, "build", lambda: _real_build(tmp_path))
+    assert release_notes.main(["--check"]) == 1, "a missing notes file must fail"
+    assert release_notes.main([]) == 0
+    notes = tmp_path / "docs" / "releases" / "0.0.2.md"
+    assert b"\r\n" not in notes.read_bytes()
+    assert release_notes.main(["--check"]) == 0
+    notes.write_text(notes.read_text() + "edited by hand\n")
+    assert release_notes.main(["--check"]) == 1
+
+
+_real_build = release_notes.build
 
 
 def test_sections_stop_at_an_undated_heading():

@@ -965,12 +965,14 @@ def test_pdf_extraction_backends_are_all_optional():
 
 
 def test_a_prerelease_note_pins_the_version_it_tells_readers_to_install():
-    """`uv tool install autorun` cannot install a prerelease.
+    """An unpinned install stops meaning "this candidate" once a stable exists.
 
-    pip and uv both exclude prereleases from an unqualified requirement, so the
-    RC note's own command installs nothing while the project is RC-only, and
-    installs the *stable* release the moment one exists — in both cases leaving
-    the reader believing they are running the candidate the note describes. A
+    While every published version is a prerelease, uv and pip fall back to the
+    newest one, so an unqualified requirement installs the latest candidate
+    (measured with uv 0.12.19 on 2026-09-27: `uv tool install autorun-ai`
+    installed 1.0.0rc1). The moment a stable release exists, the same command
+    installs that instead, leaving the reader believing they are running the
+    candidate the note describes. A
     version that says `rc`, `a` or `b` has to carry the pin into every install
     line the note prints.
     """

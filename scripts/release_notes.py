@@ -65,27 +65,38 @@ def sections(changelog: str) -> list[Section]:
     result = []
     for index, match in enumerate(found):
         end = found[index + 1].start() if index + 1 < len(found) else len(changelog)
-        # An undated heading such as `## [0.12.0]` also ends the section above it.
-        undated = re.search(r"^## ", changelog[match.end():end], re.MULTILINE)
-        if undated:
-            end = match.end() + undated.start()
+        # Any version heading ends the section, dated or not (`## [0.12.0]`,
+        # `## [Unreleased]`). A mistyped `## Fixed` does not: it stays inside,
+        # where structure_problems reports it, instead of silently dropping
+        # everything below it from the notes.
+        later = re.search(r"^## \[", changelog[match.end():end], re.MULTILINE)
+        if later:
+            end = match.end() + later.start()
         result.append(Section(match.group(1), match.group(2), changelog[match.end():end].strip("\n")))
     return result
 
 
 def is_prerelease(version: str) -> bool:
-    return re.search(r"(a|b|rc)\d+$", version) is not None
+    return re.search(r"(a|b|rc|\.dev)\d+$", version) is not None
+
+
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def _fenced_flags(body: str) -> list[tuple[str, bool]]:
+    """Each line with whether it is code: a fence line or inside a fence."""
+    flagged, fenced = [], False
+    for line in body.splitlines():
+        if _FENCE_RE.match(line):
+            fenced = not fenced
+            flagged.append((line, True))
+        else:
+            flagged.append((line, fenced))
+    return flagged
 
 
 def _outside_fences(body: str) -> list[str]:
-    lines, fenced = [], False
-    for line in body.splitlines():
-        if line.startswith("```"):
-            fenced = not fenced
-            continue
-        if not fenced:
-            lines.append(line)
-    return lines
+    return [line for line, code in _fenced_flags(body) if not code]
 
 
 def structure_problems(section: Section, previous: str) -> list[str]:
@@ -129,17 +140,17 @@ def upgrade_commands(version: str) -> str:
     loads, which the package upgrade alone leaves at the old version.
     """
     pin = (
-        " The version pin is required: without it, `uv` skips release candidates."
+        " Keep the version pin: once a stable release exists, `uv` installs that"
+        " instead of this candidate."
         if is_prerelease(version)
         else ""
     )
     steps = (
-        "If you installed the PDF backends (`uv tool list --show-extras` lists "
-        f"`pdf`), use `'autorun-ai[pdf]=={version}'`, or the upgrade removes them.{pin}",
+        f"Check that `autorun --version` prints `autorun {version}`.{pin}",
         "Restart open agent sessions. Each one reads its hooks only when it starts.",
         "If you installed only through the Claude Code marketplace, run "
         "`claude plugin update ar@autorun` and restart Claude Code instead.",
-        "New installs use the same command. The README covers other harnesses and "
+        "New installs use the same commands. The README covers other harnesses and "
         f"options: <{REPOSITORY}#readme>.",
     )
     # Wrap like the hand-written text, but never inside a `code span`: a command
@@ -159,9 +170,15 @@ def upgrade_commands(version: str) -> str:
         for number, step in enumerate(steps, 1)
     )
     return (
+        "Run one of these. Use the second if you installed the PDF backends\n"
+        "(`uv tool list --show-extras` lists `pdf`); the first removes them.\n"
+        "\n"
         "```bash\n"
         f"uv tool install --force 'autorun-ai=={version}' && autorun --install\n"
-        f"autorun --version    # expect: autorun {version}\n"
+        "```\n"
+        "\n"
+        "```bash\n"
+        f"uv tool install --force 'autorun-ai[pdf]=={version}' && autorun --install\n"
         "```\n"
         "\n"
         f"{numbered}"
@@ -170,7 +187,10 @@ def upgrade_commands(version: str) -> str:
 
 def render(section: Section, previous: str) -> str:
     """The release body: the section with its headings promoted, plus derived parts."""
-    body = re.sub(r"^### ", "## ", section.body, flags=re.MULTILINE)
+    body = "\n".join(
+        line if code or not line.startswith("### ") else line[1:]
+        for line, code in _fenced_flags(section.body)
+    )
     heading = f"## Upgrading from {previous}\n"
     body = body.replace(heading, heading + "\n" + upgrade_commands(section.version) + "\n", 1)
     return (
@@ -220,7 +240,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{relative} is stale; run scripts/release_notes.py", file=sys.stderr)
             return 1
         return 0
-    path.write_text(expected, encoding="utf-8")
+    # LF on every platform: the file is the tag annotation, byte for byte.
+    path.write_text(expected, encoding="utf-8", newline="\n")
     print(f"wrote {relative}")
     return 0
 

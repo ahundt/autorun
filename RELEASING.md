@@ -107,13 +107,14 @@ command that must run outside the lock has to say why, on the line.
 
 ### Stage 1: Version bump and release notes
 
-1. Bump the version at every [version site](#current-inventory) and commit
-   locally. Do not push yet.
-2. Write the release's section in `CHANGELOG.md`. It is the only hand-written
-   copy of the notes: `scripts/release_notes.py` renders it into
+1. Bump the version at every [version site](#current-inventory).
+2. Write the release's section in `CHANGELOG.md`, headed
+   `## [<version>] - YYYY-MM-DD` with today's date; Stage 4 requires the date
+   to be the tag day, so move it then if the tag slips. The section is the only
+   hand-written copy of the notes: `scripts/release_notes.py` renders it into
    `docs/releases/<version>.md`, which becomes the tag annotation and the
-   GitHub Release body, and neither can be corrected in the tag once pushed.
-   The script rejects a section that breaks these rules:
+   GitHub Release body, and the annotation cannot be corrected once pushed. The
+   script rejects a section that breaks these rules:
    1. A summary paragraph comes first: what users get, in two or three
       sentences.
    2. The first heading is `### Upgrading from <previous>`, where `<previous>`
@@ -122,8 +123,8 @@ command that must run outside the lock has to say why, on the line.
    3. The remaining headings, each optional, in this order: Highlights, Added,
       Changed, Deprecated, Removed, Fixed, Security, For contributors.
    4. Items are numbered, not bulleted, and do not open with a bold heading.
-3. Generate the notes; the script inserts the version-pinned upgrade commands
-   at the top of the Upgrading section and the comparison link at the end:
+3. Generate the notes. The script puts the version-pinned upgrade commands at
+   the top of the Upgrading section and the comparison link at the end:
 
    ```bash
    uv run --project plugins/autorun --locked python scripts/release_notes.py
@@ -146,27 +147,49 @@ command that must run outside the lock has to say why, on the line.
    more from users (a config edit, a rename, a migration) blocks the release
    until it ships an automatic migration or a compatibility alias. Only when
    neither is possible does the step go under Upgrading, with the reason.
-6. Rehearse that upgrade from the previous release in a scratch home. Keep
-   the path short: the sandbox daemon's socket lives under it.
+6. Rehearse that upgrade from the previous release in a scratch home. The block
+   runs under `bash` so it pastes the same way into zsh, whose interactive
+   shell treats `#` as a command; `sbx` reads `/dev/null` so no command can
+   swallow the rest of the script from stdin. `env -u` clears every variable that points a
+   harness at a live config directory, and the path stays short because the
+   sandbox daemon's socket lives under it:
 
    ```bash
+   bash <<'EOF'
+   set -eu
    previous=1.0.0rc1   # the <previous> of step 2
+   cache=$(uv cache dir)
    sb=$(mktemp -d /tmp/arup.XXXX)
    mkdir -p "$sb/home/.claude" "$sb/home/.codex" "$sb/home/.pi/agent"
-   sbx() { env HOME="$sb/home" USERPROFILE="$sb/home" CLAUDE_CONFIG_DIR="$sb/home/.claude" \
-     PI_CODING_AGENT_DIR="$sb/home/.pi/agent" AUTORUN_HOME="$sb/ar" AUTORUN_TEST_STATE_DIR="$sb/st" \
-     UV_TOOL_DIR="$sb/tools" UV_TOOL_BIN_DIR="$sb/bin" PATH="$sb/bin:$PATH" "$@"; }
-   uv build --package autorun-ai --wheel -o "$sb/dist"
-   sbx uv tool install "autorun-ai==$previous" && sbx autorun --install
-   sbx uv tool install --force "$sb"/dist/autorun_ai-*.whl && sbx autorun --install
+   sbx() {
+     env -u CODEX_HOME -u QWEN_HOME -u XDG_CONFIG_HOME -u OPENCODE_CONFIG \
+       -u OPENCODE_CONFIG_DIR -u PRIME_AGENT_CODING_AGENT_DIR \
+       HOME="$sb/home" USERPROFILE="$sb/home" CLAUDE_CONFIG_DIR="$sb/home/.claude" \
+       PI_CODING_AGENT_DIR="$sb/home/.pi/agent" AUTORUN_HOME="$sb/ar" \
+       AUTORUN_TEST_STATE_DIR="$sb/st" UV_CACHE_DIR="$cache" \
+       UV_TOOL_DIR="$sb/tools" UV_TOOL_BIN_DIR="$sb/bin" PATH="$sb/bin:$PATH" "$@" </dev/null
+   }
+   # Build the committed tree, not the checkout: a build in place leaves
+   # plugins/autorun/build/, which test_build_artifacts_do_not_exist rejects.
+   mkdir "$sb/src" && git archive HEAD | tar -x -C "$sb/src"
+   (cd "$sb/src" && uv build --package autorun-ai --wheel -o "$sb/dist")
+   sbx uv tool install "autorun-ai==$previous"
+   sbx autorun --install
+   sbx uv tool install --force "$sb"/dist/autorun_ai-*.whl
+   sbx autorun --install
    sbx autorun --version     # expect the candidate version
-   sbx autorun --status      # every tree "already current"; hook files always
-                             # read "would merge" here, even when unchanged
-   pkill -f "$sb/tools/autorun-ai"   # the sandbox daemon, and only it
+   # Every tree should read "already current". Hook files always read
+   # "would merge" here, even when nothing would change.
+   sbx autorun --status
+   pkill -f "$sb/tools/autorun-ai" || true   # the sandbox daemon, and only it
+   echo "inspect, then remove: $sb"
+   EOF
    ```
 
-   A harness whose CLI is not on `PATH` is skipped; put a stub on
-   `$sb/bin` to exercise its publish step.
+   A harness whose CLI is not on `PATH` is skipped; put a stub on the
+   sandbox's `bin` to exercise its publish step.
+7. Commit the bump, the section, and the generated notes together, so every
+   commit passes `test_release_notes.py`. Do not push yet.
 
 ### Stage 2: Pre-flight checks
 
