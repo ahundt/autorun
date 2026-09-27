@@ -379,11 +379,10 @@ class DaemonManager:
         """Get all autorun daemon PIDs currently running.
 
         Uses psutil.process_iter() for cross-platform process discovery
-        (replaces Unix-only pgrep -f autorun.daemon).
-        Skipped on Windows: daemon uses Unix sockets (AF_UNIX), unavailable on Windows.
+        (replaces Unix-only pgrep -f autorun.daemon). Windows is included: its
+        daemon listens on loopback TCP, and skipping discovery there left every
+        daemon a Windows test started running past the suite.
         """
-        if sys.platform == "win32":
-            return []
         pids = []
         try:
             # Do not request attrs here.  psutil materializes ``proc.info``

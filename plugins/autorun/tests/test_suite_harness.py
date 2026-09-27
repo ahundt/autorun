@@ -489,3 +489,30 @@ def test_the_daemon_sweep_still_kills_one_it_spawned_with_no_readable_home(
         "a daemon recorded in _test_spawned_pids must be killed even when its "
         f"environment cannot be read. Killed: {daemon_sweep.killed}"
     )
+
+
+def test_daemon_discovery_runs_on_windows(monkeypatch):
+    """Windows daemons are found, so the session-end sweep can stop them.
+
+    Discovery used to return nothing on Windows, on the belief that the daemon
+    could not run there without AF_UNIX. It runs over loopback TCP, so every
+    daemon a Windows test started outlived the suite, and deleting the runtime
+    root failed quietly on the files those daemons held open.
+    """
+    import conftest
+
+    class Process:
+        def __init__(self, pid, cmdline):
+            self.pid, self._cmdline = pid, cmdline
+
+        def cmdline(self):
+            return self._cmdline
+
+    processes = [
+        Process(7, ["python.exe", "-c", "from autorun.daemon import main; main()"]),
+        Process(8, ["python.exe", "-m", "pytest"]),
+    ]
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(conftest.psutil, "process_iter", lambda *a, **k: iter(processes))
+
+    assert conftest.DaemonManager._get_all_daemon_pids() == ["7"]
