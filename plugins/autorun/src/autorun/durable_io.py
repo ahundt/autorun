@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import sys
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any, Iterable
@@ -104,6 +105,11 @@ def _atomic_publish(path: Path, emit) -> None:
     is only guaranteed within a filesystem. The staged file is removed on any
     failure so a crashed publication never leaves a partial artifact visible.
     """
+    # A symlinked target (a dotfiles repository's settings.json) is written
+    # through: renaming over the link itself would replace it with a plain
+    # file, and the user's managed copy would silently stop receiving changes.
+    if path.is_symlink():
+        path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, staged_name = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.tmp-"
@@ -114,6 +120,11 @@ def _atomic_publish(path: Path, emit) -> None:
             emit(handle)
             handle.flush()
             os.fsync(handle.fileno())
+        # mkstemp creates 0600; keep the permissions the user's file had.
+        try:
+            os.chmod(staged, stat.S_IMODE(path.stat().st_mode))
+        except FileNotFoundError:
+            pass
         os.replace(staged, path)
         sync_directory(path.parent)
     except BaseException:

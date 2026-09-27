@@ -266,14 +266,29 @@ def task_tool_recovery_sentence(cli_type: str | None) -> str:
 # --- BUG #80305/#80401 WORKAROUND END --- DELETE WHEN FIXED ---
 
 
+def _deferred_task_tool_instruction(ctx: EventContext) -> str:
+    """The SessionStart load instruction, with one recovery path, not two."""
+    load = (
+        "Before tracked work, use ToolSearch once with "
+        "`select:TaskCreate,TaskUpdate,TaskList,TaskGet` to load Claude Code's "
+        "deferred task tools. If it returns no match, do not loop"
+    )
+    unconfirmed = _unconfirmed_task_tools_notice(ctx)
+    if unconfirmed:
+        return load + "." + unconfirmed
+    return load + "; follow the unavailable-tool recovery in autorun's task guidance."
+
+
 def _unconfirmed_task_tools_notice(ctx: EventContext) -> str:
     """What a session whose task tools autorun cannot confirm needs to know.
 
     Task gates stand down without evidence, so the recovery text they carry
     never reaches this session. Say it here instead, once per fresh context:
-    that autorun is not enforcing task tracking, and the one setting that makes
-    the tools present. The setting comes from the registry's switch, the one
-    ``autorun --install`` writes.
+    that autorun is not enforcing task tracking, and the one change that makes
+    the tools present. It names the setting rather than a command: a
+    marketplace-only install may have no ``autorun`` command at all. The
+    setting comes from the registry's switch, the one ``autorun --install``
+    writes.
     """
     from .platforms import platform_for, task_capability_is_known
 
@@ -281,13 +296,13 @@ def _unconfirmed_task_tools_notice(ctx: EventContext) -> str:
     if switch is None or not switch.env or task_capability_is_known(ctx.active_tools):
         return ""
     return (
-        " autorun is not enforcing task tracking in this session: it cannot "
-        f"confirm the task tools exist, because `{switch.env}` is not "
-        f"`{switch.value}`, and Claude Code 2.1.268 and later offer them only "
-        "to older models without it. If the search finds no match, tell the user "
-        "once, then continue: running `autorun --install` sets "
-        f"`{switch.env}={switch.value}` in ~/.claude/settings.json, and the "
-        "tools appear after Claude Code restarts."
+        " autorun is not enforcing task tracking in this session because it "
+        "cannot confirm the task tools exist: Claude Code 2.1.268 and later "
+        f"offer them to newer models only with `{switch.env}={switch.value}`. If "
+        "the search finds no match, tell the user once, then continue: add "
+        f'`"{switch.env}": {json.dumps(switch.value)}` to the `env` object of '
+        "Claude Code's settings.json (`autorun --install` does this), then "
+        "restart Claude Code."
     )
 
 
@@ -4129,11 +4144,7 @@ def register_hooks(app_instance) -> None:
             return None
         if claimed:
             ctx.add_chain_notification(
-                "Before tracked work, use ToolSearch once with "
-                "`select:TaskCreate,TaskUpdate,TaskList,TaskGet` to load Claude "
-                "Code's deferred task tools. If it returns no match, do not "
-                "loop; follow the unavailable-tool recovery in autorun's task "
-                "guidance." + _unconfirmed_task_tools_notice(ctx),
+                _deferred_task_tool_instruction(ctx),
                 channel="ai",
             )
         return None

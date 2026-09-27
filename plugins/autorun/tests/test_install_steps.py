@@ -1538,7 +1538,7 @@ def test_a_value_the_user_set_is_theirs_on_install_and_uninstall(tmp_path):
 
     kept = (
         f"kept your setting {entry.describe()}; autorun enforces task "
-        "tracking there only while it is '1'"
+        "tracking there only while it is \"1\""
     )
     assert steps.apply_switches([entry], Mode.PREVIEW) == [kept]
     assert steps.apply_switches([entry], Mode.INSTALL) == [kept]
@@ -1573,7 +1573,7 @@ def test_an_unreadable_settings_file_is_left_alone_and_the_note_says_what_to_set
     for mode in (Mode.PREVIEW, Mode.INSTALL):
         [note] = steps.apply_switches([entry], mode)
         assert note.startswith(f"skipped {entry.describe()}"), note
-        assert "set it to True yourself" in note, note
+        assert "set it to true yourself" in note, note
     assert entry.path.read_text(encoding="utf-8") == commented
 
 
@@ -1593,3 +1593,34 @@ def test_switches_follow_the_registry_and_need_the_harness_home(sandbox, walk):
     assert entry.key == ("env", "CLAUDE_CODE_ENABLE_TODO_TOOLS") and entry.value == "1"
     assert entry.record.parent == autorun_state_dir(sandbox) / "installer"
     assert steps.switches_for(PLATFORMS["codex"], ctx) == (), "Codex declares no JSON switch"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_a_symlinked_settings_file_is_written_through_and_keeps_its_mode(tmp_path):
+    """Dotfile managers link settings.json into a repository.
+
+    Renaming over the link replaced it with a plain file, so the user's managed
+    copy stopped receiving changes, and the rewrite came out as 0600.
+    """
+    import json
+    import stat as stat_module
+
+    entry = _switch(tmp_path)
+    entry.path.parent.mkdir()
+    managed = tmp_path / "dotfiles" / "claude-settings.json"
+    managed.parent.mkdir()
+    managed.write_text(json.dumps({"theme": "dark", "note": "café"}), encoding="utf-8")
+    managed.chmod(0o644)
+    entry.path.symlink_to(managed)
+
+    steps.apply_switches([entry], Mode.INSTALL)
+
+    assert entry.path.is_symlink(), "the link itself must survive"
+    written = json.loads(managed.read_text(encoding="utf-8"))
+    assert written["env"] == {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+    assert "café" in managed.read_text(encoding="utf-8"), "non-ASCII stays as written"
+    assert stat_module.S_IMODE(managed.stat().st_mode) == 0o644
+
+    steps.apply_switches([entry], Mode.UNINSTALL)
+    assert entry.path.is_symlink()
+    assert json.loads(managed.read_text(encoding="utf-8")) == {"theme": "dark", "note": "café"}

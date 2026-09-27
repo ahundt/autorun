@@ -897,10 +897,18 @@ def _check_real_autorun_home_not_created(session) -> None:
     session.exitstatus = 1
 
 
+def _is_xdist_worker(session) -> bool:
+    """A worker's output and exit status never reach the user; its controller's do."""
+    return hasattr(session.config, "workerinput")
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Clean up test sessions and test-spawned daemons after pytest finishes."""
-    _check_live_install_unchanged(session)
-    _check_real_autorun_home_not_created(session)
+    if not _is_xdist_worker(session):
+        # The controller finishes after every worker, so it sees their writes,
+        # and only its report and exit status reach the terminal and CI.
+        _check_live_install_unchanged(session)
+        _check_real_autorun_home_not_created(session)
     cleanup_test_sessions()
     DaemonManager.cleanup()
 
@@ -942,9 +950,15 @@ def pytest_sessionfinish(session, exitstatus):
     os.environ.pop("AUTORUN_TEST_TMUX_SOCKET", None)
     os.environ.pop("AUTORUN_ORIGINAL_TMUX", None)
     os.environ.pop("AUTORUN_TMUX_BIN", None)
-    import autorun.session_manager as sm
-    sm._store = None
-    sm._manager = None
+    # Reset only a module this process already loaded. Importing it here, after
+    # AUTORUN_HOME was popped above, runs core.py's import-time
+    # ipc.ensure_config_dir() against the real home: the xdist controller never
+    # imports session_manager, so every parallel run created ~/.autorun as it
+    # finished.
+    sm = sys.modules.get("autorun.session_manager")
+    if sm is not None:
+        sm._store = None
+        sm._manager = None
 
 
 @pytest.fixture(scope="session")

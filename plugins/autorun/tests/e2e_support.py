@@ -162,13 +162,27 @@ def isolated_hook_env(
     gives task gates no evidence and they stand down.
     """
     env = os.environ.copy()
-    switch = PLATFORMS[cli].task_tool_switch if cli in PLATFORMS else None
+    platform = PLATFORMS.get(cli) if cli else None
+    switch = platform.task_tool_switch if platform is not None else None
     if switch is not None and switch.env:
         # Drop what the developer's own shell exported (a run from inside a
         # Claude Code session inherits its values) before stating the switch.
         for name in switch.forwarded_env():
             env.pop(name, None)
         env[switch.env] = str(switch.value)
+    elif switch is not None and platform.config_dir_env_vars:
+        # A switch read from the harness's settings file: give this session its
+        # own config directory holding the switch, so no test reads the
+        # developer's real settings.
+        config = Path(os.environ["AUTORUN_TEST_RUNTIME_DIR"]) / f"{cli}-config-{session_id}"
+        config.mkdir(parents=True, exist_ok=True)
+        settings: dict = {}
+        node = settings
+        for part in switch.settings_path[:-1]:
+            node = node.setdefault(part, {})
+        node[switch.settings_path[-1]] = switch.value
+        (config / switch.settings_file).write_text(json.dumps(settings), encoding="utf-8")
+        env[platform.config_dir_env_vars[0]] = str(config)
     env.update(
         {
             "AUTORUN_PLUGIN_ROOT": str(plugin_root),

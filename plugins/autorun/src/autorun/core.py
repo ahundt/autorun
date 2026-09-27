@@ -29,6 +29,7 @@ Reuses session_manager.py entirely (421 lines of battle-tested RAII code).
 
 import os
 import re
+import functools
 import json
 import asyncio
 import signal
@@ -418,6 +419,71 @@ def get_cli_event_name(autorun_event: str, cli_type: str) -> str:
     return to_harness_cli_event(autorun_event, cli_type)
 
 
+def task_tools_proven_by_settings(
+    cli_type: str | None, cwd: str | None
+) -> "frozenset[str] | None":
+    """What a harness's own settings file says about its task tools.
+
+    For a switch the hook process cannot see (no ``env``: Qwen Code's
+    ``tools.todoWrite.enabled``), read the settings the harness reads: the
+    workspace file, which overrides, then the user file under its config
+    directory. The switch at its value proves the registered task tools; any
+    other value proves them absent (an empty set, so task gates skip); a key
+    set nowhere, or a file that is not strict JSON (Gemini-family settings may
+    carry comments), leaves it unknown.
+    """
+    from .platforms import platform_for, registered_task_tools
+
+    platform = platform_for(cli_type)
+    switch = platform.task_tool_switch
+    if switch is None or switch.env:
+        return None
+    from .installer.discovery import config_dir
+
+    user_dir = config_dir(platform)
+    candidates = []
+    # The workspace directory is named like the default config directory
+    # (`.qwen`), whatever QWEN_HOME relocates the user one to.
+    workspace_name = Path(platform.config_dir).name if platform.config_dir else ""
+    if cwd and workspace_name:
+        candidates.append(Path(cwd) / workspace_name / switch.settings_file)
+    if user_dir is not None:
+        candidates.append(user_dir / switch.settings_file)
+    for path in candidates:
+        found = _settings_value(str(path), tuple(switch.settings_path))
+        if found is _SETTINGS_UNREADABLE:
+            return None
+        if found is not _SETTINGS_ABSENT:
+            return registered_task_tools(cli_type) if found == switch.value else frozenset()
+    return None
+
+
+_SETTINGS_ABSENT = object()
+_SETTINGS_UNREADABLE = object()
+
+
+def _settings_value(path: str, key: tuple) -> object:
+    """One key from a JSON settings file, cached until the file changes."""
+    try:
+        status = os.stat(path)
+    except OSError:
+        return _SETTINGS_ABSENT
+    return _settings_value_at(path, key, status.st_mtime_ns, status.st_size)
+
+
+@functools.lru_cache(maxsize=32)
+def _settings_value_at(path: str, key: tuple, _mtime_ns: int, _size: int) -> object:
+    try:
+        node = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _SETTINGS_UNREADABLE
+    for part in key:
+        if not isinstance(node, dict) or part not in node:
+            return _SETTINGS_ABSENT
+        node = node[part]
+    return node
+
+
 def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> dict:
     """Normalize hook payload from any CLI format and optionally truncate transcript.
 
@@ -557,6 +623,8 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         active_tools = task_tools_proven_by_switch(
             cli_type, payload.get("autorun_harness_env")
         )
+        if active_tools is None:
+            active_tools = task_tools_proven_by_settings(cli_type, payload.get("cwd"))
 
     return {
         "cli_type": cli_type,

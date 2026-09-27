@@ -1646,7 +1646,8 @@ def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[di
         before = _canonical(document)
         yield document
         if _canonical(document) != before:
-            atomic_write(path, json.dumps(document, indent=2) + "\n")
+            # ensure_ascii=False: a user's non-ASCII text stays as they wrote it.
+            atomic_write(path, json.dumps(document, indent=2, ensure_ascii=False) + "\n")
 
 
 def json_document_unchanged(

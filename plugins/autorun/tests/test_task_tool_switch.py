@@ -93,12 +93,12 @@ def test_harnesses_whose_tools_are_optional_need_evidence():
         name for name, platform in PLATFORMS.items()
         if platform.task_enforcement_requires_tool_evidence
     }
-    assert {"claude", "codex", "gemini"} <= requires
-    for name in ("claude", "codex", "gemini"):
+    assert {"claude", "codex", "gemini", "qwen"} <= requires
+    for name in ("claude", "codex", "gemini", "qwen"):
         assert task_enforcement_capability_available(name, None) is False, name
     # Pi and Prime report their tools; OpenCode's primary agent always has
-    # todowrite; Qwen's switch is set by the installer.
-    for name in ("pi", "prime", "opencode", "qwen"):
+    # todowrite.
+    for name in ("pi", "prime", "opencode"):
         assert task_enforcement_capability_available(name, None) is True, name
 
 
@@ -176,3 +176,72 @@ def test_a_claude_plan_command_arms_the_task_nag_only_with_evidence(known):
     )
     app.dispatch(ctx)
     assert ctx.plan_awaiting_planning_tasks is known
+
+
+# --- a switch read from the harness's settings file (Qwen Code) ------------
+
+
+def _qwen_settings(directory: Path, text: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "settings.json").write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("user_settings", "expected"),
+    [
+        (None, None),
+        ('{"tools": {"todoWrite": {"enabled": true}}}', "tools"),
+        ('{"tools": {"todoWrite": {"enabled": false}}}', frozenset()),
+        ('{"theme": "dark"}', None),
+        # Gemini-family settings may carry comments; strict JSON cannot say.
+        ('{\n  // mine\n  "tools": {"todoWrite": {"enabled": true}}\n}', None),
+    ],
+)
+def test_qwen_evidence_is_its_own_setting(tmp_path, monkeypatch, user_settings, expected):
+    from autorun.core import task_tools_proven_by_settings
+
+    home = tmp_path / "qwen-home"
+    monkeypatch.setenv("QWEN_HOME", str(home))
+    if user_settings is not None:
+        _qwen_settings(home, user_settings)
+    proven = task_tools_proven_by_settings("qwen", str(tmp_path / "project"))
+    if expected == "tools":
+        assert proven == registered_task_tools("qwen")
+    else:
+        assert proven == expected
+
+
+def test_qwen_workspace_settings_override_the_user_file(tmp_path, monkeypatch):
+    from autorun.core import task_tools_proven_by_settings
+
+    home = tmp_path / "qwen-home"
+    monkeypatch.setenv("QWEN_HOME", str(home))
+    _qwen_settings(home, '{"tools": {"todoWrite": {"enabled": true}}}')
+    project = tmp_path / "project"
+    _qwen_settings(project / ".qwen", '{"tools": {"todoWrite": {"enabled": false}}}')
+
+    assert task_tools_proven_by_settings("qwen", str(project)) == frozenset()
+
+
+def test_a_settings_change_is_seen_without_a_restart(tmp_path, monkeypatch):
+    """The read is cached by modification time and size, not forever."""
+    from autorun.core import task_tools_proven_by_settings
+
+    home = tmp_path / "qwen-home"
+    monkeypatch.setenv("QWEN_HOME", str(home))
+    _qwen_settings(home, '{"tools": {"todoWrite": {"enabled": false}}}')
+    assert task_tools_proven_by_settings("qwen", None) == frozenset()
+    _qwen_settings(home, '{"tools": {"todoWrite": {"enabled": true}}}  ')
+    assert task_tools_proven_by_settings("qwen", None) == registered_task_tools("qwen")
+
+
+def test_an_env_switch_harness_never_reads_settings_files(tmp_path, monkeypatch):
+    from autorun.core import task_tools_proven_by_settings
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        '{"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}', encoding="utf-8"
+    )
+    # Claude's evidence is the variable the session process has, which the
+    # hook forwards; the file may not be what that process loaded.
+    assert task_tools_proven_by_settings("claude", None) is None

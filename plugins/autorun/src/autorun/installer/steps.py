@@ -35,6 +35,8 @@ once per plugin, before the walk, so the walk itself stays pure.
 
 from __future__ import annotations
 
+import json
+import os
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -374,7 +376,14 @@ class Switch:
 
     @property
     def record_key(self) -> str:
-        return f"{self.path}::{'.'.join(self.key)}"
+        # Resolved and case-normalized, so a symlinked file or a Windows drive
+        # letter written differently at uninstall still finds its record.
+        return f"{os.path.normcase(str(self.path.resolve()))}::{'.'.join(self.key)}"
+
+    @property
+    def shown_value(self) -> str:
+        """The value as it appears in the settings file: JSON, not Python."""
+        return json.dumps(self.value)
 
 
 def switches_for(
@@ -457,7 +466,7 @@ def apply_switches(entries: Iterable[Switch], mode: Mode) -> list[str]:
         except (OSError, ValueError) as error:
             note = (
                 f"skipped {entry.describe()}: {error}; set it to "
-                f"{entry.value!r} yourself to give task gates their evidence"
+                f"{entry.shown_value} yourself to give task gates their evidence"
             )
         if note:
             notes.append(note)
@@ -485,7 +494,10 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
                 _remove(document, entry.key)
                 return f"removed {entry.describe()}"
     entry.record.parent.mkdir(parents=True, exist_ok=True)
-    with json_document(entry.record) as record, json_document(entry.path) as document:
+    # The settings file is the outer block, so the record, closed first, is
+    # written first: a failure between the two leaves a record whose value is
+    # absent (uninstall then reports it kept), never a setting nothing records.
+    with json_document(entry.path) as document, json_document(entry.record) as record:
         if _lookup(document, entry.key) is not _ABSENT:
             return "" if entry.record_key in record else _kept_note(entry)
         _assign(document, entry.key, entry.value)
@@ -499,7 +511,7 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
 def _kept_note(entry: Switch) -> str:
     return (
         f"kept your setting {entry.describe()}; autorun enforces task "
-        f"tracking there only while it is {entry.value!r}"
+        f"tracking there only while it is {entry.shown_value}"
     )
 
 

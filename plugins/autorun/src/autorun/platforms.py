@@ -62,7 +62,9 @@ class TaskToolSwitch:
     - when ``env`` names a variable the harness passes to hook processes,
       ``hooks/hook_entry.py`` forwards it, and a truthy value is evidence the
       task tools exist. Any ``env_off`` variable set false withdraws that
-      evidence: it swaps the tools for ones this registry does not list.
+      evidence: it swaps the tools for ones this registry does not list;
+    - otherwise ``core.task_tools_proven_by_settings`` reads the setting from
+      the harness's workspace and user settings files.
     """
 
     settings_file: str
@@ -1566,9 +1568,12 @@ QWEN = register(
         # Qwen's own checklist tool is todo_write (shown as TodoList); the
         # task_* tools need experimental.agentTeam. Since 0.24.0 todo_write is
         # registered only with tools.todoWrite.enabled, which the installer
-        # sets. Qwen's hooks cannot report it, so enforcement relies on that.
+        # sets unless the user did. Qwen's hooks cannot report tools.
         # https://github.com/QwenLM/qwen-code/pull/10645
         task_bulk_tools=GEMINI.task_bulk_tools | {"todo_write"},
+        # Evidence is the setting itself, read from Qwen's settings files
+        # (core.task_tools_proven_by_settings); without it, fail open.
+        task_enforcement_requires_tool_evidence=True,
         task_tool_switch=TaskToolSwitch(
             settings_file="settings.json",
             settings_path=("tools", "todoWrite", "enabled"),
