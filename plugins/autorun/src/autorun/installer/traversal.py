@@ -47,6 +47,7 @@ from typing import Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 from .discovery import process_home, redirected_home
 from .fs import (
     Decision,
+    autorun_state_dir,
     Verdict,
     decide,
     decide_files,
@@ -247,7 +248,7 @@ def backup_root(ctx: Context) -> Path:
     return (
         Path(str(configured))
         if configured
-        else ctx.home / ".autorun" / "installer" / "backups"
+        else autorun_state_dir(ctx.home) / "installer" / "backups"
     )
 
 

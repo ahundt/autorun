@@ -25,6 +25,7 @@ os.environ.setdefault("AUTORUN_HOME", "/tmp/autorun-test-home")
 os.environ.setdefault("AUTORUN_TEST_STATE_DIR", "/tmp/autorun-test-state")
 
 from autorun.installer import discovery, steps  # noqa: E402
+from autorun.installer.fs import autorun_state_dir  # noqa: E402
 from autorun.installer.traversal import Context, Mode, run, targets  # noqa: E402
 from autorun.platforms import PLATFORMS  # noqa: E402
 
@@ -42,6 +43,10 @@ def sandbox(tmp_path, monkeypatch):
     # real home on the other.
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # autorun's own state (backups, switch records) follows AUTORUN_HOME, which
+    # the suite points at one directory per worker; give each test its own so
+    # one test's backups are not another's.
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
     # OpenCode honours XDG_CONFIG_HOME as an explicit parent override.  A CI
     # runner may export it globally, so clear it here or the OpenCode command
     # and plugin intents intentionally land outside this sandbox.
@@ -838,7 +843,7 @@ def test_force_republishes_a_hashless_legacy_shared_skill_and_keeps_a_backup(san
     assert forced.ok is True
     assert (commit / "SKILL.md").read_text(encoding="utf-8") != "an older release\n"
     assert read_marker(commit).files, "republished with hashes"
-    backups = sandbox / ".autorun" / "installer" / "backups"
+    backups = autorun_state_dir(sandbox) / "installer" / "backups"
     parked = sorted(backups.iterdir())
     assert len(parked) == 1 and parked[0].name.startswith("commit-"), parked
     assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
@@ -894,7 +899,7 @@ def test_force_uninstall_retires_a_hashless_legacy_shared_skill_and_keeps_a_back
     retired = [d for d in forced.decisions if d.target == commit]
     assert retired and retired[0].verdict.value == "retire", retired
     assert not commit.exists()
-    backups = sandbox / ".autorun" / "installer" / "backups"
+    backups = autorun_state_dir(sandbox) / "installer" / "backups"
     parked = sorted(backups.iterdir())
     assert len(parked) == 1 and parked[0].name.startswith("commit-"), parked
     assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
@@ -942,7 +947,7 @@ def test_a_retired_write_root_is_swept_for_hashless_legacy_trees(sandbox, plugin
     retired = [d for d in forced.decisions if d.target == legacy]
     assert retired and retired[0].verdict.value == "retire", retired
     assert not legacy.exists()
-    parked = sorted((sandbox / ".autorun" / "installer" / "backups").iterdir())
+    parked = sorted((autorun_state_dir(sandbox) / "installer" / "backups").iterdir())
     assert len(parked) == 1 and parked[0].name.startswith(f"{plugin}-"), parked
     assert (parked[0] / "plugin.json").read_text(encoding="utf-8") == "an older release\n"
 

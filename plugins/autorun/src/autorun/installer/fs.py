@@ -723,18 +723,27 @@ def _resume_interrupted(target: Path) -> None:
         shutil.rmtree(stage, ignore_errors=True)
 
 
+def autorun_state_dir(home: Path | None = None) -> Path:
+    """autorun's own state directory: ``AUTORUN_HOME`` when set, else ``<home>/.autorun``.
+
+    The installer's one answer. ``traversal.backup_root`` used ``<home>/.autorun``
+    while :func:`_default_backup_root` honored ``AUTORUN_HOME``, so with the
+    variable set a walk parked backups where the interrupted-publication
+    recovery never looked. Empty means unset, as in ``ipc``.
+    """
+    root = os.environ.get("AUTORUN_HOME")
+    return Path(root) if root else (home if home is not None else Path.home()) / ".autorun"
+
+
 def _default_backup_root() -> Path:
     """Where a tree that cannot be put back at its target is parked.
 
     :func:`traversal.backup_root` answers this for a walk, which carries the
     ``Context`` owning the test seam. :func:`_resume_interrupted` runs
     underneath every publication, including ones no walk started, so it
-    resolves the same location from the environment instead: ``AUTORUN_HOME``
-    when set — the variable the isolation contract redirects — and
-    ``~/.autorun`` otherwise.
+    resolves the same location without one.
     """
-    root = os.environ.get("AUTORUN_HOME")
-    return (Path(root) if root else Path.home() / ".autorun") / "installer" / "backups"
+    return autorun_state_dir() / "installer" / "backups"
 
 
 def _identity(path: Path) -> tuple | None:
