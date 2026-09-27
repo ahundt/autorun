@@ -207,20 +207,20 @@ the project's `.claude/settings.json`, then start a new session:
 ```json
 {
   "env": {
-    "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1",
-    "CLAUDE_CODE_ENABLE_TASKS": "1"
+    "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
   }
 }
 ```
 
-`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` restores the tool family;
-`CLAUDE_CODE_ENABLE_TASKS=0` would select the legacy `TodoWrite` engine instead,
-which autorun does not track. A hook cannot change its parent process's
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` restores the tool family. If you also set
+`CLAUDE_CODE_ENABLE_TASKS` to `0`, Claude Code uses the legacy `TodoWrite`
+engine instead, which autorun does not track; remove that setting. A hook cannot change its parent process's
 environment, so neither setting repairs the current session. Use `/ar:task
 pause <reason>` to end discussion without discarding autorun's retained tasks.
-To keep the tools off, set `CLAUDE_CODE_ENABLE_TODO_TOOLS` to `0` yourself;
+To keep the tools off, set `CLAUDE_CODE_ENABLE_TODO_TOOLS` to `"0"` yourself;
 `autorun --install` leaves a value you set alone, and `--uninstall` removes only
-the value it added.
+the value it added. Deleting the line does not opt out: the next install adds it
+back. `autorun --status` shows each setting as `current`, `would set`, or kept.
 
 Disable autorun's #80305/#80401 recovery text independently with:
 
@@ -236,7 +236,7 @@ Where autorun cannot tell, it does not block; it tracks what the agent records.
 
 | Harness | Tool | Off by default since | What turns it on |
 |---|---|---|---|
-| Qwen Code | `todo_write` | 0.24.0 | `"tools": {"todoWrite": {"enabled": true}}` in `~/.qwen/settings.json`; `autorun --install` sets it unless you did. If that file has comments, autorun leaves it alone and its install output names the setting to add. |
+| Qwen Code | `todo_write` | 0.24.0 | `"tools": {"todoWrite": {"enabled": true}}` in `~/.qwen/settings.json` (a project's `.qwen/settings.json` overrides it); `autorun --install` sets it unless you did. autorun reads the setting and enforces only while it is `true`. If the file has comments, autorun leaves it alone, cannot read the setting, and does not enforce; its install output names the setting to add. |
 | Codex | `update_plan` | 0.152.0 | `[tools.update_plan]` `enabled = true` in `~/.codex/config.toml`. Plan mode still rejects it, and hooks cannot see either, so autorun records Codex checklists but never requires them. |
 | Gemini CLI | `write_todos` | 0.36.0 (default model) | Only an explicit Gemini 2.x model gets it; no setting guarantees it, so autorun does not require it. |
 

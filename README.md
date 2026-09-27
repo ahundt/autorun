@@ -36,16 +36,18 @@ autorun --install
 /ar:help
 ```
 
-**Upgrading** is the same two commands. Add `[pdf]` (`'autorun-ai[pdf]'`) if
-you installed the PDF backends, or the upgrade removes them:
+**Upgrading** is the same two commands, which install the newest release. Add
+`[pdf]` (`'autorun-ai[pdf]'`) if you installed the PDF backends, or the upgrade
+removes them:
 
 ```bash
 uv tool install --force autorun-ai && autorun --install
 ```
 
 Then restart open agent sessions: each reads its hooks when it starts. With only
-the Claude Code marketplace install, run `/plugin update ar@autorun` instead.
-Each release's notes give the exact, version-pinned command.
+the Claude Code marketplace install, run `/plugin update ar@autorun` in Claude
+Code (or `claude plugin update ar@autorun` in a shell) instead. Each release's
+notes give the exact, version-pinned command.
 
 Use as much or as little workflow structure as the task needs: keep the safety
 hooks in the background, run a task directly, or add planning for larger work.
