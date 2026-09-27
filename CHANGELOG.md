@@ -116,6 +116,9 @@ Whether autorun enforces task tracking after the upgrade:
 12. A hook that runs without the daemon (while it starts, or with
     `AUTORUN_USE_DAEMON=0`) takes about a third less time: the shell-command
     parser now loads only when a shell command needs checking.
+13. autorun no longer drops a session setting (such as whether autorun is
+    active) when several hooks write state at once. The write gave up after
+    half a second instead of using the rest of the hook's time.
 
 ### For contributors
 
