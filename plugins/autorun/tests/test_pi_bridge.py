@@ -22,6 +22,40 @@ PI_TEMPLATE = PLUGIN_ROOT / "src" / "autorun" / "pi_template"
 BRIDGE_SOURCE = PLUGIN_ROOT / "src" / "autorun" / "bridge_template" / "daemon-client.mjs"
 
 
+def _find_javascript_runtime(which=shutil.which) -> str | None:
+    return which("bun") or which("node")
+
+
+JAVASCRIPT_RUNTIME = _find_javascript_runtime()
+
+
+def _javascript_command(driver: Path, *, strip_types: bool = False) -> list[str]:
+    """Prefer Bun for Pi fixtures, with Node as the portable fallback."""
+    assert JAVASCRIPT_RUNTIME is not None
+    command = [JAVASCRIPT_RUNTIME]
+    if strip_types and Path(JAVASCRIPT_RUNTIME).name == "node":
+        command.append("--experimental-strip-types")
+    command.append(str(driver))
+    return command
+
+
+def test_pi_fixture_runtime_prefers_bun_and_keeps_node_as_fallback():
+    calls = []
+
+    def both(name):
+        calls.append(name)
+        return f"/tools/{name}"
+
+    assert _find_javascript_runtime(both) == "/tools/bun"
+    assert calls == ["bun"]
+
+    def node_only(name):
+        return None if name == "bun" else "/tools/node"
+
+    assert _find_javascript_runtime(node_only) == "/tools/node"
+    assert _find_javascript_runtime(lambda _name: None) is None
+
+
 def test_pi_platform_declares_native_runtime_contract():
     from autorun.platforms import PLATFORMS
 
@@ -258,7 +292,7 @@ def _run_pi_adapter_driver(
     driver = tmp_path / "driver.mjs"
     driver.write_text(script.replace("__EXTENSION__", (extension_dir / "index.ts").as_uri()), encoding="utf-8")
     result = subprocess.run(
-        ["node", "--experimental-strip-types", str(driver)],
+        _javascript_command(driver, strip_types=True),
         capture_output=True,
         text=True,
         timeout=15,
@@ -270,7 +304,7 @@ def _run_pi_adapter_driver(
     return json.loads(result.stdout), frames
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_active_tool_introspection_failure_keeps_bridge_events_live(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -300,7 +334,7 @@ console.log(JSON.stringify({ survived: true }));
     assert all("active_tools" not in frame for frame in frames)
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_callbacks_separate_display_work_and_continuation_channels(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -354,7 +388,7 @@ console.log(JSON.stringify({ sent, users, notices }));
     assert "agent_type" not in frames[0]
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 @pytest.mark.parametrize("cli_type", ["pi", "prime"])
 def test_restricted_child_frames_effective_tools_identity_and_subagent_stop(tmp_path, cli_type):
     result, frames = _run_pi_adapter_driver(
@@ -402,7 +436,7 @@ console.log(JSON.stringify({ ok: true }));
         assert frame["cli_type"] == cli_type
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_parent_session_metadata_alone_does_not_classify_main_as_child(tmp_path):
     _result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -435,7 +469,7 @@ console.log(JSON.stringify({ ok: true }));
     assert "agent_type" not in frames[0]
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_ordinary_text_that_merely_starts_like_a_command_reaches_the_ai(tmp_path):
     """A prefix is not a command, and only the daemon can tell them apart.
 
@@ -564,7 +598,7 @@ console.log(JSON.stringify({ decision }));
 '''.replace("__COMMAND__", json.dumps(command))
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_tool_call_returns_native_block_without_executing_tool(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -612,7 +646,7 @@ def _recorded_pi_deny(cwd: Path, command: str) -> dict:
 
 
 @pytest.mark.timeout(120)
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_adapter_blocks_with_the_reason_autorun_actually_emits(tmp_path):
     """Replay autorun's recorded deny, not an invented one, through the adapter.
 
@@ -642,7 +676,7 @@ def test_pi_adapter_blocks_with_the_reason_autorun_actually_emits(tmp_path):
     assert probe.is_file(), "a blocked tool_call must never reach the shell"
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_callbacks_preserve_transcript_and_tool_result_fields(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -695,7 +729,7 @@ console.log(JSON.stringify({ before, tool }));
     assert "AUTORUN_INITIAL_TASKS_COMPLETED" in json.dumps(frames[2]["session_transcript"])
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_settled_queues_only_one_continuation_until_next_agent_start(tmp_path):
     result, _frames = _run_pi_adapter_driver(
         tmp_path,
@@ -731,7 +765,7 @@ console.log(JSON.stringify({ sent }));
     ]
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_registers_sequential_task_tools_and_routes_mutations_through_posttool(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -812,7 +846,7 @@ console.log(JSON.stringify({
     assert frames[2]["inprocess_operation"] == "task_list_v1"
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_task_create_falls_back_to_a_prefixed_random_id_without_a_daemon_mint(tmp_path):
     """A daemon that returns no id must not stop task creation: the extension
     falls back to a harness-prefixed random id that the PostToolUse receipt
@@ -844,7 +878,7 @@ console.log(JSON.stringify({ created }));
     assert frames[0]["inprocess_operation"] == "task_next_id_v1"
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_task_get_reads_one_authoritative_task(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -880,7 +914,7 @@ console.log(JSON.stringify({ result, properties: tools.get("TaskGet").parameters
     assert frames[0]["task_id"] == "one"
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_task_update_declares_and_formats_atomic_bulk_updates(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -940,7 +974,7 @@ console.log(JSON.stringify({
     assert frames[0]["tool_input"]["taskUpdates"][0]["taskId"] == "one"
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_task_mutation_uses_authoritative_snapshot_in_result(tmp_path):
     result, _frames = _run_pi_adapter_driver(
         tmp_path,
@@ -1046,7 +1080,7 @@ console.log(JSON.stringify({ ok: true }));
     assert frames[0]["task_records"][0]["status"] == "in_progress"
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for Pi callback tests")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_transcript_frame_is_bounded_and_keeps_recent_marker(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,
@@ -1120,7 +1154,7 @@ def test_pi_extension_task_status_enum_matches_the_registry():
     assert declared == set(PLATFORMS["prime"].native_task_statuses)
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
 def test_shared_daemon_client_sends_pi_identity_and_reads_a_deny(tmp_path):
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("synthetic server uses AF_UNIX")
@@ -1175,7 +1209,7 @@ console.log(JSON.stringify(response));
         encoding="utf-8",
     )
     result = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=10, check=False
+        _javascript_command(driver), capture_output=True, text=True, timeout=10, check=False
     )
     thread.join(timeout=10)
 
@@ -1186,7 +1220,7 @@ console.log(JSON.stringify(response));
     assert frames[0]["session_id"] == "pi-session"
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
 def test_shared_daemon_client_maps_every_bare_ar_spelling_to_the_help_prompt(tmp_path):
     """``/ar`` with no arguments (Pi's registered command, empty args), ``ar:``,
     ``/ar:``, ``ar-`` and ``/ar `` must all reach the daemon as the ``ar:``
@@ -1237,7 +1271,7 @@ for (const spelling of {json.dumps(spellings)}) {{
         encoding="utf-8",
     )
     result = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=20, check=False
+        _javascript_command(driver), capture_output=True, text=True, timeout=20, check=False
     )
     thread.join(timeout=10)
 
@@ -1376,7 +1410,7 @@ def test_prime_backend_declares_an_e2e_contract():
     assert contract.isolation
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
 def test_hook_entry_silence_is_an_allow_not_an_invalid_response(tmp_path):
     """An empty stdout from the hook entry means "no decision", never a block.
 
@@ -1412,7 +1446,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
         encoding="utf-8",
     )
     result = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=30, check=False
+        _javascript_command(driver), capture_output=True, text=True, timeout=30, check=False
     )
     assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
     payload = json.loads(result.stdout)
@@ -1422,7 +1456,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
     )
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
 def test_hook_entry_garbage_still_denies(tmp_path):
     """Silence is an allow; noise is still a failure.
 
@@ -1451,7 +1485,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
         encoding="utf-8",
     )
     result = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=30, check=False
+        _javascript_command(driver), capture_output=True, text=True, timeout=30, check=False
     )
     assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
     payload = json.loads(result.stdout)
@@ -1459,7 +1493,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
     assert "invalid response" in payload["denial"]
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the Pi bridge")
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
 def test_a_silent_exit_two_is_a_deny_not_an_allow(tmp_path):
     """Widening the empty case must not swallow an exit-2 deny.
 
@@ -1489,7 +1523,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
         encoding="utf-8",
     )
     result = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=30, check=False
+        _javascript_command(driver), capture_output=True, text=True, timeout=30, check=False
     )
     assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
     payload = json.loads(result.stdout)
