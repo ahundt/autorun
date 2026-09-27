@@ -86,6 +86,16 @@ def test_each_structure_rule_names_its_failure(body, complaint):
     assert any(complaint in problem for problem in _problems(body)), _problems(body)
 
 
+@pytest.mark.parametrize(
+    ("stamp", "complaint"),
+    [("2026-02-30", "not a real calendar date"), ("2999-01-01", "in the future")],
+)
+def test_the_section_date_must_be_a_real_day_that_has_come(stamp, complaint):
+    section = release_notes.Section("0.0.1rc2", stamp, GOOD)
+    problems = release_notes.structure_problems(section, "0.0.1rc1")
+    assert any(complaint in problem for problem in problems), problems
+
+
 def test_fenced_lines_are_not_mistaken_for_list_items_or_headings():
     body = GOOD.replace(
         "1. Restart running sessions.\n",

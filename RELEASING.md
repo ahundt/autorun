@@ -427,8 +427,8 @@ release_tag="v$release_version"
 # moved. A version bump prepared days before the tag day therefore bakes a stale
 # date into the annotation and into the release page, permanently. 421732cc had
 # to move a release date for this reason; these two checks are what make the
-# next one fail loudly instead. `test_release_notes_name_upgrade_actions_date`
-# only requires the date to be in the past, which a stale date also satisfies.
+# next one fail loudly instead. `release_notes.py --check` only requires the
+# date to be real and not in the future, which a stale date also satisfies.
 test "$(rg -N -o -r '$1' '^Date: (.+)$' "docs/releases/$release_version.md")" = "$(date +%F)"
 rg -N -q "^## \[$release_version\] - $(date +%F)\$" CHANGELOG.md
 # The notes must still be the CHANGELOG section rendered; moving the date means

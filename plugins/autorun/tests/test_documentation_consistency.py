@@ -487,51 +487,6 @@ def test_release_runbook_rehearses_testpypi_before_tagging():
     )
 
 
-def test_release_notes_name_upgrade_actions_date_and_diff():
-    """The tracked GitHub release body must answer upgrade questions directly."""
-    version = _declared_version("plugins/autorun/pyproject.toml", "version")
-    notes = (REPO_ROOT / "docs" / "releases" / f"{version}.md").read_text(
-        encoding="utf-8"
-    )
-    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    # `findall`, not `search`: a second section for the same version would
-    # otherwise be invisible, and the release body would agree with whichever
-    # one came first. Learned from ai-session-search, whose gate stopped at the
-    # first matching heading.
-    headings = re.findall(
-        rf"^## \[{re.escape(version)}\] - (\d{{4}}-\d{{2}}-\d{{2}})$",
-        changelog,
-        re.MULTILINE,
-    )
-    assert len(headings) == 1, (
-        f"CHANGELOG.md has {len(headings)} sections for {version}; a release "
-        "must have exactly one, or the notes agree with an arbitrary copy"
-    )
-    # The digit shape alone accepts 2026-02-30. Parsing rejects it, and rejects
-    # a date that has not happened yet, which is what a stale heading looks like
-    # when the bump was prepared days before the tag.
-    from datetime import date
-
-    try:
-        stamped = date.fromisoformat(headings[0])
-    except ValueError as error:
-        raise AssertionError(
-            f"CHANGELOG.md dates {version} {headings[0]!r}, which is not a real "
-            f"calendar date ({error}); the digit shape alone accepts 2026-02-30"
-        ) from None
-    assert stamped <= date.today(), (
-        f"CHANGELOG.md dates {version} {stamped.isoformat()}, which is in the "
-        "future; set it to the day the release is tagged"
-    )
-    assert f"Date: {headings[0]}" in notes
-    # The upgrade section's heading, order and commands are checked where they
-    # are produced: test_release_notes.py runs scripts/release_notes.py --check.
-    assert re.search(r"^## Upgrading from \S+$", notes, re.MULTILINE)
-    assert re.search(rf"compare/v\S+\.\.\.v{re.escape(version)}", notes), (
-        "the release body must carry a comparison link readers can follow"
-    )
-
-
 def _tags_published_on_origin() -> set[str] | None:
     """Tags that exist on the remote, or None when the remote is unreachable."""
     try:
@@ -638,11 +593,10 @@ def test_current_release_notes_cover_pi_and_published_distributions():
     CHANGELOG section as well only forced the same boilerplate into each one.
     """
     version = _declared_version("plugins/autorun/pyproject.toml", "version")
-    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    section = changelog.split(f"## [{version}]", 1)[1].split("\n## [", 1)[0]
-    assert "Pi" in section, f"CHANGELOG.md [{version}] omits Pi"
-
+    # The notes are the CHANGELOG section rendered (test_release_notes.py holds
+    # them to it), so reading them covers the section without parsing it again.
     notes = (REPO_ROOT / "docs" / "releases" / f"{version}.md").read_text(encoding="utf-8")
+    assert "Pi" in notes, f"docs/releases/{version}.md omits Pi"
     for required in (f"'autorun-ai=={version}'", f"'autorun-ai[pdf]=={version}'"):
         assert required in notes, f"docs/releases/{version}.md omits {required}"
 

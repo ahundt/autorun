@@ -20,6 +20,7 @@ import re
 import sys
 import textwrap
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +103,17 @@ def _outside_fences(body: str) -> list[str]:
 def structure_problems(section: Section, previous: str) -> list[str]:
     """What keeps ``section`` from reading upgrade-first, in numbered lists."""
     problems = []
+    # The digit shape alone accepts 2026-02-30, and a date that has not come
+    # yet is what a heading written days before the tag looks like.
+    try:
+        stamped = date.fromisoformat(section.date)
+    except ValueError:
+        problems.append(f"the date {section.date!r} is not a real calendar date")
+    else:
+        if stamped > date.today():
+            problems.append(
+                f"the date {section.date} is in the future; use the day the release is tagged"
+            )
     lines = _outside_fences(section.body)
     headings = [line[4:].strip() for line in lines if line.startswith("### ")]
     first_heading = next((i for i, line in enumerate(lines) if line.startswith("### ")), len(lines))
