@@ -97,9 +97,6 @@ def gemini_extension_check():
         pytest.skip(message)
 
 
-@paid_gemini_e2e
-@pytest.mark.e2e
-
 def _assert_the_hook_decided(response: dict) -> None:
     """A timed-out hook also answers {"continue": true}; say so instead of passing."""
     message = str(response.get("systemMessage", ""))
@@ -108,6 +105,8 @@ def _assert_the_hook_decided(response: dict) -> None:
     )
 
 
+@paid_gemini_e2e
+@pytest.mark.e2e
 class TestGeminiE2ERealMoney:
     """Real Gemini CLI E2E tests that make actual API calls.
 

@@ -190,3 +190,45 @@ def test_every_gated_test_lives_behind_the_shared_decorator():
         "Use `@requires_real_money` from e2e_support instead of a local "
         f"skipif; one owner keeps the marker and the gate together: {offenders}"
     )
+
+
+def test_the_real_money_decorator_only_ever_decorates_tests():
+    """A gate that lands on a helper leaves the paid tests below it ungated.
+
+    Inserting a helper between `@paid_gemini_e2e` and the paid class it sat on
+    moved the decorator onto the helper: the class lost its `real_money` mark
+    and `-m "not real_money"` collected billable tests. Any name bound to
+    `requires_real_money` (the name itself or an alias) must decorate a
+    `test_*` function or a `Test*` class.
+    """
+    misplaced = {}
+    for module in _test_modules():
+        if module.name == GATE_OWNER:
+            continue
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        gates = {"requires_real_money"}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in gates
+            ):
+                gates.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        # Module level and class bodies only: a definition inside a test
+        # function is that test's own fixture, never collected.
+        definitions = list(tree.body) + [
+            item for node in tree.body if isinstance(node, ast.ClassDef) for item in node.body
+        ]
+        for node in definitions:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            gated = any(
+                isinstance(d, ast.Name) and d.id in gates for d in node.decorator_list
+            )
+            prefix = "Test" if isinstance(node, ast.ClassDef) else "test"
+            if gated and not node.name.startswith(prefix):
+                misplaced.setdefault(module.relative_to(TESTS_DIR).as_posix(), []).append(
+                    (node.name, node.lineno)
+                )
+
+    assert not misplaced, f"real-money gate on something that is not a test: {misplaced}"
