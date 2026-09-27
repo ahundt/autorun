@@ -657,16 +657,19 @@ def _bashlex():
     return bashlex, CommandVisitor
 
 
-def warm_parser() -> None:
-    """Build the bash grammar ahead of the first command (the daemon's startup).
+def warm_parser() -> bool:
+    """Build the bash grammar now; whether bashlex is usable.
 
-    A missing or broken bashlex is not an error here: the first parse falls
-    back to shlex, the same as it would without this call.
+    The daemon calls this at startup so its first command does not pay for the
+    grammar, and the restart diagnostics report its answer. False is not an
+    error: every parse then falls back to shlex. BASHLEX_AVAILABLE only says
+    bashlex is installed.
     """
     try:
         _bashlex()
     except Exception:
-        pass
+        return False
+    return True
 
 
 def _normalize_heredoc_delimiters(cmd: str) -> str:

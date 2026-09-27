@@ -162,10 +162,10 @@ def cleanup_stale_files() -> None:
 
 
 def verify_bashlex() -> bool:
-    """Check if bashlex available in daemon."""
+    """Whether the daemon's bash parser loads (not merely that it is installed)."""
     try:
-        from autorun.command_detection import BASHLEX_AVAILABLE
-        return BASHLEX_AVAILABLE
+        from autorun.command_detection import warm_parser
+        return warm_parser()
     except Exception:
         return False
 
@@ -364,8 +364,8 @@ def _start_daemon(src_dir: Path) -> bool:
         f"print(f'sys.path[0]: {{sys.path[0]}}', flush=True); "
         f"print(f'Expected source: {src_dir}', flush=True); "
         # Verify bashlex availability
-        f"from autorun.command_detection import BASHLEX_AVAILABLE; "
-        f"print(f'bashlex available: {{BASHLEX_AVAILABLE}}', flush=True); "
+        f"from autorun.command_detection import warm_parser; "
+        f"print(f'bashlex available: {{warm_parser()}}', flush=True); "
         # Verify tool name sets loaded
         f"from autorun.config import BASH_TOOLS; "
         f"print(f'BASH_TOOLS = {{BASH_TOOLS}}', flush=True); "

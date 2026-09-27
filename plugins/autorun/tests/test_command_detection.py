@@ -628,3 +628,19 @@ def test_only_a_shell_command_pays_for_the_bash_grammar(tmp_path):
     assert not loaded_at_import
     assert loaded_after_parse
     assert names == ["cd", "git", "head"]
+
+
+def test_the_parser_check_reports_a_bashlex_that_will_not_import(monkeypatch):
+    """Installed is not the same as usable: the daemon diagnostics must say
+    False when bashlex is present but fails to load, since every parse then
+    falls back to shlex."""
+    from autorun import command_detection, restart_daemon
+
+    def broken():
+        raise ImportError("bashlex is installed but broken")
+
+    monkeypatch.setattr(command_detection, "_bashlex", broken)
+    assert command_detection.warm_parser() is False
+    assert restart_daemon.verify_bashlex() is False
+    monkeypatch.undo()
+    assert command_detection.warm_parser() is True
