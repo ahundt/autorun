@@ -491,12 +491,24 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
             recorded = record.pop(entry.record_key, _ABSENT)
             if recorded is _ABSENT or not entry.path.is_file():
                 return ""
+            # A record is {"value": ..., "created_file": bool}; an earlier
+            # build of this release stored the bare value.
+            if isinstance(recorded, Mapping) and "value" in recorded:
+                value, created_file = recorded["value"], bool(recorded.get("created_file"))
+            else:
+                value, created_file = recorded, False
             with settings_document(entry.path) as document:
-                if _lookup(document, entry.key) != recorded:
+                if _lookup(document, entry.key) != value:
                     return f"kept user-changed {entry.describe()}"
                 _remove(document, entry.key)
-                return f"removed {entry.describe()}"
+                emptied = not document
+            if created_file and emptied:
+                # The file existed only to hold this setting; leave the harness
+                # home the way the install found it.
+                entry.path.unlink(missing_ok=True)
+            return f"removed {entry.describe()}"
     entry.record.parent.mkdir(parents=True, exist_ok=True)
+    created_file = not entry.path.exists()
     # The settings file is the outer block, so the record, closed first, is
     # written first: a failure between the two leaves a record whose value is
     # absent (uninstall then reports it kept), never a setting nothing records.
@@ -504,7 +516,7 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
         if _lookup(document, entry.key) is not _ABSENT:
             return "" if entry.record_key in record else _kept_note(entry)
         _assign(document, entry.key, entry.value)
-        record[entry.record_key] = entry.value
+        record[entry.record_key] = {"value": entry.value, "created_file": created_file}
         return (
             f"set {entry.describe()}: the harness offers its task tools to "
             "sessions started from now on"

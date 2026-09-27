@@ -1525,7 +1525,35 @@ def test_a_switch_creates_the_settings_file_and_prunes_only_what_it_added(tmp_pa
     steps.apply_switches([entry], Mode.INSTALL)
     assert json.loads(entry.path.read_text()) == {"tools": {"todoWrite": {"enabled": True}}}
     steps.apply_switches([entry], Mode.UNINSTALL)
-    assert json.loads(entry.path.read_text()) == {}, "the parents autorun created are gone"
+    assert not entry.path.exists(), "a file created only for the switch is removed with it"
+
+
+def test_a_file_autorun_created_stays_when_the_user_added_to_it(tmp_path):
+    import json
+
+    entry = _switch(tmp_path)
+    entry.path.parent.mkdir()
+    steps.apply_switches([entry], Mode.INSTALL)
+    settings = json.loads(entry.path.read_text())
+    settings["theme"] = "dark"
+    entry.path.write_text(json.dumps(settings), encoding="utf-8")
+
+    steps.apply_switches([entry], Mode.UNINSTALL)
+    assert json.loads(entry.path.read_text()) == {"theme": "dark"}
+
+
+def test_an_older_bare_value_record_still_uninstalls(tmp_path):
+    """Records written before created_file existed hold the bare value."""
+    import json
+
+    entry = _switch(tmp_path)
+    entry.path.parent.mkdir()
+    entry.path.write_text(json.dumps({"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}), encoding="utf-8")
+    entry.record.parent.mkdir(parents=True)
+    entry.record.write_text(json.dumps({entry.record_key: "1"}), encoding="utf-8")
+
+    assert steps.apply_switches([entry], Mode.UNINSTALL) == [f"removed {entry.describe()}"]
+    assert json.loads(entry.path.read_text()) == {}
 
 
 def test_a_value_the_user_set_is_theirs_on_install_and_uninstall(tmp_path):
