@@ -3634,6 +3634,12 @@ class AutorunDaemon:
         self._server = await ipc.start_server(self.handle_client, limit=READ_BUFFER_LIMIT)
         self.running = True
 
+        # The bash grammar takes ~50 ms to build; build it now, off the event
+        # loop, rather than inside the first shell command's hook.
+        from .command_detection import warm_parser
+
+        asyncio.get_running_loop().run_in_executor(None, warm_parser)
+
         # Start watchdog as tracked task
         self._watchdog_task = asyncio.create_task(self.watchdog())
 

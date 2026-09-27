@@ -30,6 +30,7 @@ References:
 """
 from __future__ import annotations
 
+import importlib.util
 import logging
 import re
 import shlex
@@ -92,16 +93,11 @@ _MAX_RECURSION_DEPTH: Final[int] = 3
 
 # ─── Optional bashlex ─────────────────────────────────────────────────────────
 
-try:
-    import bashlex
-    from bashlex import ast as bashlex_ast
-    from bashlex.errors import ParsingError
-    BASHLEX_AVAILABLE: Final[bool] = True
-except ImportError:
-    BASHLEX_AVAILABLE: Final[bool] = False
-    bashlex = None  # type: ignore[assignment]
-    bashlex_ast = None  # type: ignore[assignment]
-    ParsingError = Exception  # type: ignore[misc,assignment]
+# Found here, imported on the first command parse (_bashlex below). Importing
+# bashlex rebuilds its whole LALR table -- its bundled PLY never reads the
+# parsetab it ships -- which was half of every CLI hook call, and Stop,
+# PostToolUse and prompt events never parse a command.
+BASHLEX_AVAILABLE: Final[bool] = importlib.util.find_spec("bashlex") is not None
 
 
 # ─── Data Classes ─────────────────────────────────────────────────────────────
@@ -617,7 +613,12 @@ def command_tokens_for(
 
 # ─── bashlex Visitor ──────────────────────────────────────────────────────────
 
-if BASHLEX_AVAILABLE:
+@lru_cache(maxsize=1)
+def _bashlex():
+    """bashlex and a visitor over its AST, loaded once, on first use."""
+    import bashlex
+    from bashlex import ast as bashlex_ast
+
     class CommandVisitor(bashlex_ast.nodevisitor):
         """AST visitor with wrapper-aware and recursive shell -c parsing."""
         __slots__ = ("names", "strings", "potential", "depth")
@@ -653,6 +654,20 @@ if BASHLEX_AVAILABLE:
 
             return True
 
+    return bashlex, CommandVisitor
+
+
+def warm_parser() -> None:
+    """Build the bash grammar ahead of the first command (the daemon's startup).
+
+    A missing or broken bashlex is not an error here: the first parse falls
+    back to shlex, the same as it would without this call.
+    """
+    try:
+        _bashlex()
+    except Exception:
+        pass
+
 
 def _normalize_heredoc_delimiters(cmd: str) -> str:
     """
@@ -682,10 +697,13 @@ def _normalize_heredoc_delimiters(cmd: str) -> str:
 def _extract_bashlex(cmd: str, depth: int) -> ExtractedCommands:
     """Extract using bashlex AST."""
     try:
+        bashlex, CommandVisitor = _bashlex()
         # Normalize heredoc delimiters for bashlex compatibility
         normalized_cmd = _normalize_heredoc_delimiters(cmd)
         parts = bashlex.parse(normalized_cmd)
-    except (ParsingError, Exception):
+    except Exception:
+        # Includes a bashlex that is present but will not import: the shlex
+        # fallback in _extract_impl then answers.
         return ExtractedCommands(frozenset(), frozenset(), frozenset())
 
     visitor = CommandVisitor(depth)

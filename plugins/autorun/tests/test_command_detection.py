@@ -593,3 +593,38 @@ class TestHeredocFalsePositives:
         cmd = "git commit -F /dev/stdin <<'EOF'\ndocs: add git push safety instructions\nEOF"
         assert command_matches_pattern(cmd, "git push") is False
         assert command_matches_pattern(cmd, "git commit") is True
+
+
+def test_only_a_shell_command_pays_for_the_bash_grammar(tmp_path):
+    """Importing bashlex rebuilds its whole LALR table (its bundled PLY never
+    reads the shipped parsetab): about half of each CLI hook call. Stop,
+    PostToolUse and prompt events never parse a command, so the hook entry
+    point must not import it; the first command parse must, and must work."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "src"
+    code = (
+        f"import sys, json; sys.path.insert(0, {str(src)!r}); "
+        "import autorun.__main__; "
+        "before = 'bashlex' in sys.modules; "
+        "from autorun.command_detection import extract_commands; "
+        "names = sorted(extract_commands('cd x && git status | head')[0]); "
+        "print(json.dumps([before, 'bashlex' in sys.modules, names]))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+        cwd=tmp_path,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+    loaded_at_import, loaded_after_parse, names = json.loads(completed.stdout)
+    assert not loaded_at_import
+    assert loaded_after_parse
+    assert names == ["cd", "git", "head"]
