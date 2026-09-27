@@ -958,7 +958,11 @@ CONFIG = {
     # Set to False when Anthropic exposes token counts to hooks.
     "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED": True,
     # BUG #80305: Claude Code 2.1.233+ gates TaskCreate/Get/Update/List off on
-    # newer flagship models unless CLAUDE_CODE_ENABLE_TODO_TOOLS=1 is present.
+    # newer flagship models unless CLAUDE_CODE_ENABLE_TODO_TOOLS=1 is present;
+    # 2.1.268 made it documented behavior (an allowlist of older models).
+    # `autorun --install` now sets that switch (platforms.TaskToolSwitch), and
+    # task gates need evidence of the tools, so this recovery text reaches only
+    # sessions that had the tools and lost them.
     # BUG #80401: the same four tools can vanish mid-session after the
     # claude.ai deferred-tool channel disconnects. The runtime workaround tells
     # the model to load once through ToolSearch, then gives the exact next-

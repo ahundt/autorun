@@ -36,6 +36,17 @@ autorun --install
 /ar:help
 ```
 
+**Upgrading** is the same two commands. Add `[pdf]` (`'autorun-ai[pdf]'`) if
+you installed the PDF backends, or the upgrade removes them:
+
+```bash
+uv tool install --force autorun-ai && autorun --install
+```
+
+Then restart open agent sessions: each reads its hooks when it starts. With only
+the Claude Code marketplace install, run `/plugin update ar@autorun` instead.
+Each release's notes give the exact, version-pinned command.
+
 Use as much or as little workflow structure as the task needs: keep the safety
 hooks in the background, run a task directly, or add planning for larger work.
 
@@ -1505,12 +1516,12 @@ ls -la ~/.claude/plugins/autorun/commands/
 
 **Plugin not working:** Test manually: `echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/autorun/commands/autorun`
 
-**Claude task tools missing or vanished:** Run `ToolSearch` once with
-`select:TaskCreate,TaskUpdate,TaskList,TaskGet`. If it returns no match, add
-`"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"` and
-`"CLAUDE_CODE_ENABLE_TASKS": "1"` under the `env` object in
-`~/.claude/settings.json`, then start a new Claude Code session. Hooks cannot
-change the current parent process. See
+**Claude task tools missing or vanished:** Claude Code 2.1.268+ offers them to
+newer models only with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, which
+`autorun --install` sets in `~/.claude/settings.json` unless you set it
+yourself; start a new session afterwards. Without it, autorun does not enforce
+task tracking and says so at session start. Qwen Code, Codex and Gemini CLI have
+their own switches. See
 [`plugins/autorun/TROUBLESHOOTING.md`](plugins/autorun/TROUBLESHOOTING.md#claude-task-tools-are-missing-or-vanished).
 
 **Plugin management (Claude Code):**

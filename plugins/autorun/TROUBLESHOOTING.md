@@ -14,6 +14,7 @@ This guide helps resolve common issues with autorun hooks in both Claude Code an
 - [Gemini CLI Specific Issues](#gemini-cli-specific-issues)
 - [Claude Code Specific Issues](#claude-code-specific-issues)
 - [Claude Task Tools Are Missing or Vanished](#claude-task-tools-are-missing-or-vanished)
+- [Task tools on other harnesses](#task-tools-on-other-harnesses)
 - [Debug Logging](#debug-logging)
 - [Known Issues](#known-issues)
 
@@ -181,19 +182,27 @@ repeated bootstrap attempts are the problem, not the blocking.
 `ToolSearch` returns no match; the task panel freezes; or autorun blocks Stop
 but the named task tool cannot be called.
 
-Claude Code 2.1.233 and newer gate these tools off on newer flagship models
-([#80305](https://github.com/anthropics/claude-code/issues/80305)), and the
-same deferred-tool bundle can disappear during a session
-([#80401](https://github.com/anthropics/claude-code/issues/80401)). Try one
-in-session load, not a retry loop:
+Claude Code 2.1.233 took these tools away from Opus 4.8, Sonnet 5, Fable 5 and
+newer models, and 2.1.268 offers them only to Claude 3.x, Opus 4.0-4.7, Sonnet
+4.0-4.6 and Haiku 4.5 unless `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` is set
+([tool availability](https://code.claude.com/docs/en/tools-reference)). The
+same deferred-tool bundle can also disappear during a session
+([#80401](https://github.com/anthropics/claude-code/issues/80401)).
+
+`autorun --install` sets the variable for you, in the `env` object of
+`~/.claude/settings.json`, unless you already set it to something. Start a new
+Claude Code session afterwards: settings are read at startup. Without the
+variable, autorun does not enforce task tracking in that session (it cannot tell
+whether the tools exist), and its SessionStart notice says so.
+
+If the tools are still missing, try one in-session load, not a retry loop:
 
 ```text
 ToolSearch query: select:TaskCreate,TaskUpdate,TaskList,TaskGet
 ```
 
-If there is no match, add the real environment keys to the `env` object in
-`~/.claude/settings.json` or the project's `.claude/settings.json`, then start
-a new Claude Code session:
+If there is no match, check the `env` object in `~/.claude/settings.json` or
+the project's `.claude/settings.json`, then start a new session:
 
 ```json
 {
@@ -204,12 +213,14 @@ a new Claude Code session:
 }
 ```
 
-`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` restores the gated tool family;
-`CLAUDE_CODE_ENABLE_TASKS=1` selects `TaskCreate`/`TaskUpdate` rather than the
-legacy `TodoWrite` engine. A hook cannot change its parent process's
-environment, so this cannot repair the current session. Use `/ar:task pause
-<reason>` if you need to end discussion without discarding autorun's retained
-tasks.
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` restores the tool family;
+`CLAUDE_CODE_ENABLE_TASKS=0` would select the legacy `TodoWrite` engine instead,
+which autorun does not track. A hook cannot change its parent process's
+environment, so neither setting repairs the current session. Use `/ar:task
+pause <reason>` to end discussion without discarding autorun's retained tasks.
+To keep the tools off, set `CLAUDE_CODE_ENABLE_TODO_TOOLS` to `0` yourself;
+`autorun --install` leaves a value you set alone, and `--uninstall` removes only
+the value it added.
 
 Disable autorun's #80305/#80401 recovery text independently with:
 
@@ -217,6 +228,20 @@ Disable autorun's #80305/#80401 recovery text independently with:
 export AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED=false
 export AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUND_ENABLED=false
 ```
+
+## Task tools on other harnesses
+
+autorun enforces task tracking only where the harness's own task tool exists.
+Where autorun cannot tell, it does not block; it tracks what the agent records.
+
+| Harness | Tool | Off by default since | What turns it on |
+|---|---|---|---|
+| Qwen Code | `todo_write` | 0.24.0 | `"tools": {"todoWrite": {"enabled": true}}` in `~/.qwen/settings.json`; `autorun --install` sets it unless you did. If that file has comments, autorun leaves it alone and its install output names the setting to add. |
+| Codex | `update_plan` | 0.152.0 | `[tools.update_plan]` `enabled = true` in `~/.codex/config.toml`. Plan mode still rejects it, and hooks cannot see either, so autorun records Codex checklists but never requires them. |
+| Gemini CLI | `write_todos` | 0.36.0 (default model) | Only an explicit Gemini 2.x model gets it; no setting guarantees it, so autorun does not require it. |
+
+Pi and Prime Agent report their tools to autorun directly; OpenCode's primary
+agent always has `todowrite`.
 
 ## Hook Execution Errors
 

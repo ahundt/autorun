@@ -8,29 +8,44 @@ marketplace itself carries a separate `version` field.
 
 ## [1.0.0rc3] - 2026-09-27
 
-autorun's task gates hold back an agent's tool calls until it records its
-tasks. They could block a session that had no way to record tasks, denying
-every tool call from then on: a Pi or Prime Agent subagent without task tools,
-or a Codex session without a usable `update_plan`. This release fixes both, and
-includes the other changes from 1.0.0rc2, which reached TestPyPI but was never
-released.
+Coding agents have started shipping without their task tools by default, and
+autorun's task gates could then deny every tool call until the agent made a
+task call it had no way to make. This hit Claude Code on current models, Qwen
+Code, Gemini CLI, Codex, and Pi or Prime Agent subagents without task tools. The
+gates now enforce only where the session can make that call, and
+`autorun --install` turns the tools back on where the agent has a setting for
+it. 1.0.0rc2 reached TestPyPI but was never released, so its changes ship here.
 
 ### Upgrading from 1.0.0rc1
 
-`autorun --install` republishes the hooks and extensions each harness loads and
-restarts the autorun daemon. Upgrading the package without it leaves every
-harness on 1.0.0rc1. Task state, configuration, and `/ar` commands carry over
-unchanged.
+`autorun --install` republishes the hooks and extensions each harness loads,
+restarts the autorun daemon, and turns on Claude Code's and Qwen Code's task
+tools unless you set those switches yourself (see Changed). Upgrading the
+package without it leaves every harness on 1.0.0rc1. Task state, configuration,
+and `/ar` commands carry over unchanged.
 
 ### Changed
 
-1. On Codex, autorun no longer asks for or requires `update_plan` calls. Codex
-   hooks do not report which tools a session has, and `update_plan` is missing
-   on some Codex surfaces and rejected in Plan mode, so a required call could
-   leave every following tool call denied. autorun still records the checklists
-   an agent keeps, and stage markers and destructive-command guards still
-   apply.
-2. The plan skills tell the agent to use task tools only when the session has
+1. Claude Code: `autorun --install` adds `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` to
+   the `env` object in `~/.claude/settings.json`. Claude Code 2.1.268 and later
+   offer TaskCreate and the other task tools only to older models without it. A
+   value you already set is kept, and `autorun --uninstall` removes only the one
+   autorun added. In a session without it, autorun does not enforce task
+   tracking and says so when the session starts.
+2. Qwen Code: `autorun --install` sets `tools.todoWrite.enabled` in
+   `~/.qwen/settings.json` the same way, because Qwen Code 0.24.0 and later
+   register `todo_write` only with it, and autorun now counts `todo_write` as
+   task progress. A settings file with comments is left untouched, and the
+   install output names the setting to add.
+3. Gemini CLI 0.36.0 and later give the default model no `write_todos`, so
+   autorun no longer requires it there.
+4. On Codex, autorun no longer asks for or requires `update_plan` calls. Codex
+   0.152.0 and later leave `update_plan` off unless
+   `tools.update_plan.enabled = true`, Plan mode rejects it, and Codex hooks
+   cannot tell either, so a required call could leave every following tool call
+   denied. autorun still records the checklists an agent keeps, and stage
+   markers and destructive-command guards still apply.
+5. The plan skills tell the agent to use task tools only when the session has
    them. They previously said Pi's task tools were always present.
 
 ### Fixed
@@ -38,8 +53,7 @@ unchanged.
 1. A Pi or Prime Agent subagent without `TaskCreate` or `TaskUpdate` is no
    longer blocked. The task gates required one of those calls, so every tool
    call after that was denied. The gates now skip a session that lacks the tool
-   they would require. Claude Code and the other harnesses do not report their
-   sessions' tools, so their gates work as before.
+   they would require, with or without the daemon running.
 2. Clearing a Codex checklist now clears autorun's record of it. An
    `update_plan` call with an empty list was ignored, so autorun kept the old
    tasks.
@@ -52,6 +66,11 @@ unchanged.
 5. Plan commands keep the text typed after them. `/ar:pn add a login page` could
    produce plan instructions without "add a login page". The same applied to
    `/ar:pr`, `/ar:pu`, `/ar:pp`, and their long names such as `/ar:plannew`.
+6. `autorun --status` no longer lists `would merge ~/.codex/hooks.json` right
+   after an install. A hooks file that needs no change now reads `current`.
+7. With `AUTORUN_HOME` set, the hook debug log and the backups
+   `autorun --install --force` makes now go there. They went to `~/.autorun`,
+   where recovery from an interrupted install did not look for the backups.
 
 ### For contributors
 
@@ -65,8 +84,17 @@ unchanged.
 4. `scripts/release_notes.py` generates `docs/releases/<version>.md` from the
    release's CHANGELOG section and checks that section's structure.
 5. RELEASING.md tags with `--cleanup=verbatim` so the annotation keeps the
-   notes' headings, rehearses the sdist as well as the wheel, and requires the
-   release date to be the tag day.
+   notes' headings, rehearses the sdist as well as the wheel, requires the
+   release date to be the tag day, and rehearses the upgrade from the previous
+   release in a scratch home.
+6. The suite no longer writes the developer's real `~/.autorun` or leaves
+   daemons and temporary directories behind, and it fails the run if it creates
+   `~/.autorun`. Tests clear the environment with
+   `isolated_environ.isolation_only()`.
+7. Gate tests state whether the session has its task tools
+   (`tests/task_tool_evidence.py`); they had assumed every Claude session has
+   TaskCreate. The switch variables are cleared at startup, so a run inside an
+   agent session gives the same results.
 
 ## [1.0.0rc1] - 2026-08-23
 
