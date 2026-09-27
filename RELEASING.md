@@ -260,19 +260,62 @@ Run this only after Stage 3 has pushed `publish.yml` and exact-SHA CI is green.
 
 ```bash
 gh workflow run publish.yml --ref main
+release_version=$(rg -N -o -r '$1' '^version = "(.+)"' plugins/autorun/pyproject.toml)
+run_id=$(gh run list --workflow publish.yml --branch main --event workflow_dispatch \
+  --limit 1 --json databaseId,headSha --jq '.[0].databaseId')
+test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$(git rev-parse HEAD)"
+gh run watch "$run_id" --exit-status
 ```
 
-Require the workflow to succeed, then install it both ways in throwaway tool
-directories so the rehearsal cannot disturb the installed CLIs. Install the
-plain form too: it is the one that proves no extraction library is required.
+Install the exact files the successful run uploaded, not a version chosen
+between two indexes. Current uv stops at the first index that contains a
+distribution name, so a production RC1 can hide a TestPyPI RC2 even when the
+TestPyPI URL appears first on the command line. `unsafe-best-match` avoids that
+failure by trusting both indexes equally, but the release gate needs no such
+broad exception: select the candidate by its direct TestPyPI URL and leave PyPI
+as the dependency index.
+
+Download the files built by this run, resolve their TestPyPI records by exact
+filename, and require TestPyPI's SHA-256 values to match before installing:
 
 ```bash
-UV_TOOL_DIR=$(mktemp -d) UV_TOOL_BIN_DIR=$(mktemp -d) \
-  uv tool install --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ autorun-ai
-UV_TOOL_DIR=$(mktemp -d) UV_TOOL_BIN_DIR=$(mktemp -d) \
-  uv tool install --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ 'autorun-ai[pdf]'
+sandbox=$(mktemp -d /tmp/ar-testpypi.XXXX)
+gh run download "$run_id" -n dist-autorun -D "$sandbox/dist"
+wheel=$(find "$sandbox/dist" -maxdepth 1 -name '*.whl' -print -quit)
+sdist=$(find "$sandbox/dist" -maxdepth 1 -name '*.tar.gz' -print -quit)
+test "$(find "$sandbox/dist" -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" = 1
+test "$(find "$sandbox/dist" -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" = 1
+metadata="$sandbox/testpypi.json"
+curl --fail --silent --show-error --location \
+  "https://test.pypi.org/pypi/autorun-ai/$release_version/json" -o "$metadata"
+wheel_name=$(basename "$wheel")
+sdist_name=$(basename "$sdist")
+test "$(jq --arg name "$wheel_name" '[.urls[] | select(.filename == $name and (.yanked | not))] | length' "$metadata")" = 1
+test "$(jq --arg name "$sdist_name" '[.urls[] | select(.filename == $name and (.yanked | not))] | length' "$metadata")" = 1
+wheel_url=$(jq -er --arg name "$wheel_name" '.urls[] | select(.filename == $name and (.yanked | not)) | .url' "$metadata")
+sdist_url=$(jq -er --arg name "$sdist_name" '.urls[] | select(.filename == $name and (.yanked | not)) | .url' "$metadata")
+wheel_index_sha=$(jq -er --arg name "$wheel_name" '.urls[] | select(.filename == $name) | .digests.sha256' "$metadata")
+sdist_index_sha=$(jq -er --arg name "$sdist_name" '.urls[] | select(.filename == $name) | .digests.sha256' "$metadata")
+test "$(shasum -a 256 "$wheel" | cut -d' ' -f1)" = "$wheel_index_sha"
+test "$(shasum -a 256 "$sdist" | cut -d' ' -f1)" = "$sdist_index_sha"
+
+# Use throwaway tool roots so the rehearsal cannot disturb installed CLIs.
+# Test the plain form too: it proves no extraction dependency is required.
+mkdir -p "$sandbox/plain-bin" "$sandbox/pdf-bin"
+UV_TOOL_DIR="$sandbox/plain-tools" UV_TOOL_BIN_DIR="$sandbox/plain-bin" \
+  uv tool install --index-url https://pypi.org/simple/ "autorun-ai @ $wheel_url"
+test "$(HOME="$sandbox/plain-home" AUTORUN_HOME="$sandbox/plain-ar" \
+  "$sandbox/plain-bin/autorun" --version)" = "autorun $release_version"
+UV_TOOL_DIR="$sandbox/pdf-tools" UV_TOOL_BIN_DIR="$sandbox/pdf-bin" \
+  uv tool install --index-url https://pypi.org/simple/ "autorun-ai[pdf] @ $wheel_url"
+HOME="$sandbox/pdf-home" AUTORUN_HOME="$sandbox/pdf-ar" \
+  "$sandbox/pdf-bin/extract-pdfs" --list-backends
+
+# A direct sdist URL forces the unusual build backend path. Disable uv's cache
+# so this proves the sdist itself builds and contains both import packages.
+UV_NO_CACHE=1 uv run --isolated --no-project --index-url https://pypi.org/simple/ \
+  --with "autorun-ai @ $sdist_url" \
+  python -c "import autorun, pdf_extraction; assert autorun.__version__ == '$release_version'"
 ```
 
 TestPyPI refuses a re-upload of an existing file. The workflow passes
@@ -373,14 +416,16 @@ gh run view "$run_id"                      # which jobs passed, which is waiting
 gh run view "$run_id" --json jobs --jq \
   '.jobs[] | select(.name=="publish-testpypi") | .steps[] | "\(.conclusion)\t\(.name)"'
 
-# Stronger than any log line: install the rehearsed wheel and run its CLI. An
-# accepted upload only proves TestPyPI took the file.
+# Stronger than any log line: repeat the exact-filename and SHA-256 procedure in
+# "Rehearse on TestPyPI before any tag" against this tag run's `dist-autorun`
+# artifact. An accepted upload only proves TestPyPI took bytes; matching the
+# run artifact proves which bytes, and the direct URLs prove those bytes install.
 sandbox=$(mktemp -d /tmp/arv.XXXX)
+gh run download "$run_id" -n dist-autorun -D "$sandbox/dist"
+# Resolve $wheel_url, $sdist_url and both digests exactly as above, then:
 uv venv --python 3.13 "$sandbox/venv"
 uv pip install --python "$sandbox/venv/bin/python" \
-  --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ \
-  "autorun-ai==$release_version"
+  --index-url https://pypi.org/simple/ "autorun-ai @ $wheel_url"
 env HOME="$sandbox/home" AUTORUN_HOME="$sandbox/ar-home" \
   "$sandbox/venv/bin/autorun" --version   # expect $release_version
 
@@ -391,10 +436,8 @@ env HOME="$sandbox/home" AUTORUN_HOME="$sandbox/ar-home" \
 # only these users hit it -- --no-binary, an unsupported platform, a policy that
 # forbids wheels.
 uv venv --python 3.13 "$sandbox/sdist-venv"
-uv pip install --python "$sandbox/sdist-venv/bin/python" \
-  --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ \
-  --no-binary autorun-ai "autorun-ai==$release_version"
+UV_NO_CACHE=1 uv pip install --python "$sandbox/sdist-venv/bin/python" \
+  --index-url https://pypi.org/simple/ "autorun-ai @ $sdist_url"
 "$sandbox/sdist-venv/bin/python" -c "import autorun, pdf_extraction"
 
 # What is pending, and whether you may approve it.

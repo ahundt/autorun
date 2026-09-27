@@ -66,6 +66,10 @@ jobs:
       - name: Install uv and Python
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          # The artifact builder guarantees repeatable bytes only within one
+          # toolchain. Pin uv so a later tag run cannot silently use a newer
+          # archive writer than the workflow-dispatch rehearsal.
+          version: '0.12.19'
           python-version: '3.12'
 
       - name: Verify the tag matches the declared version
@@ -82,7 +86,10 @@ jobs:
           echo "autorun $declared matches tag v$tag_version"
 
       - name: Build sdist and wheel
-        run: uv build --package autorun-ai --out-dir dist
+        # This wrapper derives SOURCE_DATE_EPOCH from the commit and normalizes
+        # the sdist. Rehearsal and tag runs at one SHA must build the same bytes
+        # because the TestPyPI digest check below deliberately rejects drift.
+        run: uv run --no-project python scripts/build_release_artifacts.py --out-dir dist
 
       - name: Verify one wheel carries both packages and both entry points
         # The pdf plugin has no pyproject of its own, so nothing else would
@@ -156,6 +163,8 @@ jobs:
       - name: Install uv and Python
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          # Keep the installer semantics fixed with the artifact toolchain.
+          version: '0.12.19'
           python-version: '3.12'
       - name: Install the rehearsed distribution from TestPyPI and run its CLI
         # An accepted upload is a weaker property than an installable wheel, and
@@ -167,34 +176,78 @@ jobs:
         # this job also runs on `workflow_dispatch`, where the ref name is the
         # branch and that expression would ask TestPyPI for `autorun-ai==main`.
         #
-        # TestPyPI is the primary index and PyPI stays available for the rest.
-        # Restricting to TestPyPI alone would be a stronger check, but autorun-ai
-        # has five real runtime dependencies (bashlex, filelock, packaging,
-        # psutil, pyyaml) that only PyPI carries, so it would fail on those
-        # rather than on anything about this wheel. These are the same two index
-        # flags RELEASING.md gives for the manual rehearsal, so the automated
-        # check and the documented command cannot diverge.
+        # Select the candidate by its exact TestPyPI URL and compare TestPyPI's
+        # recorded digest with the file built by this run. A dual-index package
+        # requirement is ambiguous under uv's first-index policy: PyPI already
+        # carries this distribution, so uv can stop there without considering
+        # the candidate on TestPyPI. `unsafe-best-match` would make both indexes
+        # equally trusted, which is broader than this verification needs. A
+        # direct candidate URL plus PyPI for dependencies proves the uploaded
+        # bytes while retaining uv's safe index policy for every dependency.
         #
-        # TestPyPI's simple index trails the upload by seconds, hence the retry.
+        # TestPyPI's metadata API trails the upload by seconds, hence the retry.
         run: |
           set -euo pipefail
           wheel=$(find dist -maxdepth 1 -name '*.whl' -print -quit)
-          test -n "$wheel"
+          sdist=$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)
+          test -n "$wheel" && test -n "$sdist"
+          test "$(find dist -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" = 1
+          test "$(find dist -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" = 1
+          wheel_name=$(basename "$wheel")
+          sdist_name=$(basename "$sdist")
           version=$(basename "$wheel" | cut -d- -f2)
           echo "rehearsing autorun-ai==${version}"
-          export AUTORUN_HOME="${RUNNER_TEMP}/ar-home"
+          metadata="${RUNNER_TEMP}/testpypi-${version}.json"
+          ready=false
           for attempt in 1 2 3 4 5 6; do
-            if uv run --isolated --no-project \
-              --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple/ \
-              --with "autorun-ai==${version}" autorun --version; then
-              exit 0
+            if curl --fail --silent --show-error --location \
+              "https://test.pypi.org/pypi/autorun-ai/${version}/json" \
+              --output "$metadata" && \
+              python3 - "$metadata" "$version" "$wheel_name" "$sdist_name" <<'PY'
+          import json
+          import sys
+
+          path, version, wheel_name, sdist_name = sys.argv[1:]
+          document = json.load(open(path, encoding="utf-8"))
+          assert document["info"]["version"] == version
+          live = [item for item in document["urls"] if not item["yanked"]]
+          assert [item["filename"] for item in live].count(wheel_name) == 1
+          assert [item["filename"] for item in live].count(sdist_name) == 1
+          PY
+            then
+              ready=true
+              break
             fi
-            echo "attempt ${attempt} failed; TestPyPI index may still be catching up"
+            echo "attempt ${attempt} failed; TestPyPI metadata may still be catching up"
             sleep 20
           done
-          echo "::error::autorun-ai ${version} did not install from TestPyPI"
-          exit 1
+          test "$ready" = true
+
+          metadata_values=$(python3 - "$metadata" "$wheel_name" "$sdist_name" <<'PY'
+          import json
+          import sys
+
+          path, wheel_name, sdist_name = sys.argv[1:]
+          items = {item["filename"]: item for item in json.load(open(path, encoding="utf-8"))["urls"]}
+          wheel = items[wheel_name]
+          sdist = items[sdist_name]
+          print(wheel["url"], wheel["digests"]["sha256"], sdist["url"], sdist["digests"]["sha256"], sep="\t")
+          PY
+          )
+          IFS=$'\t' read -r wheel_url wheel_index_sha sdist_url sdist_index_sha <<< "$metadata_values"
+          wheel_sha=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$wheel")
+          sdist_sha=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$sdist")
+          test "$wheel_sha" = "$wheel_index_sha"
+          test "$sdist_sha" = "$sdist_index_sha"
+
+          export AUTORUN_HOME="${RUNNER_TEMP}/ar-home"
+          test "$(uv run --isolated --no-project --index-url https://pypi.org/simple/ \
+            --with "autorun-ai @ ${wheel_url}" autorun --version)" = "autorun ${version}"
+          uv run --isolated --no-project --index-url https://pypi.org/simple/ \
+            --with "autorun-ai[pdf] @ ${wheel_url}" extract-pdfs --list-backends
+          UV_NO_CACHE=1 uv run --isolated --no-project --index-url https://pypi.org/simple/ \
+            --with "autorun-ai @ ${sdist_url}" \
+            python -c "import autorun, pdf_extraction; assert autorun.__version__ == '${version}'"
 
   publish-pypi:
     needs: publish-testpypi

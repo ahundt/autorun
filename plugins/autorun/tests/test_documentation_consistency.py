@@ -1533,7 +1533,7 @@ def test_publishing_jobs_state_their_own_precondition():
 
 
 def test_the_testpypi_rehearsal_installs_the_wheel_it_uploaded():
-    """The rehearsal must prove the wheel installs, not that bytes were accepted.
+    """The rehearsal must install the exact wheel bytes that it uploaded.
 
     Stated as the violation: a `publish-testpypi` job whose only action is an
     upload. TestPyPI accepting a file says nothing about whether the wheel
@@ -1541,10 +1541,13 @@ def test_the_testpypi_rehearsal_installs_the_wheel_it_uploaded():
     the very next job writes to PyPI, where a version is immutable, so a wheel
     problem found afterwards costs a new version rather than a re-upload.
 
-    Both halves are asserted because either alone is satisfiable while the
-    release still publishes unrehearsed bytes: an install step that never runs
-    the CLI proves resolution only, and a CLI invocation that resolves from
-    PyPI would pass even if nothing had been uploaded.
+    A dual-index requirement is not enough. uv's first-index policy may find an
+    older production release and refuse to consider the candidate on TestPyPI;
+    weakening it with ``unsafe-best-match`` makes dependency-confusion policy
+    broader than this check needs. The workflow instead resolves the candidate
+    files from TestPyPI's version JSON, matches their SHA-256 digests to
+    ``dist/``, and installs those direct URLs while resolving dependencies from
+    PyPI.
 
     Learned from ai-session-search, whose rehearsal had the same shape.
     """
@@ -1556,16 +1559,67 @@ def test_the_testpypi_rehearsal_installs_the_wheel_it_uploaded():
     steps = workflow["jobs"]["publish-testpypi"]["steps"]
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
 
-    assert "test.pypi.org/simple" in scripts, (
-        "publish-testpypi never installs from the index it just uploaded to, so "
-        "a green rehearsal proves only that TestPyPI accepted the bytes"
-    )
+    assert "test.pypi.org/pypi/autorun-ai/" in scripts
+    assert 'digests"]["sha256"]' in scripts
+    assert re.search(r"autorun-ai(?:\[pdf\])?\s*@\s*\$\{?wheel_url", scripts)
+    assert re.search(r"autorun-ai\s*@\s*\$\{?sdist_url", scripts)
+    assert "unsafe-best-match" not in scripts
+    assert not (
+        "test.pypi.org/simple" in scripts and "pypi.org/simple" in scripts
+    ), "the rehearsal must not choose the candidate through ambiguous dual indexes"
     assert re.search(r"\bautorun --version\b", scripts), (
         "publish-testpypi installs the wheel but never runs the console script, "
         "so a distribution that resolves and cannot execute still reaches PyPI"
     )
+    assert "import autorun, pdf_extraction" in scripts
     # The publish action itself is not a `run:` step, so its absence here would
     # mean the upload was removed and only the verification remains.
     assert any(
         "pypi-publish" in str(step.get("uses", "")) for step in steps
     ), "publish-testpypi no longer uploads anything"
+
+
+def test_publish_workflow_builds_repeatable_artifacts_with_a_pinned_toolchain():
+    """Rehearsal and tag runs must be capable of producing identical bytes."""
+    import yaml
+
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    steps = workflow["jobs"]["build"]["steps"]
+    setup_uv = next(step for step in steps if "setup-uv" in step.get("uses", ""))
+    pinned_version = setup_uv.get("with", {}).get("version", "")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned_version)
+    setup_versions = {
+        step.get("with", {}).get("version", "")
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", ())
+        if "setup-uv" in step.get("uses", "")
+    }
+    assert setup_versions == {pinned_version}
+
+    build = next(step for step in steps if step.get("name") == "Build sdist and wheel")
+    command = build.get("run", "")
+    assert "scripts/build_release_artifacts.py" in command
+    assert not re.search(r"(?:^|\s)uv build(?:\s|$)", command), (
+        "publish.yml must not bypass SOURCE_DATE_EPOCH and sdist normalization"
+    )
+
+
+def test_release_runbook_uses_digest_verified_testpypi_artifacts():
+    """The manual gates must verify the same exact artifacts as automation."""
+    runbook = (REPO_ROOT / "RELEASING.md").read_text(encoding="utf-8")
+    commands = "\n".join(re.findall(r"```(?:bash)?\n(.*?)```", runbook, re.DOTALL))
+
+    assert "test.pypi.org/pypi/autorun-ai/$release_version/json" in runbook
+    assert "digests.sha256" in runbook
+    assert 'autorun-ai @ $wheel_url' in runbook
+    assert 'autorun-ai[pdf] @ $wheel_url' in runbook
+    assert 'autorun-ai @ $sdist_url' in runbook
+    assert "unsafe-best-match" not in commands
+    assert "test.pypi.org/simple" not in commands, (
+        "TestPyPI candidates must be selected by exact, digest-verified URL; "
+        "a simple-index lookup can select or suppress the wrong release"
+    )
