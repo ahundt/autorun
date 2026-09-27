@@ -66,6 +66,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "task_enforcement_requires_tool_evidence": (
             platform.task_enforcement_requires_tool_evidence
         ),
+        "task_evidence_from_task_calls": platform.task_evidence_from_task_calls,
         "task_tool_switch": (
             None
             if platform.task_tool_switch is None

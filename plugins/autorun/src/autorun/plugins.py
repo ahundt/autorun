@@ -1810,7 +1810,7 @@ def _task_staleness_scope(ctx: EventContext) -> str:
 
 
 def _task_staleness_applies(ctx: EventContext) -> bool:
-    if not task_progress_capability_available(ctx.cli_type, ctx.active_tools):
+    if not task_progress_capability_available(ctx.cli_type, ctx.task_tool_evidence):
         return False
     scope = _task_staleness_scope(ctx)
     return scope == "all" or scope == _task_staleness_agent_kind(ctx)
@@ -1830,14 +1830,14 @@ def _required_task_roles(*, no_tasks: bool) -> "frozenset[str]":
 
 def _required_task_mutation_available(ctx: EventContext) -> bool:
     """Match enforcement to creating new tasks or updating existing ones."""
-    if not task_capability_is_known(ctx.active_tools):
+    if not task_capability_is_known(ctx.task_tool_evidence):
         # Most harnesses preserve legacy enforcement from this cheap check.
         # A platform whose task tool is conditional can require positive
         # evidence here without taking the session lock merely to choose a
         # create-versus-update role that remains unknown either way.
         return task_enforcement_capability_available(
             ctx.cli_type,
-            ctx.active_tools,
+            ctx.task_tool_evidence,
         )
     required_roles = TASK_CREATE_CAPABILITY_ROLES
     if not (ctx.plan_awaiting_planning_tasks or ctx.plan_awaiting_execution_tasks):
@@ -1850,11 +1850,11 @@ def _required_task_mutation_available(ctx: EventContext) -> bool:
             # Unknown task state preserves legacy progress-tool behavior.
             return task_enforcement_capability_available(
                 ctx.cli_type,
-                ctx.active_tools,
+                ctx.task_tool_evidence,
             )
     return task_enforcement_capability_available(
         ctx.cli_type,
-        ctx.active_tools,
+        ctx.task_tool_evidence,
         required_roles,
     )
 
@@ -1930,7 +1930,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
 
     can_create_tasks = task_enforcement_capability_available(
         ctx.cli_type,
-        ctx.active_tools,
+        ctx.task_tool_evidence,
         TASK_CREATE_CAPABILITY_ROLES,
     )
 
@@ -2485,7 +2485,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     required_roles = _required_task_roles(no_tasks=no_tasks)
     if not task_enforcement_capability_available(
         ctx.cli_type,
-        ctx.active_tools,
+        ctx.task_tool_evidence,
         required_roles,
     ):
         _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
@@ -2542,7 +2542,7 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
         return None
     if not task_enforcement_capability_available(
         ctx.cli_type,
-        ctx.active_tools,
+        ctx.task_tool_evidence,
         TASK_CREATE_CAPABILITY_ROLES,
     ):
         _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
@@ -3142,7 +3142,7 @@ def _make_plan_handler(skill_name: str):
                 pass
         can_create_tasks = task_enforcement_capability_available(
             ctx.cli_type,
-            ctx.active_tools,
+            ctx.task_tool_evidence,
             TASK_CREATE_CAPABILITY_ROLES,
         )
         ctx.plan_awaiting_planning_tasks = (

@@ -256,3 +256,63 @@ def test_the_codex_switch_is_installed_but_never_evidence(tmp_path, monkeypatch)
     assert PLATFORMS["codex"].task_tool_switch.proves_tools is False
     assert task_tools_proven_by_settings("codex", None) is None
     assert task_enforcement_capability_available("codex", None) is False
+
+
+# --- evidence from a task call the session made -----------------------------
+
+
+def _post_tool(session_id: str, cli_type: str, tool_name: str, store, agent_id=None):
+    return EventContext(
+        session_id=session_id,
+        event="PostToolUse",
+        prompt="",
+        tool_name=tool_name,
+        tool_input={"subject": "Observed", "description": ""},
+        tool_result="Task #1 created successfully",
+        store=store,
+        cli_type=cli_type,
+        agent_id=agent_id,
+    )
+
+
+def test_a_task_call_proves_the_tools_for_the_rest_of_the_session():
+    """A Claude session on an older model has TaskCreate without any switch.
+
+    Its first successful task call is the evidence: from then on task gates
+    may enforce in that session.
+    """
+    from autorun.plugins import app
+
+    store = ThreadSafeDB()
+    before = _post_tool("observed-claude", "claude", "Read", store)
+    assert before.task_tool_evidence is None, "unknown until a task call"
+
+    app.dispatch(
+        _post_tool("observed-claude", "claude", "TaskCreate", store)
+    )
+    after = _post_tool("observed-claude", "claude", "Bash", store)
+    assert after.task_tool_evidence == registered_task_tools("claude")
+    assert task_enforcement_capability_available("claude", after.task_tool_evidence)
+
+
+def test_a_subagents_task_call_proves_nothing_for_the_parent_or_itself():
+    from autorun.plugins import app
+
+    store = ThreadSafeDB()
+    app.dispatch(
+        _post_tool("observed-child", "claude", "TaskCreate", store, agent_id="agent-1")
+    )
+    assert _post_tool("observed-child", "claude", "Bash", store).task_tool_evidence is None
+    child = _post_tool("observed-child", "claude", "Bash", store, agent_id="agent-1")
+    assert child.task_tool_evidence is None
+
+
+def test_codex_never_learns_from_a_call_plan_mode_could_later_refuse():
+    from autorun.plugins import app
+
+    store = ThreadSafeDB()
+    assert PLATFORMS["codex"].task_evidence_from_task_calls is False
+    app.dispatch(
+        _post_tool("observed-codex", "codex", "update_plan", store)
+    )
+    assert _post_tool("observed-codex", "codex", "Bash", store).task_tool_evidence is None

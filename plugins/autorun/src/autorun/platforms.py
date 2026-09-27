@@ -915,6 +915,11 @@ class Platform:
     # The setting that turns this harness's task tools on, when they are an
     # opt-in. See TaskToolSwitch for both of its consumers.
     task_tool_switch: TaskToolSwitch | None = None
+    # True when a successful call to one of this harness's task tools in a main
+    # session proves the tools exist for the rest of that session (a Claude
+    # session on an older model has them without the switch). False where a
+    # tool that worked can later be refused, as Codex Plan mode does.
+    task_evidence_from_task_calls: bool = False
     # Optional provenance applied by the shared task lifecycle to records from
     # this harness's native task tools. Empty preserves caller metadata.
     task_record_source: str = ""
@@ -1300,6 +1305,7 @@ CLAUDE = register(
         # them. Subagents follow the parent session.
         # https://code.claude.com/docs/en/tools-reference (Task tool availability)
         task_enforcement_requires_tool_evidence=True,
+        task_evidence_from_task_calls=True,
         task_tool_switch=TaskToolSwitch(
             settings_file="settings.json",
             settings_path=("env", "CLAUDE_CODE_ENABLE_TODO_TOOLS"),
@@ -1415,6 +1421,7 @@ GEMINI = register(
         # No setting guarantees either, and hooks do not list tools.
         # https://github.com/google-gemini/gemini-cli/pull/22442
         task_enforcement_requires_tool_evidence=True,
+        task_evidence_from_task_calls=True,
         supports_additional_context_events=frozenset(
             {
                 "SessionStart",
@@ -1576,8 +1583,10 @@ QWEN = register(
         # https://github.com/QwenLM/qwen-code/pull/10645
         task_bulk_tools=GEMINI.task_bulk_tools | {"todo_write"},
         # Evidence is the setting itself, read from Qwen's settings files
-        # (core.task_tools_proven_by_settings); without it, fail open.
+        # (core.task_tools_proven_by_settings), or a task call this session
+        # made; without either, fail open.
         task_enforcement_requires_tool_evidence=True,
+        task_evidence_from_task_calls=True,
         task_tool_switch=TaskToolSwitch(
             settings_file="settings.json",
             settings_path=("tools", "todoWrite", "enabled"),

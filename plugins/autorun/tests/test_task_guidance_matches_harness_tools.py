@@ -347,7 +347,8 @@ class TestClaudeDeferredTaskToolLoading:
             _ctx("load-unconfirmed", "SessionStart", "claude", active_tools=None)
         ))
 
-        assert "not enforcing task tracking" in text
+        assert "not enforcing task tracking yet" in text
+        assert "starts once this session makes a task call" in text
         assert "autorun --install" in text
         assert "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" in text
 

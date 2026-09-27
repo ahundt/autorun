@@ -96,6 +96,7 @@ class TestPlanCommandHandlers:
             cli_type = "claude"
             # An installed Claude session: its task tools are switched on.
             active_tools = task_tool_evidence("claude")
+            task_tool_evidence = active_tools
             permission_mode = "default"
 
         ctx = MockContext()
@@ -285,6 +286,7 @@ class TestPlanCommandHandlers:
             cli_type = "claude"
             # An installed Claude session: its task tools are switched on.
             active_tools = task_tool_evidence("claude")
+            task_tool_evidence = active_tools
             permission_mode = "default"
 
         ctx = MockContext()

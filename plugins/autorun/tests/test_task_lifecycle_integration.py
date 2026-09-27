@@ -52,6 +52,7 @@ def create_mock_context(session_id='test-integration', **kwargs):
     # tools the way a real EventContext would carry them.
     ctx.cli_type = kwargs.get('cli_type', 'claude')
     ctx.active_tools = kwargs.get('active_tools', task_tool_evidence(ctx.cli_type))
+    ctx.task_tool_evidence = ctx.active_tools
 
     # Mock the allow, block, and continue_running methods
     def mock_allow(msg=''):

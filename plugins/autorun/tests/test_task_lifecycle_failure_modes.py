@@ -68,6 +68,7 @@ class TestFailureModes:
         ctx.session_id = session_id
         ctx.cli_type = 'claude'
         ctx.active_tools = task_tool_evidence('claude')
+        ctx.task_tool_evidence = ctx.active_tools
         ctx.plan_active = False  # Don't try to link to plan
         ctx.plan_arguments = ''
 
@@ -116,6 +117,7 @@ class TestFailureModes:
         ctx.session_id = session_id
         ctx.cli_type = 'claude'
         ctx.active_tools = task_tool_evidence('claude')
+        ctx.task_tool_evidence = ctx.active_tools
         ctx.plan_active = False
         ctx.plan_arguments = ''
 
@@ -172,6 +174,7 @@ class TestFailureModes:
             ctx.session_id = session_id
             ctx.cli_type = 'claude'
             ctx.active_tools = task_tool_evidence('claude')
+            ctx.task_tool_evidence = ctx.active_tools
             ctx.tool_name = 'TaskCreate'
             ctx.tool_input = {
                 'subject': f'Test {i}',

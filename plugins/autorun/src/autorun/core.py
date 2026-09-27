@@ -2041,6 +2041,30 @@ class EventContext:
         """Effective model-facing tools, or None when the bridge cannot know."""
         return self._active_tools
 
+    #: Session state recording that a main session called one of its task
+    #: tools successfully (task_lifecycle.track_task_operations).
+    TASK_TOOLS_OBSERVED = "task_tools_observed"
+
+    @property
+    def task_tool_evidence(self) -> "frozenset[str] | None":
+        """What task gates may assume about this session's task tools.
+
+        The one answer every capability check reads. A reported list, or one a
+        harness switch proved, comes first (``active_tools``). Otherwise, where
+        the registry allows it, a task call this main session already made
+        successfully proves the tools: a Claude session on an older model has
+        them without any switch. None means unknown.
+        """
+        if self._active_tools is not None:
+            return self._active_tools
+        from .platforms import platform_for, registered_task_tools
+
+        if self.agent_id or not platform_for(self.cli_type).task_evidence_from_task_calls:
+            return None
+        if self.state_get(self.TASK_TOOLS_OBSERVED, False):
+            return registered_task_tools(self.cli_type)
+        return None
+
     @property
     def agent_transcript_path(self) -> "str | None":
         """Child-agent transcript path when the harness reports one separately."""

@@ -293,13 +293,14 @@ def _unconfirmed_task_tools_notice(ctx: EventContext) -> str:
     from .platforms import platform_for, task_capability_is_known
 
     switch = platform_for(ctx.cli_type).task_tool_switch
-    if switch is None or not switch.env or task_capability_is_known(ctx.active_tools):
+    if switch is None or not switch.env or task_capability_is_known(ctx.task_tool_evidence):
         return ""
     return (
-        " autorun is not enforcing task tracking in this session because it "
-        "cannot confirm the task tools exist: Claude Code 2.1.268 and later "
-        f"offer them to newer models only with `{switch.env}={switch.value}`. If "
-        "the search finds no match, tell the user once, then continue: add "
+        " autorun is not enforcing task tracking yet: it cannot confirm the "
+        "task tools exist, and starts once this session makes a task call. "
+        "Claude Code 2.1.268 and later offer them to newer models only with "
+        f"`{switch.env}={switch.value}`. If the search finds no match, tell the "
+        "user once, then continue: add "
         f'`"{switch.env}": {json.dumps(switch.value)}` to the `env` object of '
         "Claude Code's settings.json (`autorun --install` does this), then "
         "restart Claude Code."
@@ -2196,7 +2197,7 @@ class TaskLifecycle:
 
         if not task_enforcement_capability_available(
             ctx.cli_type,
-            ctx.active_tools,
+            ctx.task_tool_evidence,
             TASK_UPDATE_CAPABILITY_ROLES,
         ):
             task_progress_state_set(ctx, "task_staleness_enforce_next", False)
@@ -2337,7 +2338,7 @@ class TaskLifecycle:
             return None
         if not task_enforcement_capability_available(
             ctx.cli_type,
-            ctx.active_tools,
+            ctx.task_tool_evidence,
             TASK_UPDATE_CAPABILITY_ROLES,
         ):
             # Skip only this Task-specific gate. Later Stop handlers may still
@@ -4052,6 +4053,15 @@ def register_hooks(app_instance) -> None:
         role = task_tool_role(_task_cli_hint(ctx), ctx.tool_name)
         if role is None:
             return None
+        if (
+            not ctx.agent_id
+            and platform_for(ctx.cli_type).task_evidence_from_task_calls
+            and not ctx.state_get(EventContext.TASK_TOOLS_OBSERVED, False)
+        ):
+            # PostToolUse follows a call that ran, so the task tools exist in
+            # this main session; task gates may enforce from now on
+            # (EventContext.task_tool_evidence).
+            ctx.state_set(EventContext.TASK_TOOLS_OBSERVED, True)
 
         try:
             # Instantiate class with auto-detected session ID
