@@ -432,7 +432,12 @@ def fail_open_for_cli(message: str, cli_type: str) -> NoReturn:
     if cli_type == "claude":
         fail_open(message)
     if cli_type in {"gemini", "qwen"}:
-        print(json.dumps({"continue": True}))
+        # systemMessage reaches the user here too. Without it a timeout reads
+        # exactly like a hook that ran and had nothing to say.
+        response = {"continue": True}
+        if message:
+            response["systemMessage"] = f"[autorun] {message}"
+        print(json.dumps(response))
     else:
         # Codex, Antigravity, ForgeCode, and OpenCode accept an empty native
         # no-op.  Claude common fields are invalid on Antigravity's root-only

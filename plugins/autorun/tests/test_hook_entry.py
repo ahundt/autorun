@@ -445,6 +445,8 @@ class TestHookEntryExecutionPriority:
         if cli_type == "claude":
             assert response["continue"] is True
         else:
+            # Gemini-family replies also say why, in their user-visible field.
+            response.pop("systemMessage", None)
             assert response == expected
 
     def test_hook_timeout_is_platform_specific(self):
@@ -456,6 +458,25 @@ class TestHookEntryExecutionPriority:
         for cli_type, timeout in CONFIG["hook_wrapper_timeouts_seconds"].items():
             assert hook_entry.hook_timeout_for_cli(cli_type) == timeout
         assert hook_entry.hook_timeout_for_cli("unknown") == hook_entry.hook_timeout_for_cli("claude")
+
+    @pytest.mark.parametrize("cli_type", ["claude", "gemini", "qwen"])
+    def test_a_lifecycle_timeout_tells_the_user_it_timed_out(self, capsys, cli_type):
+        """A timed-out Stop lets the agent go; the user must see why.
+
+        Gemini and Qwen used to get a bare {"continue": true}, the same reply
+        as a hook that ran and had nothing to say, so neither a user nor a
+        failing test could tell that autorun never decided.
+        """
+        hook_entry = load_hook_entry_module()
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.fail_after_cli_timeout(cli_type, "Stop")
+
+        assert exc.value.code == 0
+        response = json.loads(capsys.readouterr().out)
+        assert response["continue"] is True
+        timeout = f"{hook_entry.hook_timeout_for_cli(cli_type):g}s"
+        assert response["systemMessage"] == f"[autorun] autorun CLI timed out after {timeout}"
 
     def test_hook_timeout_hot_path_does_not_import_autorun(self, monkeypatch):
         """Short-lived wrappers read the contract mirror without package startup."""
@@ -1005,8 +1026,8 @@ class TestTryCliRobustness:
         ("cli_type", "expected"),
         [
             ("claude", {"continue": True}),
-            ("gemini", {"continue": True}),
-            ("qwen", {"continue": True}),
+            ("gemini", {"continue": True, "systemMessage": "[autorun] Cannot locate plugin source"}),
+            ("qwen", {"continue": True, "systemMessage": "[autorun] Cannot locate plugin source"}),
             ("codex", {}),
             ("antigravity", {}),
         ],
