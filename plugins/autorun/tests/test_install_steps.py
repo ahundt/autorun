@@ -1592,7 +1592,11 @@ def test_switches_follow_the_registry_and_need_the_harness_home(sandbox, walk):
     assert entry.path == base / "settings.json"
     assert entry.key == ("env", "CLAUDE_CODE_ENABLE_TODO_TOOLS") and entry.value == "1"
     assert entry.record.parent == autorun_state_dir(sandbox) / "installer"
-    assert steps.switches_for(PLATFORMS["codex"], ctx) == (), "Codex declares no JSON switch"
+    codex_base = discovery.config_dir(PLATFORMS["codex"], home=sandbox)
+    codex_base.mkdir(parents=True, exist_ok=True)
+    [codex_entry] = steps.switches_for(PLATFORMS["codex"], ctx)
+    assert codex_entry.path == codex_base / "config.toml"
+    assert codex_entry.key == ("tools", "update_plan", "enabled") and codex_entry.value is True
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
@@ -1670,3 +1674,41 @@ def test_claude_uninstall_removes_the_marketplace_only_with_every_plugin(
         assert calls.index(marketplace) > max(uninstalls), "after every plugin"
     else:
         assert marketplace not in calls, calls
+
+
+def test_a_toml_switch_keeps_the_users_comments_and_round_trips_exactly(tmp_path):
+    """Codex settings are TOML; a user's comments and layout must survive."""
+    entry = steps.Switch(
+        tmp_path / "codex" / "config.toml",
+        ("tools", "update_plan", "enabled"),
+        True,
+        tmp_path / "state" / "installer" / "switches.json",
+    )
+    entry.path.parent.mkdir()
+    original = '# my codex config\nmodel = "gpt-5"  # keep\n\n[tools]\nweb_search = true\n'
+    entry.path.write_text(original, encoding="utf-8")
+
+    assert steps.apply_switches([entry], Mode.PREVIEW) == [f"would set {entry.describe()}"]
+    [note] = steps.apply_switches([entry], Mode.INSTALL)
+    assert note.startswith(f"set {entry.describe()}"), note
+    written = entry.path.read_text(encoding="utf-8")
+    assert written.startswith(original), "everything the user wrote is kept as written"
+    assert "[tools.update_plan]\nenabled = true" in written
+    assert steps.apply_switches([entry], Mode.PREVIEW) == [f"current {entry.describe()}"]
+
+    steps.apply_switches([entry], Mode.UNINSTALL)
+    assert entry.path.read_text(encoding="utf-8") == original
+
+
+def test_an_invalid_toml_file_is_left_alone_with_a_note(tmp_path):
+    entry = steps.Switch(
+        tmp_path / "codex" / "config.toml",
+        ("tools", "update_plan", "enabled"),
+        True,
+        tmp_path / "state" / "installer" / "switches.json",
+    )
+    entry.path.parent.mkdir()
+    entry.path.write_text("model = [\n", encoding="utf-8")
+    [note] = steps.apply_switches([entry], Mode.INSTALL)
+    assert note.startswith(f"skipped {entry.describe()}") and "set it to true yourself" in note
+    assert entry.path.read_text(encoding="utf-8") == "model = [\n"

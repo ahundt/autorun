@@ -76,7 +76,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, Mapping
+from typing import Callable, Iterable, Iterator, Mapping, MutableMapping
 
 from filelock import FileLock
 
@@ -1648,6 +1648,46 @@ def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[di
         if _canonical(document) != before:
             # ensure_ascii=False: a user's non-ASCII text stays as they wrote it.
             atomic_write(path, json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+
+
+@contextmanager
+def toml_document(path: Path) -> Iterator[MutableMapping]:
+    """:func:`json_document` for TOML: same lock, atomic write, and no-op rule.
+
+    tomlkit edits the parsed document in place and writes back the user's
+    comments, ordering and spacing untouched; only what the caller changed
+    differs. Trailing blank lines a removal leaves are trimmed, so setting and
+    then removing a key returns the file to what it was.
+    """
+    import tomlkit
+
+    with FileLock(str(path.parent / INSTALL_LOCK_NAME)):
+        document = read_toml_document(path)
+        before = tomlkit.dumps(document)
+        yield document
+        after = tomlkit.dumps(document)
+        if after != before:
+            atomic_write(path, after.rstrip("\n") + "\n" if after.strip() else "")
+
+
+def read_toml_document(path: Path) -> MutableMapping:
+    """The parsed TOML document at ``path``, empty when absent; raises if invalid."""
+    import tomlkit
+
+    return tomlkit.parse(path.read_text(encoding="utf-8") if path.is_file() else "")
+
+
+@contextmanager
+def settings_document(path: Path) -> Iterator[MutableMapping]:
+    """A harness settings file for editing, by its format: TOML or JSON."""
+    manager = toml_document(path) if path.suffix == ".toml" else json_document(path)
+    with manager as document:
+        yield document
+
+
+def read_settings(path: Path) -> Mapping:
+    """A harness settings file's contents, by its format; empty when absent."""
+    return read_toml_document(path) if path.suffix == ".toml" else read_json_object(path)
 
 
 def json_document_unchanged(

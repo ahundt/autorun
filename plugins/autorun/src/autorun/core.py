@@ -436,7 +436,7 @@ def task_tools_proven_by_settings(
 
     platform = platform_for(cli_type)
     switch = platform.task_tool_switch
-    if switch is None or switch.env:
+    if switch is None or switch.env or not switch.proves_tools:
         return None
     from .installer.discovery import config_dir
 

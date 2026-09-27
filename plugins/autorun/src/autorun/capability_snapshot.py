@@ -76,6 +76,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
                 "source": platform.task_tool_switch.source,
                 "env": platform.task_tool_switch.env,
                 "env_off": list(platform.task_tool_switch.env_off),
+                "proves_tools": platform.task_tool_switch.proves_tools,
             }
         ),
         "task_record_source": platform.task_record_source,

@@ -245,3 +245,14 @@ def test_an_env_switch_harness_never_reads_settings_files(tmp_path, monkeypatch)
     # Claude's evidence is the variable the session process has, which the
     # hook forwards; the file may not be what that process loaded.
     assert task_tools_proven_by_settings("claude", None) is None
+
+
+def test_the_codex_switch_is_installed_but_never_evidence(tmp_path, monkeypatch):
+    """With update_plan enabled, Codex Plan mode still rejects it; hooks cannot tell."""
+    from autorun.core import task_tools_proven_by_settings
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    (tmp_path / "config.toml").write_text("[tools.update_plan]\nenabled = true\n", encoding="utf-8")
+    assert PLATFORMS["codex"].task_tool_switch.proves_tools is False
+    assert task_tools_proven_by_settings("codex", None) is None
+    assert task_enforcement_capability_available("codex", None) is False

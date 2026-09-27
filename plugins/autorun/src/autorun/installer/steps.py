@@ -41,12 +41,12 @@ import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Iterator, Mapping, Sequence
+from typing import Iterable, Iterator, Mapping, MutableMapping, Sequence
 
 from ..platforms import ExtensionSkills, PluginPackageSkills
 from . import codex, discovery, extension, memory, settings, skills
 from .discovery import redirected_home
-from .fs import autorun_state_dir, json_document, read_json_object
+from .fs import autorun_state_dir, json_document, read_settings, settings_document
 from .traversal import Context, Intent, Kind, Mode, Step
 
 __all__ = [
@@ -424,19 +424,22 @@ def _lookup(document: Mapping, key: Sequence[str]) -> object:
     return node
 
 
-def _assign(document: dict, key: Sequence[str], value: object) -> None:
+def _assign(document: MutableMapping, key: Sequence[str], value: object) -> None:
     node = document
     for part in key[:-1]:
         child = node.get(part)
-        if not isinstance(child, dict):
+        if not isinstance(child, MutableMapping):
             if child is not None:
-                raise ValueError(f"{'.'.join(key)}: {part} is not a JSON object")
-            child = node[part] = {}
+                raise ValueError(f"{'.'.join(key)}: {part} is not a table or object")
+            # Read it back: tomlkit stores a copy of what is assigned (a Table),
+            # so writing into the local {} would never reach the document.
+            node[part] = {}
+            child = node[part]
         node = child
     node[key[-1]] = value
 
 
-def _remove(document: dict, key: Sequence[str]) -> None:
+def _remove(document: MutableMapping, key: Sequence[str]) -> None:
     """Delete ``key`` and any parent it leaves empty; the user's keys stay."""
     parents = [document]
     for part in key[:-1]:
@@ -475,7 +478,7 @@ def apply_switches(entries: Iterable[Switch], mode: Mode) -> list[str]:
 
 def _apply_switch(entry: Switch, mode: Mode) -> str:
     if mode is Mode.PREVIEW:
-        found = _lookup(read_json_object(entry.path), entry.key)
+        found = _lookup(read_settings(entry.path), entry.key)
         if found is _ABSENT:
             return f"would set {entry.describe()}"
         if found == entry.value:
@@ -488,7 +491,7 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
             recorded = record.pop(entry.record_key, _ABSENT)
             if recorded is _ABSENT or not entry.path.is_file():
                 return ""
-            with json_document(entry.path) as document:
+            with settings_document(entry.path) as document:
                 if _lookup(document, entry.key) != recorded:
                     return f"kept user-changed {entry.describe()}"
                 _remove(document, entry.key)
@@ -497,7 +500,7 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
     # The settings file is the outer block, so the record, closed first, is
     # written first: a failure between the two leaves a record whose value is
     # absent (uninstall then reports it kept), never a setting nothing records.
-    with json_document(entry.path) as document, json_document(entry.record) as record:
+    with settings_document(entry.path) as document, json_document(entry.record) as record:
         if _lookup(document, entry.key) is not _ABSENT:
             return "" if entry.record_key in record else _kept_note(entry)
         _assign(document, entry.key, entry.value)

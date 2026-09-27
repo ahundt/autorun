@@ -767,6 +767,8 @@ _LIVE_INSTALL_GLOBS = (
     # The installer writes Qwen's task-tool switch here (platforms.TaskToolSwitch).
     "~/.qwen/settings.json",
     "~/.codex/hooks.json",
+    # The installer writes Codex's update_plan switch here.
+    "~/.codex/config.toml",
     "~/.agents/plugins/marketplace.json",
 )
 

@@ -73,6 +73,10 @@ class TaskToolSwitch:
     source: str
     env: str = ""
     env_off: tuple[str, ...] = ()
+    #: False when the setting makes the tool exist but not always callable,
+    #: so it may be installed yet never counts as evidence (Codex Plan mode
+    #: rejects update_plan with the setting on).
+    proves_tools: bool = True
 
     def forwarded_env(self) -> tuple[str, ...]:
         """Every variable a hook process must forward for this switch."""
@@ -1624,6 +1628,17 @@ CODEX = register(
         native_shell_read_commands=frozenset({"cat", "head", "tail"}),
         task_management_style="plan_checklist",
         task_plan_tools=frozenset({"update_plan"}),
+        # Codex 0.152.0+ registers update_plan only with this setting
+        # (openai/codex#41744). The installer turns it on so checklists work,
+        # but Plan mode still rejects the tool and hooks cannot see the mode,
+        # so it is never evidence and task-only gates stay off on Codex.
+        task_tool_switch=TaskToolSwitch(
+            settings_file="config.toml",
+            settings_path=("tools", "update_plan", "enabled"),
+            value=True,
+            source="https://github.com/openai/codex/pull/41744",
+            proves_tools=False,
+        ),
         # Codex command-hook stdin exposes permission policy, not the current
         # collaboration mode or effective tool list. update_plan is absent on
         # some desktop surfaces and rejected in Plan mode, so assuming it is

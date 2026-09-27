@@ -56,7 +56,8 @@ def test_capability_snapshot_records_multi_harness_task_surfaces():
     assert platforms["claude"]["task_tool_switch"]["env"] == "CLAUDE_CODE_ENABLE_TODO_TOOLS"
     assert platforms["qwen"]["task_tool_switch"]["settings_path"] == ["tools", "todoWrite", "enabled"]
     assert "todo_write" in platforms["qwen"]["task_bulk_tools"]
-    assert platforms["codex"]["task_tool_switch"] is None
+    assert platforms["codex"]["task_tool_switch"]["settings_file"] == "config.toml"
+    assert platforms["codex"]["task_tool_switch"]["proves_tools"] is False
     assert platforms["gemini"]["task_management_style"] == "bulk_todos"
     assert platforms["qwen"]["task_management_style"] == "bulk_todos"
     assert platforms["opencode"]["task_management_style"] == "bulk_todos"

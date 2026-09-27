@@ -45,6 +45,11 @@ dependencies = [
     # lazily, only when a flag actually holds a range, so the ordinary
     # always/never/auto path pays no import on the hook's dispatch budget.
     "packaging>=23.0",
+    # Codex keeps its settings in ~/.codex/config.toml. The installer turns on
+    # its task tool there (platforms.TaskToolSwitch), and a round-trip editor
+    # is what keeps the user's comments and layout; the stdlib only reads TOML.
+    # Imported lazily by the installer; no hook imports it.
+    "tomlkit>=0.12",
 ]
 # Runtime policy: Python is the only runtime autorun installs. JavaScript runs
 # only inside OpenCode and Pi, whose own in-process extension loaders provide
