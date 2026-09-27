@@ -393,6 +393,25 @@ def perform(
     )
 
 
+def _listed_plugins(root: Path) -> set[str]:
+    """Every plugin name the marketplace manifest at ``root`` lists.
+
+    Unreadable or absent means the set cannot be known; the caller then treats
+    it as more than the uninstall covers and leaves the marketplace alone.
+    """
+    try:
+        manifest = json.loads(
+            (root / discovery.MARKETPLACE_MANIFEST).read_text(encoding="utf-8")
+        )
+        names = {
+            str(entry["name"]) for entry in manifest.get("plugins", ())
+            if isinstance(entry, Mapping) and entry.get("name")
+        }
+    except (OSError, ValueError, AttributeError, KeyError):
+        return {"\0unknown"}
+    return names or {"\0unknown"}
+
+
 def _registrations(
     harnesses: Sequence[object],
     plugins: Mapping[str, Path],
@@ -445,6 +464,7 @@ def _registrations(
                 for plugin, directory in plugins.items()
                 if isinstance(staged, Mapping) and plugin in staged
             }
+        withdrawn_before = len(done)
         for plugin in registration_plugins:
             extension_target = (
                 extension.extension_dir(ctx, platform, plugin)
@@ -682,6 +702,29 @@ def _registrations(
                             )
                         ),
                     )
+        # What `marketplace add` registered belongs to every plugin it lists, so
+        # it goes only when all of them do, and after their own removal.
+        # Only where this harness had something of ours to withdraw: a
+        # marketplace the user added by hand, with nothing of autorun's under
+        # it, stays theirs.
+        if (
+            removing
+            and len(done) > withdrawn_before
+            and _listed_plugins(root) <= set(plugins)
+        ):
+            entry = (
+                custom_entry
+                if isinstance(custom_entry, registration.Registration)
+                else registration.REGISTRATIONS.get(registration_name)
+            )
+            if entry is not None:
+                done.extend(registration.withdraw_marketplace(
+                    entry,
+                    {"market": registration_market},
+                    run=run,
+                    available=available,
+                    label=name,
+                ))
         # Companions are separate products. Installing one when requested does
         # not authorize removing it as a side effect of uninstalling autorun.
         wanted = [] if removing else _companions_wanted(ctx)

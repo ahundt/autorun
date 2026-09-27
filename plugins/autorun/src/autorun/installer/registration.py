@@ -86,6 +86,11 @@ class Registration:
     #: A forced extension uninstall can leave the harness registered but empty.
     #: Retry one failed install without repeating the destructive uninstall.
     retry_after_force: bool = False
+    #: Removal that belongs to the marketplace rather than to one plugin (the
+    #: counterpart of an ``install`` step such as ``marketplace add``). Run once,
+    #: after every plugin's ``remove``, and only when the uninstall covers every
+    #: plugin the marketplace lists; a partial uninstall still needs it.
+    remove_after_all: tuple[tuple[str, ...], ...] = ()
 
 
 def with_binary(entry: Registration, binary: str) -> Registration:
@@ -96,6 +101,7 @@ def with_binary(entry: Registration, binary: str) -> Registration:
     return Registration(
         install=commands(entry.install),
         remove=commands(entry.remove),
+        remove_after_all=commands(entry.remove_after_all),
         refresh=commands(entry.refresh),
         fallback_install=commands(entry.fallback_install),
         verify=commands(entry.verify),
@@ -139,6 +145,9 @@ REGISTRATIONS: Mapping[str, Registration] = {
             ("claude", "plugin", "enable", "{name}@{market}"),
         ),
         remove=(("claude", "plugin", "uninstall", "{name}@{market}"),),
+        # `marketplace add` above left an entry in Claude's settings
+        # (extraKnownMarketplaces) that uninstalling the plugins alone kept.
+        remove_after_all=(("claude", "plugin", "marketplace", "remove", "{market}"),),
     ),
     "codex": Registration(
         binary="codex",
@@ -513,6 +522,30 @@ def withdraw_entry(
         return ()
     return _sequence(
         entry.remove,
+        values,
+        run,
+        label or entry.binary,
+        stop=False,
+        absent=True,
+        environment=entry.environment,
+    )
+
+
+def withdraw_marketplace(
+    entry: Registration,
+    values: Mapping[str, str],
+    *,
+    run: Runner = _spawn,
+    available: Iterable[str] | None = None,
+    label: str = "",
+) -> tuple[Outcome, ...]:
+    """Run a registration's once-per-marketplace removal; absent is success."""
+    if not entry.remove_after_all or (
+        available is not None and entry.binary not in available
+    ):
+        return ()
+    return _sequence(
+        entry.remove_after_all,
         values,
         run,
         label or entry.binary,

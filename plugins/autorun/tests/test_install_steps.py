@@ -1624,3 +1624,49 @@ def test_a_symlinked_settings_file_is_written_through_and_keeps_its_mode(tmp_pat
     steps.apply_switches([entry], Mode.UNINSTALL)
     assert entry.path.is_symlink()
     assert json.loads(managed.read_text(encoding="utf-8")) == {"theme": "dark", "note": "café"}
+
+
+@pytest.mark.parametrize(
+    ("plugins", "removes_marketplace"),
+    [(("ar", "pdf-extractor"), True), (("ar",), False)],
+)
+def test_claude_uninstall_removes_the_marketplace_only_with_every_plugin(
+    sandbox, plugins, removes_marketplace
+):
+    """`marketplace add` left an entry in Claude's settings that uninstall kept.
+
+    It belongs to every plugin the marketplace lists, so it goes after all of
+    them and never on a partial uninstall.
+    """
+    import subprocess
+
+    from autorun.installer.orchestrate import install, uninstall
+
+    calls = []
+
+    def record(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    common = dict(
+        marketplace_root=REPO,
+        settings={"skill_placement": {"": "auto"}, "conductor": False},
+        home=sandbox,
+        harnesses=(PLATFORMS["claude"],),
+        run_command=record,
+        available=("claude",),
+        state_dir=sandbox / ".state",
+    )
+    (sandbox / ".claude").mkdir(exist_ok=True)
+    install(plugins=("ar", "pdf-extractor"), **common)
+    calls.clear()
+    uninstall(plugins=plugins, **common)
+
+    marketplace = ("claude", "plugin", "marketplace", "remove", "autorun")
+    uninstalls = [i for i, call in enumerate(calls) if call[:3] == ("claude", "plugin", "uninstall")]
+    assert uninstalls, calls
+    if removes_marketplace:
+        assert calls.count(marketplace) == 1, calls
+        assert calls.index(marketplace) > max(uninstalls), "after every plugin"
+    else:
+        assert marketplace not in calls, calls
