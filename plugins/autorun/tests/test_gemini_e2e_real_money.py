@@ -99,6 +99,15 @@ def gemini_extension_check():
 
 @paid_gemini_e2e
 @pytest.mark.e2e
+
+def _assert_the_hook_decided(response: dict) -> None:
+    """A timed-out hook also answers {"continue": true}; say so instead of passing."""
+    message = str(response.get("systemMessage", ""))
+    assert "timed out" not in message, (
+        f"the hook ran out of its time budget and failed open: {message!r}"
+    )
+
+
 class TestGeminiE2ERealMoney:
     """Real Gemini CLI E2E tests that make actual API calls.
 
@@ -192,18 +201,9 @@ class TestGeminiHookEntryPoint:
         env["GEMINI_SESSION_ID"] = "test-e2e-session"
         env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-test"
 
-        # Get hook script path (installed extension or source fallback)
-        candidates = [
-            Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
-            Path(__file__).parent.parent / "hooks/hook_entry.py",
-        ]
-        hook_script = None
-        for candidate in candidates:
-            if candidate.exists():
-                hook_script = candidate
-                break
-        if hook_script is None:
-            pytest.skip("Hook script not found. Searched:\n" + "\n".join(f"  - {p}" for p in candidates))
+        # This checkout's hook, never an installed extension: a test of the
+        # source must not pass or fail on whatever is installed on the machine.
+        hook_script = Path(__file__).parent.parent / "hooks/hook_entry.py"
 
         # Set plugin root for source fallback
         plugin_root = str(Path(__file__).parent.parent)
@@ -212,6 +212,7 @@ class TestGeminiHookEntryPoint:
         # Run hook with uv run (matches production hook commands)
         result = subprocess.run(
             ["uv", "run", "--project", plugin_root, "python", str(hook_script)],
+            input="",
             capture_output=True,
             text=True,
             timeout=15,
@@ -226,6 +227,7 @@ class TestGeminiHookEntryPoint:
             response = json.loads(result.stdout)
             assert response.get("continue") is True, \
                 "Hook should return continue=true for SessionStart"
+            _assert_the_hook_decided(response)
         except json.JSONDecodeError as e:
             pytest.fail(f"Invalid JSON response from hook: {e}\nOutput: {result.stdout}")
 
@@ -235,18 +237,9 @@ class TestGeminiHookEntryPoint:
         env["GEMINI_SESSION_ID"] = "test-e2e-session"
         env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-test"
 
-        # Get hook script path (installed extension or source fallback)
-        candidates = [
-            Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
-            Path(__file__).parent.parent / "hooks/hook_entry.py",
-        ]
-        hook_script = None
-        for candidate in candidates:
-            if candidate.exists():
-                hook_script = candidate
-                break
-        if hook_script is None:
-            pytest.skip("Hook script not found. Searched:\n" + "\n".join(f"  - {p}" for p in candidates))
+        # This checkout's hook, never an installed extension: a test of the
+        # source must not pass or fail on whatever is installed on the machine.
+        hook_script = Path(__file__).parent.parent / "hooks/hook_entry.py"
 
         # Set plugin root for source fallback
         plugin_root = str(Path(__file__).parent.parent)
@@ -275,6 +268,7 @@ class TestGeminiHookEntryPoint:
             response = json.loads(result.stdout)
             assert response.get("continue") is not None, \
                 "Hook should return a continue field"
+            _assert_the_hook_decided(response)
         except json.JSONDecodeError as e:
             pytest.fail(f"Invalid JSON response from hook: {e}\nOutput: {result.stdout}")
 
