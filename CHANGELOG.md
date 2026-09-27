@@ -19,15 +19,16 @@ it. 1.0.0rc2 reached TestPyPI but was never released, so its changes ship here.
 ### Upgrading from 1.0.0rc1
 
 `autorun --install` republishes the hooks and extensions each harness loads,
-restarts the autorun daemon, and turns on Claude Code's and Qwen Code's task
-tools through two settings, unless you set them yourself (see Changed).
+restarts the autorun daemon, and turns on the task tools of Claude Code, Qwen
+Code and Codex through one setting each, unless you set them yourself (see
+Changed).
 `autorun --status` then lists each setting as `current`, or as kept when the
 value is yours. Upgrading the package without it leaves every harness on
 1.0.0rc1. A Claude Code marketplace-only install never runs
 `autorun --install`: add `"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"` to the `env`
 object of `~/.claude/settings.json` yourself, creating `env` if it is missing.
-If your Qwen settings file has comments, the install leaves it alone and its
-output names the setting to add. Task state, configuration, and `/ar` commands
+If your Qwen or Codex settings file cannot be parsed, the install leaves it
+alone and its output names the setting to add. Task state, configuration, and `/ar` commands
 carry over unchanged.
 
 ### Changed
@@ -37,22 +38,26 @@ carry over unchanged.
    offer TaskCreate and the other task tools only to older models without it. A
    value you already set is kept, and `autorun --uninstall` removes only the one
    autorun added. To keep the tools off, set it to `"0"`; deleting the line does
-   not opt out, because the next install adds it back. In a session without it,
-   autorun does not enforce task tracking and says so when the session starts.
+   not opt out, because the next install adds it back. A session without it
+   gets task gates once it has made a task call, which a session on an older
+   model does; until then autorun does not enforce task tracking and says so
+   when the session starts.
 2. Qwen Code: `autorun --install` sets `tools.todoWrite.enabled` to `true` in
    `~/.qwen/settings.json` the same way, because Qwen Code 0.24.0 and later
    register `todo_write` only with it, and autorun now counts `todo_write` as
    task progress. autorun enforces Qwen task tracking only while that setting
-   is `true`; set it to `false` to keep the tool off. A settings file with comments is left untouched, and the install
+   is `true` or the session has made a task call; set it to `false` to keep the
+   tool off. A settings file with comments is left untouched, and the install
    output names the setting to add.
 3. Gemini CLI 0.36.0 and later give the default model no `write_todos`, so
-   autorun no longer requires it there.
-4. On Codex, autorun no longer asks for or requires `update_plan` calls. Codex
-   0.152.0 and later leave `update_plan` off unless
-   `tools.update_plan.enabled = true`, Plan mode rejects it, and Codex hooks
-   cannot tell either, so a required call could leave every following tool call
-   denied. autorun still records the checklists an agent keeps, and stage
-   markers and destructive-command guards still apply.
+   autorun requires it only once the session has called it.
+4. Codex: `autorun --install` sets `[tools.update_plan] enabled = true` in
+   `~/.codex/config.toml`, keeping your comments and layout, because Codex
+   0.152.0 and later leave `update_plan` off without it. autorun no longer asks
+   for or requires `update_plan` calls: Plan mode rejects the tool even when it
+   is on, and Codex hooks cannot tell, so a required call could leave every
+   following tool call denied. autorun still records the checklists an agent
+   keeps, and stage markers and destructive-command guards still apply.
 5. The plan skills tell the agent to use task tools only when the session has
    them. They previously said Pi's task tools were always present.
 
@@ -79,7 +84,10 @@ carry over unchanged.
 7. With `AUTORUN_HOME` set, the hook debug log and the backups
    `autorun --install --force` makes now go there. They went to `~/.autorun`,
    where recovery from an interrupted install did not look for the backups.
-8. The Pi, Prime Agent and OpenCode extensions no longer exit when the autorun
+8. `autorun --uninstall` removes the `autorun` marketplace entry it added to
+   Claude Code's settings when you uninstall every autorun plugin. It stayed
+   behind before; a partial uninstall still keeps it for the other plugins.
+9. The Pi, Prime Agent and OpenCode extensions no longer exit when the autorun
    daemon is unreachable and the hook entry finishes without reading its input,
    as it does for an allowed tool. Writing to its closed input could end the
    extension process right after it had allowed the call.

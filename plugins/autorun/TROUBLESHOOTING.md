@@ -192,8 +192,9 @@ same deferred-tool bundle can also disappear during a session
 `autorun --install` sets the variable for you, in the `env` object of
 `~/.claude/settings.json`, unless you already set it to something. Start a new
 Claude Code session afterwards: settings are read at startup. Without the
-variable, autorun does not enforce task tracking in that session (it cannot tell
-whether the tools exist), and its SessionStart notice says so.
+variable, autorun enforces task tracking only after the session has made a task
+call (an older model has the tools anyway); until then its SessionStart notice
+says tracking is not enforced yet.
 
 If the tools are still missing, try one in-session load, not a retry loop:
 
@@ -236,9 +237,9 @@ Where autorun cannot tell, it does not block; it tracks what the agent records.
 
 | Harness | Tool | Off by default since | What turns it on |
 |---|---|---|---|
-| Qwen Code | `todo_write` | 0.24.0 | `"tools": {"todoWrite": {"enabled": true}}` in `~/.qwen/settings.json` (a project's `.qwen/settings.json` overrides it); `autorun --install` sets it unless you did. autorun reads the setting and enforces only while it is `true`. If the file has comments, autorun leaves it alone, cannot read the setting, and does not enforce; its install output names the setting to add. |
-| Codex | `update_plan` | 0.152.0 | `[tools.update_plan]` `enabled = true` in `~/.codex/config.toml`. Plan mode still rejects it, and hooks cannot see either, so autorun records Codex checklists but never requires them. |
-| Gemini CLI | `write_todos` | 0.36.0 (default model) | Only an explicit Gemini 2.x model gets it; no setting guarantees it, so autorun does not require it. |
+| Qwen Code | `todo_write` | 0.24.0 | `"tools": {"todoWrite": {"enabled": true}}` in `~/.qwen/settings.json` (a project's `.qwen/settings.json` overrides it); `autorun --install` sets it unless you did. autorun enforces while the setting is `true` or once the session has called `todo_write`. If the file has comments, autorun leaves it alone and its install output names the setting to add. |
+| Codex | `update_plan` | 0.152.0 | `[tools.update_plan]` `enabled = true` in `~/.codex/config.toml`; `autorun --install` sets it unless you did, keeping your comments. Plan mode still rejects the tool and hooks cannot see the mode, so autorun records Codex checklists but never requires them. |
+| Gemini CLI | `write_todos` | 0.36.0 (default model) | Only an explicit Gemini 2.x model gets it; no setting guarantees it, so autorun requires it only once the session has called it. |
 
 Pi and Prime Agent report their tools to autorun directly; OpenCode's primary
 agent always has `todowrite`.
