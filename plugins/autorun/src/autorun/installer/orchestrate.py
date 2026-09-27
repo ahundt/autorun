@@ -340,6 +340,13 @@ def perform(
                 ),
                 mode,
             ))
+            # Never raises: a settings file it cannot read becomes a note.
+            notes.extend(steps.apply_switches(
+                steps.switches_for(
+                    harness, staged, removing=mode is Mode.UNINSTALL
+                ),
+                mode,
+            ))
             if mode is not Mode.UNINSTALL:
                 try:
                     notes.extend(steps.apply_hooks(

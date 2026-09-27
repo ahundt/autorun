@@ -44,6 +44,7 @@ from typing import Iterable, Iterator, Mapping, Sequence
 from ..platforms import ExtensionSkills, PluginPackageSkills
 from . import codex, discovery, extension, memory, settings, skills
 from .discovery import redirected_home
+from .fs import autorun_state_dir, json_document, read_json_object
 from .traversal import Context, Intent, Kind, Mode, Step
 
 __all__ = [
@@ -52,8 +53,9 @@ __all__ = [
     "extension_materialization_intents", "extension_materialization_targets",
     "opencode_shim_step", "pi_extension_step", "stage_opencode_shim",
     "stage_pi_extension", "stage_toml_commands",
-    "Region", "Hooks", "Marketplace", "regions_for", "hooks_for",
-    "marketplaces_for", "apply_regions", "apply_hooks", "apply_marketplaces",
+    "Region", "Hooks", "Marketplace", "Switch", "regions_for", "hooks_for",
+    "marketplaces_for", "switches_for", "apply_regions", "apply_hooks",
+    "apply_marketplaces", "apply_switches",
     "prepared",
     "COMMANDS_SUBDIR", "TEMPLATE_SUBDIR",
 ]
@@ -351,6 +353,154 @@ class Marketplace:
 
     def describe(self) -> str:
         return f"{self.path} [{self.entry.get('name', '?')}]"
+
+
+@dataclass(frozen=True, slots=True)
+class Switch:
+    """One harness setting autorun turns on, in a JSON file the user owns.
+
+    ``record`` is autorun's own list of the settings it made, kept under its
+    state directory rather than in the user's file, so uninstall removes only a
+    value autorun set and the user has not changed since.
+    """
+
+    path: Path
+    key: tuple[str, ...]
+    value: object
+    record: Path
+
+    def describe(self) -> str:
+        return f"{self.path} [{'.'.join(self.key)}]"
+
+    @property
+    def record_key(self) -> str:
+        return f"{self.path}::{'.'.join(self.key)}"
+
+
+def switches_for(
+    harness: object, ctx: Context, *, removing: bool = False
+) -> tuple[Switch, ...]:
+    """The task-tool switch this harness declares (platforms.TaskToolSwitch).
+
+    A custom harness inherits its flavor's switch with its own config
+    directory. A harness whose config directory does not exist gets none: the
+    installer does not create a harness's home to hold one setting.
+    """
+    if "ar" not in _plugins(ctx):
+        return ()
+    platform = getattr(harness, "platform", harness)
+    switch = getattr(platform, "task_tool_switch", None)
+    base = discovery.config_dir(platform, home=ctx.home)
+    if switch is None or base is None or not base.is_dir():
+        return ()
+    return (
+        Switch(
+            base / switch.settings_file,
+            tuple(switch.settings_path),
+            switch.value,
+            autorun_state_dir(ctx.home) / "installer" / "switches.json",
+        ),
+    )
+
+
+_ABSENT = object()
+
+
+def _lookup(document: Mapping, key: Sequence[str]) -> object:
+    node: object = document
+    for part in key:
+        if not isinstance(node, Mapping) or part not in node:
+            return _ABSENT
+        node = node[part]
+    return node
+
+
+def _assign(document: dict, key: Sequence[str], value: object) -> None:
+    node = document
+    for part in key[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            if child is not None:
+                raise ValueError(f"{'.'.join(key)}: {part} is not a JSON object")
+            child = node[part] = {}
+        node = child
+    node[key[-1]] = value
+
+
+def _remove(document: dict, key: Sequence[str]) -> None:
+    """Delete ``key`` and any parent it leaves empty; the user's keys stay."""
+    parents = [document]
+    for part in key[:-1]:
+        parents.append(parents[-1][part])
+    del parents[-1][key[-1]]
+    for depth in range(len(key) - 1, 0, -1):
+        if not parents[depth]:
+            del parents[depth - 1][key[depth - 1]]
+
+
+def apply_switches(entries: Iterable[Switch], mode: Mode) -> list[str]:
+    """Set, keep, or withdraw each switch, or say what would happen.
+
+    Install sets a missing value and records it; a value the user already set,
+    to anything, is theirs and stays. Uninstall removes the value only if the
+    record says autorun set it and it still holds what autorun wrote.
+
+    A switch never fails an install. Gemini-family settings files may carry
+    comments, which strict JSON rejects; such a file is left untouched and the
+    note names the setting for the user to add. Task gates on that harness then
+    work as they would without autorun's help.
+    """
+    notes: list[str] = []
+    for entry in entries:
+        try:
+            note = _apply_switch(entry, mode)
+        except (OSError, ValueError) as error:
+            note = (
+                f"skipped {entry.describe()}: {error}; set it to "
+                f"{entry.value!r} yourself to give task gates their evidence"
+            )
+        if note:
+            notes.append(note)
+    return notes
+
+
+def _apply_switch(entry: Switch, mode: Mode) -> str:
+    if mode is Mode.PREVIEW:
+        found = _lookup(read_json_object(entry.path), entry.key)
+        if found is _ABSENT:
+            return f"would set {entry.describe()}"
+        if found == entry.value:
+            return f"current {entry.describe()}"
+        return _kept_note(entry)
+    if mode is Mode.UNINSTALL:
+        if not entry.record.is_file():
+            return ""
+        with json_document(entry.record) as record:
+            recorded = record.pop(entry.record_key, _ABSENT)
+            if recorded is _ABSENT or not entry.path.is_file():
+                return ""
+            with json_document(entry.path) as document:
+                if _lookup(document, entry.key) != recorded:
+                    return f"kept user-changed {entry.describe()}"
+                _remove(document, entry.key)
+                return f"removed {entry.describe()}"
+    entry.record.parent.mkdir(parents=True, exist_ok=True)
+    with json_document(entry.record) as record, json_document(entry.path) as document:
+        if _lookup(document, entry.key) is not _ABSENT:
+            return "" if entry.record_key in record else _kept_note(entry)
+        _assign(document, entry.key, entry.value)
+        record[entry.record_key] = entry.value
+        return (
+            f"set {entry.describe()}: the harness offers its task tools to "
+            "sessions started from now on"
+        )
+
+
+def _kept_note(entry: Switch) -> str:
+    return (
+        f"kept your setting {entry.describe()}; autorun enforces task "
+        f"tracking there only while it is {entry.value!r}"
+    )
 
 
 def regions_for(

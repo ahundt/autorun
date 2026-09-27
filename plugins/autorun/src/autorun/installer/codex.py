@@ -30,7 +30,11 @@ import shutil
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from .fs import dereference_links as fs_dereference_links, json_document
+from .fs import (
+    dereference_links as fs_dereference_links,
+    json_document,
+    json_document_unchanged,
+)
 
 __all__ = [
     "ALLOWED_TOP_LEVEL",
@@ -223,13 +227,12 @@ def hooks_current(
     """
     if not path.is_file():
         return False
-    document = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(document, dict):
-        raise ValueError(f"{path} must contain a JSON object")
-    _validate_hooks_document(path, document)
-    before = json.dumps(document, sort_keys=True)
-    _merge_into(document, ours, description=description, mark=mark)
-    return json.dumps(document, sort_keys=True) == before
+
+    def merge(document: dict) -> None:
+        _validate_hooks_document(path, document)
+        _merge_into(document, ours, description=description, mark=mark)
+
+    return json_document_unchanged(path, merge)
 
 
 def _merge_into(

@@ -1483,3 +1483,113 @@ def test_only_codex_merges_into_a_user_owned_hooks_file(sandbox):
     ]
 
     assert merging == ["codex"], merging
+
+
+# --- task-tool switches (platforms.TaskToolSwitch) ---------------------------
+
+
+def _switch(tmp_path, key=("env", "CLAUDE_CODE_ENABLE_TODO_TOOLS"), value="1"):
+    return steps.Switch(
+        tmp_path / "harness" / "settings.json",
+        key,
+        value,
+        tmp_path / "state" / "installer" / "switches.json",
+    )
+
+
+def test_a_switch_is_set_when_absent_and_removed_only_by_its_own_uninstall(tmp_path):
+    import json
+
+    entry = _switch(tmp_path)
+    entry.path.parent.mkdir()
+    entry.path.write_text(json.dumps({"theme": "dark", "env": {"MINE": "x"}}), encoding="utf-8")
+
+    assert steps.apply_switches([entry], Mode.PREVIEW) == [f"would set {entry.describe()}"]
+    [note] = steps.apply_switches([entry], Mode.INSTALL)
+    assert note.startswith(f"set {entry.describe()}: ") and "sessions started from now on" in note
+    settings = json.loads(entry.path.read_text())
+    assert settings == {"theme": "dark", "env": {"MINE": "x", "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}
+    assert steps.apply_switches([entry], Mode.PREVIEW) == [f"current {entry.describe()}"]
+    assert steps.apply_switches([entry], Mode.INSTALL) == [], "a repeat install is silent"
+
+    assert steps.apply_switches([entry], Mode.UNINSTALL) == [f"removed {entry.describe()}"]
+    assert json.loads(entry.path.read_text()) == {"theme": "dark", "env": {"MINE": "x"}}
+
+
+def test_a_switch_creates_the_settings_file_and_prunes_only_what_it_added(tmp_path):
+    import json
+
+    entry = _switch(tmp_path, ("tools", "todoWrite", "enabled"), True)
+    entry.path.parent.mkdir()
+
+    steps.apply_switches([entry], Mode.INSTALL)
+    assert json.loads(entry.path.read_text()) == {"tools": {"todoWrite": {"enabled": True}}}
+    steps.apply_switches([entry], Mode.UNINSTALL)
+    assert json.loads(entry.path.read_text()) == {}, "the parents autorun created are gone"
+
+
+def test_a_value_the_user_set_is_theirs_on_install_and_uninstall(tmp_path):
+    """Setting the switch to anything, including 0, is how a user opts out."""
+    import json
+
+    entry = _switch(tmp_path)
+    entry.path.parent.mkdir()
+    entry.path.write_text(json.dumps({"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"}}), encoding="utf-8")
+
+    kept = (
+        f"kept your setting {entry.describe()}; autorun enforces task "
+        "tracking there only while it is '1'"
+    )
+    assert steps.apply_switches([entry], Mode.PREVIEW) == [kept]
+    assert steps.apply_switches([entry], Mode.INSTALL) == [kept]
+    assert steps.apply_switches([entry], Mode.UNINSTALL) == []
+    assert json.loads(entry.path.read_text()) == {"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"}}
+
+
+def test_a_switch_the_user_changed_after_install_survives_uninstall(tmp_path):
+    import json
+
+    entry = _switch(tmp_path)
+    entry.path.parent.mkdir()
+    steps.apply_switches([entry], Mode.INSTALL)
+    entry.path.write_text(json.dumps({"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"}}), encoding="utf-8")
+
+    assert steps.apply_switches([entry], Mode.INSTALL) == [], "never overwrites the user's change"
+    assert steps.apply_switches([entry], Mode.UNINSTALL) == [f"kept user-changed {entry.describe()}"]
+    assert json.loads(entry.path.read_text()) == {"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"}}
+
+
+def test_an_unreadable_settings_file_is_left_alone_and_the_note_says_what_to_set(tmp_path):
+    """Gemini-family settings may carry comments; strict JSON rejects them.
+
+    The install must go on, the file must be untouched, and the user must learn
+    which setting to add by hand.
+    """
+    entry = _switch(tmp_path, ("tools", "todoWrite", "enabled"), True)
+    entry.path.parent.mkdir()
+    commented = '{\n  // my settings\n  "theme": "dark"\n}\n'
+    entry.path.write_text(commented, encoding="utf-8")
+
+    for mode in (Mode.PREVIEW, Mode.INSTALL):
+        [note] = steps.apply_switches([entry], mode)
+        assert note.startswith(f"skipped {entry.describe()}"), note
+        assert "set it to True yourself" in note, note
+    assert entry.path.read_text(encoding="utf-8") == commented
+
+
+def test_switches_follow_the_registry_and_need_the_harness_home(sandbox, walk):
+    from autorun.platforms import PLATFORMS
+
+    ctx = walk[1] if isinstance(walk, tuple) else walk
+    claude = PLATFORMS["claude"]
+    base = discovery.config_dir(claude, home=sandbox)
+    if base.exists():
+        import shutil
+        shutil.rmtree(base)
+    assert steps.switches_for(claude, ctx) == (), "no harness home, no setting"
+    base.mkdir(parents=True)
+    [entry] = steps.switches_for(claude, ctx)
+    assert entry.path == base / "settings.json"
+    assert entry.key == ("env", "CLAUDE_CODE_ENABLE_TODO_TOOLS") and entry.value == "1"
+    assert entry.record.parent == autorun_state_dir(sandbox) / "installer"
+    assert steps.switches_for(PLATFORMS["codex"], ctx) == (), "Codex declares no JSON switch"

@@ -266,6 +266,31 @@ def task_tool_recovery_sentence(cli_type: str | None) -> str:
 # --- BUG #80305/#80401 WORKAROUND END --- DELETE WHEN FIXED ---
 
 
+def _unconfirmed_task_tools_notice(ctx: EventContext) -> str:
+    """What a session whose task tools autorun cannot confirm needs to know.
+
+    Task gates stand down without evidence, so the recovery text they carry
+    never reaches this session. Say it here instead, once per fresh context:
+    that autorun is not enforcing task tracking, and the one setting that makes
+    the tools present. The setting comes from the registry's switch, the one
+    ``autorun --install`` writes.
+    """
+    from .platforms import platform_for, task_capability_is_known
+
+    switch = platform_for(ctx.cli_type).task_tool_switch
+    if switch is None or not switch.env or task_capability_is_known(ctx.active_tools):
+        return ""
+    return (
+        " autorun is not enforcing task tracking in this session: it cannot "
+        f"confirm the task tools exist, because `{switch.env}` is not "
+        f"`{switch.value}`, and Claude Code 2.1.268 and later offer them only "
+        "to older models without it. If the search finds no match, tell the user "
+        "once, then continue: running `autorun --install` sets "
+        f"`{switch.env}={switch.value}` in ~/.claude/settings.json, and the "
+        "tools appear after Claude Code restarts."
+    )
+
+
 def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled: bool = False) -> str:
     """Return stop/resume actions in the platform's native task vocabulary."""
     sos = format_command_for_cli("/ar:sos", cli_type)
@@ -4108,7 +4133,7 @@ def register_hooks(app_instance) -> None:
                 "`select:TaskCreate,TaskUpdate,TaskList,TaskGet` to load Claude "
                 "Code's deferred task tools. If it returns no match, do not "
                 "loop; follow the unavailable-tool recovery in autorun's task "
-                "guidance.",
+                "guidance." + _unconfirmed_task_tools_notice(ctx),
                 channel="ai",
             )
         return None

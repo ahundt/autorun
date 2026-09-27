@@ -1642,16 +1642,41 @@ def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[di
     install does not churn mtimes the harness watches.
     """
     with FileLock(str(path.parent / INSTALL_LOCK_NAME)):
-        if path.is_file():
-            document = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(document, dict):
-                raise ValueError(f"{path} must contain a JSON object")
-        else:
-            document = default()
-        before = json.dumps(document, sort_keys=True)
+        document = read_json_object(path, default)
+        before = _canonical(document)
         yield document
-        if json.dumps(document, sort_keys=True) != before:
+        if _canonical(document) != before:
             atomic_write(path, json.dumps(document, indent=2) + "\n")
+
+
+def json_document_unchanged(
+    path: Path, mutate: Callable[[dict], object], default: Callable[[], dict] = dict
+) -> bool:
+    """Whether :func:`json_document` would write nothing after ``mutate``.
+
+    Reads only, so ``--status`` and a dry run can say "current" with the same
+    comparison an install uses to decide whether to write. A missing file is
+    compared from ``default``, as an install would start from it. Raises what
+    reading raises.
+    """
+    document = read_json_object(path, default)
+    before = _canonical(document)
+    mutate(document)
+    return _canonical(document) == before
+
+
+def read_json_object(path: Path, default: Callable[[], dict] = dict) -> dict:
+    """The JSON object at ``path``, ``default()`` when absent; raises if unreadable."""
+    if not path.is_file():
+        return default()
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return document
+
+
+def _canonical(document: dict) -> str:
+    return json.dumps(document, sort_keys=True)
 
 
 #: The copy side of ``IGNORED_GLOBS``. Never widen this list alone: copying a

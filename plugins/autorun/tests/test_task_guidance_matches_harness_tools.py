@@ -67,7 +67,7 @@ def cfg(tmp_path):
 
 
 def _ctx(session_id: str, event: str, cli_type: str = "claude", source: str = "startup",
-         tool_result: str = "") -> EventContext:
+         tool_result: str = "", active_tools=...) -> EventContext:
     ctx = EventContext(
         session_id=session_id,
         event=event,
@@ -82,7 +82,8 @@ def _ctx(session_id: str, event: str, cli_type: str = "claude", source: str = "s
         # Codex command hooks cannot report this inventory in production; tests
         # that exercise Codex guidance rather than the unknown-capability path
         # model a future authoritative receipt explicitly.
-        active_tools=task_tool_evidence(cli_type),
+        # ``...``: a session that has its harness's task tools.
+        active_tools=task_tool_evidence(cli_type) if active_tools is ... else active_tools,
     )
     ctx.autorun_active = False
     ctx.autorun_stage = EventContext.STAGE_INACTIVE
@@ -331,6 +332,31 @@ class TestClaudeDeferredTaskToolLoading:
 
         assert "ToolSearch" in text
         assert "select:TaskCreate,TaskUpdate,TaskList,TaskGet" in text
+
+    def test_a_session_without_evidence_is_told_tracking_is_off_and_how_to_fix_it(
+        self, isolated_session
+    ):
+        """Gates stand down without evidence, so their recovery text never shows.
+
+        The SessionStart notice is then the only place this session learns why
+        tasks are not enforced and the one setting that brings the tools back.
+        """
+        from autorun import plugins
+
+        text = str(plugins.app.dispatch(
+            _ctx("load-unconfirmed", "SessionStart", "claude", active_tools=None)
+        ))
+
+        assert "not enforcing task tracking" in text
+        assert "autorun --install" in text
+        assert "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" in text
+
+    def test_a_session_with_evidence_gets_no_tracking_off_notice(self, isolated_session):
+        from autorun import plugins
+
+        text = str(plugins.app.dispatch(_ctx("load-confirmed", "SessionStart", "claude")))
+        assert "ToolSearch" in text
+        assert "not enforcing task tracking" not in text
 
     def test_deferred_tool_instruction_is_once_per_fresh_context(
         self, isolated_session
