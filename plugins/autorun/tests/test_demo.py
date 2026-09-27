@@ -111,13 +111,20 @@ if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
 
 try:
-    from e2e_support import requires_real_money
+    from e2e_support import private_daemon_env, requires_real_money
 except ImportError:  # standalone recording use, where `autorun` may not import
     # Without the shared gate there is no way to read the opt-in, so the paid
     # tests stay off. Skipping costs a demo run nothing; guessing could cost money.
     requires_real_money = pytest.mark.skip(
         reason="e2e_support unavailable; paid Claude tests stay off"
     )
+    _standalone_home: list = []
+
+    def private_daemon_env(name: str) -> dict:
+        """A private daemon home for a standalone demo run."""
+        if not _standalone_home:
+            _standalone_home.append(tempfile.mkdtemp(prefix=f"{name}_"))
+        return dict(os.environ, AUTORUN_HOME=_standalone_home[0])
 
 # Import tmux detection functions (graceful fallback for environments without autorun)
 try:
@@ -362,41 +369,9 @@ def run_hook(event: str, payload: dict, plugin_root: Path = None,
     return result.returncode, parsed, stderr
 
 
-#: One AUTORUN_HOME for this module, separate from the session-wide one.
-_DEMO_HOME: list = []
-
-
 def _isolated_daemon_env() -> dict:
-    """Environment whose daemon cannot be one another test file left behind.
-
-    The suite shares a single AUTORUN_HOME, so every test file shares one
-    daemon socket, port file, lock and flock. test_daemon_restart_safety.py
-    runs stub daemons that deliberately take the flock and fail, and they never
-    publish a port. A stub that outlives its test leaves this module's client
-    reading a held flock -- "a daemon is running, wait" -- while connect() gets
-    FileNotFoundError for the port file that stub never wrote. The client then
-    declines to spawn on every attempt and reports "no daemon was spawned by
-    this client", which is what these tests failed with on Windows while
-    passing everywhere else.
-
-    A private home gives this module its own endpoint, so what it exercises is
-    autorun's cold start rather than another file's leftovers.
-    """
-    if not _DEMO_HOME:
-        # Inside this worker's runtime root (/tmp/ar_test_*, set by
-        # conftest.py), for two reasons. The root is short, and the POSIX
-        # socket path lives under it (sun_path is 104 bytes on macOS; a long
-        # temp path overflows and reads as a hook timeout). And it is what
-        # makes cleanup reach this daemon: pytest_sessionfinish stops every
-        # daemon whose AUTORUN_HOME is under that root, then deletes the root.
-        # A home in the system temp area, as this once was, fell outside both,
-        # so each run left a daemon running with its parent gone.
-        _DEMO_HOME.append(
-            tempfile.mkdtemp(
-                prefix="demo_", dir=os.environ.get("AUTORUN_TEST_RUNTIME_DIR")
-            )
-        )
-    return dict(os.environ, AUTORUN_HOME=_DEMO_HOME[0])
+    """This module's private daemon home (e2e_support.private_daemon_env)."""
+    return private_daemon_env("demo")
 
 
 def _daemon_log_tail(limit: int = 2000) -> str:

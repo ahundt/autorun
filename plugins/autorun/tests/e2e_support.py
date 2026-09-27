@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -149,6 +150,39 @@ def autorun_extension_listed(output: str) -> bool:
 def model_override(env_name: str, default: str) -> str:
     """Resolve a paid-test model with an explicit low-cost default."""
     return os.environ.get(env_name, default).strip() or default
+
+
+#: One private AUTORUN_HOME per caller name, made on first use.
+_PRIVATE_DAEMON_HOMES: dict[str, str] = {}
+
+
+def private_daemon_env(name: str) -> dict[str, str]:
+    """Environment whose daemon cannot be one another test file left behind.
+
+    The suite shares a single AUTORUN_HOME, so every test file shares one
+    daemon socket, port file, lock and flock. test_daemon_restart_safety.py
+    runs stub daemons that deliberately take the flock and fail, and they never
+    publish a port. A stub that outlives its test leaves a later client reading
+    a held flock -- "a daemon is running, wait" -- while connect() gets
+    FileNotFoundError for the port file that stub never wrote. The client then
+    declines to spawn on every attempt and reports "no daemon was spawned by
+    this client": test_demo.py failed that way on Windows, and so did the
+    Gemini hook tests once they stopped accepting a timed-out reply.
+
+    A private home gives the caller its own endpoint, so what it exercises is
+    autorun's cold start rather than another file's leftovers. It lives inside
+    this worker's runtime root (conftest.py) for two reasons: the root is
+    short, and the POSIX socket path lives under it (sun_path is 104 bytes on
+    macOS; a long temp path overflows and reads as a hook timeout); and
+    pytest_sessionfinish stops every daemon whose AUTORUN_HOME is under that
+    root, then deletes it. A home in the system temp area fell outside both,
+    so each run left a daemon running with its parent gone.
+    """
+    if name not in _PRIVATE_DAEMON_HOMES:
+        _PRIVATE_DAEMON_HOMES[name] = tempfile.mkdtemp(
+            prefix=f"{name}_", dir=os.environ.get("AUTORUN_TEST_RUNTIME_DIR")
+        )
+    return dict(os.environ, AUTORUN_HOME=_PRIVATE_DAEMON_HOMES[name])
 
 
 def isolated_hook_env(

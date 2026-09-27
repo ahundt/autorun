@@ -20,6 +20,7 @@ import pytest
 from e2e_support import (
     RETIRED_GEMINI_BACKEND_REASON,
     autorun_extension_listed,
+    private_daemon_env,
     real_money_enabled,
     requires_real_money,
     retired_gemini_backend_enabled,
@@ -196,7 +197,8 @@ class TestGeminiHookEntryPoint:
     def test_hook_sessionstart_event(self):
         """Test SessionStart hook event (NO COST - direct Python call)."""
         # Set up Gemini environment
-        env = os.environ.copy()
+        # Its own daemon home: the shared one may hold another test's stub.
+        env = private_daemon_env("gemini_hook")
         env["GEMINI_SESSION_ID"] = "test-e2e-session"
         env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-test"
 
@@ -232,7 +234,8 @@ class TestGeminiHookEntryPoint:
 
     def test_hook_beforeagent_event(self):
         """Test BeforeAgent hook event (NO COST - direct Python call)."""
-        env = os.environ.copy()
+        # Its own daemon home: the shared one may hold another test's stub.
+        env = private_daemon_env("gemini_hook")
         env["GEMINI_SESSION_ID"] = "test-e2e-session"
         env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-test"
 
