@@ -20,6 +20,7 @@ from autorun.config import CONFIG
 from autorun import task_lifecycle as tl
 from autorun import plugins as plg
 from autorun.core import EventContext, ThreadSafeDB
+from task_tool_evidence import task_tool_evidence
 
 
 # ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -94,6 +95,7 @@ def _ctx_for_session(
         tool_result=tool_result,
         session_transcript=session_transcript,
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     return ctx
 
@@ -444,6 +446,7 @@ def test_multi_session_isolation(tmp_path, monkeypatch):
     ctx_a = EventContext(
         session_id=sid_a, event="Stop", prompt="", tool_name="",
         tool_input={}, tool_result="", session_transcript=[], store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     mgr_a.handle_stop(ctx_a)
 
@@ -567,6 +570,7 @@ def test_task_ignore_subcommand_uses_task_lifecycle_state(tmp_path, monkeypatch)
         prompt="/ar:task ignore 72 user confirmed stale",
         store=ThreadSafeDB(),
         cli_type="claude",
+        active_tools=task_tool_evidence("claude"),
     )
 
     result = plg.app.dispatch(ctx)

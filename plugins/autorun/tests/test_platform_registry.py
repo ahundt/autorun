@@ -26,6 +26,7 @@ from autorun.platforms import (
     Platform,
     SkillRoute,
     SessionIdentityResolutionError,
+    TaskToolSwitch,
     register,
     resolve_standalone_session_identity,
     standalone_session_help,
@@ -562,7 +563,7 @@ def test_platform_fields_are_immutable_primitives():
     p = PLATFORMS["claude"]
     allowed = (
         str, int, bool, float, tuple, frozenset, type(None), dict,
-        HookProtocol, SkillRoute,
+        HookProtocol, SkillRoute, TaskToolSwitch,
     )
     for field in dataclasses.fields(p):
         value = getattr(p, field.name)
@@ -670,10 +671,14 @@ def test_codex_requires_effective_tool_evidence_before_task_only_enforcement():
     assert task_enforcement_capability_available(
         "codex", frozenset({"update_plan"}), TASK_PROGRESS_CAPABILITY_ROLES
     ) is True
-    # Codex's command-hook inventory gap is not a reason to change another
-    # harness's established unknown-capability behavior.
+    # Claude Code 2.1.268+ gives newer models no task tools unless a switch is
+    # on, so it needs evidence too; a harness whose tools are always there
+    # keeps the established unknown-capability behavior.
     assert task_enforcement_capability_available(
         "claude", None, TASK_PROGRESS_CAPABILITY_ROLES
+    ) is False
+    assert task_enforcement_capability_available(
+        "opencode", None, TASK_PROGRESS_CAPABILITY_ROLES
     ) is True
 
 

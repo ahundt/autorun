@@ -163,6 +163,13 @@ def find_plugin_root() -> Path:
     )
 
 
+#: What `autorun --install` puts in ~/.claude/settings.json "env", which Claude
+#: Code passes to every hook process. hooks/hook_entry.py forwards it, so these
+#: gate tests exercise that whole path; without it, current Claude models have
+#: no task tools and the task gates stand down.
+_INSTALLED_SWITCH = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+
+
 def run_hook(
     hook_script: Path,
     plugin_root: Path,
@@ -1194,6 +1201,7 @@ class TestClaudeHookEntryPoint:
         """
         env = os.environ.copy()
         env["AUTORUN_USE_DAEMON"] = "0"
+        env.update(_INSTALLED_SWITCH)
         return env
 
     def _daemon_env(self):
@@ -1207,6 +1215,7 @@ class TestClaudeHookEntryPoint:
         """
         env = os.environ.copy()
         env["AUTORUN_USE_DAEMON"] = "1"
+        env.update(_INSTALLED_SWITCH)
         return env
 
     def _run_isolated(self, hook_resources, payload, timeout=15, *, stateful=False):

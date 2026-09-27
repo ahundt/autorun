@@ -32,6 +32,7 @@ from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 from autorun.session_manager import SessionStateManager, session_state
 from autorun import session_manager as _sm_module
 from autorun.session_manager import _reset_for_testing
+from task_tool_evidence import task_tool_evidence
 
 
 # ─────────────────────────────── fixtures ────────────────────────────────────
@@ -67,6 +68,7 @@ def _stop_ctx(sid, event="Stop", cli_type="claude"):
         session_id=sid, event=event, prompt="", tool_name="",
         tool_input={}, tool_result="", session_transcript=[],
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     ctx.autorun_active = False
     ctx.autorun_stage = EventContext.STAGE_INACTIVE
@@ -80,6 +82,7 @@ def _ss_ctx(sid, cli_type="claude"):
         session_id=sid, event="SessionStart", prompt="", tool_name="",
         tool_input={}, tool_result="", session_transcript=[],
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     ctx.autorun_active = False
     ctx.autorun_stage = EventContext.STAGE_INACTIVE

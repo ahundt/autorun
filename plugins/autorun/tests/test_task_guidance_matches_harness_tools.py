@@ -37,6 +37,7 @@ import pytest
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / "src"))
 
+from task_tool_evidence import task_tool_evidence
 from autorun.core import EventContext, ThreadSafeDB
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 from autorun.session_manager import SessionStateManager
@@ -81,7 +82,7 @@ def _ctx(session_id: str, event: str, cli_type: str = "claude", source: str = "s
         # Codex command hooks cannot report this inventory in production; tests
         # that exercise Codex guidance rather than the unknown-capability path
         # model a future authoritative receipt explicitly.
-        active_tools=(frozenset({"update_plan"}) if cli_type == "codex" else None),
+        active_tools=task_tool_evidence(cli_type),
     )
     ctx.autorun_active = False
     ctx.autorun_stage = EventContext.STAGE_INACTIVE

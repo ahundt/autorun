@@ -46,6 +46,38 @@ def _process_home() -> Path:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskToolSwitch:
+    """The documented setting that makes a harness offer its native task tools.
+
+    Harnesses have been turning their task tools into opt-ins: Claude Code
+    offers them only to older models since 2.1.268 unless
+    ``CLAUDE_CODE_ENABLE_TODO_TOOLS=1``; Qwen Code registers ``todo_write`` only
+    with ``tools.todoWrite.enabled`` since 0.24.0. A gate that demands a tool
+    the session was never given can deny every later call, so the switch is
+    data here and two consumers read it:
+
+    - the installer sets ``settings_path`` to ``value`` in the JSON file
+      ``settings_file`` under the harness's config directory, only when the
+      user has not set it, and removes only a value it recorded setting;
+    - when ``env`` names a variable the harness passes to hook processes,
+      ``hooks/hook_entry.py`` forwards it, and a truthy value is evidence the
+      task tools exist. Any ``env_off`` variable set false withdraws that
+      evidence: it swaps the tools for ones this registry does not list.
+    """
+
+    settings_file: str
+    settings_path: tuple[str, ...]
+    value: object
+    source: str
+    env: str = ""
+    env_off: tuple[str, ...] = ()
+
+    def forwarded_env(self) -> tuple[str, ...]:
+        """Every variable a hook process must forward for this switch."""
+        return tuple(name for name in (self.env, *self.env_off) if name)
+
+
+@dataclass(frozen=True, slots=True)
 class SkillRoute:
     """Where one harness loads skills from when autorun does not use the
     shared ``~/.agents/skills`` root.
@@ -874,6 +906,9 @@ class Platform:
     # unknown then fails open for task-only gates while unrelated autorun gates
     # remain active. Voluntary observed task calls are still tracked.
     task_enforcement_requires_tool_evidence: bool = False
+    # The setting that turns this harness's task tools on, when they are an
+    # opt-in. See TaskToolSwitch for both of its consumers.
+    task_tool_switch: TaskToolSwitch | None = None
     # Optional provenance applied by the shared task lifecycle to records from
     # this harness's native task tools. Empty preserves caller metadata.
     task_record_source: str = ""
@@ -1251,6 +1286,23 @@ CLAUDE = register(
         # TaskUpdate declares addBlockedBy and addBlocks.
         task_dependency_syntax="{task_update}({task_id_param}=N, addBlockedBy=[M])",
         task_review_tools=frozenset({"TaskList", "TaskGet"}),
+        # Claude Code 2.1.268+ offers the task tools only to Claude 3.x, Opus
+        # 4.0-4.7, Sonnet 4.0-4.6 and Haiku 4.5 unless the switch below is on
+        # (2.1.233 began with Opus 4.8, Sonnet 5 and Fable 5), and no hook input
+        # lists the session's tools. Without the switch the tools may be
+        # missing, so task-only gates wait for evidence instead of demanding
+        # them. Subagents follow the parent session.
+        # https://code.claude.com/docs/en/tools-reference (Task tool availability)
+        task_enforcement_requires_tool_evidence=True,
+        task_tool_switch=TaskToolSwitch(
+            settings_file="settings.json",
+            settings_path=("env", "CLAUDE_CODE_ENABLE_TODO_TOOLS"),
+            value="1",
+            source="https://code.claude.com/docs/en/env-vars",
+            env="CLAUDE_CODE_ENABLE_TODO_TOOLS",
+            # =0 selects the legacy TodoWrite engine instead of the Task tools.
+            env_off=("CLAUDE_CODE_ENABLE_TASKS",),
+        ),
         # Verified against the live tool: TaskUpdate rejects anything else with
         # InputValidationError ('expected one of "pending"|"in_progress"|
         # "completed" ... expected "deleted"'). Notably absent: "delegated",
@@ -1351,6 +1403,12 @@ GEMINI = register(
             }
         ),
         task_bulk_tools=frozenset({"write_todos"}),
+        # Gemini CLI 0.36.0+ offers write_todos only when the model is an
+        # explicit Gemini 2.x, and the default model alias `auto` is not; the
+        # tracker_* tools sit behind experimental.taskTracker (default off).
+        # No setting guarantees either, and hooks do not list tools.
+        # https://github.com/google-gemini/gemini-cli/pull/22442
+        task_enforcement_requires_tool_evidence=True,
         supports_additional_context_events=frozenset(
             {
                 "SessionStart",
@@ -1505,7 +1563,18 @@ QWEN = register(
         task_create_tools=GEMINI.task_create_tools,
         task_update_tools=GEMINI.task_update_tools,
         task_review_tools=GEMINI.task_review_tools,
-        task_bulk_tools=GEMINI.task_bulk_tools,
+        # Qwen's own checklist tool is todo_write (shown as TodoList); the
+        # task_* tools need experimental.agentTeam. Since 0.24.0 todo_write is
+        # registered only with tools.todoWrite.enabled, which the installer
+        # sets. Qwen's hooks cannot report it, so enforcement relies on that.
+        # https://github.com/QwenLM/qwen-code/pull/10645
+        task_bulk_tools=GEMINI.task_bulk_tools | {"todo_write"},
+        task_tool_switch=TaskToolSwitch(
+            settings_file="settings.json",
+            settings_path=("tools", "todoWrite", "enabled"),
+            value=True,
+            source="https://github.com/QwenLM/qwen-code/pull/10645",
+        ),
         supports_additional_context_events=GEMINI.supports_additional_context_events,
     )
 )
@@ -2112,6 +2181,55 @@ def task_enforcement_capability_available(
         cli_type,
         active_tools,
         required_roles,
+    )
+
+
+_SWITCH_ON = frozenset({"1", "true", "yes", "on"})
+_SWITCH_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def task_tools_proven_by_switch(
+    cli_type: str | None, harness_env: "Mapping[str, str] | None"
+) -> frozenset[str] | None:
+    """The task tools a harness's own switch proves present, or None.
+
+    ``harness_env`` holds the switch variables the hook process forwarded
+    (see :class:`TaskToolSwitch`). None means unproven, never absent: without
+    the switch a Claude session on an older model still has its tools, so the
+    caller keeps treating capability as unknown.
+    """
+    switch = platform_for(cli_type).task_tool_switch
+    if switch is None or not switch.env or not isinstance(harness_env, Mapping):
+        return None
+    if str(harness_env.get(switch.env, "")).strip().lower() not in _SWITCH_ON:
+        return None
+    if any(
+        str(harness_env.get(name, "")).strip().lower() in _SWITCH_OFF
+        for name in switch.env_off
+    ):
+        return None
+    return registered_task_tools(cli_type)
+
+
+def registered_task_tools(cli_type: str | None) -> frozenset[str]:
+    """Every task tool name this registry lists for one harness, in any role."""
+    platform = platform_for(cli_type)
+    return (
+        platform.task_create_tools
+        | platform.task_update_tools
+        | platform.task_review_tools
+        | platform.task_bulk_tools
+        | platform.task_plan_tools
+    )
+
+
+def task_tool_switch_env_names() -> frozenset[str]:
+    """Every variable a hook process must forward for some harness's switch."""
+    return frozenset(
+        name
+        for platform in PLATFORMS.values()
+        if platform.task_tool_switch is not None
+        for name in platform.task_tool_switch.forwarded_env()
     )
 
 

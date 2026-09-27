@@ -26,6 +26,7 @@ from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 from autorun import plugins
 from autorun import task_lifecycle
 from autorun.session_manager import SessionStateManager
+from task_tool_evidence import task_tool_evidence
 
 
 @pytest.fixture
@@ -88,6 +89,7 @@ def make_stop_ctx(
         tool_result=tool_result,
         session_transcript=session_transcript,
         store=store or ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     ctx.autorun_active = autorun_active
     ctx.autorun_stage = autorun_stage
@@ -460,6 +462,7 @@ class TestContextCompactionResilience:
             tool_result="",
             session_transcript=[],
             store=ThreadSafeDB(),
+            active_tools=task_tool_evidence(None),
         )
         # Note: source='compact' comes in the payload, not stored on ctx directly
         result = manager.handle_session_start(ctx)
@@ -572,6 +575,7 @@ class TestPendingStopInjection:
             tool_name="Read",
             tool_input={"file_path": "/tmp/test.txt"},
             store=store,
+            active_tools=task_tool_evidence(None),
         )
 
         # Find and call deliver_pending_stop_injection from the PostToolUse chain
@@ -639,6 +643,7 @@ class TestPostToolUseTaskCreateBlocksStop:
             tool_input={"subject": "Fix login bug", "description": "Users can't log in"},
             tool_result="Task #1 created successfully: Fix login bug",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
 
         # Run through full PostToolUse chain
@@ -687,6 +692,7 @@ class TestPostToolUseTaskCreateBlocksStop:
             tool_input={"subject": "Quick fix", "description": ""},
             tool_result="Task #1 created successfully: Quick fix",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(create_ctx, "PostToolUse")
 
@@ -698,6 +704,7 @@ class TestPostToolUseTaskCreateBlocksStop:
             tool_input={"taskId": "1", "status": "completed"},
             tool_result="Updated task #1 status",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(update_ctx, "PostToolUse")
 
@@ -729,6 +736,7 @@ class TestPostToolUseTaskCreateBlocksStop:
                 tool_input={"subject": f"Task {i}", "description": ""},
                 tool_result=f"Task #{i} created successfully: Task {i}",
                 store=store,
+                active_tools=task_tool_evidence(None),
             )
             plugins.app._run_chain(ctx, "PostToolUse")
 
@@ -741,6 +749,7 @@ class TestPostToolUseTaskCreateBlocksStop:
                 tool_input={"taskId": tid, "status": "completed"},
                 tool_result=f"Updated task #{tid} status",
                 store=store,
+                active_tools=task_tool_evidence(None),
             )
             plugins.app._run_chain(ctx, "PostToolUse")
 
@@ -787,6 +796,7 @@ class TestWriteTodosRouting:
             tool_input={"subject": "Fix Gemini bug", "description": "desc"},
             tool_result="Task #1 created successfully: Fix Gemini bug",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(ctx, "PostToolUse")
 
@@ -808,6 +818,7 @@ class TestWriteTodosRouting:
             tool_input={"subject": "Fix it", "description": ""},
             tool_result="Task #1 created successfully: Fix it",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(create_ctx, "PostToolUse")
 
@@ -819,6 +830,7 @@ class TestWriteTodosRouting:
             tool_input={"taskId": "1", "status": "completed"},
             tool_result="Updated task #1 status to completed",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(update_ctx, "PostToolUse")
 
@@ -837,6 +849,7 @@ class TestWriteTodosRouting:
             tool_input={},
             tool_result="Tasks listed: 0 items",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(ctx, "PostToolUse")
 
@@ -858,6 +871,7 @@ class TestWriteTodosRouting:
             tool_result="todos updated",
             store=store,
             cli_type="gemini",
+            active_tools=task_tool_evidence("gemini"),
         )
         plugins.app._run_chain(bulk_ctx, "PostToolUse")
 
@@ -883,6 +897,7 @@ class TestWriteTodosRouting:
             tool_input=None,
             tool_result="Task #1 created successfully",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         # Must not raise AttributeError
         plugins.app._run_chain(ctx, "PostToolUse")
@@ -902,6 +917,7 @@ class TestWriteTodosRouting:
             tool_input={"subject": "Gemini task"},
             tool_result="Task #1 created successfully: Gemini task",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(ctx, "PostToolUse")
 
@@ -924,6 +940,7 @@ class TestWriteTodosRouting:
             tool_input={"subject": "Quick task"},
             tool_result="Task #1 created successfully: Quick task",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(create_ctx, "PostToolUse")
 
@@ -935,6 +952,7 @@ class TestWriteTodosRouting:
             tool_input={"taskId": "1", "status": "completed"},
             tool_result="Updated task #1 status to completed",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(update_ctx, "PostToolUse")
 
@@ -972,6 +990,7 @@ class TestStalenessCounterWriteTodos:
             tool_input={"subject": "Pending task"},
             tool_result="Task #1 created successfully: Pending task",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(create_ctx, "PostToolUse")
 
@@ -984,6 +1003,7 @@ class TestStalenessCounterWriteTodos:
                 tool_input={"file_path": f"/tmp/test{i}.txt"},
                 tool_result="file contents",
                 store=store,
+                active_tools=task_tool_evidence(None),
             )
             ctx.task_staleness_enabled = True
             plugins.app._run_chain(ctx, "PostToolUse")
@@ -996,6 +1016,7 @@ class TestStalenessCounterWriteTodos:
             tool_input={"file_path": "/tmp/check.txt"},
             tool_result="contents",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         check_ctx.task_staleness_enabled = True
         # Now fire write_todos — should reset counter
@@ -1006,6 +1027,7 @@ class TestStalenessCounterWriteTodos:
             tool_input={"taskId": "1", "status": "in_progress"},
             tool_result="Updated task #1",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         todos_ctx.task_staleness_enabled = True
         plugins.app._run_chain(todos_ctx, "PostToolUse")
@@ -1018,6 +1040,7 @@ class TestStalenessCounterWriteTodos:
             tool_input={"file_path": "/tmp/after.txt"},
             tool_result="contents",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         after_ctx.task_staleness_enabled = True
         assert after_ctx.tool_calls_since_task_update == 0, f"write_todos must reset staleness counter to 0. Got: {after_ctx.tool_calls_since_task_update}"
@@ -1128,6 +1151,7 @@ class TestStopBlockRepeatedDeliverySuppression:
                 tool_input={"command": "echo hi"},
                 tool_result="hi",
                 store=store,
+                active_tools=task_tool_evidence(None),
             )
             pt_result = plugins.app._run_chain(pt_ctx, "PostToolUse")
             delivered = (pt_result or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
@@ -1158,6 +1182,7 @@ class TestStopBlockRepeatedDeliverySuppression:
                 tool_input={"command": "echo 1"},
                 tool_result="1",
                 store=store,
+                active_tools=task_tool_evidence(None),
             ),
             "PostToolUse",
         )
@@ -1171,6 +1196,7 @@ class TestStopBlockRepeatedDeliverySuppression:
                 tool_input={"command": "echo 2"},
                 tool_result="2",
                 store=store,
+                active_tools=task_tool_evidence(None),
             ),
             "PostToolUse",
         )
@@ -1203,6 +1229,7 @@ class TestStopBlockRepeatedDeliverySuppression:
                     tool_input={"command": f"echo {n}"},
                     tool_result=str(n),
                     store=store,
+                    active_tools=task_tool_evidence(None),
                 ),
                 "PostToolUse",
             )
@@ -1235,6 +1262,7 @@ class TestStopBlockRepeatedDeliverySuppression:
             tool_input={"command": "echo hi"},
             tool_result="hi",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app._run_chain(pt_ctx1, "PostToolUse")
 
@@ -1252,6 +1280,7 @@ class TestStopBlockRepeatedDeliverySuppression:
             tool_input={"command": "echo hi"},
             tool_result="hi",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         pt_result2 = plugins.app._run_chain(pt_ctx2, "PostToolUse")
         assert pt_result2 is not None, "Changed Stop-block text must still be delivered on the next PostToolUse"

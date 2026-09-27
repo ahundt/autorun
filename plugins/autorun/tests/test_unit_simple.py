@@ -21,6 +21,8 @@ from autorun import CONFIG
 # Daemon-path imports for migrated tests
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
+from types import EllipsisType
+from task_tool_evidence import task_tool_evidence
 
 
 def _dispatch(prompt: str, session_id: str = "test-unit") -> dict:
@@ -32,6 +34,7 @@ def _dispatch(prompt: str, session_id: str = "test-unit") -> dict:
         tool_name="",
         tool_input={},
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     return plugins.app.dispatch(ctx) or {}
 
@@ -784,7 +787,7 @@ def _make_post_tool_ctx(
     tool_input: dict | None = None,
     agent_id: str | None = None,
     agent_type: str | None = None,
-    active_tools: frozenset[str] | None = None,
+    active_tools: frozenset[str] | None | EllipsisType = ...,
     store: ThreadSafeDB | None = None,
 ) -> EventContext:
     """Build PostToolUse EventContext for staleness tests."""
@@ -798,7 +801,9 @@ def _make_post_tool_ctx(
         cli_type=cli_type,
         agent_id=agent_id,
         agent_type=agent_type,
-        active_tools=active_tools,
+        # ``...`` means a session that has its harness's task tools; pass None
+        # for an unreported surface.
+        active_tools=task_tool_evidence(cli_type) if active_tools is ... else active_tools,
     )
     ctx.autorun_active = autorun_active
     ctx.task_staleness_enabled = task_staleness_enabled
@@ -1308,6 +1313,7 @@ def test_clear_restarts_initial_phase_but_resume_and_compact_preserve_it():
             event="SessionStart",
             source=source,
             store=ThreadSafeDB(),
+            active_tools=task_tool_evidence(None),
         )
         ctx.task_staleness_initial_checkpoint_complete = True
         ctx.tool_calls_since_task_update = 9
@@ -1348,7 +1354,8 @@ def test_capable_child_session_start_uses_agent_local_cadence_state():
     _make_pending_task(sid)
     store = ThreadSafeDB()
     parent = EventContext(
-        session_id=sid, event="SessionStart", store=store, cli_type="pi"
+        session_id=sid, event="SessionStart", store=store, cli_type="pi",
+        active_tools=task_tool_evidence("pi"),
     )
     plugins._task_progress_state_set(parent, "task_staleness_reminder_count", 7)
     plugins._task_progress_state_set(parent, "task_staleness_enforce_next", True)
@@ -1569,7 +1576,7 @@ def _make_pre_tool_ctx(
     tool_input: dict | None = None,
     agent_id: str | None = None,
     agent_type: str | None = None,
-    active_tools: frozenset[str] | None = None,
+    active_tools: frozenset[str] | None | EllipsisType = ...,
     permission_mode: str = "default",
     store: ThreadSafeDB | None = None,
 ) -> EventContext:
@@ -1584,7 +1591,7 @@ def _make_pre_tool_ctx(
         cli_type=cli_type,
         agent_id=agent_id,
         agent_type=agent_type,
-        active_tools=active_tools,
+        active_tools=task_tool_evidence(cli_type) if active_tools is ... else active_tools,
         permission_mode=permission_mode,
     )
     plugins._task_progress_state_set(
@@ -1683,8 +1690,9 @@ def test_an_unknown_tool_surface_is_not_charged_for_a_task_state_read(monkeypatc
     """Seven of the nine harnesses never report a tool surface; none should pay.
 
     Only the Pi-family bridge sends `active_tools`. For everyone else it is
-    None, and `task_progress_capability_available` answers True from that alone
-    — before it looks at the roles. Refining CREATE versus UPDATE first means
+    None, and the capability answer follows from that alone, before any role:
+    True where unknown keeps legacy enforcement (OpenCode), False where the
+    harness needs evidence first (Claude). Refining CREATE versus UPDATE first means
     constructing a TaskLifecycle (a config-file read) and taking the session
     lock for `get_incomplete_tasks`, then discarding the answer.
 
@@ -1703,9 +1711,13 @@ def test_an_unknown_tool_surface_is_not_charged_for_a_task_state_read(monkeypatc
     monkeypatch.setattr(plugins.task_lifecycle, "TaskLifecycle", Counting)
 
     unknown = _make_pre_tool_ctx(
-        "bash", "test-capability-unknown", cli_type="claude", active_tools=None
+        "bash", "test-capability-unknown", cli_type="opencode", active_tools=None
     )
     assert plugins._required_task_mutation_available(unknown) is True
+    unproven = _make_pre_tool_ctx(
+        "bash", "test-capability-unproven", cli_type="claude", active_tools=None
+    )
+    assert plugins._required_task_mutation_available(unproven) is False
     assert constructions == [], (
         "An unreported tool surface read task state to pick a role that "
         "task_progress_capability_available then ignored."
@@ -1834,6 +1846,7 @@ def test_codex_without_tool_inventory_clears_impossible_update_plan_denial(
         permission_mode=permission_mode,
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=2,
+        active_tools=None,
     )
 
     result = plugins.app.dispatch(ctx)
@@ -1870,6 +1883,7 @@ def test_task_cli_hint_ignores_autodetected_fallback():
         tool_name="write_todos",
         tool_input={},
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     # Force the property to auto-detect and fill _cli_type.
     assert implicit.cli_type in {"claude", "gemini", "codex", "forgecode"}
@@ -1904,6 +1918,7 @@ def test_enforce_staleness_full_lifecycle():
             tool_input={},
             tool_result="",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         post_ctx.task_staleness_enabled = True
         post_ctx.task_staleness_threshold = 3
@@ -1917,6 +1932,7 @@ def test_enforce_staleness_full_lifecycle():
         tool_name="Read",
         tool_input={},
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     result1 = plugins.app.dispatch(pre_ctx1)
     if result1:
@@ -1934,6 +1950,7 @@ def test_enforce_staleness_full_lifecycle():
             tool_input={},
             tool_result="",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         post_ctx2.task_staleness_enabled = True
         post_ctx2.task_staleness_threshold = 3
@@ -1947,6 +1964,7 @@ def test_enforce_staleness_full_lifecycle():
         tool_name="Read",
         tool_input={},
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     result2 = plugins.app.dispatch(pre_ctx2)
     if result2:
@@ -1961,6 +1979,7 @@ def test_enforce_staleness_full_lifecycle():
         tool_name="TaskList",
         tool_input={},
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     plugins.app.dispatch(pre_ctx3)
 
@@ -1972,6 +1991,7 @@ def test_enforce_staleness_full_lifecycle():
         tool_name="Read",
         tool_input={},
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     result4 = plugins.app.dispatch(pre_ctx4)
     if result4:
@@ -2100,6 +2120,7 @@ def test_zero_tasks_sets_enforce_next():
             tool_input={},
             tool_result="",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         ctx.task_staleness_enabled = True
         plugins.app.dispatch(ctx)
@@ -2112,6 +2133,7 @@ def test_zero_tasks_sets_enforce_next():
         tool_input={},
         tool_result="",
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     assert check_ctx.task_staleness_enforce_next is True, "Zero-tasks should set enforce_next after threshold"
 
@@ -2133,6 +2155,7 @@ def test_two_level_escalation_no_third():
             tool_input={},
             tool_result="",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         ctx.task_staleness_enabled = True
         ctx.task_staleness_threshold = 3
@@ -2154,7 +2177,7 @@ def test_plan_command_sets_planning_reminder_flag():
     """Plan command sets plan_awaiting_planning_tasks flag."""
     sid = "test-plan-cmd-flag"
     _dispatch("/ar:plannew", session_id=sid)
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB())
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB(), active_tools=task_tool_evidence(None))
     assert ctx.plan_awaiting_planning_tasks is True
     assert ctx.plan_active is True
 
@@ -2163,11 +2186,11 @@ def test_planning_reminder_fires_on_every_post_tool_use():
     """Reminder fires on every PostToolUse when planning flag is set."""
     sid = "test-planning-reminder-fires"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     ctx.plan_awaiting_planning_tasks = True
     results = []
     for _ in range(3):
-        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
         result = plugins.app.dispatch(ctx) or {}
         results.append(result)
     assert all("PLANNING TASKS REQUIRED" in str(r) for r in results)
@@ -2177,15 +2200,15 @@ def test_planning_reminder_clears_on_task_create():
     """TaskCreate clears the planning reminder flag."""
     sid = "test-planning-clears"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     ctx.plan_awaiting_planning_tasks = True
 
     # TaskCreate should clear the flag
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="TaskCreate", tool_input={}, tool_result="", store=store)
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="TaskCreate", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     plugins.app.dispatch(ctx2)
 
     # Next call should be silent
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     result = plugins.app.dispatch(ctx3) or {}
     assert "PLANNING TASKS REQUIRED" not in str(result)
 
@@ -2194,7 +2217,7 @@ def test_planning_reminder_clears_on_codex_update_plan():
     """Codex update_plan clears plan-task reminders like native task creation."""
     sid = "test-planning-clears-codex-plan"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex")
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex", active_tools=task_tool_evidence("codex"))
     ctx.plan_awaiting_planning_tasks = True
 
     ctx2 = EventContext(
@@ -2206,10 +2229,11 @@ def test_planning_reminder_clears_on_codex_update_plan():
         tool_result="",
         store=store,
         cli_type="codex",
+        active_tools=task_tool_evidence("codex"),
     )
     plugins.app.dispatch(ctx2)
 
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex")
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex", active_tools=task_tool_evidence("codex"))
     result = plugins.app.dispatch(ctx3) or {}
     assert "PLANNING TASKS REQUIRED" not in str(result)
 
@@ -2220,7 +2244,7 @@ def test_plan_acceptance_sets_execution_reminder_and_clears_planning():
     store = ThreadSafeDB()
 
     # Simulate: plan command was invoked (planning flag set)
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     ctx.plan_awaiting_planning_tasks = True
     ctx.plan_arguments = "test plan"
 
@@ -2233,11 +2257,12 @@ def test_plan_acceptance_sets_execution_reminder_and_clears_planning():
         tool_input={},
         tool_result="User has approved your plan. You can now start coding.",
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     plugins.app.dispatch(ctx2)
 
     # Check flags
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     assert ctx3.plan_awaiting_planning_tasks is False
     assert ctx3.plan_awaiting_execution_tasks is True
 
@@ -2278,20 +2303,20 @@ def test_execution_reminder_fires_until_task_create():
     """Execution reminder fires until TaskCreate is called."""
     sid = "test-exec-reminder"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     ctx.plan_awaiting_execution_tasks = True
 
     # Should fire
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     result = plugins.app.dispatch(ctx2) or {}
     assert "EXECUTION TASKS REQUIRED" in str(result)
 
     # TaskCreate clears
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="TaskCreate", tool_input={}, tool_result="", store=store)
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="TaskCreate", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     plugins.app.dispatch(ctx3)
 
     # Should be silent
-    ctx4 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx4 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     result2 = plugins.app.dispatch(ctx4) or {}
     assert "EXECUTION TASKS REQUIRED" not in str(result2)
 
@@ -2330,7 +2355,7 @@ def test_planning_reminder_references_planning_format():
 
 def test_no_reminder_when_flags_not_set():
     """No reminder fires when both flags are False (default)."""
-    ctx = EventContext(session_id="test-no-reminder", event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=ThreadSafeDB())
+    ctx = EventContext(session_id="test-no-reminder", event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=ThreadSafeDB(), active_tools=task_tool_evidence(None))
     result = plugins.app.dispatch(ctx) or {}
     assert "PLANNING TASKS REQUIRED" not in str(result)
     assert "EXECUTION TASKS REQUIRED" not in str(result)
@@ -2344,7 +2369,7 @@ def test_plan_acceptance_sets_enforce_next_immediately():
     """
     sid = "test-acceptance-enforce"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     ctx.plan_awaiting_planning_tasks = True
     ctx.plan_arguments = "test plan"
 
@@ -2357,11 +2382,12 @@ def test_plan_acceptance_sets_enforce_next_immediately():
         tool_input={},
         tool_result="User has approved your plan. You can now start coding.",
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     plugins.app.dispatch(ctx2)
 
     # enforce_next should be set immediately after plan acceptance
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     assert ctx3.task_staleness_enforce_next is True, "Plan acceptance must set enforce_next=True immediately so the first non-Task PreToolUse gets enforcement"
 
 
@@ -2373,14 +2399,14 @@ def test_remind_until_tasks_sets_enforce_after_first_call():
     """
     sid = "test-remind-enforce-1st"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     ctx.plan_awaiting_execution_tasks = True
 
     # First PostToolUse with execution flag → reminder fires
     plugins.app.dispatch(ctx)
 
     # Check enforce_next is set after 1st call
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     assert ctx2.task_staleness_enforce_next is True, (
         f"remind_until_tasks_created must set enforce_next after 1st call (was: count >= 10). plan_task_reminder_count={ctx2.plan_task_reminder_count}"
     )
@@ -2399,11 +2425,11 @@ def test_session_resume_sets_enforce_next_for_incomplete_tasks():
     _make_pending_task(sid, "1", "unfinished work")
 
     # Simulate SessionStart (resume)
-    ctx = EventContext(session_id=sid, event="SessionStart", prompt="", store=store)
+    ctx = EventContext(session_id=sid, event="SessionStart", prompt="", store=store, active_tools=task_tool_evidence(None))
     plugins.app.dispatch(ctx)
 
     # enforce_next should be set
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
     assert ctx2.task_staleness_enforce_next is True, (
         "SessionStart with incomplete tasks must set enforce_next=True so the AI's first non-Task tool call gets denied"
     )
@@ -2422,7 +2448,7 @@ def test_tasks_command_off():
     """The singular legacy /ar:task off alias disables staleness reminders."""
     sid = "test-tasks-cmd-off"
     _dispatch("/ar:task off", session_id=sid)
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB())
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB(), active_tools=task_tool_evidence(None))
     assert ctx.task_staleness_enabled is False
 
 
@@ -2430,7 +2456,7 @@ def test_tasks_command_threshold_override():
     """Legacy /ar:tasks N selects a fixed cadence for both phases."""
     sid = "test-tasks-thresh"
     _dispatch("/ar:tasks 5", session_id=sid)
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB())
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB(), active_tools=task_tool_evidence(None))
     assert ctx.task_staleness_threshold == 5
     assert ctx.task_staleness_initial_threshold == 5
     assert ctx.task_staleness_subsequent_threshold == 5
@@ -2448,6 +2474,7 @@ def test_tasks_command_configures_initial_and_subsequent_thresholds():
         prompt="",
         tool_name="Bash",
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     assert ctx.task_staleness_initial_threshold == 12
     assert ctx.task_staleness_subsequent_threshold == 40
@@ -2465,6 +2492,7 @@ def test_tasks_command_configures_agent_scope(scope):
         prompt="",
         tool_name="Bash",
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     assert ctx.task_staleness_agent_scope == scope
     assert scope in str(result)
@@ -2570,6 +2598,7 @@ def test_stage_reset_when_stage2_completed_and_tasks_outstanding():
         event="Stop",
         prompt="",
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
@@ -2596,6 +2625,7 @@ def test_no_stage_reset_when_no_tasks_outstanding():
         event="Stop",
         prompt="",
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
@@ -2617,6 +2647,7 @@ def test_stage_reset_counter_also_reset():
         event="Stop",
         prompt="",
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
@@ -2658,6 +2689,7 @@ def test_staleness_counter_session_isolation():
         prompt="",
         tool_name="Bash",
         store=shared_store,
+        active_tools=task_tool_evidence(None),
     )
     ctx_a.autorun_active = True
     ctx_a.task_staleness_enabled = True
@@ -2670,6 +2702,7 @@ def test_staleness_counter_session_isolation():
         prompt="",
         tool_name="Bash",
         store=shared_store,
+        active_tools=task_tool_evidence(None),
     )
     ctx_b.autorun_active = True
     ctx_b.task_staleness_enabled = True
@@ -2688,6 +2721,7 @@ def test_staleness_counter_session_isolation():
         prompt="",
         tool_name="Bash",
         store=shared_store,
+        active_tools=task_tool_evidence(None),
     )
     assert (ctx_a2.tool_calls_since_task_update or 0) == 10, (
         f"Session A counter should still be 10, got {ctx_a2.tool_calls_since_task_update} (corrupted by session B)"
@@ -2710,6 +2744,7 @@ def test_staleness_enabled_session_isolation():
         prompt="",
         tool_name="Bash",
         store=shared_store,
+        active_tools=task_tool_evidence(None),
     )
     ctx_a.task_staleness_enabled = False
 
@@ -2720,6 +2755,7 @@ def test_staleness_enabled_session_isolation():
         prompt="",
         tool_name="Bash",
         store=shared_store,
+        active_tools=task_tool_evidence(None),
     )
     assert ctx_b.task_staleness_enabled is True, (
         f"Session B should have staleness enabled (default), got {ctx_b.task_staleness_enabled} (leaked from session A)"
@@ -2742,6 +2778,7 @@ def test_staleness_threshold_session_isolation():
         prompt="",
         tool_name="Bash",
         store=shared_store,
+        active_tools=task_tool_evidence(None),
     )
     ctx_a.task_staleness_threshold = 5
 
@@ -2752,6 +2789,7 @@ def test_staleness_threshold_session_isolation():
         prompt="",
         tool_name="Bash",
         store=shared_store,
+        active_tools=task_tool_evidence(None),
     )
     assert ctx_b.task_staleness_threshold is None, f"Session B threshold should be None (default), got {ctx_b.task_staleness_threshold} (leaked from session A)"
 
@@ -2777,6 +2815,7 @@ def _e2e_post_tool(tool_name: str, session_id: str, store: ThreadSafeDB) -> dict
         tool_input={},
         tool_result="",
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     ctx.autorun_active = True
     return plugins.app.dispatch(ctx) or {}
@@ -2789,6 +2828,7 @@ def _e2e_stop(session_id: str, store: ThreadSafeDB, autorun_stage: int = 0) -> d
         event="Stop",
         prompt="",
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = autorun_stage
@@ -2805,6 +2845,7 @@ def _e2e_command(prompt: str, session_id: str, store: ThreadSafeDB) -> dict:
         tool_name="",
         tool_input={},
         store=store,
+        active_tools=task_tool_evidence(None),
     )
     return plugins.app.dispatch(ctx) or {}
 
@@ -2835,7 +2876,7 @@ class TestStalenessE2E:
         _make_pending_task(sid, "1", "keep counter alive")
         for i in range(5):
             _e2e_post_tool("Bash", sid, self.store)
-        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Read", store=self.store)
+        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Read", store=self.store, active_tools=task_tool_evidence(None))
         assert (ctx.tool_calls_since_task_update or 0) == 5
 
     def test_multiple_injection_cycles(self):
@@ -3042,7 +3083,7 @@ class TestStalenessE2E:
         # Dispatch with autorun_active=False — injection at 2nd call (threshold=2)
         results = []
         for _ in range(2):
-            ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+            ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, active_tools=task_tool_evidence(None))
             ctx.autorun_active = False
             result = plugins.app.dispatch(ctx) or {}
             results.append(result)
@@ -3066,7 +3107,7 @@ class TestStalenessE2E:
 
         # Phase 2: TaskUpdate resets counter
         _e2e_post_tool("TaskUpdate", sid, store)
-        ctx_check = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=store)
+        ctx_check = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=store, active_tools=task_tool_evidence(None))
         assert (ctx_check.tool_calls_since_task_update or 0) == 0
 
         # Phase 3: Outstanding task exists, attempt stop at STAGE_2_COMPLETED
@@ -3147,6 +3188,7 @@ class TestStalenessE2E:
             prompt="",
             tool_name="Bash",
             store=resumed_store,
+            active_tools=task_tool_evidence(None),
         )
         assert (ctx.tool_calls_since_task_update or 0) == 5, f"Counter should resume from its last boundary, expected 5, got {ctx.tool_calls_since_task_update}"
 
@@ -3165,6 +3207,7 @@ class TestStalenessE2E:
             prompt="",
             tool_name="Bash",
             store=resumed_store,
+            active_tools=task_tool_evidence(None),
         )
         assert ctx.task_staleness_enabled is False, "task_staleness_enabled=False should persist across resume"
 
@@ -3181,6 +3224,7 @@ class TestStalenessE2E:
             prompt="",
             tool_name="Bash",
             store=resumed_store,
+            active_tools=task_tool_evidence(None),
         )
         assert ctx.task_staleness_threshold == 7, f"Threshold should persist across resume, expected 7, got {ctx.task_staleness_threshold}"
 
@@ -3203,6 +3247,7 @@ class TestStalenessE2E:
                 prompt="",
                 tool_name="Bash",
                 store=self.store,
+                active_tools=task_tool_evidence(None),
             )
             ctx.tool_calls_since_task_update = (ctx.tool_calls_since_task_update or 0) + 1
 
@@ -3213,6 +3258,7 @@ class TestStalenessE2E:
             prompt="",
             tool_name="Bash",
             store=self.store,
+            active_tools=task_tool_evidence(None),
         )
         assert (ctx_new.tool_calls_since_task_update or 0) == 0, "New session counter should be 0"
         assert ctx_new.task_staleness_enabled is True, "New session should have staleness enabled"
@@ -3237,6 +3283,7 @@ class TestStalenessE2E:
             tool_input={"taskId": "1", "status": "completed"},
             tool_result="Updated task #1 status",
             store=self.store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app.dispatch(ctx)
 
@@ -3277,6 +3324,7 @@ class TestStalenessE2E:
             tool_input={"taskId": "99", "status": "completed"},
             tool_result="Updated task #99 status",
             store=self.store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app.dispatch(ctx)
 
@@ -3330,6 +3378,7 @@ class TestStalenessE2E:
             tool_input={"taskId": "1", "status": "completed"},
             tool_result="Updated task #1 status",
             store=self.store,
+            active_tools=task_tool_evidence(None),
         )
         plugins.app.dispatch(ctx)
 
@@ -3409,6 +3458,7 @@ def _make_bug_18534_ctx(cli_type, session_suffix):
         tool_result="contents",
         store=ThreadSafeDB(),
         cli_type=cli_type,
+        active_tools=task_tool_evidence(cli_type),
     )
 
 
@@ -3537,7 +3587,7 @@ def test_stop_block_resets_staleness_counter(tmp_path, monkeypatch):
     _make_pending_task(sid, "1", "Test task")
 
     # Set counter high (simulates AI working without task updates)
-    ctx_setup = EventContext(session_id=sid, event="PreToolUse", prompt="", store=store)
+    ctx_setup = EventContext(session_id=sid, event="PreToolUse", prompt="", store=store, active_tools=task_tool_evidence(None))
     ctx_setup.tool_calls_since_task_update = 20
 
     # Stop fires → counter should reset

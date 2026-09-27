@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun import CONFIG
+from task_tool_evidence import task_tool_evidence
 
 
 class TestPlanCommandHandlers:
@@ -93,7 +94,8 @@ class TestPlanCommandHandlers:
         class MockContext:
             command_arguments = ""
             cli_type = "claude"
-            active_tools = None
+            # An installed Claude session: its task tools are switched on.
+            active_tools = task_tool_evidence("claude")
             permission_mode = "default"
 
         ctx = MockContext()
@@ -116,6 +118,7 @@ class TestPlanCommandHandlers:
             prompt="ar:pp notes/approved-plan.md",
             store=ThreadSafeDB(),
             cli_type="pi",
+            active_tools=task_tool_evidence("pi"),
         )
         result = app.dispatch(ctx)["systemMessage"]
 
@@ -154,6 +157,7 @@ class TestPlanCommandHandlers:
             prompt=f"{spelling} {argument}",
             store=ThreadSafeDB(),
             cli_type="pi",
+            active_tools=task_tool_evidence("pi"),
         )
 
         result = app.dispatch(ctx)
@@ -179,6 +183,7 @@ class TestPlanCommandHandlers:
             prompt=prompt,
             store=ThreadSafeDB(),
             cli_type="pi",
+            active_tools=task_tool_evidence("pi"),
         )
 
         text = app.dispatch(ctx)["systemMessage"]
@@ -239,6 +244,7 @@ class TestPlanCommandHandlers:
             store=ThreadSafeDB(),
             cli_type="codex",
             permission_mode=permission_mode,
+            active_tools=None,
         )
 
         result = app.dispatch(ctx)
@@ -277,7 +283,8 @@ class TestPlanCommandHandlers:
         class MockContext:
             command_arguments = ""
             cli_type = "claude"
-            active_tools = None
+            # An installed Claude session: its task tools are switched on.
+            active_tools = task_tool_evidence("claude")
             permission_mode = "default"
 
         ctx = MockContext()

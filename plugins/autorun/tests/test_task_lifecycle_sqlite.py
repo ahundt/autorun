@@ -19,6 +19,7 @@ from autorun.config import CONFIG  # noqa: E402
 from autorun.core import EventContext, ThreadSafeDB  # noqa: E402
 from autorun.session_manager import TaskRepository, session_state  # noqa: E402
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig  # noqa: E402
+from task_tool_evidence import task_tool_evidence
 
 
 @pytest.fixture
@@ -65,6 +66,7 @@ def _stop_context(event: str = "Stop", transcript_path: str = "") -> EventContex
         transcript_path=transcript_path,
         store=ThreadSafeDB(),
         cli_type="claude",
+        active_tools=task_tool_evidence("claude"),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_1
@@ -177,6 +179,7 @@ def test_task_update_rejects_conflicting_single_and_bulk_shapes(sqlite_lifecycle
         session_transcript=[],
         store=ThreadSafeDB(),
         cli_type="claude",
+        active_tools=task_tool_evidence("claude"),
     )
 
     with pytest.raises(ValueError, match="exactly one of taskId or taskUpdates"):
@@ -203,6 +206,7 @@ def test_opencode_todos_replace_only_their_own_tasks(sqlite_lifecycle):
             session_transcript=[],
             store=ThreadSafeDB(),
             cli_type="opencode",
+            active_tools=task_tool_evidence("opencode"),
         ),
         config=sqlite_lifecycle.config,
     )
@@ -224,6 +228,7 @@ def test_opencode_todos_replace_only_their_own_tasks(sqlite_lifecycle):
         session_transcript=[],
         store=ThreadSafeDB(),
         cli_type="opencode",
+        active_tools=task_tool_evidence("opencode"),
     )
     lifecycle.handle_bulk_todos(second_ctx)
     assert set(lifecycle.tasks) == {"claude-1", "oc-2"}
@@ -239,6 +244,7 @@ def test_opencode_todos_replace_only_their_own_tasks(sqlite_lifecycle):
         session_transcript=[],
         store=ThreadSafeDB(),
         cli_type="opencode",
+        active_tools=task_tool_evidence("opencode"),
     )
     lifecycle.handle_bulk_todos(cancelled_ctx)
     assert set(lifecycle.tasks) == {"claude-1", "oc-3"}
@@ -253,6 +259,7 @@ def test_opencode_todos_replace_only_their_own_tasks(sqlite_lifecycle):
         session_transcript=[],
         store=ThreadSafeDB(),
         cli_type="opencode",
+        active_tools=task_tool_evidence("opencode"),
     )
     lifecycle.handle_bulk_todos(clear_ctx)
     assert set(lifecycle.tasks) == {"claude-1"}
@@ -272,6 +279,7 @@ def _dispatch_opencode_todos(session_id: str, todos: list, store: ThreadSafeDB) 
             session_transcript=[],
             store=store,
             cli_type="opencode",
+            active_tools=task_tool_evidence("opencode"),
         )
     )
 
@@ -377,6 +385,7 @@ def test_codex_child_session_returns_parent_row_backed_delegation(
         tool_result={"agent_id": agent_id, "status": "spawned"},
         store=store,
         cli_type="codex",
+        active_tools=task_tool_evidence("codex"),
     )
     parent.record_agent_spawn(spawn_ctx)
     parent.create_task("codex", {"subject": "Codex child"}, "created")
@@ -400,6 +409,7 @@ def test_codex_child_session_returns_parent_row_backed_delegation(
         agent_transcript_path=f"/tmp/codex/agent-{agent_id}.jsonl",
         store=store,
         cli_type="codex",
+        active_tools=task_tool_evidence("codex"),
     )
 
     assert TaskLifecycle(ctx=child_ctx, config=parent.config).handle_stop(child_ctx) is None
@@ -508,6 +518,7 @@ def test_retried_hook_update_does_not_duplicate_output_or_event(sqlite_lifecycle
             tool_name="update_plan",
             tool_input={"task_id": "retried", "result": "same output"},
             session_transcript=[{"role": "assistant", "content": "tool call"}],
+            active_tools=task_tool_evidence(None),
         ),
         config=sqlite_lifecycle.config,
     )
@@ -794,6 +805,7 @@ def test_process_restart_recovers_every_outstanding_status(sqlite_lifecycle):
         store=ThreadSafeDB(),
         cli_type="claude",
         source="resume",
+        active_tools=task_tool_evidence("claude"),
     )
     ctx.autorun_active = False
     ctx.autorun_stage = EventContext.STAGE_INACTIVE
@@ -828,6 +840,7 @@ def test_nonblocking_recovery_does_not_arm_pretool_denial(
         store=ThreadSafeDB(),
         cli_type="claude",
         source="resume",
+        active_tools=task_tool_evidence("claude"),
     )
     ctx.autorun_active = False
     ctx.autorun_stage = EventContext.STAGE_INACTIVE

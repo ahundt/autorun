@@ -26,6 +26,7 @@ from autorun.core import (
 )
 from autorun.platforms import PLATFORMS
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from task_tool_evidence import task_tool_evidence
 
 
 def _manager(tmp_path, *, stop_block_max_count: int) -> TaskLifecycle:
@@ -175,6 +176,7 @@ def test_user_prompt_chain_runs_before_command_or_passthrough(prompt):
             prompt=prompt,
             store=ThreadSafeDB(),
             cli_type="claude",
+            active_tools=task_tool_evidence("claude"),
         )
     )
 
@@ -251,6 +253,7 @@ def test_non_task_posttooluse_resets_stop_and_ghost_sequences(
         tool_result="contents",
         store=store,
         cli_type="claude",
+        active_tools=task_tool_evidence("claude"),
     )
     plugins.reset_ghost_counter_on_activity(context)
 
@@ -278,6 +281,7 @@ def test_task_posttooluse_resets_stop_but_not_ghost_sequence(
         tool_result="Task not found",
         store=store,
         cli_type="claude",
+        active_tools=task_tool_evidence("claude"),
     )
     plugins.reset_ghost_counter_on_activity(context)
 
@@ -328,6 +332,7 @@ def test_parallel_posttooluse_resets_are_idempotent(tmp_path, monkeypatch):
             tool_result="contents",
             store=store,
             cli_type="codex",
+            active_tools=task_tool_evidence("codex"),
         )
         for index in range(8)
     ]
@@ -361,6 +366,7 @@ def test_user_prompt_resets_sequence_before_next_stop(
             prompt="Continue the release work.",
             store=store,
             cli_type="codex",
+            active_tools=task_tool_evidence("codex"),
         )
     )
 
@@ -514,9 +520,7 @@ def test_all_registered_harnesses_encode_block_then_bounded_allow(
             session_transcript=[],
             store=store,
             cli_type=cli_type,
-            active_tools=(
-                frozenset({"update_plan"}) if cli_type == "codex" else None
-            ),
+            active_tools=task_tool_evidence(cli_type),
             stop_hook_active=stop_hook_active,
         )
 
@@ -554,6 +558,7 @@ def test_user_prompt_reset_failure_is_logged_and_prompt_dispatch_continues(
             prompt="Continue discussing.",
             store=ThreadSafeDB(),
             cli_type="codex",
+            active_tools=task_tool_evidence("codex"),
         )
     )
 

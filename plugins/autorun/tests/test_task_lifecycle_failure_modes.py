@@ -25,6 +25,7 @@ sys.path.insert(0, str(plugin_root / 'src'))
 
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 from autorun.session_manager import session_state
+from task_tool_evidence import task_tool_evidence
 
 
 class TestFailureModes:
@@ -65,6 +66,8 @@ class TestFailureModes:
         from unittest.mock import MagicMock
         ctx = MagicMock()
         ctx.session_id = session_id
+        ctx.cli_type = 'claude'
+        ctx.active_tools = task_tool_evidence('claude')
         ctx.plan_active = False  # Don't try to link to plan
         ctx.plan_arguments = ''
 
@@ -111,6 +114,8 @@ class TestFailureModes:
         from unittest.mock import MagicMock
         ctx = MagicMock()
         ctx.session_id = session_id
+        ctx.cli_type = 'claude'
+        ctx.active_tools = task_tool_evidence('claude')
         ctx.plan_active = False
         ctx.plan_arguments = ''
 
@@ -165,6 +170,8 @@ class TestFailureModes:
         for i, result_format in enumerate(formats, 1):
             ctx = MagicMock()
             ctx.session_id = session_id
+            ctx.cli_type = 'claude'
+            ctx.active_tools = task_tool_evidence('claude')
             ctx.tool_name = 'TaskCreate'
             ctx.tool_input = {
                 'subject': f'Test {i}',

@@ -28,6 +28,7 @@ sys.path.insert(0, str(plugin_root / 'src'))
 
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 from autorun.core import EventContext
+from task_tool_evidence import task_tool_evidence
 
 
 def create_mock_context(session_id='test-integration', **kwargs):
@@ -46,6 +47,11 @@ def create_mock_context(session_id='test-integration', **kwargs):
     # gate the "/ar:tasks off does NOT apply here" caveat. Default True
     # (staleness reminders enabled) matches EventContext's real CONFIG default.
     ctx.task_staleness_enabled = kwargs.get('task_staleness_enabled', True)
+    # A MagicMock attribute is neither None nor a frozenset, so the task gates
+    # read it as "no evidence" and stand down. State the harness and its task
+    # tools the way a real EventContext would carry them.
+    ctx.cli_type = kwargs.get('cli_type', 'claude')
+    ctx.active_tools = kwargs.get('active_tools', task_tool_evidence(ctx.cli_type))
 
     # Mock the allow, block, and continue_running methods
     def mock_allow(msg=''):

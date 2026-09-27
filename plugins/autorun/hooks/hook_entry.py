@@ -161,10 +161,21 @@ def explicit_event_name() -> str | None:
     return None
 
 
+#: Harness settings that decide whether its task tools exist, as the harness
+#: passes them to this process (platforms.TaskToolSwitch). The daemon does not
+#: share the session's environment, so they travel in the payload. This file
+#: imports no autorun module; test_task_tool_switch.py pins this tuple to
+#: platforms.task_tool_switch_env_names().
+TASK_TOOL_SWITCH_ENV = ("CLAUDE_CODE_ENABLE_TASKS", "CLAUDE_CODE_ENABLE_TODO_TOOLS")
+
+
 def prepare_hook_payload(payload: dict, cli_type: str) -> dict:
-    """Attach command-owned event identity and common Antigravity aliases."""
+    """Attach command-owned event identity, task-tool switches, and Antigravity aliases."""
     prepared = dict(payload)
     prepared["cli_type"] = cli_type
+    switches = {name: os.environ[name] for name in TASK_TOOL_SWITCH_ENV if name in os.environ}
+    if switches:
+        prepared["autorun_harness_env"] = switches
     event_name = explicit_event_name()
     if event_name:
         # Antigravity stdin deliberately omits the event name. The installed

@@ -29,6 +29,7 @@ import pytest
 
 from autorun.core import EventContext, ThreadSafeDB
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from task_tool_evidence import task_tool_evidence
 
 
 # === Sentinels — exact substrings that MUST appear in the user-visible channel ===
@@ -83,9 +84,7 @@ def _make_stop_ctx(session_id: str, cli_type: str, store=None) -> EventContext:
         session_transcript=[],
         store=store or ThreadSafeDB(),
         cli_type=cli_type,
-        active_tools=(
-            frozenset({"update_plan"}) if cli_type == "codex" else None
-        ),
+        active_tools=task_tool_evidence(cli_type),
     )
 
 
@@ -459,6 +458,7 @@ def _posttooluse_ctx(session_id: str, store) -> EventContext:
         session_transcript=[],
         store=store,
         cli_type="claude",
+        active_tools=task_tool_evidence("claude"),
     )
 
 

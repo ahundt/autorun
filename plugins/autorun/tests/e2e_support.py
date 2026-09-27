@@ -151,9 +151,20 @@ def model_override(env_name: str, default: str) -> str:
     return os.environ.get(env_name, default).strip() or default
 
 
-def isolated_hook_env(plugin_root: Path, session_id: str) -> dict[str, str]:
-    """Build a direct-hook environment that cannot reach the shared daemon."""
+def isolated_hook_env(
+    plugin_root: Path, session_id: str, cli: str | None = None
+) -> dict[str, str]:
+    """Build a direct-hook environment that cannot reach the shared daemon.
+
+    With ``cli``, the environment also turns on that harness's task-tool
+    switch, the way ``autorun --install`` leaves an installed session
+    (platforms.TaskToolSwitch). Without it, a harness whose tools are an opt-in
+    gives task gates no evidence and they stand down.
+    """
     env = os.environ.copy()
+    switch = PLATFORMS[cli].task_tool_switch if cli in PLATFORMS else None
+    if switch is not None and switch.env:
+        env[switch.env] = "1"
     env.update(
         {
             "AUTORUN_PLUGIN_ROOT": str(plugin_root),
@@ -236,7 +247,7 @@ def run_isolated_hook(
         capture_output=True,
         text=True,
         timeout=timeout,
-        env=isolated_hook_env(plugin_root, session_id),
+        env=isolated_hook_env(plugin_root, session_id, cli),
         cwd=cwd,
     )
 
@@ -311,7 +322,7 @@ def run_bounded_stop_hook_sequence(
             capture_output=True,
             text=True,
             timeout=20,
-            env=isolated_hook_env(plugin_root, session_id),
+            env=isolated_hook_env(plugin_root, session_id, cli),
             cwd=cwd,
         )
         if completed.returncode != 0:

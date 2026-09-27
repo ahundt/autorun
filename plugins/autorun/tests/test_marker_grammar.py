@@ -33,6 +33,7 @@ if str(SRC_DIR) not in sys.path:
 
 from autorun import session_manager as sm  # noqa: E402
 from autorun.core import EventContext, ThreadSafeDB  # noqa: E402
+from task_tool_evidence import task_tool_evidence  # noqa: E402
 from autorun.task_lifecycle import (  # noqa: E402
     TaskLifecycle,
     TaskLifecycleConfig,
@@ -201,6 +202,7 @@ def _stop_context(session_id, assistant_text):
         session_transcript=[{"role": "assistant", "content": assistant_text}],
         store=ThreadSafeDB(),
         cli_type="claude",
+        active_tools=task_tool_evidence("claude"),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_1

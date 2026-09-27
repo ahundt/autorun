@@ -27,6 +27,7 @@ from autorun.task_lifecycle import (
 from autorun import plugins
 from autorun import task_lifecycle
 from autorun.session_manager import session_state, SessionStateManager
+from task_tool_evidence import task_tool_evidence
 
 
 @pytest.fixture
@@ -75,6 +76,7 @@ def make_post_tool_ctx(
         tool_input=tool_input or {},
         tool_result=tool_result,
         store=ThreadSafeDB(),
+        active_tools=task_tool_evidence(None),
     )
     for k, v in overrides.items():
         setattr(ctx, k, v)
@@ -564,6 +566,7 @@ class TestChainNotificationAccumulator:
             tool_result="some result",
             store=ThreadSafeDB(),
             cli_type="gemini",
+            active_tools=task_tool_evidence("gemini"),
         )
         ctx.add_chain_notification("AI-only note", channel="ai")
 
@@ -630,6 +633,7 @@ class TestChainNotificationAccumulator:
             tool_name="ExitPlanMode", tool_input={},
             tool_result="User has approved your plan. You can now start coding.",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         ctx.plan_arguments = "Build feature"
         result = plugins.app.dispatch(ctx) or {}
@@ -645,6 +649,7 @@ class TestChainNotificationAccumulator:
             session_id=sid, event="PostToolUse", prompt="",
             tool_name="Bash", tool_input={}, tool_result="",
             store=store,
+            active_tools=task_tool_evidence(None),
         )
         assert ctx2.plan_awaiting_execution_tasks is True
 

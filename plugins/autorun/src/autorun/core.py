@@ -545,6 +545,15 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         for name in raw_active_tools
     ):
         active_tools = frozenset(name.strip() for name in raw_active_tools)
+    if active_tools is None:
+        # A harness that reports no tool list may still have switched its task
+        # tools on in a way the hook process can see. The set then names only
+        # those task tools: it is evidence for task gates, not an inventory.
+        from .platforms import task_tools_proven_by_switch
+
+        active_tools = task_tools_proven_by_switch(
+            cli_type, payload.get("autorun_harness_env")
+        )
 
     return {
         "cli_type": cli_type,

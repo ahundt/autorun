@@ -29,6 +29,7 @@ from autorun import session_manager as sm  # noqa: E402
 from autorun.config import CONFIG  # noqa: E402
 from autorun.core import EventContext, ThreadSafeDB  # noqa: E402
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig  # noqa: E402
+from task_tool_evidence import task_tool_evidence
 
 DELEGATE = CONFIG["delegate_marker_template"]
 STALE_CLEAR = CONFIG["ghost_clear_marker_template"]
@@ -86,6 +87,7 @@ def _stop_context(
         store=store or ThreadSafeDB(),
         cli_type="claude",
         last_assistant_message=last_assistant_message or "",
+        active_tools=task_tool_evidence("claude"),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_1
@@ -103,6 +105,7 @@ def _stop_context_with_messages(session_id, messages, store=None):
         session_transcript=messages,
         store=store or ThreadSafeDB(),
         cli_type="claude",
+        active_tools=task_tool_evidence("claude"),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_1
@@ -414,6 +417,7 @@ class TestBothPathwaysAgree:
             session_transcript=[],
             store=ThreadSafeDB(),
             cli_type="claude",
+            active_tools=task_tool_evidence("claude"),
         )
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_1

@@ -34,6 +34,7 @@ from autorun import session_manager as sm  # noqa: E402
 from autorun.config import CONFIG  # noqa: E402
 from autorun.core import EventContext, ThreadSafeDB, normalize_hook_payload  # noqa: E402
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig  # noqa: E402
+from task_tool_evidence import task_tool_evidence
 
 DELEGATE = CONFIG["delegate_marker_template"]
 
@@ -116,6 +117,7 @@ def _ctx(
         transcript_path=transcript_path,
         agent_transcript_path=agent_transcript_path,
         agent_id=agent_id,
+        active_tools=task_tool_evidence(cli_type),
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_1

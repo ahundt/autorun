@@ -66,6 +66,18 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "task_enforcement_requires_tool_evidence": (
             platform.task_enforcement_requires_tool_evidence
         ),
+        "task_tool_switch": (
+            None
+            if platform.task_tool_switch is None
+            else {
+                "settings_file": platform.task_tool_switch.settings_file,
+                "settings_path": list(platform.task_tool_switch.settings_path),
+                "value": platform.task_tool_switch.value,
+                "source": platform.task_tool_switch.source,
+                "env": platform.task_tool_switch.env,
+                "env_off": list(platform.task_tool_switch.env_off),
+            }
+        ),
         "task_record_source": platform.task_record_source,
         "agent_spawn_tools": sorted(platform.agent_spawn_tools),
         "aggregates_conductor_tasks": platform.aggregates_conductor_tasks,
