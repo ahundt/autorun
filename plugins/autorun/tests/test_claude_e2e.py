@@ -1228,13 +1228,30 @@ class TestClaudeHookEntryPoint:
             timeout=timeout,
         )
 
+    def _setup_isolated(self, hook_resources, payload, *, stateful=False):
+        """Run an idempotent setup hook, retrying one that only timed out.
+
+        A test's precondition (autorun active, task #1 created, a threshold
+        set) is not what it measures. On a slow Windows runner one of these
+        failed open with "autorun CLI timed out", the session never got its
+        task, and the ladder test then saw 0 reminders with no hint why.
+        Activation, `/ar:tasks N` and creating task #1 are idempotent, so a
+        retry is safe; calls a test counts are never retried.
+        """
+        for _ in range(3):
+            result = self._run_isolated(hook_resources, payload, stateful=stateful)
+            response = result[3] or {}
+            if "timed out after" not in str(response.get("systemMessage", "")):
+                return result
+        raise AssertionError(f"setup hook kept timing out: {payload.get('hook_event_name')} {response}")
+
     def _create_task_isolated(self, hook_resources, session_id, task_id="1", subject="test task", *, stateful=False):
         """Create a task via isolated PostToolUse (no daemon, temp state dir).
 
         Without an incomplete task, check_task_staleness uses the
         no_tasks_threshold (default 5) path instead of the user-set threshold.
         """
-        self._run_isolated(hook_resources, self._base_payload(
+        self._setup_isolated(hook_resources, self._base_payload(
             "PostToolUse", session_id,
             tool_name="TaskCreate",
             tool_input={"subject": subject, "description": "test"},
@@ -1272,7 +1289,7 @@ class TestClaudeHookEntryPoint:
 
     def _activate_autorun_isolated(self, hook_resources, session_id, task="test task", *, stateful=False):
         """Activate autorun in isolated temp state, optionally via test daemon."""
-        return self._run_isolated(hook_resources, self._base_payload(
+        return self._setup_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt=f"/ar:go {task}",
             session_transcript=[],
@@ -1481,7 +1498,7 @@ class TestClaudeHookEntryPoint:
         self._activate_autorun_isolated(hook_resources, session_id, stateful=True)
         self._create_task_isolated(hook_resources, session_id, stateful=True)
 
-        self._run_isolated(hook_resources, self._base_payload(
+        self._setup_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 2", session_transcript=[],
         ), stateful=True)
@@ -1509,7 +1526,9 @@ class TestClaudeHookEntryPoint:
         post_escalation = [m for m in post_msgs if "TASK UPDATE REQUIRED" in m or "OVERDUE" in m]
         assert len(post_escalation) >= 3, (
             f"Expected 3 PostToolUse reminders (1st=REQUIRED, 2nd+=OVERDUE). "
-            f"Got {len(post_escalation)}: {[m[:50] for m in post_escalation]}"
+            f"Got {len(post_escalation)}: {[m[:50] for m in post_escalation]}; "
+            f"every PostToolUse message: {[m[:80] for m in post_msgs]}; "
+            f"PreToolUse: {pre_results}"
         )
         assert "REQUIRED" in post_escalation[0], "1st PostToolUse should be REQUIRED"
         assert "OVERDUE" in post_escalation[1], "2nd PostToolUse should be OVERDUE"
