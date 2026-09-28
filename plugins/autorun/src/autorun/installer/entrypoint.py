@@ -332,6 +332,15 @@ def _runtime_settings(
         },
         _codex_hook_command=command.shell(),
         _codex_plugin_hook_command=plugin_command,
+        # Claude's cached copy of a wheel install runs "autorun --cli claude",
+        # which needs the uv tool directory on PATH; the desktop app starts
+        # without it, and every hook then failed before it could log anything.
+        _claude_hook_command=runtime.hook_command(
+            plugin,
+            cli="claude",
+            python=python,
+            no_sync=no_sync,
+        ).shell(),
         _extension_hook_commands={
             getattr(harness, "name", ""): runtime.hook_command(
                 plugin,

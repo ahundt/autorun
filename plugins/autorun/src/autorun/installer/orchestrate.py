@@ -678,6 +678,9 @@ def _registrations(
                                     cached = filled
                             if cached is not None:
                                 claude.substitute_root(cached)
+                                claude.pin_hook_command(
+                                    cached, str(ctx.settings.get("_claude_hook_command") or "")
+                                )
                         except Exception as error:
                             cache_failure = Outcome(
                                 f"{name}: cache fallback",

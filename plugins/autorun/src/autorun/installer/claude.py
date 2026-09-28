@@ -36,6 +36,7 @@ files in the cached copy), which is a handful of small documents.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -45,7 +46,12 @@ from .fs import atomic_write, fill_tree
 __all__ = [
     "CACHE_SUBDIR", "SUBSTITUTED_NAMES",
     "cache_dir", "cache_fallback", "substitute_root", "installed_versions",
+    "CONSOLE_HOOK_COMMAND", "pin_hook_command",
 ]
+
+#: The hook command build_support.py writes into a wheel's hooks.json: the
+#: console script, found through PATH. Kept identical to that literal.
+CONSOLE_HOOK_COMMAND = "autorun --cli claude"
 
 #: Where Claude keeps plugin copies, relative to its config directory. The
 #: marketplace name and the plugin name are separate levels, which is why one
@@ -138,6 +144,34 @@ def _candidates(directory: Path, names: Iterable[str]) -> Iterator[Path]:
     for path in sorted(directory.rglob("*")):
         if path.is_file() and not path.is_symlink() and path.name in wanted:
             yield path
+
+
+def pin_hook_command(directory: Path, command: str) -> bool:
+    """Give a cached copy's hooks the installer's absolute hook command.
+
+    A wheel's hooks.json runs :data:`CONSOLE_HOOK_COMMAND`, which works only
+    where Claude Code's PATH holds uv's tool directory. The desktop app is
+    started by the OS without the user's shell profile, so there every hook
+    failed with "command not found" before hook_entry.py could log it, and
+    autorun enforced nothing. Codex hooks were already written with the
+    absolute interpreter; this gives Claude the same. Only that exact command
+    is replaced, so a checkout's own hooks.json is left as it is. Returns
+    whether the file changed.
+    """
+    path = directory / "hooks" / "hooks.json"
+    if not command or not path.is_file():
+        return False
+    document = json.loads(path.read_text(encoding="utf-8"))
+    changed = False
+    for matchers in (document.get("hooks") or {}).values():
+        for matcher in matchers if isinstance(matchers, list) else ():
+            for hook in (matcher.get("hooks") or ()) if isinstance(matcher, dict) else ():
+                if isinstance(hook, dict) and hook.get("command") == CONSOLE_HOOK_COMMAND:
+                    hook["command"] = command
+                    changed = True
+    if changed:
+        atomic_write(path, json.dumps(document, indent=2) + "\n")
+    return changed
 
 
 def demo() -> None:

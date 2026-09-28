@@ -202,3 +202,35 @@ def test_the_bare_spelling_is_expanded_too(source, home):
     assert "$CLAUDE_PLUGIN_ROOT" not in (written / "hooks" / "hooks.json").read_text(
         encoding="utf-8"
     )
+
+
+def test_a_cached_wheel_hook_runs_without_the_tool_directory_on_path(tmp_path):
+    """The wheel's hooks ran `autorun --cli claude` through PATH. The desktop
+    app starts Claude Code without uv's tool directory there, so every hook
+    failed with "command not found" before it could log anything."""
+    import json
+
+    from autorun.installer import claude
+
+    hooks = tmp_path / "hooks" / "hooks.json"
+    hooks.parent.mkdir()
+    mine = {"type": "command", "command": "~/bin/my-hook"}
+    hooks.write_text(json.dumps({"hooks": {
+        "Stop": [{"hooks": [{"type": "command", "command": claude.CONSOLE_HOOK_COMMAND}]}],
+        "PreToolUse": [{"hooks": [mine]}],
+    }}))
+    absolute = "/opt/tool/bin/python /opt/tool/autorun/hooks/hook_entry.py --cli claude"
+    assert claude.pin_hook_command(tmp_path, absolute)
+    written = json.loads(hooks.read_text())["hooks"]
+    assert written["Stop"][0]["hooks"][0]["command"] == absolute
+    assert written["PreToolUse"][0]["hooks"][0] == mine, "other commands stay"
+    assert not claude.pin_hook_command(tmp_path, absolute), "already pinned"
+
+
+def test_the_pinned_command_is_the_one_the_wheel_build_writes():
+    from pathlib import Path
+
+    from autorun.installer import claude
+
+    build = (Path(__file__).resolve().parents[1] / "build_support.py").read_text(encoding="utf-8")
+    assert f'hook["command"] = "{claude.CONSOLE_HOOK_COMMAND}"' in build
