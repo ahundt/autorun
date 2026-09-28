@@ -130,7 +130,7 @@ def substitute_root(directory: Path, *, names: Iterable[str] = SUBSTITUTED_NAMES
             before = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        after = harness.substitute(before, directory)
+        after = harness.substitute(before, directory, json_string=path.suffix == ".json")
         if after != before:
             atomic_write(path, after)
             # The receipt is portable between hosts; do not persist Windows

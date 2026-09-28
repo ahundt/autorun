@@ -234,3 +234,20 @@ def test_the_pinned_command_is_the_one_the_wheel_build_writes():
 
     build = (Path(__file__).resolve().parents[1] / "build_support.py").read_text(encoding="utf-8")
     assert f'hook["command"] = "{claude.CONSOLE_HOOK_COMMAND}"' in build
+
+
+def test_a_backslash_in_the_plugin_root_keeps_hooks_json_parseable(tmp_path):
+    """Windows paths (C:\\Users\\...) were pasted raw into hooks.json, where each
+    backslash began an invalid JSON escape and the file stopped parsing."""
+    import json
+
+    from autorun.installer import claude
+
+    root = tmp_path / "C:\\Users\\me"  # a literal backslash in one name on POSIX
+    (root / "hooks").mkdir(parents=True)
+    (root / "hooks" / "hooks.json").write_text(json.dumps({"hooks": {"Stop": [{"hooks": [
+        {"type": "command", "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py"},
+    ]}]}}))
+    claude.substitute_root(root)
+    command = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
+    assert command == f"python {root}/hooks/hook_entry.py"

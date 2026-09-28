@@ -23,6 +23,7 @@ Complexity: O(n) in the text for every function here.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,16 +91,27 @@ def render_toml_command(command: Command, *, args: str = GEMINI_ARGS) -> str:
     )
 
 
-def substitute(text: str, root: Path, *, placeholder: str = CLAUDE_ROOT_PLACEHOLDER) -> str:
+def substitute(
+    text: str,
+    root: Path,
+    *,
+    placeholder: str = CLAUDE_ROOT_PLACEHOLDER,
+    json_string: bool = False,
+) -> str:
     """Replace a harness's plugin-root placeholder with the real directory.
 
     Both spellings are handled — ``${CLAUDE_PLUGIN_ROOT}`` and the bare
     ``$CLAUDE_PLUGIN_ROOT`` — because a manifest written by hand uses whichever
     the author remembered, and an unexpanded placeholder becomes a path that
     does not exist rather than an error anyone sees.
+
+    ``json_string`` escapes the directory for a placeholder inside a JSON
+    string. Pasted raw, a Windows path's backslashes (``C:\\Users``) became
+    invalid escapes and the whole hooks.json stopped parsing.
     """
+    value = json.dumps(str(root))[1:-1] if json_string else str(root)
     bare = placeholder.replace("${", "$").replace("}", "")
-    return text.replace(placeholder, str(root)).replace(bare, str(root))
+    return text.replace(placeholder, value).replace(bare, value)
 
 
 def demo() -> None:
