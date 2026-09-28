@@ -194,9 +194,10 @@ def upgrade_commands(version: str) -> str:
         for number, step in enumerate(steps, 1)
     )
     marketplace = textwrap.fill(
-        "If you installed only through the Claude Code marketplace, skip these "
-        "commands: run `claude plugin update ar@autorun`, then restart Claude "
-        "Code. That route does not run `autorun --install`, so any setting this "
+        "If you installed only through the Claude Code marketplace, run this "
+        "instead of the commands below, then restart Claude Code. The first "
+        "half fetches the new release into Claude's copy of the marketplace. "
+        "That route does not run `autorun --install`, so any setting this "
         "section says the install changes is yours to add.",
         width=80,
         break_long_words=False,
@@ -204,6 +205,10 @@ def upgrade_commands(version: str) -> str:
     )
     return (
         f"{marketplace}\n"
+        "\n"
+        "```bash\n"
+        "claude plugin marketplace update autorun && claude plugin update ar@autorun\n"
+        "```\n"
         "\n"
         "Otherwise run one of these. Use the second if you installed the PDF\n"
         "backends (`uv tool list --show-extras` lists `pdf`); the first removes them.\n"

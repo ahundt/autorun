@@ -146,7 +146,11 @@ def test_the_upgrade_commands_lead_the_upgrade_section():
     first_step = rendered.index("1. Restart running sessions.")
     assert upgrading < command < first_step
     assert rendered.index("## Fixed") > first_step
-    marketplace = rendered.index("claude plugin update ar@autorun")
+    # One unwrapped line, so it copies whole: the refresh first, or a
+    # GitHub-sourced marketplace can still hold the previous release.
+    marketplace = rendered.index(
+        "```bash\nclaude plugin marketplace update autorun && claude plugin update ar@autorun\n```"
+    )
     assert upgrading < marketplace < command, "marketplace-only readers learn first"
     assert "`autorun --version` prints `autorun 0.0.1rc2`" in _prose(rendered)
     pdf = rendered.index("'autorun-ai[pdf]==0.0.1rc2'")

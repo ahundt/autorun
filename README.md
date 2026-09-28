@@ -45,8 +45,8 @@ uv tool install --force autorun-ai && autorun --install
 ```
 
 Then restart open agent sessions: each reads its hooks when it starts. With only
-the Claude Code marketplace install, run `/plugin update ar@autorun` in Claude
-Code (or `claude plugin update ar@autorun` in a shell) instead. Each release's
+the Claude Code marketplace install, run `claude plugin marketplace update
+autorun && claude plugin update ar@autorun` in a shell instead. Each release's
 notes give the exact, version-pinned command.
 
 Use as much or as little workflow structure as the task needs: keep the safety
