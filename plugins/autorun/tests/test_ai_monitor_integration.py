@@ -19,6 +19,7 @@ import pytest
 
 from autorun.core import EventContext, ThreadSafeDB, dispatch_timeout_for_event
 from autorun.config import CONFIG
+from autorun.session_manager import state_lock_timeout
 from autorun.plugins import (
     is_premature_stop,
     build_injection_prompt,
@@ -66,13 +67,21 @@ def _make_ctx(
         store=store or ThreadSafeDB(),
         deadline_monotonic=time.monotonic() + dispatch_timeout_for_event("Stop"),
     )
-    ctx.autorun_active = active
-    ctx.autorun_stage = stage
-    ctx.hook_call_count = hook_call_count
-    ctx.recheck_count = recheck_count
-    ctx.file_policy = file_policy
-    ctx.autorun_task = autorun_task
-    ctx.autorun_mode = autorun_mode
+    # One flush, as the daemon's dispatch batches a handler's writes
+    # (AutorunApp.dispatch -> ThreadSafeDB.batch_writes). Seven separate durable
+    # writes per context, three threads at once, spent the whole deadline on a
+    # loaded Windows runner, so the last write fell back to the 0.5 s floor and
+    # lost the lock: `assert 2 == 3`, a cost of this setup, not of the code.
+    with ctx._store.batch_writes(
+        timeout=state_lock_timeout(ctx, floor=ctx._store._state_timeout)
+    ):
+        ctx.autorun_active = active
+        ctx.autorun_stage = stage
+        ctx.hook_call_count = hook_call_count
+        ctx.recheck_count = recheck_count
+        ctx.file_policy = file_policy
+        ctx.autorun_task = autorun_task
+        ctx.autorun_mode = autorun_mode
     return ctx
 
 
