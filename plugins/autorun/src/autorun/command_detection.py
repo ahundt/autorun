@@ -624,10 +624,12 @@ def _bashlex():
     try:
         import bashlex
         from bashlex import ast as bashlex_ast
+
+        base = bashlex_ast.nodevisitor
     except Exception:
         return None
 
-    class CommandVisitor(bashlex_ast.nodevisitor):
+    class CommandVisitor(base):
         """AST visitor with wrapper-aware and recursive shell -c parsing."""
         __slots__ = ("names", "strings", "potential", "depth")
 

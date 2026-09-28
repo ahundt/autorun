@@ -134,23 +134,27 @@ Whether autorun enforces task tracking after the upgrade:
     `ok   claude: claude plugin install ar@autorun`. A successful Claude Code
     plugin install printed nothing, and a repeat install printed "merged" for
     a Codex hooks file it had not changed.
-17. When a skill is not updated because you have your own copy of it, the
-    install names the directory, for example `~/.agents/skills/cache`, and how
-    to take autorun's copy instead. It named only the skill.
-18. A Claude Code session that switches with `/model` to a model without task
-    tools is no longer held to task tracking by task calls the earlier model
-    made. Tracking resumes once the new model makes a task call.
+17. When a skill is not updated because a copy autorun does not own is in the
+    way, the install prints that directory's full path and how to take
+    autorun's copy instead. It named only the skill.
+18. A Claude Code session that switches with `/model` is no longer held to
+    task tracking by task calls the earlier model made, which kept a model
+    without task tools blocked. Tracking resumes once the new model makes a
+    task call, or at once when `CLAUDE_CODE_ENABLE_TODO_TOOLS` is set.
 19. A Qwen Code `settings.json` with comments is read the way Qwen Code reads
     it, so `tools.todoWrite.enabled` set there counts.
-20. A `settings.json`, `hooks.json` or `AGENTS.md`/`CLAUDE.md` that is a
-    symlink to a missing file is left alone and reported. The install created
-    the missing file wherever the link pointed. Uninstalling from a linked
-    memory file that held only autorun's section keeps the link.
-21. `autorun --install` keeps the indentation, line endings and escaping of the
-    settings files it edits, and `autorun --uninstall` leaves an empty `env` or
-    `[tools]` you already had, so an install followed by an uninstall returns
-    the file as it was. Each edit had reformatted the whole file, and uninstall
-    removed those empty sections.
+20. `autorun --install` stops with an error naming the file when a
+    `settings.json`, `hooks.json`, `AGENTS.md` or `CLAUDE.md` it edits is a
+    symlink to a missing file; it had created the missing file wherever the
+    link pointed. Uninstall skips such a file and removes everything else, and
+    an uninstall from a linked memory file that held only autorun's section
+    keeps the link.
+21. `autorun --install` keeps the indentation, line endings, final newline and
+    `\u` escaping of the settings files it edits, and `autorun --uninstall`
+    leaves an empty `env` or `[tools]` you already had. Each edit had
+    reformatted the whole file with two-space indents and LF endings, and
+    uninstall removed those empty sections. JSON arrays written on one line
+    inside an indented file are still spread over several.
 
 ### For contributors
 

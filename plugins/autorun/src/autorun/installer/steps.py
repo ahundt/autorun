@@ -43,10 +43,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping, MutableMapping, Sequence
 
+from filelock import FileLock
+
 from ..platforms import ExtensionSkills, PluginPackageSkills
 from . import codex, discovery, extension, memory, settings, skills
 from .discovery import redirected_home
-from .fs import autorun_state_dir, json_document, read_settings, settings_document
+from .fs import (
+    INSTALL_LOCK_NAME, autorun_state_dir, edit_target, json_document, read_settings, settings_document,
+)
 from .traversal import Context, Intent, Kind, Mode, Step
 
 __all__ = [
@@ -483,8 +487,13 @@ def apply_switches(entries: Iterable[Switch], mode: Mode) -> list[str]:
             note = _apply_switch(entry, mode)
         except (OSError, ValueError) as error:
             note = (
-                f"skipped {entry.describe()}: {error}; set it to "
-                f"{entry.shown_value} yourself to give task gates their evidence"
+                f"skipped {entry.describe()}: {error}; "
+                + (
+                    "remove it yourself if autorun set it"
+                    if mode is Mode.UNINSTALL
+                    else f"set it to {entry.shown_value} yourself to give task "
+                    "gates their evidence"
+                )
             )
         if note:
             notes.append(note)
@@ -493,6 +502,7 @@ def apply_switches(entries: Iterable[Switch], mode: Mode) -> list[str]:
 
 def _apply_switch(entry: Switch, mode: Mode) -> str:
     if mode is Mode.PREVIEW:
+        edit_target(entry.path)  # a dangling link is refused, as install refuses it
         found = _lookup(read_settings(entry.path), entry.key)
         if found is _ABSENT:
             return f"would set {entry.describe()}"
@@ -502,7 +512,14 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
     if mode is Mode.UNINSTALL:
         if not entry.record.is_file():
             return ""
-        if not entry.path.is_file():
+        if entry.path.is_symlink() and not entry.path.exists():
+            # The file is somewhere the link cannot reach right now; the
+            # record stays so a later uninstall can still remove the value.
+            return (
+                f"skipped {entry.describe()}: it links to a file that does not "
+                "exist; uninstall again once the link resolves"
+            )
+        if not entry.path.exists():
             # The setting went with its file; the record goes too.
             with json_document(entry.record) as record:
                 record.pop(entry.record_key, None)
@@ -529,8 +546,11 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
         if created_file and emptied and not entry.path.is_symlink():
             # The file existed only to hold this setting; leave the harness
             # home the way the install found it. A link put there since is
-            # the user's.
-            entry.path.unlink(missing_ok=True)
+            # the user's. Checked again under the lock: an install that wrote
+            # the file after the edit above released it keeps its file.
+            with FileLock(str(entry.path.parent / INSTALL_LOCK_NAME)):
+                if entry.path.is_file() and not read_settings(entry.path):
+                    entry.path.unlink()
         return f"removed {entry.describe()}"
     entry.record.parent.mkdir(parents=True, exist_ok=True)
     # A dangling link is not an absent file: settings_document refuses it.

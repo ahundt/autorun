@@ -2009,6 +2009,10 @@ def test_the_preflight_stops_an_install_at_a_dangling_memory_link(tmp_path, monk
          '{"name":"caf\\u00e9","tools":{"other":true}}\n'),
         # An empty object has no style of its own to keep.
         ("settings.json", ("env", "X"), "{}\n"),
+        # A Windows path's escaped backslash before a "u" is not a \\u escape.
+        ("settings.json", ("env", "X"), '{\n  "hook": "C:\\\\users\\\\me"\n}\n'),
+        # TOML without a final newline keeps ending without one.
+        ("config.toml", ("tools", "update_plan", "enabled"), 'model = "x"'),
         # An empty [tools] table the user wrote, CRLF.
         ("config.toml", ("tools", "update_plan", "enabled"),
          '# mine\r\nmodel = "o3"\r\n\r\n[tools]\r\n'),
@@ -2040,3 +2044,81 @@ def test_a_memory_region_round_trip_keeps_crlf(tmp_path):
     assert b"autorun guidance\r\nsecond line" in written and b"\n" not in written.replace(b"\r\n", b"")
     assert memory.strip(guide, block)
     assert guide.read_bytes() == original
+
+
+def test_a_dangling_settings_link_at_uninstall_keeps_the_record_for_later(tmp_path):
+    """Uninstall used to drop the record, so once the link resolved again the
+    value autorun set could never be removed."""
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlinks need privileges here")
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    (dotfiles / "settings.json").write_text('{"theme": "dark"}\n')
+    settings = tmp_path / "settings.json"
+    settings.symlink_to(dotfiles / "settings.json")
+    switch = steps.Switch(settings, ("env", "X"), "1", tmp_path / "state" / "switches.json")
+    steps.apply_switches([switch], Mode.INSTALL)
+
+    (dotfiles / "settings.json").rename(tmp_path / "away.json")
+    [note] = steps.apply_switches([switch], Mode.UNINSTALL)
+    assert note.startswith("skipped ") and "does not exist" in note, note
+    assert settings.is_symlink()
+
+    (tmp_path / "away.json").rename(dotfiles / "settings.json")
+    assert steps.apply_switches([switch], Mode.UNINSTALL) == [f"removed {switch.describe()}"]
+    assert json.loads((dotfiles / "settings.json").read_text()) == {"theme": "dark"}
+
+
+def test_a_dangling_memory_link_does_not_stop_an_uninstall(tmp_path, monkeypatch):
+    """One broken link must not keep every other harness's files installed:
+    a missing file holds nothing of autorun's to remove."""
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlinks need privileges here")
+    from autorun.installer.orchestrate import uninstall
+
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    (home / ".codex" / "AGENTS.md").symlink_to(tmp_path / "gone" / "AGENTS.md")
+    result = uninstall(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"_guidance": {"codex": "guidance"}, "skill_placement": {"codex": "auto"}},
+        home=home,
+        harnesses=(PLATFORMS["codex"],),
+        available=(),
+        run_command=lambda argv: None,
+        state_dir=tmp_path / "state",
+    )
+    assert not any(f.check == "installer preflight" for f in result.findings), result.findings
+    assert (home / ".codex" / "AGENTS.md").is_symlink()
+
+
+def test_the_kept_skill_warning_finds_a_differently_cased_directory(sandbox):
+    from autorun.installer import skills
+
+    root = sandbox / "shared"
+    mine = root / "Cache"
+    mine.mkdir(parents=True)
+    (mine / "SKILL.md").write_text("---\nname: cache\ndescription: mine\n---\n")
+    ours = root / "commit"  # autorun's own marked copy is not a conflict
+    ours.mkdir()
+    from autorun.installer.fs import record_tree
+    record_tree(ours, plugin="ar", ownership_proof=lambda directory: True)
+    found = skills.conflicting_paths(
+        PLATFORMS["codex"], Context(marketplace_root=REPO), ["ar:cache", "ar:commit"],
+        shared_root_override=root,
+    )
+    assert [path.name for path in found] == ["Cache"]
+
+
+def test_an_escaped_backslash_before_u_is_not_a_unicode_escape():
+    """"C:\\users" in a file made every non-ASCII value autorun wrote come out
+    as a \\u escape, because the check matched the backslash-u text."""
+    from autorun.installer.fs import render_json_like
+
+    windows = '{\n  "hook": "C:\\\\users"\n}\n'
+    assert "José" in render_json_like({"hook": "C:\\users", "h": "José"}, windows)
+    escaped = '{"n": "caf\\u00e9"}\n'
+    assert "\\u00e9" in render_json_like({"n": "café"}, escaped)

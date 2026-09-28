@@ -385,13 +385,20 @@ def conflicting_paths(
     """
     shared_dir = shared_root_override if shared_root_override is not None else shared_root()
     roots = (shared_dir, *_native_roots(platform, ctx))
-    names = [entry.partition(":")[2] or entry for entry in refused]
-    return tuple(
-        root / name
-        for name in names
-        for root in roots
-        if (root / name).exists() or (root / name).is_symlink()
-    )
+    found: list[Path] = []
+    for entry in refused:
+        plugin, _, name = entry.rpartition(":")
+        for root in roots:
+            # Only what blocked_names itself refuses, found the way it looks
+            # (case-folded): not autorun's own marked copy on another route,
+            # and not missed when the user's directory is spelled `Cache`.
+            if not root.is_dir() or name not in blocked_names({name: root}, root, plugin):
+                continue
+            found.extend(
+                child for child in root.iterdir()
+                if child.name.casefold() == name.casefold()
+            )
+    return tuple(found)
 
 
 def skill_intents(

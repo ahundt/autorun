@@ -1683,8 +1683,12 @@ def read_text_exact(path: Path) -> str:
 
 
 def newline_of(text: str) -> str:
-    """The line ending a file uses: CRLF if it has any, else LF."""
-    return "\r\n" if "\r\n" in text else "\n"
+    """The line ending most of a file's lines use: CRLF or LF.
+
+    By majority, so one stray CRLF does not convert an LF file on first edit.
+    """
+    crlf = text.count("\r\n")
+    return "\r\n" if crlf > text.count("\n") - crlf else "\n"
 
 
 def render_json_like(document: object, original: str) -> str:
@@ -1710,7 +1714,10 @@ def render_json_like(document: object, original: str) -> str:
             indent = "\t" if lead.startswith("\t") else len(lead)
     # A file that escapes non-ASCII keeps escaping it; otherwise it stays as
     # the user wrote it.
-    ensure_ascii = "\\u" in original and not any(ord(ch) > 127 for ch in original)
+    # A real \uXXXX escape, not the "\\u" of an escaped backslash before a u
+    # (a Windows path such as "C:\\users").
+    escapes = re.search(r"(?<!\\)(?:\\\\)*\\u[0-9a-fA-F]{4}", original)
+    ensure_ascii = bool(escapes) and not any(ord(ch) > 127 for ch in original)
     text = json.dumps(document, indent=indent, separators=separators, ensure_ascii=ensure_ascii)
     final = "" if original and not original.endswith(("\n", "\r")) else "\n"
     return (text + final).replace("\n", newline)
@@ -1729,13 +1736,16 @@ def toml_document(path: Path) -> Iterator[MutableMapping]:
 
     with FileLock(str(path.parent / INSTALL_LOCK_NAME)):
         path = edit_target(path)
-        newline = newline_of(read_text_exact(path))
+        original = read_text_exact(path)
+        newline = newline_of(original)
         document = read_toml_document(path)
         before = tomlkit.dumps(document)
         yield document
         after = tomlkit.dumps(document)
         if after != before:
-            text = after.rstrip("\n") + "\n" if after.strip() else ""
+            # A file that ended without a newline keeps ending without one.
+            final = "" if original and not original.endswith(("\n", "\r")) else "\n"
+            text = after.rstrip("\n") + final if after.strip() else ""
             atomic_write(path, text.replace("\n", newline))
 
 

@@ -4062,8 +4062,11 @@ def register_hooks(app_instance) -> None:
             # PostToolUse follows a call that ran, so the task tools exist for
             # the model that made it; task gates may enforce while that model
             # answers (EventContext.task_tool_evidence).
-            observed = ctx.current_model() or True
-            if ctx.state_get(EventContext.TASK_TOOLS_OBSERVED, False) != observed:
+            stored = ctx.state_get(EventContext.TASK_TOOLS_OBSERVED, False)
+            # A tail that names no model (one huge line, another harness's
+            # transcript) keeps a model already recorded rather than erasing it.
+            observed = ctx.current_model() or stored or True
+            if stored != observed:
                 ctx.state_set(EventContext.TASK_TOOLS_OBSERVED, observed)
 
         try:

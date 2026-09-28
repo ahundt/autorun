@@ -108,7 +108,12 @@ def _preflight_user_files(
     *,
     removing: bool,
 ) -> tuple[status.Finding, ...]:
-    """Validate every shared user file before the first durable mutation."""
+    """Validate every shared user file before the first durable mutation.
+
+    A dangling link stops an install, which would create its target, but not
+    an uninstall: a missing file holds nothing of autorun's to remove, and one
+    broken link must not keep every other harness's files in place.
+    """
     failures: list[status.Finding] = []
 
     def check(label: str, action) -> None:
@@ -127,18 +132,18 @@ def _preflight_user_files(
     for harness in harnesses:
         for region in steps.regions_for(harness, ctx, removing=removing):
             check(region.describe(), lambda region=region: (
-                edit_target(region.path), memory.validate(region.path, region.block)
+                removing or edit_target(region.path), memory.validate(region.path, region.block)
             ))
         for hooks in steps.hooks_for(harness, ctx, removing=removing):
             check(hooks.describe(), lambda hooks=hooks: (
-                edit_target(hooks.path), codex.validate_hooks(hooks.path)
+                removing or edit_target(hooks.path), codex.validate_hooks(hooks.path)
             ))
     for marketplace in marketplaces:
         expected = None if removing else marketplace.entry
         check(
             marketplace.describe(),
             lambda marketplace=marketplace, expected=expected: (
-                edit_target(marketplace.path),
+                removing or edit_target(marketplace.path),
                 codex.validate_marketplace(marketplace.path, expected),
             ),
         )
@@ -236,8 +241,8 @@ def perform(
                 findings.append(status.Finding(
                     "skill placement",
                     status.Level.WARN,
-                    f"{getattr(harness, 'name', '?')}: kept your own "
-                    f"{', '.join(planned.refused)} — "
+                    f"{getattr(harness, 'name', '?')}: kept existing "
+                    f"{', '.join(planned.refused)} this install does not own — "
                     + (", ".join(str(path) for path in blocking) or "paths not autorun's")
                     + "; the harness uses those copies, not this release's",
                     "to take autorun's, move those directories aside and rerun "

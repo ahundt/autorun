@@ -391,6 +391,11 @@ def test_a_model_switch_retires_the_proof_until_the_new_model_calls_a_task_tool(
     answered_by("<synthetic>")  # the harness's own lines name no model
     assert event("Bash").task_tool_evidence == registered_task_tools("claude")
 
+    with transcript.open("a", encoding="utf-8") as out:  # a subagent's turn
+        out.write(json.dumps({"type": "assistant", "isSidechain": True,
+                              "message": {"model": "claude-haiku-4-5"}}) + "\n")
+    assert event("Bash").task_tool_evidence == registered_task_tools("claude")
+
     answered_by("claude-older-model")
     assert event("Bash").task_tool_evidence is None, "unknown again after the switch"
 
