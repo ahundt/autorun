@@ -69,6 +69,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -108,6 +109,9 @@ __all__ = [
     "dereference_links",
     "fill_tree",
     "json_document",
+    "render_json_like",
+    "read_text_exact",
+    "newline_of",
     "edit_target",
     "atomic_write",
     "OWNED_MARKER_NAME",
@@ -1661,12 +1665,55 @@ def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[di
     """
     with FileLock(str(path.parent / INSTALL_LOCK_NAME)):
         path = edit_target(path)
+        original = read_text_exact(path)
         document = read_json_object(path, default)
         before = _canonical(document)
         yield document
         if _canonical(document) != before:
-            # ensure_ascii=False: a user's non-ASCII text stays as they wrote it.
-            atomic_write(path, json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+            atomic_write(path, render_json_like(document, original))
+
+
+def read_text_exact(path: Path) -> str:
+    """``path``'s text with its line endings as stored; "" when absent.
+
+    ``read_text`` translates CRLF to LF, which hid a file's own line endings
+    from every editor that meant to keep them.
+    """
+    return path.read_bytes().decode("utf-8") if path.is_file() else ""
+
+
+def newline_of(text: str) -> str:
+    """The line ending a file uses: CRLF if it has any, else LF."""
+    return "\r\n" if "\r\n" in text else "\n"
+
+
+def render_json_like(document: object, original: str) -> str:
+    """``document`` as JSON in the style ``original`` was written in.
+
+    Every edit used to rewrite the user's whole file with two-space indents
+    and LF line endings, so a four-space or CRLF settings.json changed on
+    install and stayed changed after uninstall removed the one key. Indent
+    (spaces, tab, or one line), line ending, final newline and ``\\u``
+    escaping are read from ``original``; a new file gets two spaces and LF.
+    """
+    newline = newline_of(original)
+    indent: int | str | None = 2
+    separators = None
+    stripped = original.strip()
+    if stripped and "\n" not in stripped and stripped not in ("{}", "[]"):
+        indent = None  # one line stays one line; an empty "{}" has no style
+        separators = (", ", ": ") if '": ' in stripped else (",", ":")
+    else:
+        match = re.search(r"^([ \t]+)\S", original, re.MULTILINE)
+        if match:
+            lead = match.group(1)
+            indent = "\t" if lead.startswith("\t") else len(lead)
+    # A file that escapes non-ASCII keeps escaping it; otherwise it stays as
+    # the user wrote it.
+    ensure_ascii = "\\u" in original and not any(ord(ch) > 127 for ch in original)
+    text = json.dumps(document, indent=indent, separators=separators, ensure_ascii=ensure_ascii)
+    final = "" if original and not original.endswith(("\n", "\r")) else "\n"
+    return (text + final).replace("\n", newline)
 
 
 @contextmanager
@@ -1682,12 +1729,14 @@ def toml_document(path: Path) -> Iterator[MutableMapping]:
 
     with FileLock(str(path.parent / INSTALL_LOCK_NAME)):
         path = edit_target(path)
+        newline = newline_of(read_text_exact(path))
         document = read_toml_document(path)
         before = tomlkit.dumps(document)
         yield document
         after = tomlkit.dumps(document)
         if after != before:
-            atomic_write(path, after.rstrip("\n") + "\n" if after.strip() else "")
+            text = after.rstrip("\n") + "\n" if after.strip() else ""
+            atomic_write(path, text.replace("\n", newline))
 
 
 def read_toml_document(path: Path) -> MutableMapping:

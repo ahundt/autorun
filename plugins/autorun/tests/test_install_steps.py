@@ -1642,7 +1642,9 @@ def test_a_symlinked_settings_file_is_written_through_and_keeps_its_mode(tmp_pat
     entry.path.parent.mkdir()
     managed = tmp_path / "dotfiles" / "claude-settings.json"
     managed.parent.mkdir()
-    managed.write_text(json.dumps({"theme": "dark", "note": "café"}), encoding="utf-8")
+    managed.write_text(
+        json.dumps({"theme": "dark", "note": "café"}, ensure_ascii=False), encoding="utf-8"
+    )
     managed.chmod(0o644)
     entry.path.symlink_to(managed)
 
@@ -1991,3 +1993,50 @@ def test_the_preflight_stops_an_install_at_a_dangling_memory_link(tmp_path, monk
     assert not result.ok
     assert any("AGENTS.md" in f.detail and "does not exist" in f.detail for f in result.findings)
     assert (home / ".codex" / "AGENTS.md").is_symlink()
+
+
+@pytest.mark.parametrize(
+    ("name", "key", "original"),
+    [
+        # Four spaces, CRLF, and an "env" the user already had, empty.
+        ("settings.json", ("env", "X"),
+         '{\r\n    "theme": "dark",\r\n    "env": {}\r\n}\r\n'),
+        # Tabs, non-ASCII, no final newline.
+        ("settings.json", ("env", "X"),
+         '{\n\t"theme": "déjà vu",\n\t"list": [\n\t\t1\n\t]\n}'),
+        # One line, \\u escapes kept as escapes.
+        ("settings.json", ("tools", "todoWrite", "enabled"),
+         '{"name":"caf\\u00e9","tools":{"other":true}}\n'),
+        # An empty object has no style of its own to keep.
+        ("settings.json", ("env", "X"), "{}\n"),
+        # An empty [tools] table the user wrote, CRLF.
+        ("config.toml", ("tools", "update_plan", "enabled"),
+         '# mine\r\nmodel = "o3"\r\n\r\n[tools]\r\n'),
+    ],
+)
+def test_install_then_uninstall_gives_the_file_back_byte_for_byte(tmp_path, name, key, original):
+    """Uninstall restored settings by meaning, not bytes: every edit rewrote
+    JSON with two spaces and LF, and removing the key also removed a parent
+    table the user had written, empty."""
+    path = tmp_path / name
+    path.write_bytes(original.encode("utf-8"))
+    switch = steps.Switch(path, key, True, tmp_path / "state" / "switches.json")
+    assert steps.apply_switches([switch], Mode.INSTALL)[0].startswith("set ")
+    assert path.read_bytes() != original.encode("utf-8")
+    assert steps.apply_switches([switch], Mode.UNINSTALL) == [f"removed {switch.describe()}"]
+    assert path.read_bytes() == original.encode("utf-8")
+
+
+def test_a_memory_region_round_trip_keeps_crlf(tmp_path):
+    from autorun.installer import memory
+    from autorun.installer.memory import Block
+
+    guide = tmp_path / "AGENTS.md"
+    original = b"# mine\r\n\r\nline two\r\n"
+    guide.write_bytes(original)
+    block = Block("codex-agents-md")
+    assert memory.splice(guide, "autorun guidance\nsecond line", block)
+    written = guide.read_bytes()
+    assert b"autorun guidance\r\nsecond line" in written and b"\n" not in written.replace(b"\r\n", b"")
+    assert memory.strip(guide, block)
+    assert guide.read_bytes() == original

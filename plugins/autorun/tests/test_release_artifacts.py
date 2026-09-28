@@ -122,13 +122,12 @@ def release_bundle(tmp_path_factory):
     checkout.mkdir()
     commit = _prospective_checkout(checkout)
     env = os.environ.copy()
-    env.update(
-        {
-            "AUTORUN_BUILD_COMMIT": commit,
-            "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
-            "UV_CACHE_DIR": str(root / "uv-cache"),
-        }
-    )
+    # uv's own cache (or the caller's UV_CACHE_DIR), not a fresh one per run: a
+    # new cache downloaded every build and install dependency again, 260 s
+    # locally against about 18 s warm, and beside a parallel suite that ran
+    # past _run's timeouts. It holds downloads, never autorun state, and uv
+    # locks it for concurrent use; reproducibility is the two builds' digests.
+    env.update({"AUTORUN_BUILD_COMMIT": commit, "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH})
     builds = []
     for pass_number in (1, 2):
         output = root / f"dist-{pass_number}"

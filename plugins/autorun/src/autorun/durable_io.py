@@ -116,7 +116,10 @@ def _atomic_publish(path: Path, emit) -> None:
     )
     staged = Path(staged_name)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        # newline="": the bytes are the caller's text. Text mode turned every
+        # "\n" into "\r\n" on Windows, so a file could not keep LF there, and
+        # a caller preserving a file's own CRLF got "\r\r\n".
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
             emit(handle)
             handle.flush()
             os.fsync(handle.fileno())

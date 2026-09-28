@@ -439,13 +439,28 @@ def _assign(document: MutableMapping, key: Sequence[str], value: object) -> None
     node[key[-1]] = value
 
 
-def _remove(document: MutableMapping, key: Sequence[str]) -> None:
-    """Delete ``key`` and any parent it leaves empty; the user's keys stay."""
+def _existing_parents(document: Mapping, key: Sequence[str]) -> int:
+    """How many of ``key``'s parent tables or objects are already there."""
+    node: object = document
+    for count, part in enumerate(key[:-1]):
+        node = node.get(part) if isinstance(node, Mapping) else None
+        if not isinstance(node, Mapping):
+            return count
+    return len(key) - 1
+
+
+def _remove(document: MutableMapping, key: Sequence[str], *, kept: int = 0) -> None:
+    """Delete ``key`` and each parent it empties that autorun created.
+
+    ``kept`` parents existed before the install (``_existing_parents``): an
+    ``"env": {}`` or ``[tools]`` the user had stays even when empty. Records
+    from before this was stored pass 0, the earlier behaviour.
+    """
     parents = [document]
     for part in key[:-1]:
         parents.append(parents[-1][part])
     del parents[-1][key[-1]]
-    for depth in range(len(key) - 1, 0, -1):
+    for depth in range(len(key) - 1, kept, -1):
         if not parents[depth]:
             del parents[depth - 1][key[depth - 1]]
 
@@ -501,13 +516,15 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
                 return ""
             # A record is {"value": ..., "created_file": bool}; an earlier
             # build of this release stored the bare value.
+            kept = 0
             if isinstance(recorded, Mapping) and "value" in recorded:
                 value, created_file = recorded["value"], bool(recorded.get("created_file"))
+                kept = int(recorded.get("kept_parents", 0))
             else:
                 value, created_file = recorded, False
             if _lookup(document, entry.key) != value:
                 return f"kept user-changed {entry.describe()}"
-            _remove(document, entry.key)
+            _remove(document, entry.key, kept=kept)
             emptied = not document
         if created_file and emptied and not entry.path.is_symlink():
             # The file existed only to hold this setting; leave the harness
@@ -526,8 +543,11 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
         with settings_document(entry.path) as document, json_document(entry.record) as record:
             if _lookup(document, entry.key) is not _ABSENT:
                 return "" if entry.record_key in record else _kept_note(entry)
+            kept = _existing_parents(document, entry.key)
             _assign(document, entry.key, entry.value)
-            record[entry.record_key] = {"value": entry.value, "created_file": created_file}
+            record[entry.record_key] = {
+                "value": entry.value, "created_file": created_file, "kept_parents": kept,
+            }
             wrote_record = True
             return (
                 f"set {entry.describe()}: the harness offers its task tools to "
