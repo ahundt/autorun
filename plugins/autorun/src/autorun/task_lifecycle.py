@@ -74,6 +74,7 @@ from .platforms import (
     resolve_standalone_session_identity,
     task_enforcement_capability_available,
     task_tool_role,
+    writes_whole_task_list,
 )
 from .task_pause import (
     task_pause_allows_stop,
@@ -181,7 +182,7 @@ _ACT_STALE_AI_ESCAPE_CHECKLIST = (
 
 def _stale_escape_sentence(cli_type: str | None, *, threshold: int, marker: str) -> str:
     """Stale-task escape wording in the harness's own task vocabulary."""
-    template = _ACT_STALE_AI_ESCAPE_CHECKLIST if platform_for(cli_type).task_management_style == "plan_checklist" else _ACT_STALE_AI_ESCAPE_TASK_TOOLS
+    template = _ACT_STALE_AI_ESCAPE_CHECKLIST if writes_whole_task_list(cli_type) else _ACT_STALE_AI_ESCAPE_TASK_TOOLS
     # Only threshold/marker are substituted here; the {task_*} placeholders stay
     # for core.py to resolve against the running harness.
     return template.replace("{threshold}", str(threshold)).replace("{marker}", marker)
@@ -317,15 +318,15 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
         tasks_off = format_command_for_cli("/ar:tasks off", cli_type)
         user_actions += f"; {tasks_off} only disables reminders"
     recovery = task_tool_recovery_sentence(cli_type)
-    if platform_for(cli_type).task_management_style == "plan_checklist":
+    if writes_whole_task_list(cli_type):
         return (
             "Actions: 1. You must complete or remove each checklist item before stopping "
-            "2. Review/update: {task_progress} with the current plan list "
+            "2. Review/update: {task_progress} with the full current list "
             '3. Finish work: {task_progress} with finished items status="completed" '
             "4. Defer/delegate: keep a concrete follow-up item pending "
             "5. Truly blocked? re-check that first (reread the error, try another "
             "approach); then, as a permitted last resort, remove the item from the "
-            "current plan list and state why "
+            "list you send and state why "
             f"6. User only: {user_actions} "
             f"{recovery}"
         )

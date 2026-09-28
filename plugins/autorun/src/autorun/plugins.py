@@ -68,6 +68,7 @@ from .platforms import (
     task_capability_is_known,
     task_enforcement_capability_available,
     task_progress_capability_available,
+    writes_whole_task_list,
 )
 from .session_manager import SessionPersistenceError, session_state
 from .scoped_allow import (
@@ -1657,11 +1658,11 @@ def _get_task_creation_reminder(ctx: EventContext) -> Optional[str]:
     Used by both detect_plan_approval (inline append) and
     remind_until_tasks_created (chain notification stacking).
     """
-    if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+    if writes_whole_task_list(ctx.cli_type):
         if ctx.plan_awaiting_execution_tasks:
             return (
                 "\nEXECUTION TASKS REQUIRED: plan accepted, no implementation checklist exists. "
-                "Your next action must be {task_progress} with a plan list that tracks concrete work: "
+                "Your next action must be {task_progress} with a checklist that tracks concrete work: "
                 "1. [TDD] Step N: write tests for [step] "
                 "2. [EXEC] Step N: [implementation step] "
                 "3. keep exactly one item in_progress, use pending for later items, and completed for finished items. "
@@ -1670,7 +1671,7 @@ def _get_task_creation_reminder(ctx: EventContext) -> Optional[str]:
         if ctx.plan_awaiting_planning_tasks:
             return (
                 "\nPLANNING TASKS REQUIRED: a plan is active with no checklist tracking it. "
-                "Your next action must be {task_progress} with a plan list of concrete planning steps: "
+                "Your next action must be {task_progress} with a checklist of concrete planning steps: "
                 "1. [PLANNING] Step N: [name] "
                 "2. keep exactly one item in_progress, use pending for later items, and completed for finished items. "
                 "Do not call any other tool until the checklist exists."
@@ -1684,10 +1685,10 @@ def _get_task_creation_reminder(ctx: EventContext) -> Optional[str]:
 
 def _get_tdd_scaffolding_message(ctx: EventContext) -> str:
     """Return platform-native TDD scaffolding reminder text."""
-    if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+    if writes_whole_task_list(ctx.cli_type):
         return (
             "\nTDD SCAFFOLDING REQUIRED: use {task_progress} before writing implementation code. "
-            "The plan list must include one [TDD] item and one [EXEC] item per implementation step, "
+            "The checklist must include one [TDD] item and one [EXEC] item per implementation step, "
             "with each [EXEC] item pending until its matching [TDD] item is completed."
         )
     return _resolve_task_dependency(CONFIG.get("tdd_scaffolding_message", ""), ctx.cli_type, 4)
@@ -1695,10 +1696,10 @@ def _get_tdd_scaffolding_message(ctx: EventContext) -> str:
 
 def _task_staleness_instructions(ctx: EventContext) -> str:
     """Return native task/checklist instructions for staleness enforcement."""
-    if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+    if writes_whole_task_list(ctx.cli_type):
         if ctx.plan_awaiting_planning_tasks:
             return (
-                "Call {task_progress} now with a plan list of [PLANNING] steps. "
+                "Call {task_progress} now with a checklist of [PLANNING] steps. "
                 "Use statuses pending|in_progress|completed and keep exactly one item in_progress. "
                 "Do not call any other tool until the checklist exists."
             )
@@ -1761,7 +1762,7 @@ def _resolve_task_dependency(text: str, cli_type: str | None, number: int) -> st
 def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: bool = False, no_tasks: bool = False) -> str:
     """Return the PostToolUse staleness reminder in the platform's native terms."""
     agent_context = " Current subagent only." if ctx.agent_id else ""
-    if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+    if writes_whole_task_list(ctx.cli_type):
         disable = format_command_for_cli("/ar:tasks off", ctx.cli_type)
         if no_tasks:
             return (
@@ -1771,7 +1772,7 @@ def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: 
             )
         level = "TASK UPDATE OVERDUE" if overdue else "TASK UPDATE REQUIRED"
         return (
-            f"\n{level}: {threshold} calls without a plan update. "
+            f"\n{level}: {threshold} calls without a checklist update. "
             "Next: {task_progress}; refresh statuses and add newly discovered work as "
             "concrete steps, one per item. "
             f"The next non-task call will be blocked. Disable reminders: {disable}." + agent_context

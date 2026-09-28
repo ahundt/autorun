@@ -1236,6 +1236,10 @@ _PI_TOOLS = {
 # Codex model-facing tool surface does not expose Claude-style Grep/Glob/Read/
 # Write tools. Keep suggestions pointed at the shell inspection/search commands
 # and apply_patch path Codex can actually use.
+# Qwen's own checklist tool is todo_write; the tracker_* names it shares with
+# Gemini need experimental flags, so guidance names todo_write.
+_QWEN_TOOLS = dict(_GEMINI_TOOLS, task_progress="todo_write")
+
 _CODEX_TOOLS = dict(_CLAUDE_TOOLS)
 _CODEX_TOOLS.update(
     {
@@ -1571,7 +1575,7 @@ QWEN = register(
         generates_toml_commands=False,
         extensions_subdir="extensions",
         uninstall_cmd=("qwen", "extensions", "uninstall", "{name}"),
-        tool_names=_GEMINI_TOOLS,
+        tool_names=_QWEN_TOOLS,
         task_management_style="bulk_todos",
         task_create_tools=GEMINI.task_create_tools,
         task_update_tools=GEMINI.task_update_tools,
@@ -2101,6 +2105,16 @@ def to_harness_cli_event(event: str, harness_name: str | None) -> str:
     """Map an autorun dispatcher event to the harness CLI's native name."""
     platform = platform_for(harness_name)
     return platform.autorun_to_harness_cli_events.get(event, event)
+
+
+def writes_whole_task_list(cli_type: str | None) -> bool:
+    """Whether this harness's task tool rewrites the whole list at once.
+
+    update_plan, write_todos, todo_write and todowrite each take the full list,
+    and an item left out is removed, so guidance for them names that one tool
+    and never a per-task call (``tool(id="X", status=...)``) or a list tool.
+    """
+    return platform_for(cli_type).task_management_style in ("plan_checklist", "bulk_todos")
 
 
 def task_tool_role(cli_type: str | None, tool_name: str | None) -> str | None:

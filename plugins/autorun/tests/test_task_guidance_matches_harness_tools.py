@@ -515,3 +515,47 @@ def test_the_discard_escape_is_a_permitted_last_resort_after_rechecking(cli_type
     assert "re-check" in text, "check the can't-be-done assumption first"
     assert "permitted" in text, "discarding is allowed, not a rule violation"
     assert "state why" in text, "the discard carries its reason"
+
+
+_WHOLE_LIST_HARNESSES = sorted(
+    name
+    for name, platform in __import__("autorun.platforms", fromlist=["PLATFORMS"]).PLATFORMS.items()
+    if platform.task_management_style in ("plan_checklist", "bulk_todos")
+)
+
+
+@pytest.mark.parametrize("cli_type", _WHOLE_LIST_HARNESSES)
+def test_a_whole_list_task_tool_is_never_described_as_per_task_calls(cli_type):
+    """write_todos, todo_write, todowrite and update_plan each rewrite the whole
+    list; an item left out is removed. Qwen and Gemini were told to call
+    tracker_update_task(id="X", ...) and tracker_list_tasks, tools that are off
+    by default, and OpenCode todowrite(id="X", ...), a call its tool does not
+    take, so a Stop block named actions the agent could not perform."""
+    from types import SimpleNamespace
+
+    from autorun import plugins
+    from autorun.core import format_suggestion
+    from autorun.platforms import platform_for
+    from autorun.task_lifecycle import _stale_escape_sentence, _task_actions_fragment
+
+    progress = platform_for(cli_type).tool_names["task_progress"]
+    texts = [_task_actions_fragment(cli_type), _stale_escape_sentence(cli_type, threshold=2, marker="M")]
+    for planning, execution in ((False, False), (True, False), (False, True)):
+        ctx = SimpleNamespace(
+            cli_type=cli_type,
+            plan_awaiting_planning_tasks=planning,
+            plan_awaiting_execution_tasks=execution,
+            agent_id=None,
+        )
+        texts.append(plugins._task_staleness_instructions(ctx))
+    for raw in texts:
+        text = format_suggestion(raw, cli_type)
+        assert progress in text, text
+        assert "tracker_" not in text, text
+        assert '(id="X"' not in text and "(taskId=" not in text, text
+
+
+def test_qwen_names_its_own_checklist_tool():
+    from autorun.platforms import platform_for
+
+    assert platform_for("qwen").tool_names["task_progress"] == "todo_write"
