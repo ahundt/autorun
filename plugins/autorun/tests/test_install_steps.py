@@ -1773,3 +1773,49 @@ def test_a_failed_switch_write_leaves_no_record_so_the_users_own_value_is_never_
     assert steps.apply_switches([entry], Mode.UNINSTALL) == []
     assert json.loads(entry.path.read_text()) == {"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}
 
+
+@pytest.mark.parametrize(
+    ("source", "removes"),
+    [
+        ({"source": "directory", "path": str(REPO)}, True),
+        ({"source": "github", "repo": "ahundt/autorun"}, False),
+    ],
+)
+def test_a_retried_uninstall_still_removes_the_marketplace_autorun_added(
+    sandbox, source, removes
+):
+    """A failed `marketplace remove` stopped the uninstall after the plugins
+    were gone. The retry found nothing of autorun's to withdraw, so the entry
+    `marketplace add` wrote stayed. An entry pointing at autorun's own
+    marketplace directory is autorun's; one the user added from elsewhere is
+    not."""
+    import json
+    import subprocess
+
+    from autorun.installer.orchestrate import uninstall
+
+    calls = []
+
+    def record(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    claude_home = sandbox / ".claude"
+    claude_home.mkdir(exist_ok=True)
+    (claude_home / "settings.json").write_text(
+        json.dumps({"extraKnownMarketplaces": {"autorun": {"source": source}}}),
+        encoding="utf-8",
+    )
+    uninstall(
+        plugins=("ar", "pdf-extractor"),
+        marketplace_root=REPO,
+        settings={"skill_placement": {"": "auto"}, "conductor": False},
+        home=sandbox,
+        harnesses=(PLATFORMS["claude"],),
+        run_command=record,
+        available=("claude",),
+        state_dir=sandbox / ".state",
+    )
+
+    marketplace = ("claude", "plugin", "marketplace", "remove", "autorun")
+    assert (marketplace in calls) is removes, calls

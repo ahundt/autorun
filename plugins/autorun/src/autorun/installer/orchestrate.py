@@ -36,6 +36,7 @@ registration command. A preview spawns nothing.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -412,6 +413,31 @@ def _listed_plugins(root: Path) -> set[str]:
     return names or {"\0unknown"}
 
 
+def _marketplace_added_from(platform: object, market: str, root: Path, ctx: Context) -> bool:
+    """Whether the harness still lists ``market`` as added from ``root``.
+
+    `claude plugin marketplace add <root>` records
+    ``extraKnownMarketplaces.<market>.source = {"source": "directory", "path":
+    <root>}`` in Claude's settings.json. That entry is autorun's even when no
+    plugin is left under it: a `marketplace remove` that failed after the
+    plugins were uninstalled leaves exactly this, and a retry must finish the
+    job. A marketplace the user added from anywhere else is theirs.
+    """
+    base = discovery.config_dir(platform, home=ctx.home)
+    if base is None:
+        return False
+    try:
+        settings = json.loads((base / "settings.json").read_text(encoding="utf-8"))
+        source = settings["extraKnownMarketplaces"][market]["source"]
+        if source.get("source") != "directory":
+            return False
+        return os.path.normcase(os.path.realpath(source["path"])) == os.path.normcase(
+            os.path.realpath(root)
+        )
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
 def _registrations(
     harnesses: Sequence[object],
     plugins: Mapping[str, Path],
@@ -709,8 +735,11 @@ def _registrations(
         # it, stays theirs.
         if (
             removing
-            and len(done) > withdrawn_before
             and _listed_plugins(root) <= set(plugins)
+            and (
+                len(done) > withdrawn_before
+                or _marketplace_added_from(platform, registration_market, root, ctx)
+            )
         ):
             entry = (
                 custom_entry
