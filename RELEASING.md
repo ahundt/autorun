@@ -89,6 +89,7 @@ needs no login and returns the repository, workflow and environment PyPI
 actually accepted:
 
 ```bash
+release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
 curl -sS "https://pypi.org/integrity/autorun-ai/$release_version/autorun_ai-$release_version-py3-none-any.whl/provenance" \
   | python3 -c 'import json,sys; a=json.load(sys.stdin)["attestation_bundles"][0]["publisher"]; print(a)'
 ```
@@ -97,6 +98,11 @@ curl -sS "https://pypi.org/integrity/autorun-ai/$release_version/autorun_ai-$rel
 
 Every public write below is marked **RELEASER**. Do not push, tag, or create a
 GitHub release while preparing a candidate on someone else's behalf.
+
+Tools: `git`, `gh` (logged in), `uv`, `jq`, `curl` and `shasum`, plus `claude`
+for the marketplace rehearsal. The gated scripts use only POSIX `grep` and
+`sed` for text; ripgrep (`rg`) is needed only for the manual version search in
+[Quick Method](#quick-method).
 
 Every command in this checklist passes `--locked`. It is the same rule
 `.github/workflows/ci.yml` follows and
@@ -110,8 +116,13 @@ command that must run outside the lock has to say why, on the line.
 1. Bump the version at every [version site](#current-inventory).
 2. Write the release's section in `CHANGELOG.md`, headed
    `## [<version>] - YYYY-MM-DD` with today's date in New York, which
-   `scripts/release_notes.py --today` prints wherever you are; Stage 4 requires
-   the date to be the tag day, so move it then if the tag slips. The section is the only
+   `scripts/release_notes.py --today` prints wherever you are. Stage 4 requires
+   the date to be the tag day, and it must be right before Stage 3: the
+   TestPyPI rehearsal uploads files built from this commit, and a later commit
+   that moves the date changes their bytes (the build timestamp is the commit
+   time), which the tag run's digest check rejects, burning the version. If the
+   day slips before the rehearsal, move the date and regenerate the notes; once
+   it has run, rehearse and tag on the same New York day. The section is the only
    hand-written copy of the notes: `scripts/release_notes.py` renders it into
    `docs/releases/<version>.md`, which becomes the tag annotation and the
    GitHub Release body, and the annotation cannot be corrected once pushed. The
@@ -247,9 +258,10 @@ uv run --project plugins/autorun --locked python -m autorun --install --force
 # suite before the reinstall.
 (cd plugins/autorun && AUTORUN_ENABLE_LIVE_INSTALL_CHECKS=1 uv run --project . --locked pytest tests/test_hook_entry.py -k "cache_matches_source or gemini_extension_hooks_match" -v)
 
-# No existing tag for this version
-git tag -l 'vX.Y.Z'                    # expect empty
-git ls-remote --tags origin vX.Y.Z     # expect empty
+# No existing tag for this version (both print nothing)
+release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
+git tag -l "v$release_version"
+git ls-remote --tags origin "v$release_version"
 ```
 
 Rehearse the marketplace install from the exact candidate checkout, never the
@@ -257,7 +269,7 @@ live home. This validates what a fresh Claude install will copy without waiting
 for the tag. Keep the scratch directory until its files have been inspected.
 
 ```bash
-scratch_root=$(mktemp -d "${TMPDIR:-/tmp}/autorun-rc1.XXXXXX")
+scratch_root=$(mktemp -d "${TMPDIR:-/tmp}/autorun-rehearsal.XXXXXX")
 mkdir -p "$scratch_root/home"
 git worktree add --detach "$scratch_root/checkout" "$release_sha"
 env HOME="$scratch_root/home" USERPROFILE="$scratch_root/home" \
@@ -314,7 +326,16 @@ Browser: <https://github.com/ahundt/autorun/actions/workflows/ci.yml>, newest
 run. Check its commit against `$release_sha` before reading the result; a run
 for an earlier push looks identical at a glance.
 
+The gated blocks from here to Stage 4 run as one `bash` script with `set -e`,
+so the first failed check stops everything after it. Pasted as bare lines into
+an interactive shell, a failed `test` only sets a status and the next line runs
+anyway, which in Stage 4 is `git push` of a tag that cannot be moved. They take
+`release_sha` from your shell, and nothing inside reads stdin (a command that
+did would consume the rest of the script).
+
 ```bash
+release_sha="$release_sha" bash <<'EOF'
+set -euo pipefail
 # Find the push run for the exact candidate, then verify its identity.
 run_id=$(gh run list --workflow ci.yml --commit "$release_sha" --event push \
   --limit 1 --json databaseId --jq '.[0].databaseId')
@@ -327,13 +348,17 @@ test "$(gh run view "$run_id" --json jobs --jq '.jobs | length')" = 11
 test "$(gh run view "$run_id" --json jobs --jq \
   '[.jobs[] | select(.conclusion != "success")] | length')" = 0
 
-# If it fails, check logs
-gh run view "$run_id" --log-failed
-
 # A green run can still carry deprecation and tool warnings that fail the next
 # one. Read them before tagging.
-gh run view "$run_id" --log | rg -i 'warn|deprecat' | sort -u
+gh run view "$run_id" --log | { grep -Ei 'warn|deprecat' || true; } | sort -u
+echo "CI green for $release_sha: run $run_id"
+EOF
 ```
+
+If it stops, read the failure with `gh run view <run id> --log-failed`. A
+Windows job that failed on a hook timeout or a lock timeout can be retried once
+with `gh run rerun <run id> --failed`; anything else is a defect to fix and
+push, which starts Stage 3 again with a new SHA.
 
 The workflow file is part of the release trust boundary. Every external
 `uses:` reference must remain pinned to a full 40-character commit SHA; the
@@ -345,14 +370,12 @@ Run this only after Stage 3 has pushed `publish.yml` and exact-SHA CI is green.
 `workflow_dispatch` builds and publishes to TestPyPI only; its
 `testpypi_only` input defaults to true, so the rehearsal cannot reach PyPI:
 
-```bash
-gh workflow run publish.yml --ref main
-release_version=$(rg -N -o -r '$1' '^version = "(.+)"' plugins/autorun/pyproject.toml)
-run_id=$(gh run list --workflow publish.yml --branch main --event workflow_dispatch \
-  --limit 1 --json databaseId,headSha --jq '.[0].databaseId')
-test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$(git rev-parse HEAD)"
-gh run watch "$run_id" --exit-status
-```
+Run it on the New York day you will tag (Stage 1 step 2): the CHANGELOG date
+is inside the uploaded files, and TestPyPI keeps the first upload for good.
+
+The dispatch, the wait and the verification that follows are one script. `gh
+run list` can answer before the new run exists, so the script waits for a run
+that was not there before the dispatch and names `$release_sha`.
 
 Install the exact files the successful run uploaded, not a version chosen
 between two indexes. Current uv stops at the first index that contains a
@@ -366,6 +389,28 @@ Download the files built by this run, resolve their TestPyPI records by exact
 filename, and require TestPyPI's SHA-256 values to match before installing:
 
 ```bash
+release_sha="$release_sha" bash <<'EOF'
+set -euo pipefail
+test "$(git rev-parse origin/main)" = "$release_sha"
+release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
+release_day=$(uv run --project plugins/autorun --locked python scripts/release_notes.py --today)
+grep -qxF "## [$release_version] - $release_day" CHANGELOG.md
+
+before=$(gh run list --workflow publish.yml --event workflow_dispatch --limit 20 \
+  --json databaseId --jq '.[].databaseId')
+gh workflow run publish.yml --ref main
+run_id=""
+for _ in $(seq 1 30); do
+  run_id=$(gh run list --workflow publish.yml --branch main --event workflow_dispatch \
+    --limit 5 --json databaseId,headSha \
+    --jq ".[] | select(.headSha == \"$release_sha\") | .databaseId" \
+    | grep -vxF "${before:-none}" | head -n 1 || true)
+  [ -n "$run_id" ] && break
+  sleep 5
+done
+test -n "$run_id"
+gh run watch "$run_id" --exit-status
+
 sandbox=$(mktemp -d /tmp/ar-testpypi.XXXX)
 gh run download "$run_id" -n dist-autorun -D "$sandbox/dist"
 wheel=$(find "$sandbox/dist" -maxdepth 1 -name '*.whl' -print -quit)
@@ -403,6 +448,8 @@ HOME="$sandbox/pdf-home" AUTORUN_HOME="$sandbox/pdf-ar" \
 UV_NO_CACHE=1 uv run --isolated --no-project --index-url https://pypi.org/simple/ \
   --with "autorun-ai @ $sdist_url" \
   python -c "import autorun, pdf_extraction; assert autorun.__version__ == '$release_version'"
+echo "TestPyPI rehearsal passed: run $run_id, files in $sandbox"
+EOF
 ```
 
 TestPyPI refuses a re-upload of an existing file. The workflow passes
@@ -419,8 +466,10 @@ guarantees that every manifest agrees with the field read here, so one substitut
 covers them all.
 
 ```bash
+release_sha="$release_sha" bash <<'EOF'
+set -euo pipefail
 test "$(git rev-parse HEAD)" = "$release_sha"
-release_version=$(rg -N -o -r '$1' '^version = "(.+)"' plugins/autorun/pyproject.toml)
+release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
 test -n "$release_version"
 release_tag="v$release_version"
 
@@ -433,8 +482,8 @@ release_tag="v$release_version"
 # The tag day is the New York calendar day, not this machine's: `date +%F`
 # would stamp a different day when the releaser is travelling.
 release_day=$(uv run --project plugins/autorun --locked python scripts/release_notes.py --today)
-test "$(rg -N -o -r '$1' '^Date: (.+)$' "docs/releases/$release_version.md")" = "$release_day"
-rg -N -q "^## \[$release_version\] - $release_day\$" CHANGELOG.md
+test "$(sed -n 's/^Date: //p' "docs/releases/$release_version.md")" = "$release_day"
+grep -qxF "## [$release_version] - $release_day" CHANGELOG.md
 # The notes must still be the CHANGELOG section rendered; moving the date means
 # regenerating them.
 uv run --project plugins/autorun --locked python scripts/release_notes.py --check
@@ -453,11 +502,14 @@ TZ=America/New_York git tag -a "$release_tag" "$release_sha" --cleanup=verbatim 
   -F "docs/releases/$release_version.md"
 
 # Prove the round trip before pushing, while the tag is still local and cheap to
-# redo. After the push the recovery table forbids moving it.
-diff <(git cat-file tag "$release_tag" | sed -n '6,$p') \
+# redo (`git tag -d "$release_tag"`). After the push the recovery table forbids
+# moving it. The second sed drops a signature block, which tag.gpgSign appends.
+diff <(git cat-file tag "$release_tag" | sed -n '6,$p' \
+       | sed '/^-----BEGIN [A-Z ]*SIGNATURE-----$/,$d') \
      "docs/releases/$release_version.md"
 
 git push origin "$release_tag"
+EOF
 ```
 
 The first tag pushed under this runbook predates that flag, so its annotation is
@@ -737,18 +789,16 @@ inside the `autorun-ai` distribution as `pdf_extraction` behind the `pdf` extra.
 | `plugins/pdf-extractor/.claude-plugin/plugin.json` | `"version": "X.Y.Z"` | |
 | `plugins/pdf-extractor/gemini-extension.json` | `"version": "X.Y.Z"` | |
 
-### Documentation (7+ files)
+### Documentation (6 files)
 
 | File | Notes |
 |------|-------|
 | `README.md` | Section headers, install verification examples |
 | `CHANGELOG.md` | Add the dated release section |
 | `docs/releases/1.0.0rc3.md` | GitHub Release body and tag annotation, generated by `scripts/release_notes.py` from the CHANGELOG section; regenerate, never edit |
-| `AGENTS.md` | 2 refs — `## autorun Plugin (vX.Y.Z)` and `## pdf-extractor Plugin (vX.Y.Z)`. `CLAUDE.md` and `GEMINI.md` are symlinks to it; edit this file, never a link |
-| `plugins/autorun/AGENTS.md` | 1 ref — the illustrative plugin-cache path `<version>/` |
+| `AGENTS.md` | 1 ref — the plugin-cache path in the "Repair the live Claude cache" one-liner. `CLAUDE.md` and `GEMINI.md` are symlinks to it; edit this file, never a link |
 | `plugins/autorun/HOOK_ARCHITECTURE.md` | Version references in docs |
 | `RELEASING.md` | No current-version field; update only examples that intentionally track the release |
-| `plugins/pdf-extractor/CLAUDE.md` | Section header |
 
 ### Skills (4+ files)
 
