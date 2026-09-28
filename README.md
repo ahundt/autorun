@@ -27,6 +27,8 @@
 # the command it installs is `autorun`, and the harness commands are `/ar:*`.
 uv tool install autorun-ai
 autorun --install
+# "autorun: command not found"? uv's tool directory (~/.local/bin by default)
+# is not on your PATH yet: run `uv tool update-shell`, open a new terminal.
 
 # Verify installation
 /ar:st
@@ -1510,13 +1512,22 @@ claude --debug
 /plugin install ar@autorun
 
 # Check plugin structure after installation
-ls -la ~/.claude/plugins/autorun/.claude-plugin/
-ls -la ~/.claude/plugins/autorun/commands/
+ls -la ~/.claude/plugins/cache/autorun/ar/*/.claude-plugin/
+ls -la ~/.claude/plugins/cache/autorun/ar/*/commands/
 ```
+
+**`autorun: command not found` after `uv tool install`:** uv puts the command
+in its tool directory (`~/.local/bin` by default), which your shell may not
+search yet. Run `uv tool update-shell` and open a new terminal; `uv tool dir
+--bin` prints the directory. Hooks are unaffected: installed hooks call the
+command by its full path.
 
 **UV/Python Issues:** [UV](https://docs.astral.sh/uv/) manages Python versions and dependencies — most issues are solved by force reinstalling: `uv run --project plugins/autorun python -m autorun --install --force`. Requires Python 3.10+ (auto-detected). `"dbm error"` on first run is normal.
 
-**Plugin not working:** Test manually: `echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/autorun/commands/autorun`
+**Plugin not working:** `autorun --status` checks every detected harness's
+assets and runs the installed hook command once (`ok hook command`). Each hook
+call is logged to `~/.autorun/hook_entry_debug.log` and the daemon's view to
+`~/.autorun/daemon.log`.
 
 **Claude task tools missing or vanished:** Claude Code 2.1.268+ offers them to
 newer models only with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, which

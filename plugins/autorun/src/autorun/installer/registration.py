@@ -36,6 +36,7 @@ one timeout rather than several.
 from __future__ import annotations
 
 import inspect
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Sequence
@@ -341,8 +342,11 @@ def _sequence(
     done: list[Outcome] = []
     pending = list(commands)
     for index, argv in enumerate(pending):
+        # The whole filled command, not its first three words: "claude plugin
+        # install" read the same for every plugin, so a report could not say
+        # which one a success or failure belonged to.
         outcome = _perform(
-            argv, values, run, f"{harness}: {' '.join(argv[:3])}",
+            argv, values, run, f"{harness}: {shlex.join(substitute(argv, values))}",
             absent=absent,
             already=already,
             environment=environment,

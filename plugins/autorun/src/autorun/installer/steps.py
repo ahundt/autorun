@@ -687,6 +687,16 @@ def apply_hooks(entries: Iterable[Hooks], mode: Mode) -> list[str]:
                 current = False
             notes.append(f"{'current' if current else 'would merge'} {entry.describe()}")
             continue
+        if mode is not Mode.UNINSTALL:
+            # Same comparison as the preview, so a repeat install says the file
+            # is current rather than "merged" into a file it left untouched.
+            try:
+                current = codex.hooks_current(entry.path, wanted)
+            except (OSError, ValueError):
+                current = False  # the merge below raises the real error
+            if current:
+                notes.append(f"current {entry.describe()}")
+                continue
         codex.merge_hooks(entry.path, wanted)
         notes.append(f"{'withdrew' if mode is Mode.UNINSTALL else 'merged'} {entry.describe()}")
     return notes
@@ -696,20 +706,26 @@ def apply_marketplaces(entries: Iterable[Marketplace], mode: Mode) -> list[str]:
     """Publish or withdraw exact marketplace entries; preview only describes."""
     notes = []
     for marketplace in entries:
-        notes.append(marketplace.describe())
         if mode is Mode.PREVIEW:
+            notes.append(marketplace.describe())
             continue
+        # A verb, like every other note: the bare path read as neither done
+        # nor pending, and a retired entry replaced here is a change to say.
+        changed = False
         for retired in marketplace.retired:
-            codex.withdraw_from_marketplace(marketplace.path, retired)
+            changed |= codex.withdraw_from_marketplace(marketplace.path, retired)
         if mode is Mode.INSTALL:
-            codex.publish_marketplace(
+            changed |= codex.publish_marketplace(
                 marketplace.path,
                 marketplace.name,
                 marketplace.entry,
                 display="Personal",
             )
+            verb = "published" if changed else "current"
         else:
-            codex.withdraw_from_marketplace(marketplace.path, marketplace.entry)
+            changed |= codex.withdraw_from_marketplace(marketplace.path, marketplace.entry)
+            verb = "withdrew" if changed else "absent"
+        notes.append(f"{verb} {marketplace.describe()}")
     return notes
 
 

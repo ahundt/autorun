@@ -12,6 +12,7 @@ Nothing here may touch the developer's own configuration.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections import Counter
@@ -1819,3 +1820,76 @@ def test_a_retried_uninstall_still_removes_the_marketplace_autorun_added(
 
     marketplace = ("claude", "plugin", "marketplace", "remove", "autorun")
     assert (marketplace in calls) is removes, calls
+
+
+def test_an_install_reports_each_registration_by_plugin_even_when_it_succeeds():
+    """A real install said nothing at all about `claude plugin install`.
+
+    Successes were printed only on a dry run, and each line was the command's
+    first three words, so "claude plugin install" read the same for every
+    plugin. The report now names the plugin and shows successes too.
+    """
+    import subprocess
+
+    from autorun.installer import orchestrate, registration
+    from autorun.installer.runtime import Outcome
+
+    def ok(argv):
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    outcomes = registration.register(
+        "claude",
+        {"name": "ar", "market": "autorun", "root": "/repo"},
+        run=ok,
+        available=("claude",),
+    )
+    assert outcomes and all(o.ok for o in outcomes)
+    assert any("ar@autorun" in o.step for o in outcomes), [o.step for o in outcomes]
+
+    lines = orchestrate.Result(
+        Mode.INSTALL, registrations=(Outcome("claude: claude plugin install ar@autorun", True),)
+    ).lines()
+    assert "ok   claude: claude plugin install ar@autorun" in lines
+
+
+def test_repeat_installs_say_current_and_changes_carry_a_verb(tmp_path):
+    """The dogfood install's second run printed "merged" for an untouched
+    hooks.json and a verbless path for the Codex marketplace."""
+    hooks = steps.Hooks(tmp_path / "hooks.json", {"Stop": ("uv run hook_entry.py --cli codex",)})
+    assert steps.apply_hooks([hooks], Mode.INSTALL) == [f"merged {hooks.describe()}"]
+    before = hooks.path.read_bytes()
+    assert steps.apply_hooks([hooks], Mode.INSTALL) == [f"current {hooks.describe()}"]
+    assert hooks.path.read_bytes() == before
+
+    old = {"name": "autorun", "source": {"source": "local", "path": "./plugins/autorun"}}
+    new = {"name": "ar", "source": {"source": "local", "path": "./plugins/ar"}}
+    path = tmp_path / "marketplace.json"
+    path.write_text(json.dumps({"name": "personal", "plugins": [old]}))
+    market = steps.Marketplace(path, "personal", new, retired=(old,))
+    assert steps.apply_marketplaces([market], Mode.INSTALL) == [f"published {market.describe()}"]
+    assert steps.apply_marketplaces([market], Mode.INSTALL) == [f"current {market.describe()}"]
+    assert steps.apply_marketplaces([market], Mode.UNINSTALL) == [f"withdrew {market.describe()}"]
+    assert steps.apply_marketplaces([market], Mode.UNINSTALL) == [f"absent {market.describe()}"]
+
+
+def test_a_kept_user_skill_is_reported_with_its_path_and_the_way_out(sandbox):
+    """"preserved conflicting user paths for ar:cache" named no path and no fix."""
+    from autorun.installer import orchestrate
+
+    mine = sandbox / ".agents" / "skills" / "cache"
+    mine.mkdir(parents=True)
+    (mine / "SKILL.md").write_text("---\nname: cache\ndescription: mine\n---\nmine\n")
+    (sandbox / ".codex").mkdir(exist_ok=True)
+    result = orchestrate.preview(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"codex": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["codex"],),
+        available=(),
+        run_command=lambda argv: None,
+    )
+    warning = next(f for f in result.findings if f.check == "skill placement")
+    assert str(mine) in warning.detail and "ar:cache" in warning.detail
+    assert "rerun `autorun --install`" in warning.fix
+    assert (mine / "SKILL.md").read_text().endswith("mine\n"), "the user's copy stays"

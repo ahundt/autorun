@@ -72,6 +72,7 @@ class DirectCommand:
         return subprocess.run(
             self.command,
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             timeout=timeout,
         )
@@ -126,6 +127,7 @@ class UvCommand:
         return subprocess.run(
             self.argv(),
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             timeout=timeout,
             env={**os.environ, **self.env} if self.env else None,
@@ -275,9 +277,15 @@ def _spawn(
     timeout: int = 120,
     env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
+    # Never the caller's stdin. hook_entry.py reads stdin to EOF whenever it
+    # is not a TTY, so `autorun --status` run from an agent's shell tool, a CI
+    # step or a script whose stdin pipe stays open hung on the hook probe for
+    # the full timeout and then reported a healthy hook as BROKEN. A harness
+    # CLI that wants to prompt gets EOF and fails at once instead of waiting.
     return subprocess.run(
         list(argv),
         capture_output=True,
+        stdin=subprocess.DEVNULL,
         text=True,
         timeout=timeout,
         env={**os.environ, **env} if env else None,

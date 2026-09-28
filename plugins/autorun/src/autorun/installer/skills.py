@@ -48,6 +48,7 @@ __all__ = [
     "routes_for",
     "blocked_names",
     "skill_plan",
+    "conflicting_paths",
     "skill_intents",
     "bridge_intents",
     "unsatisfiable",
@@ -335,7 +336,7 @@ def skill_plan(
             # ~/.agents/skills beside their native directory, so a native
             # fallback copy would list the name twice — the duplicate the
             # one-route rule exists to prevent. The name therefore lands in
-            # ``refused`` ("preserved conflicting user paths") instead. Only
+            # ``refused`` (the "kept your own" warning, which names the path) instead. Only
             # a blocker that is NOT a loadable skill, or a harness that does
             # not read the shared root, leaves the name unreachable and keeps
             # the fallback.
@@ -367,6 +368,29 @@ def skill_plan(
     return (
         tuple(intents),
         Placement(tuple(shared), tuple(native), tuple(refused)),
+    )
+
+
+def conflicting_paths(
+    platform: object,
+    ctx: Context,
+    refused: Iterable[str],
+    *,
+    shared_root_override: Path | None = None,
+) -> tuple[Path, ...]:
+    """The user-owned directories behind each refused ``plugin:name``.
+
+    A warning that named only skills left the user to guess which of several
+    roots held the copy in the way; these are the paths to move aside.
+    """
+    shared_dir = shared_root_override if shared_root_override is not None else shared_root()
+    roots = (shared_dir, *_native_roots(platform, ctx))
+    names = [entry.partition(":")[2] or entry for entry in refused]
+    return tuple(
+        root / name
+        for name in names
+        for root in roots
+        if (root / name).exists() or (root / name).is_symlink()
     )
 
 

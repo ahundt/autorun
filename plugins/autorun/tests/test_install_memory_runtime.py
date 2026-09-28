@@ -580,3 +580,34 @@ def test_a_failed_daemon_restart_keeps_the_cli_diagnostic():
     assert not result.ok
     assert result.detail == "missing filelock dependency"
     assert result.describe() == "FAIL daemon restart — missing filelock dependency"
+
+
+def test_installer_subprocesses_never_inherit_an_open_stdin():
+    """The status hook probe hung 120 s when the caller's stdin was a pipe.
+
+    hook_entry.py reads stdin to EOF unless it is a TTY, so `autorun --status`
+    from an agent's shell tool, CI or a script — any parent holding a pipe
+    open — waited out the timeout and then called a healthy hook BROKEN.
+    """
+    import os
+
+    from autorun.installer.runtime import DirectCommand, _spawn
+
+    reader = [sys.executable, "-c", "import sys; print(len(sys.stdin.read()))"]
+    read_end, write_end = os.pipe()
+    saved = os.dup(0)
+    try:
+        os.dup2(read_end, 0)  # fd 0 is now a pipe nobody will ever close
+        spawned = _spawn(reader, timeout=20)
+        direct = DirectCommand(tuple(reader)).run(timeout=20)
+        uv = UvCommand(project=Path(__file__).resolve().parents[1], no_sync=True,
+                       args=("-c", "import sys; print(len(sys.stdin.read()))"))
+        via_uv = uv.run(timeout=60) if has_uv() else None
+    finally:
+        os.dup2(saved, 0)
+        for fd in (saved, read_end, write_end):
+            os.close(fd)
+    assert spawned.stdout.strip() == "0", spawned
+    assert direct.stdout.strip() == "0", direct
+    if via_uv is not None:
+        assert via_uv.stdout.strip() == "0", via_uv

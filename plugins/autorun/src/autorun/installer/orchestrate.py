@@ -80,7 +80,10 @@ class Result:
     def lines(self, *, verbose: bool = False) -> list[str]:
         out = list(status.report_lines(self.decisions, self.findings, verbose=verbose))
         out.extend(self.notes)
-        out.extend(o.describe() for o in self.registrations if verbose or not o.ok)
+        # Every registration is reported, successes included: it is a line per
+        # harness and plugin, and the only sign in a real install's output that
+        # a harness CLI (``claude plugin install``) was told at all.
+        out.extend(o.describe() for o in self.registrations)
         if self.torn_down is not None:
             out.extend(self.torn_down.describe())
         if self.missing:
@@ -224,11 +227,16 @@ def perform(
                 ),
             )
             if planned.refused:
+                blocking = skills.conflicting_paths(platform, ctx, planned.refused)
                 findings.append(status.Finding(
                     "skill placement",
                     status.Level.WARN,
-                    f"{getattr(harness, 'name', '?')}: preserved conflicting "
-                    f"user paths for {', '.join(planned.refused)}",
+                    f"{getattr(harness, 'name', '?')}: kept your own "
+                    f"{', '.join(planned.refused)} — "
+                    + (", ".join(str(path) for path in blocking) or "paths not autorun's")
+                    + "; the harness uses those copies, not this release's",
+                    "to take autorun's, move those directories aside and rerun "
+                    "`autorun --install`",
                 ))
         if any(finding.level is status.Level.BROKEN for finding in findings):
             return Result(mode, findings=tuple(findings), missing=missing)
