@@ -634,13 +634,36 @@ def test_the_parser_check_reports_a_bashlex_that_will_not_import(monkeypatch):
     """Installed is not the same as usable: the daemon diagnostics must say
     False when bashlex is present but fails to load, since every parse then
     falls back to shlex."""
+    import builtins
+    import sys
+
     from autorun import command_detection, restart_daemon
 
-    def broken():
-        raise ImportError("bashlex is installed but broken")
+    real_import = builtins.__import__
+    attempts = []
 
-    monkeypatch.setattr(command_detection, "_bashlex", broken)
-    assert command_detection.warm_parser() is False
-    assert restart_daemon.verify_bashlex() is False
-    monkeypatch.undo()
+    def failing_import(name, *args, **kwargs):
+        if name == "bashlex" or name.startswith("bashlex."):
+            attempts.append(name)
+            raise ImportError("bashlex is installed but broken")
+        return real_import(name, *args, **kwargs)
+
+    for name in [n for n in sys.modules if n == "bashlex" or n.startswith("bashlex.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(builtins, "__import__", failing_import)
+    command_detection._bashlex.cache_clear()
+    command_detection._extract_cached.cache_clear()
+    try:
+        assert command_detection.warm_parser() is False
+        assert restart_daemon.verify_bashlex() is False
+        # Every parse falls back to shlex, and none retries the failed import:
+        # each retry rebuilt bashlex's grammar tables on the hook path.
+        for n in range(5):
+            names = command_detection._extract_impl(f"git status && ls {n}").names
+            assert names == {"git", "ls"}, names
+        assert len(attempts) == 1, attempts
+    finally:
+        monkeypatch.undo()
+        command_detection._bashlex.cache_clear()
+        command_detection._extract_cached.cache_clear()
     assert command_detection.warm_parser() is True

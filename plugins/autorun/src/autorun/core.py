@@ -429,8 +429,8 @@ def task_tools_proven_by_settings(
     workspace file, which overrides, then the user file under its config
     directory. The switch at its value proves the registered task tools; any
     other value proves them absent (an empty set, so task gates skip); a key
-    set nowhere, or a file that is not strict JSON (Gemini-family settings may
-    carry comments), leaves it unknown.
+    set nowhere, or a file that will not parse even with its comments removed
+    (the harness's own reading), leaves it unknown.
     """
     from .platforms import platform_for, registered_task_tools
 
@@ -471,10 +471,39 @@ def _settings_value(path: str, key: tuple) -> object:
     return _settings_value_at(path, key, status.st_mtime_ns, status.st_size)
 
 
+def _strip_json_comments(text: str) -> str:
+    """``//`` and ``/* */`` comments removed, string literals untouched.
+
+    Qwen Code and Gemini CLI read settings.json through strip-json-comments,
+    so a commented file is valid to them; treating it as unreadable left a
+    switch the user had set reported as unknown.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 @functools.lru_cache(maxsize=32)
 def _settings_value_at(path: str, key: tuple, _mtime_ns: int, _size: int) -> object:
     try:
-        node = json.loads(Path(path).read_text(encoding="utf-8"))
+        node = json.loads(_strip_json_comments(Path(path).read_text(encoding="utf-8")))
     except (OSError, ValueError):
         return _SETTINGS_UNREADABLE
     for part in key:
@@ -2042,8 +2071,15 @@ class EventContext:
         return self._active_tools
 
     #: Session state recording that a main session called one of its task
-    #: tools successfully (task_lifecycle.track_task_operations).
+    #: tools successfully (task_lifecycle.track_task_operations): the model
+    #: that made the call, or True where the transcript names none.
     TASK_TOOLS_OBSERVED = "task_tools_observed"
+
+    def current_model(self) -> "str | None":
+        """The model behind this session's newest transcript answer, if named."""
+        from .transcript_commands import latest_assistant_model
+
+        return latest_assistant_model(self.transcript_path)
 
     @property
     def task_tool_evidence(self) -> "frozenset[str] | None":
@@ -2061,9 +2097,18 @@ class EventContext:
 
         if self.agent_id or not platform_for(self.cli_type).task_evidence_from_task_calls:
             return None
-        if self.state_get(self.TASK_TOOLS_OBSERVED, False):
-            return registered_task_tools(self.cli_type)
-        return None
+        observed = self.state_get(self.TASK_TOOLS_OBSERVED, False)
+        if not observed:
+            return None
+        if isinstance(observed, str):
+            # A task call proves the tools for the model that made it. After a
+            # `/model` switch to one Claude Code offers no task tools, holding
+            # the old proof kept Stop demanding task updates the agent could
+            # not make; the answer is unknown again until this model calls one.
+            current = self.current_model()
+            if current is not None and current != observed:
+                return None
+        return registered_task_tools(self.cli_type)
 
     @property
     def agent_transcript_path(self) -> "str | None":

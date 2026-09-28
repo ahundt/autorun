@@ -4058,15 +4058,13 @@ def register_hooks(app_instance) -> None:
         role = task_tool_role(_task_cli_hint(ctx), ctx.tool_name)
         if role is None:
             return None
-        if (
-            not ctx.agent_id
-            and platform_for(ctx.cli_type).task_evidence_from_task_calls
-            and not ctx.state_get(EventContext.TASK_TOOLS_OBSERVED, False)
-        ):
-            # PostToolUse follows a call that ran, so the task tools exist in
-            # this main session; task gates may enforce from now on
-            # (EventContext.task_tool_evidence).
-            ctx.state_set(EventContext.TASK_TOOLS_OBSERVED, True)
+        if not ctx.agent_id and platform_for(ctx.cli_type).task_evidence_from_task_calls:
+            # PostToolUse follows a call that ran, so the task tools exist for
+            # the model that made it; task gates may enforce while that model
+            # answers (EventContext.task_tool_evidence).
+            observed = ctx.current_model() or True
+            if ctx.state_get(EventContext.TASK_TOOLS_OBSERVED, False) != observed:
+                ctx.state_set(EventContext.TASK_TOOLS_OBSERVED, observed)
 
         try:
             # Instantiate class with auto-detected session ID

@@ -193,8 +193,13 @@ def _qwen_settings(directory: Path, text: str) -> None:
         ('{"tools": {"todoWrite": {"enabled": true}}}', "tools"),
         ('{"tools": {"todoWrite": {"enabled": false}}}', frozenset()),
         ('{"theme": "dark"}', None),
-        # Gemini-family settings may carry comments; strict JSON cannot say.
-        ('{\n  // mine\n  "tools": {"todoWrite": {"enabled": true}}\n}', None),
+        # Qwen Code reads settings through strip-json-comments, so a commented
+        # file says what it says; comment markers inside strings are text.
+        ('{\n  // mine\n  "tools": {"todoWrite": {"enabled": true}}\n}', "tools"),
+        ('{"tools": {/* off */ "todoWrite": {"enabled": false}}}', frozenset()),
+        ('{"url": "http://x/*y*/", "q": "a\\"//", "tools": {"todoWrite": {"enabled": true}}}', "tools"),
+        # A file the harness cannot parse either says nothing.
+        ('{"tools": {"todoWrite": {"enabled": true}}', None),
     ],
 )
 def test_qwen_evidence_is_its_own_setting(tmp_path, monkeypatch, user_settings, expected):
@@ -298,7 +303,8 @@ def test_the_codex_switch_is_installed_but_never_evidence(tmp_path, monkeypatch)
 # --- evidence from a task call the session made -----------------------------
 
 
-def _post_tool(session_id: str, cli_type: str, tool_name: str, store, agent_id=None):
+def _post_tool(session_id: str, cli_type: str, tool_name: str, store, agent_id=None,
+               transcript_path=None):
     return EventContext(
         session_id=session_id,
         event="PostToolUse",
@@ -309,6 +315,7 @@ def _post_tool(session_id: str, cli_type: str, tool_name: str, store, agent_id=N
         store=store,
         cli_type=cli_type,
         agent_id=agent_id,
+        transcript_path=transcript_path,
     )
 
 
@@ -353,3 +360,39 @@ def test_codex_never_learns_from_a_call_plan_mode_could_later_refuse():
         _post_tool("observed-codex", "codex", "update_plan", store)
     )
     assert _post_tool("observed-codex", "codex", "Bash", store).task_tool_evidence is None
+
+
+def test_a_model_switch_retires_the_proof_until_the_new_model_calls_a_task_tool(tmp_path):
+    """Evidence from a task call belongs to the model that made it.
+
+    A session proved its tools on one model, then `/model` moved it to one
+    Claude Code offers no task tools; the old proof kept Stop demanding task
+    updates the agent could not make.
+    """
+    import json
+
+    from autorun.plugins import app
+
+    transcript = tmp_path / "session.jsonl"
+
+    def answered_by(model: str) -> None:
+        with transcript.open("a", encoding="utf-8") as out:
+            out.write(json.dumps({"type": "assistant", "message": {"model": model}}) + "\n")
+            out.write(json.dumps({"type": "user", "message": {"content": "ok"}}) + "\n")
+
+    def event(tool: str):
+        return _post_tool("switched", "claude", tool, store, transcript_path=str(transcript))
+
+    store = ThreadSafeDB()
+    answered_by("claude-opus-5-5")
+    app.dispatch(event("TaskCreate"))
+    assert event("Bash").task_tool_evidence == registered_task_tools("claude")
+
+    answered_by("<synthetic>")  # the harness's own lines name no model
+    assert event("Bash").task_tool_evidence == registered_task_tools("claude")
+
+    answered_by("claude-older-model")
+    assert event("Bash").task_tool_evidence is None, "unknown again after the switch"
+
+    app.dispatch(event("TaskUpdate"))
+    assert event("Bash").task_tool_evidence == registered_task_tools("claude")

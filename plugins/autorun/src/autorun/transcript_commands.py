@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Container, Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from .core import canonicalize_command_prompt
@@ -57,6 +58,43 @@ def latest_transcript_command(
             command=command,
             marker=prompt.marker,
         )
+    return None
+
+
+def latest_assistant_model(
+    path: str | None, *, max_bytes: int = DEFAULT_TRANSCRIPT_COMMAND_SCAN_BYTES
+) -> str | None:
+    """The model that wrote the newest assistant entry in the transcript tail.
+
+    Claude Code records ``message.model`` on every assistant line and nothing
+    in a hook payload names the model, so this is how task-tool evidence
+    notices a mid-session ``/model`` switch. ``<synthetic>`` entries are the
+    harness's own and name no model. None when the tail holds no answer.
+
+    Cached until the file changes: several gates ask on every event.
+    """
+    if not path:
+        return None
+    try:
+        status = os.stat(path)
+    except OSError:
+        return None
+    return _latest_assistant_model(path, status.st_size, status.st_mtime_ns, max_bytes)
+
+
+@lru_cache(maxsize=64)
+def _latest_assistant_model(path: str, _size: int, _mtime_ns: int, max_bytes: int) -> str | None:
+    for _offset, line in reversed(_read_tail_lines(path, max_bytes=max_bytes)):
+        if '"assistant"' not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        message = obj.get("message") if isinstance(obj, dict) else None
+        model = message.get("model") if isinstance(message, dict) else None
+        if obj.get("type") == "assistant" and isinstance(model, str) and model and model != "<synthetic>":
+            return model
     return None
 
 

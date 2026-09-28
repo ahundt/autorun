@@ -1893,3 +1893,101 @@ def test_a_kept_user_skill_is_reported_with_its_path_and_the_way_out(sandbox):
     assert str(mine) in warning.detail and "ar:cache" in warning.detail
     assert "rerun `autorun --install`" in warning.fix
     assert (mine / "SKILL.md").read_text().endswith("mine\n"), "the user's copy stays"
+
+
+def _can_symlink(tmp_path) -> bool:
+    try:
+        (tmp_path / "probe-link").symlink_to(tmp_path)
+    except (OSError, NotImplementedError):
+        return False
+    (tmp_path / "probe-link").unlink()
+    return True
+
+
+def test_a_symlinked_user_file_is_edited_through_its_link(tmp_path):
+    """settings.json and CLAUDE.md linked into a dotfiles repo stay links,
+    and an uninstall that empties a linked file keeps the link: it used to
+    delete the link and leave autorun's region in the linked file."""
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlinks need privileges here")
+    from autorun.installer import memory
+    from autorun.installer.memory import Block
+
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    (dotfiles / "settings.json").write_text('{"theme": "dark"}\n')
+    (dotfiles / "CLAUDE.md").write_text("# mine\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    settings = home / "settings.json"
+    guide = home / "CLAUDE.md"
+    settings.symlink_to(dotfiles / "settings.json")
+    guide.symlink_to(dotfiles / "CLAUDE.md")
+
+    switch = steps.Switch(settings, ("env", "X"), "1", tmp_path / "state" / "switches.json")
+    assert steps.apply_switches([switch], Mode.INSTALL)[0].startswith("set ")
+    block = Block("claude-memory-md")
+    assert memory.splice(guide, "autorun guidance", block)
+    assert settings.is_symlink() and guide.is_symlink()
+    assert json.loads((dotfiles / "settings.json").read_text())["env"] == {"X": "1"}
+    assert "autorun guidance" in (dotfiles / "CLAUDE.md").read_text()
+
+    assert steps.apply_switches([switch], Mode.UNINSTALL) == [f"removed {switch.describe()}"]
+    assert memory.strip(guide, block)
+    assert settings.is_symlink() and guide.is_symlink()
+    assert json.loads((dotfiles / "settings.json").read_text()) == {"theme": "dark"}
+    assert (dotfiles / "CLAUDE.md").read_text() == "# mine\n"
+
+    (dotfiles / "AGENTS.md").write_text("")
+    only_ours = home / "AGENTS.md"
+    only_ours.symlink_to(dotfiles / "AGENTS.md")
+    memory.splice(only_ours, "autorun guidance", block)
+    assert memory.strip(only_ours, block)
+    assert only_ours.is_symlink() and (dotfiles / "AGENTS.md").read_text() == ""
+
+
+def test_a_dangling_link_is_refused_not_replaced(tmp_path):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlinks need privileges here")
+    from autorun.installer import memory
+    from autorun.installer.memory import Block
+
+    settings = tmp_path / "settings.json"
+    settings.symlink_to(tmp_path / "unmounted" / "settings.json")
+    switch = steps.Switch(settings, ("env", "X"), "1", tmp_path / "state" / "switches.json")
+    [note] = steps.apply_switches([switch], Mode.INSTALL)
+    assert note.startswith("skipped ") and "does not exist" in note, note
+    assert settings.is_symlink() and not settings.exists()
+    record = tmp_path / "state" / "switches.json"
+    assert not record.exists() or "X" not in record.read_text(), "nothing claims the value"
+
+    guide = tmp_path / "CLAUDE.md"
+    guide.symlink_to(tmp_path / "unmounted" / "CLAUDE.md")
+    with pytest.raises(ValueError, match="does not exist"):
+        memory.splice(guide, "autorun guidance", Block("claude-memory-md"))
+    assert guide.is_symlink() and not (tmp_path / "unmounted").exists()
+
+
+def test_the_preflight_stops_an_install_at_a_dangling_memory_link(tmp_path, monkeypatch):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlinks need privileges here")
+    from autorun.installer.orchestrate import install
+
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    (home / ".codex" / "AGENTS.md").symlink_to(tmp_path / "gone" / "AGENTS.md")
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"_guidance": {"codex": "guidance"}, "skill_placement": {"codex": "auto"}},
+        home=home,
+        harnesses=(PLATFORMS["codex"],),
+        available=(),
+        run_command=lambda argv: None,
+        state_dir=tmp_path / "state",
+    )
+    assert not result.ok
+    assert any("AGENTS.md" in f.detail and "does not exist" in f.detail for f in result.findings)
+    assert (home / ".codex" / "AGENTS.md").is_symlink()

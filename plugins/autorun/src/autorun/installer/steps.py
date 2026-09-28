@@ -487,9 +487,17 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
     if mode is Mode.UNINSTALL:
         if not entry.record.is_file():
             return ""
-        with json_document(entry.record) as record:
+        if not entry.path.is_file():
+            # The setting went with its file; the record goes too.
+            with json_document(entry.record) as record:
+                record.pop(entry.record_key, None)
+            return ""
+        # Settings file outer, record inner, as install takes them: opposite
+        # orders let a concurrent install and uninstall each hold one lock
+        # and wait forever on the other.
+        with settings_document(entry.path) as document, json_document(entry.record) as record:
             recorded = record.pop(entry.record_key, _ABSENT)
-            if recorded is _ABSENT or not entry.path.is_file():
+            if recorded is _ABSENT:
                 return ""
             # A record is {"value": ..., "created_file": bool}; an earlier
             # build of this release stored the bare value.
@@ -497,18 +505,19 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
                 value, created_file = recorded["value"], bool(recorded.get("created_file"))
             else:
                 value, created_file = recorded, False
-            with settings_document(entry.path) as document:
-                if _lookup(document, entry.key) != value:
-                    return f"kept user-changed {entry.describe()}"
-                _remove(document, entry.key)
-                emptied = not document
-            if created_file and emptied:
-                # The file existed only to hold this setting; leave the harness
-                # home the way the install found it.
-                entry.path.unlink(missing_ok=True)
-            return f"removed {entry.describe()}"
+            if _lookup(document, entry.key) != value:
+                return f"kept user-changed {entry.describe()}"
+            _remove(document, entry.key)
+            emptied = not document
+        if created_file and emptied and not entry.path.is_symlink():
+            # The file existed only to hold this setting; leave the harness
+            # home the way the install found it. A link put there since is
+            # the user's.
+            entry.path.unlink(missing_ok=True)
+        return f"removed {entry.describe()}"
     entry.record.parent.mkdir(parents=True, exist_ok=True)
-    created_file = not entry.path.exists()
+    # A dangling link is not an absent file: settings_document refuses it.
+    created_file = not (entry.path.exists() or entry.path.is_symlink())
     # The settings file is the outer block, so the record, closed first, is
     # written first: a failure between the two leaves a record whose value is
     # absent (uninstall then reports it kept), never a setting nothing records.

@@ -43,7 +43,7 @@ from typing import Iterable, Mapping, Sequence
 
 from . import claude, codex, discovery, extension, memory, registration, skills, status, steps, teardown
 from ..platforms import PLATFORMS, ExtensionSkills, PluginPackageSkills
-from .fs import Verdict, owns, preserved_paths, read_marker, record_tree
+from .fs import Verdict, edit_target, owns, preserved_paths, read_marker, record_tree
 from .runtime import Outcome, Runner, _spawn
 from .traversal import Context, Mode, retirements, run, targets
 
@@ -126,15 +126,20 @@ def _preflight_user_files(
 
     for harness in harnesses:
         for region in steps.regions_for(harness, ctx, removing=removing):
-            check(region.describe(), lambda region=region: memory.validate(region.path, region.block))
+            check(region.describe(), lambda region=region: (
+                edit_target(region.path), memory.validate(region.path, region.block)
+            ))
         for hooks in steps.hooks_for(harness, ctx, removing=removing):
-            check(hooks.describe(), lambda hooks=hooks: codex.validate_hooks(hooks.path))
+            check(hooks.describe(), lambda hooks=hooks: (
+                edit_target(hooks.path), codex.validate_hooks(hooks.path)
+            ))
     for marketplace in marketplaces:
         expected = None if removing else marketplace.entry
         check(
             marketplace.describe(),
-            lambda marketplace=marketplace, expected=expected: codex.validate_marketplace(
-                marketplace.path, expected
+            lambda marketplace=marketplace, expected=expected: (
+                edit_target(marketplace.path),
+                codex.validate_marketplace(marketplace.path, expected),
             ),
         )
     return tuple(failures)

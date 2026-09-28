@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .fs import atomic_write
+from .fs import atomic_write, edit_target
 
 __all__ = [
     "Block", "bounds", "splice", "strip", "foreign_slugs", "SENTINEL_RE",
@@ -157,6 +157,7 @@ def splice(target: Path, body: str, block: Block) -> bool:
     body = body.replace(block.start, "").replace(block.end, "").strip()
     if not body:
         return False
+    target = edit_target(target)
     existing = target.read_text(encoding="utf-8") if target.is_file() else ""
     updated = _rendered(existing, block, body)
     if updated == existing:
@@ -173,11 +174,15 @@ def strip(target: Path, block: Block) -> bool:
     """
     if not target.is_file():
         return False
+    linked = target.is_symlink()
+    target = edit_target(target)
     existing = target.read_text(encoding="utf-8")
     if bounds(existing, block) is None:
         return False
     updated = _rendered(existing, block, "")
-    if updated:
+    if updated or linked:
+        # A linked file is the user's arrangement even when autorun's region
+        # was all it held: empty it, and leave the link and its target.
         atomic_write(target, updated)
     else:
         target.unlink()

@@ -108,6 +108,7 @@ __all__ = [
     "dereference_links",
     "fill_tree",
     "json_document",
+    "edit_target",
     "atomic_write",
     "OWNED_MARKER_NAME",
     "INSTALL_LOCK_NAME",
@@ -1627,6 +1628,23 @@ def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, 
         return tuple(removed)
 
 
+def edit_target(path: Path) -> Path:
+    """The file an edit of the user's ``path`` reads and writes: a link's target.
+
+    Writes already go through a link (durable_io._atomic_publish), so a
+    ``settings.json`` linked into a dotfiles repository stays a link. A link
+    whose target is missing is refused: it read as an absent file, and the
+    write then created the target, parent directories and all, wherever the
+    link pointed (an unmounted volume, a repo not yet cloned).
+    """
+    if not path.is_symlink():
+        return path
+    target = path.resolve()
+    if not target.exists():
+        raise ValueError(f"{path} is a symlink to {target}, which does not exist")
+    return target
+
+
 @contextmanager
 def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[dict]:
     """Read-or-default, yield for mutation, write atomically — or not at all.
@@ -1642,6 +1660,7 @@ def json_document(path: Path, default: Callable[[], dict] = dict) -> Iterator[di
     install does not churn mtimes the harness watches.
     """
     with FileLock(str(path.parent / INSTALL_LOCK_NAME)):
+        path = edit_target(path)
         document = read_json_object(path, default)
         before = _canonical(document)
         yield document
@@ -1662,6 +1681,7 @@ def toml_document(path: Path) -> Iterator[MutableMapping]:
     import tomlkit
 
     with FileLock(str(path.parent / INSTALL_LOCK_NAME)):
+        path = edit_target(path)
         document = read_toml_document(path)
         before = tomlkit.dumps(document)
         yield document

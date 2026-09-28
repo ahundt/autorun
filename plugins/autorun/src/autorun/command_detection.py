@@ -615,9 +615,17 @@ def command_tokens_for(
 
 @lru_cache(maxsize=1)
 def _bashlex():
-    """bashlex and a visitor over its AST, loaded once, on first use."""
-    import bashlex
-    from bashlex import ast as bashlex_ast
+    """bashlex and a visitor over its AST, loaded once, on first use.
+
+    None when bashlex is present but will not import. The failure is cached
+    too: lru_cache does not remember an exception, so a broken bashlex was
+    re-imported, grammar rebuild and all, on every command parse.
+    """
+    try:
+        import bashlex
+        from bashlex import ast as bashlex_ast
+    except Exception:
+        return None
 
     class CommandVisitor(bashlex_ast.nodevisitor):
         """AST visitor with wrapper-aware and recursive shell -c parsing."""
@@ -665,11 +673,7 @@ def warm_parser() -> bool:
     error: every parse then falls back to shlex. BASHLEX_AVAILABLE only says
     bashlex is installed.
     """
-    try:
-        _bashlex()
-    except Exception:
-        return False
-    return True
+    return _bashlex() is not None
 
 
 def _normalize_heredoc_delimiters(cmd: str) -> str:
@@ -699,14 +703,17 @@ def _normalize_heredoc_delimiters(cmd: str) -> str:
 
 def _extract_bashlex(cmd: str, depth: int) -> ExtractedCommands:
     """Extract using bashlex AST."""
+    loaded = _bashlex()
+    if loaded is None:
+        # A bashlex that is present but will not import: the shlex fallback
+        # in _extract_impl answers.
+        return ExtractedCommands(frozenset(), frozenset(), frozenset())
+    bashlex, CommandVisitor = loaded
     try:
-        bashlex, CommandVisitor = _bashlex()
         # Normalize heredoc delimiters for bashlex compatibility
         normalized_cmd = _normalize_heredoc_delimiters(cmd)
         parts = bashlex.parse(normalized_cmd)
     except Exception:
-        # Includes a bashlex that is present but will not import: the shlex
-        # fallback in _extract_impl then answers.
         return ExtractedCommands(frozenset(), frozenset(), frozenset())
 
     visitor = CommandVisitor(depth)
