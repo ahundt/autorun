@@ -33,6 +33,10 @@ def _javascript_command(driver: Path, *, strip_types: bool = False) -> list[str]
     """Prefer Bun for Pi fixtures, with Node as the portable fallback."""
     assert JAVASCRIPT_RUNTIME is not None
     command = [JAVASCRIPT_RUNTIME]
+    if Path(JAVASCRIPT_RUNTIME).name.startswith("bun"):
+        # Never fetch a missing import from npm: a fixture must not depend on
+        # the network (the OpenCode shim's optional import hung this way).
+        command.append("--no-install")
     if strip_types and Path(JAVASCRIPT_RUNTIME).name == "node":
         command.append("--experimental-strip-types")
     command.append(str(driver))

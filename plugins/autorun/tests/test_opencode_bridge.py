@@ -537,7 +537,10 @@ try {
         encoding="utf-8",
     )
     result = subprocess.run(
-        ["bun", "run", str(driver), mode],
+        # --no-install: the shim's optional `import("@opencode-ai/plugin")`
+        # made Bun fetch the package from npm, so these tests depended on the
+        # network and hung for their whole timeout when it was slow.
+        ["bun", "run", "--no-install", str(driver), mode],
         capture_output=True,
         text=True,
         timeout=60,
