@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0rc3] - 2026-09-27
+## [1.0.0rc3] - 2026-09-28
 
 Coding agents have started shipping without their task tools by default, and
 autorun's task gates could then deny every tool call until the agent made a
@@ -119,6 +119,12 @@ Whether autorun enforces task tracking after the upgrade:
 13. autorun no longer drops a session setting (such as whether autorun is
     active) when several hooks write state at once. The write gave up after
     half a second instead of using the rest of the hook's time.
+14. On Qwen Code, Gemini CLI and OpenCode, autorun's stop and reminder
+    messages name the agent's own list tool (`todo_write`, `write_todos`,
+    `todowrite`) and ask for the full list. They named per-task calls such as
+    `tracker_update_task(id="X", ...)`, which those agents do not have by
+    default, so a blocked stop could ask for an action the agent could not
+    take.
 
 ### For contributors
 
