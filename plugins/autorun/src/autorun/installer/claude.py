@@ -219,7 +219,8 @@ def demo() -> None:
         # Substitution reaches the hook manifest and leaves prose alone.
         changed = substitute_root(written)
         assert changed == ("hooks/hooks.json",), changed
-        assert str(written) in (written / "hooks" / "hooks.json").read_text()
+        # As JSON writes it: a Windows path's backslashes arrive escaped.
+        assert json.dumps(str(written))[1:-1] in (written / "hooks" / "hooks.json").read_text()
         assert "${CLAUDE_PLUGIN_ROOT}" in (written / "README.md").read_text()
 
         # Idempotent: nothing left to expand, so nothing is rewritten.

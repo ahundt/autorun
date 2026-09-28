@@ -63,16 +63,24 @@ def _run_exit_plan_mode(cli, project_dir, plan_path, session_id):
         "tool_input": {"cwd": str(project_dir)},
         "tool_response": {"filePath": str(plan_path)} if plan_path else {},
     }
-    result = run_isolated_hook(
-        plugin_root=PLUGIN_ROOT,
-        hook_script=_hook_script(),
-        cli=cli,
-        payload=payload,
-    )
-    assert result.returncode == 0, f"hook failed: {result.stderr}"
-    if not result.stdout.strip():
-        return {}
-    return json.loads(result.stdout)
+    for attempt in (1, 2):
+        result = run_isolated_hook(
+            plugin_root=PLUGIN_ROOT,
+            hook_script=_hook_script(),
+            cli=cli,
+            payload=payload,
+        )
+        assert result.returncode == 0, f"hook failed: {result.stderr}"
+        response = json.loads(result.stdout) if result.stdout.strip() else {}
+        # These pin what the hook says, not how fast a cold, daemon-less
+        # process answers. A Windows runner that ran each call in 1 s on one
+        # push took 4.4 s on the next and hit the 4 s Gemini/Qwen budget, so
+        # the hook failed open with only its timeout notice. One retry on a
+        # warm file cache; a wrong or missing answer still fails below.
+        if attempt == 1 and "timed out after" in str(response.get("systemMessage", "")):
+            continue
+        return response
+    return response
 
 
 def _ai_visible_text(response: dict) -> str:

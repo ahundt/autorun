@@ -1539,7 +1539,8 @@ def test_successful_claude_registration_expands_the_cached_hook_root(tmp_path, m
     )
 
     hooks = (cached / "hooks" / "hooks.json").read_text(encoding="utf-8")
-    assert str(cached) in hooks and "${CLAUDE_PLUGIN_ROOT}" not in hooks
+    # As JSON writes it: a Windows path's backslashes arrive escaped.
+    assert json.dumps(str(cached))[1:-1] in hooks and "${CLAUDE_PLUGIN_ROOT}" not in hooks
     assert outcomes and all(outcome.ok for outcome in outcomes)
 
 

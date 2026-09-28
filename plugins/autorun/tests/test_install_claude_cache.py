@@ -147,7 +147,10 @@ def test_the_plugin_root_placeholder_is_expanded_in_the_cached_copy(source, home
     changed = claude.substitute_root(written)
 
     assert changed == ("hooks/hooks.json",)
-    assert str(written) in (written / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    # As JSON writes it: a Windows path's backslashes arrive escaped.
+    assert json.dumps(str(written))[1:-1] in (written / "hooks" / "hooks.json").read_text(
+        encoding="utf-8"
+    )
     assert "${CLAUDE_PLUGIN_ROOT}" not in (written / "hooks" / "hooks.json").read_text(
         encoding="utf-8"
     )
