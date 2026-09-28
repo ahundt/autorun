@@ -512,15 +512,26 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
     # The settings file is the outer block, so the record, closed first, is
     # written first: a failure between the two leaves a record whose value is
     # absent (uninstall then reports it kept), never a setting nothing records.
-    with settings_document(entry.path) as document, json_document(entry.record) as record:
-        if _lookup(document, entry.key) is not _ABSENT:
-            return "" if entry.record_key in record else _kept_note(entry)
-        _assign(document, entry.key, entry.value)
-        record[entry.record_key] = {"value": entry.value, "created_file": created_file}
-        return (
-            f"set {entry.describe()}: the harness offers its task tools to "
-            "sessions started from now on"
-        )
+    wrote_record = False
+    try:
+        with settings_document(entry.path) as document, json_document(entry.record) as record:
+            if _lookup(document, entry.key) is not _ABSENT:
+                return "" if entry.record_key in record else _kept_note(entry)
+            _assign(document, entry.key, entry.value)
+            record[entry.record_key] = {"value": entry.value, "created_file": created_file}
+            wrote_record = True
+            return (
+                f"set {entry.describe()}: the harness offers its task tools to "
+                "sessions started from now on"
+            )
+    except (OSError, ValueError):
+        # The settings write failed after the record landed. The caller's note
+        # tells the user to set the value themselves; a record left behind would
+        # later claim that value as autorun's, and uninstall would remove it.
+        if wrote_record:
+            with json_document(entry.record) as record:
+                record.pop(entry.record_key, None)
+        raise
 
 
 def _kept_note(entry: Switch) -> str:

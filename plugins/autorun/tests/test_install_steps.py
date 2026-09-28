@@ -1740,3 +1740,36 @@ def test_an_invalid_toml_file_is_left_alone_with_a_note(tmp_path):
     [note] = steps.apply_switches([entry], Mode.INSTALL)
     assert note.startswith(f"skipped {entry.describe()}") and "set it to true yourself" in note
     assert entry.path.read_text(encoding="utf-8") == "model = [\n"
+
+
+def test_a_failed_switch_write_leaves_no_record_so_the_users_own_value_is_never_removed(
+    tmp_path, monkeypatch
+):
+    """The record is written before the settings file. When the settings write
+    then failed, the record stayed: the note told the user to set the value
+    themselves, the next install took that value for autorun's, and
+    --uninstall deleted it."""
+    import contextlib
+    import json
+
+    entry = _switch(tmp_path)
+    entry.path.parent.mkdir()
+    real = steps.settings_document
+
+    @contextlib.contextmanager
+    def unwritable(path):
+        with real(path) as document:
+            yield document
+            raise PermissionError(f"read-only: {path}")
+
+    monkeypatch.setattr(steps, "settings_document", unwritable)
+    [note] = steps.apply_switches([entry], Mode.INSTALL)
+    assert note.startswith(f"skipped {entry.describe()}"), note
+    monkeypatch.setattr(steps, "settings_document", real)
+
+    entry.path.write_text(json.dumps({"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}), encoding="utf-8")
+    [note] = steps.apply_switches([entry], Mode.INSTALL)
+    assert note.startswith("kept your setting"), note
+    assert steps.apply_switches([entry], Mode.UNINSTALL) == []
+    assert json.loads(entry.path.read_text()) == {"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}
+
