@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0rc3] - 2026-09-28
+## [1.0.0rc3] - 2026-10-05
 
 Coding agents have started shipping without their task tools by default, and
 autorun's task gates could then deny every tool call until the agent made a
