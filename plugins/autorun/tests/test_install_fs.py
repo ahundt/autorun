@@ -99,6 +99,49 @@ def test_an_unmarked_directory_is_the_users_whatever_its_name(tmp_path, source):
     assert (theirs / "SKILL.md").is_file(), "refused removal must not delete"
 
 
+def test_an_empty_unmarked_directory_is_published_into_like_an_absent_one(
+    tmp_path, source
+):
+    """An empty directory holds nothing a user wrote, so keeping it protects nothing.
+
+    Keeping it did harm: `~/plugins/ar` left empty by an earlier run made every
+    install report `keep ... user-authored` and exit 0, while the Codex personal
+    marketplace still registered `ar` at `./plugins/ar`. Codex then listed a
+    plugin with no files in it. Edge case 1 still holds for a directory with
+    any content in it; see the test above.
+    """
+    leftover = tmp_path / "dest" / "demo"
+    leftover.mkdir(parents=True)
+
+    decision = publish_tree(source, leftover, plugin="ar")
+
+    assert decision.verdict is Verdict.PUBLISH, decision.describe()
+    assert (leftover / "SKILL.md").read_text() == "version one\n"
+    assert read_marker(leftover) is not None, "adopted tree must be ours to remove"
+    assert withdrawn(leftover) is True
+    assert not leftover.exists()
+
+
+def test_an_empty_directory_reached_through_a_link_is_still_kept(tmp_path, source):
+    """Adoption must not write through a link the user placed.
+
+    An empty directory is safe to take only where it stands. A symlink to one
+    names some other place the user chose, so it stays theirs.
+    """
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    linked = tmp_path / "dest" / "demo"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(elsewhere, target_is_directory=True)
+
+    decision = publish_tree(source, linked, plugin="ar")
+
+    assert decision.verdict is Verdict.KEEP
+    assert decision.reason == "user-authored"
+    assert linked.is_symlink(), "the user's link must survive"
+    assert list(elsewhere.iterdir()) == [], "nothing written through the link"
+
+
 def test_exact_external_receipt_can_adopt_but_is_rechecked_inside_lock(
     tmp_path, source
 ):

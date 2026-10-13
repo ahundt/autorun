@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
+## [Unreleased]
+
+### Fixed
+
+- **An empty directory where autorun installs no longer blocks the install.**
+  `autorun --install` treated any existing directory without autorun's
+  ownership marker as user-authored, empty ones included. An empty
+  `~/plugins/ar`, the Codex plugin source, was therefore kept and never
+  filled, while the Codex personal marketplace still registered `ar` at
+  `./plugins/ar`: Codex listed a plugin with no files, and the install printed
+  `keep ... user-authored` and exited 0. An empty directory holds nothing a
+  user wrote, so the installer now publishes into it as if it were absent.
+  A directory with any content stays the user's, a symlinked one is never
+  written through, and uninstall still never removes a directory autorun did
+  not create.
+
 ## [1.0.0rc3] - 2026-10-06
 
 Coding agents have started shipping without their task tools by default, and

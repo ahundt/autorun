@@ -495,6 +495,21 @@ LEGACY_RETIRE = (
 )
 
 
+def _is_empty_real_directory(path: Path) -> bool:
+    """An empty directory standing at ``path`` itself, not reached through a link.
+
+    A symlink names a place the user chose, so it is never adopted. An
+    unreadable directory is treated as not empty: when its contents cannot be
+    seen, they cannot be shown to be absent.
+    """
+    if path.is_symlink() or not path.is_dir():
+        return False
+    try:
+        return next(path.iterdir(), None) is None
+    except OSError:
+        return False
+
+
 def decide(
     target: Path,
     source: Path | None,
@@ -525,6 +540,16 @@ def decide(
 
     manifest = read(target)
     if manifest is None:
+        # An empty directory holds nothing a user wrote, so publishing into it
+        # loses nothing; keeping it did lose something. An empty ~/plugins/ar
+        # left by an earlier run was kept as "user-authored" while the Codex
+        # marketplace still registered ar there, so Codex listed a plugin with
+        # no files. Only the install question changes: uninstall still never
+        # removes a directory autorun did not create. publish_tree asks this
+        # twice, the second time inside its lock, so a file written in between
+        # turns the answer back to KEEP.
+        if source is not None and _is_empty_real_directory(target):
+            return Decision(Verdict.PUBLISH, target, "adopting empty directory")
         if ownership_proof is not None:
             try:
                 if ownership_proof(target):
