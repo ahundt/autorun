@@ -122,6 +122,24 @@ def test_an_empty_unmarked_directory_is_published_into_like_an_absent_one(
     assert not leftover.exists()
 
 
+def test_uninstall_never_removes_an_empty_directory_autorun_did_not_create(tmp_path):
+    """Adoption is an install decision only.
+
+    Publishing into an empty unmarked directory is safe because it loses
+    nothing. Removing one is a different act: autorun did not create it, so
+    uninstall and prune leave it where the user put it, empty or not.
+    """
+    theirs = tmp_path / "dest" / "demo"
+    theirs.mkdir(parents=True)
+
+    decision = decide(theirs, None, plugin="ar")
+
+    assert decision.verdict is Verdict.KEEP, decision.describe()
+    assert decision.reason == "user-authored"
+    assert withdrawn(theirs) is False
+    assert theirs.is_dir(), "an empty directory autorun did not create must survive"
+
+
 def test_an_empty_directory_reached_through_a_link_is_still_kept(tmp_path, source):
     """Adoption must not write through a link the user placed.
 
