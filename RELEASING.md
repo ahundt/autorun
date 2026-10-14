@@ -24,7 +24,7 @@ committing to it, the commands suit inspection and repetition.
 | [Rehearsal](#rehearse-on-testpypi-before-any-tag) | `gh workflow run publish.yml` uploads to TestPyPI only, proving OIDC before the tag. |
 | [Stage 4](#stage-4-tag-and-push--releaser-public-write) | Create and push the annotated tag. **RELEASER** |
 | [Stage 5](#stage-5-verify-the-tag-then-approve-the-tag-run--releaser-public-write) | Confirm the tag names the proven commit, then approve `pypi`. This approval is what publishes to PyPI, and the version becomes permanent. **RELEASER** |
-| [Stage 6](#stage-6-create-github-prerelease--releaser-public-write) | Publish the GitHub prerelease from `docs/releases/<version>.md`. **RELEASER** |
+| [Stage 6](#stage-6-create-the-github-release--releaser-public-write) | Publish the GitHub release from `docs/releases/<version>.md`, marked prerelease exactly when the version is an RC. **RELEASER** |
 | [Stage 7](#stage-7-verify-the-published-release-from-the-public-install-path) | Install from the public index and confirm the version answers. |
 
 If a step fails after a public write, go to the [recovery table](#recovery-table)
@@ -598,7 +598,7 @@ gh api --method POST \
   -f state=approved -F "environment_ids[]=$env_id" -f comment="rc verified"
 ```
 
-### Stage 6: Create GitHub prerelease — **RELEASER public write**
+### Stage 6: Create the GitHub release — **RELEASER public write**
 
 Every pushed `v*` tag gets a release page, release candidates included.
 `installer/entrypoint.py:_latest_version` enumerates
@@ -609,11 +609,17 @@ and independent of the calendar: if a tag was pushed and the release page was
 never made, run it for that tag now rather than folding the tag into the next
 candidate.
 
-The `--prerelease` flag is part of updater correctness. It governs **self-update
-only**: `installer/entrypoint.py` sets `allow_prerelease` from whether the
-*installed* version contains a letter, then filters candidates on the release's
-`prerelease` field, so an RC published without the flag is offered to stable
-installs as an ordinary upgrade.
+The prerelease flag is part of updater correctness, and it follows the
+updater's own rule. `installer/entrypoint.py:_latest_version` sets
+`allow_prerelease` from whether the *installed* version contains a letter, then
+drops every release whose `prerelease` field is true unless that is set. So the
+flag must be on exactly when the release's version contains a letter, in both
+directions: an RC published without it is offered to stable installs as an
+ordinary upgrade, and a stable release published with it is invisible to every
+stable install, including the one it creates, so `--self-update` from it never
+finds a later stable release. The command below derives the flag from the
+version with that same rule rather than asking anyone to choose it. The flag
+governs **self-update only**.
 
 It does not govern fresh installs, and that is expected rather than a marking
 failure. `claude plugin marketplace add` follows the default branch, so a fresh
@@ -635,9 +641,11 @@ describes a "This is a pre-release" checkbox that the form does not have.
 3. Fill **Release title**, and paste `docs/releases/<version>.md` into
    **Release description**. Leave **Generate release notes** alone; the reviewed
    file is the source, not GitHub's commit summary.
-4. Under **Release label**, select the **Pre-release** radio rather than
-   **None**. It is a two-option radio group, so leaving it at the default
-   publishes a production release.
+4. Under **Release label**, choose by the version, as the command below does.
+   For a release candidate (the version contains a letter, such as `1.0.0rc3`)
+   select **Pre-release**; it is a two-option radio group whose default is
+   **None**, so leaving it publishes an RC as a production release. For a stable
+   version (digits and dots only, such as `1.0.0`) leave it at **None**.
 5. **Publish release**, or **Save draft** to look at it first.
 
 `gh release create` has no `--web` flag, so this URL is the route rather than a
@@ -658,14 +666,20 @@ it for the attempt, or take the browser route above:
 ```
 
 ```bash
+# The updater's rule (installer/entrypoint.py:_latest_version): a version with a
+# letter in it is a prerelease, one of digits and dots is stable.
+case "$release_version" in
+  *[A-Za-z]*) release_kind=--prerelease; expect_prerelease=true ;;
+  *)          release_kind=--latest;     expect_prerelease=false ;;
+esac
 if gh release view "$release_tag" >/dev/null 2>&1; then
   gh release view "$release_tag" --json tagName,isDraft,isPrerelease,url
 else
-  gh release create "$release_tag" --verify-tag --prerelease \
+  gh release create "$release_tag" --verify-tag "$release_kind" \
     --title "autorun $release_tag" \
     --notes-file "docs/releases/$release_version.md"
 fi
-test "$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)" = true
+test "$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)" = "$expect_prerelease"
 test "$(gh release view "$release_tag" --json isDraft --jq .isDraft)" = false
 ```
 
@@ -701,8 +715,8 @@ its contents have been inspected.
 | Before the tag is pushed | Delete/recreate the local tag after the fix and repeat every exact-SHA gate. |
 | Remote tag exists, GitHub release absent, tag content correct | Finish Stage 6 for that tag, however late. Every pushed `v*` tag gets its release page, release candidates included. |
 | Remote tag exists but the code under it is wrong | Do not move or delete the remote tag. Publish its release page anyway so the tag is not a silent artifact, then fix on `main` and issue the next RC version. |
-| GitHub prerelease exists and is correct | Treat a retry as success; verify its tag, commit, draft flag, and prerelease flag. |
-| GitHub prerelease exists but content or artifacts are wrong | Do not replace immutable code under the tag. Correct prose in place only when code is unchanged; otherwise issue the next RC version. |
+| GitHub release exists and is correct | Treat a retry as success; verify its tag, commit, draft flag, and that its prerelease flag matches the version (Stage 6). |
+| GitHub release exists but content or artifacts are wrong | Do not replace immutable code under the tag. Correct prose in place only when code is unchanged; otherwise issue the next version. |
 | Any public step partially succeeds | Inventory remote tag and release state before retrying. Never assume a failed command made no public write. |
 
 ---
