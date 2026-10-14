@@ -6,21 +6,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [Unreleased]
+## [1.0.0] - 2026-10-14
+
+autorun 1.0.0 is the first stable release. autorun puts a gate in front of an
+AI coding agent's tool calls, for example stopping `rm -rf` before it runs and
+suggesting `trash` instead, on Claude Code, Google Antigravity, Qwen Code, Codex
+CLI, Pi, ForgeCode, and OpenCode. This release is 1.0.0rc3 plus one installer
+fix for Codex; task state, configuration, and the `/ar` commands carry over
+from rc3 unchanged.
+
+### Upgrading from 1.0.0rc3
+
+`autorun --install` republishes what each harness loads and restarts the
+autorun daemon, as it did for rc3. There is no new setting to add, including
+for a Claude Code marketplace-only install. Agent sessions already running are
+served by the restarted daemon. `uv tool list` shows `autorun-ai` if you
+installed with uv. From 1.0.0rc1, use the same commands; the 1.0.0rc3 notes
+describe what changed between rc1 and rc3.
 
 ### Fixed
 
-- **An empty directory where autorun installs no longer blocks the install.**
-  `autorun --install` treated any existing directory without autorun's
-  ownership marker as user-authored, empty ones included. An empty
-  `~/plugins/ar`, the Codex plugin source, was therefore kept and never
-  filled, while the Codex personal marketplace still registered `ar` at
-  `./plugins/ar`: Codex listed a plugin with no files, and the install printed
-  `keep ... user-authored` and exited 0. An empty directory holds nothing a
-  user wrote, so the installer now publishes into it as if it were absent.
-  A directory with any content stays the user's, a symlinked one is never
-  written through, and uninstall still never removes a directory autorun did
-  not create.
+1. When `~/plugins/ar` already existed as an empty directory,
+   `autorun --install` kept it as yours, registered Codex's `ar` plugin there
+   anyway, and reported success, leaving Codex with a plugin that had no files
+   (`ls -A ~/plugins/ar` printed nothing). It now fills an empty directory, and
+   still leaves alone any directory that has content in it or is reached through
+   a symlink.
+
+### For contributors
+
+1. `installer/fs.py:decide` publishes into an existing directory that has no
+   ownership marker and no entries, and reports `adopting empty directory`.
+   `test_install_fs.py` covers it, including that an empty directory reached
+   through a symlink stays kept and that uninstall is unchanged.
+2. RELEASING.md Stage 6 derives the GitHub release's prerelease flag from the
+   version with the rule `installer/entrypoint.py:_latest_version` uses. A
+   stable version is published as the latest release, not as a prerelease that
+   every stable install's `--self-update` would skip.
+3. RELEASING.md lists the files where `1.0.0` appears only as example or test
+   data. The inventory coverage test matches the version as a substring, and
+   `1.0.0` is both a prefix of every earlier release candidate and a common
+   example version.
+4. RELEASING.md now says to bump `version` in
+   `plugins/autorun/src/autorun/metadata.json`. `build_support.build_metadata`
+   keeps a version already written there, so a stale one ships in the wheel.
+5. RELEASING.md's live-install comment now says that `autorun --install`
+   restarts the shared autorun daemon, which it already did; the comment had
+   said the command restarted nothing.
 
 ## [1.0.0rc3] - 2026-10-06
 
