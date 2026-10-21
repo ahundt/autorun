@@ -6,14 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0] - 2026-10-14
+## [1.0.0] - 2026-10-31
 
 autorun 1.0.0 is the first stable release. autorun puts a gate in front of an
 AI coding agent's tool calls, for example stopping `rm -rf` before it runs and
 suggesting `trash` instead, on Claude Code, Google Antigravity, Qwen Code, Codex
-CLI, Pi, ForgeCode, and OpenCode. This release is 1.0.0rc3 plus one installer
-fix for Codex; task state, configuration, and the `/ar` commands carry over
-from rc3 unchanged.
+CLI, Pi, ForgeCode, and OpenCode. This release is 1.0.0rc3 plus two installer
+fixes, one for Codex and one for Qwen Code; task state, configuration, and the
+`/ar` commands carry over from rc3 unchanged.
 
 ### Upgrading from 1.0.0rc3
 
@@ -32,6 +32,11 @@ describe what changed between rc1 and rc3.
    (`ls -A ~/plugins/ar` printed nothing). It now fills an empty directory, and
    still leaves alone any directory that has content in it or is reached through
    a symlink.
+2. On a machine where Qwen Code had never run, the first `autorun --install`
+   left Qwen's task tool off (`tools.todoWrite.enabled` in
+   `~/.qwen/settings.json`) and said nothing, so Qwen sessions had no
+   `todo_write` and autorun did not enforce task tracking there until a second
+   install. One install now turns it on.
 
 ### For contributors
 
@@ -39,18 +44,25 @@ describe what changed between rc1 and rc3.
    ownership marker and no entries, and reports `adopting empty directory`.
    `test_install_fs.py` covers it, including that an empty directory reached
    through a symlink stays kept and that uninstall is unchanged.
-2. RELEASING.md Stage 6 derives the GitHub release's prerelease flag from the
+2. `installer/orchestrate.py:perform` asks `steps.switches_for` again, after
+   registration in an install, for each harness that had no config directory
+   before it; `qwen extensions install` is what creates `~/.qwen`. A harness
+   whose directory existed still gets its switch before registration, so autorun
+   stays the creator of a settings file such as `~/.codex/config.toml` and
+   uninstall still removes it. `test_install_steps.py` covers both, and that no
+   harness directory is created for the switch alone.
+3. RELEASING.md Stage 6 derives the GitHub release's prerelease flag from the
    version with the rule `installer/entrypoint.py:_latest_version` uses. A
    stable version is published as the latest release, not as a prerelease that
    every stable install's `--self-update` would skip.
-3. RELEASING.md lists the files where `1.0.0` appears only as example or test
+4. RELEASING.md lists the files where `1.0.0` appears only as example or test
    data. The inventory coverage test matches the version as a substring, and
    `1.0.0` is both a prefix of every earlier release candidate and a common
    example version.
-4. RELEASING.md now says to bump `version` in
+5. RELEASING.md now says to bump `version` in
    `plugins/autorun/src/autorun/metadata.json`. `build_support.build_metadata`
    keeps a version already written there, so a stale one ships in the wheel.
-5. RELEASING.md's live-install comment now says that `autorun --install`
+6. RELEASING.md's live-install comment now says that `autorun --install`
    restarts the shared autorun daemon, which it already did; the comment had
    said the command restarted nothing.
 
