@@ -1628,6 +1628,114 @@ def test_switches_follow_the_registry_and_need_the_harness_home(sandbox, walk):
     assert codex_entry.key == ("tools", "update_plan", "enabled") and codex_entry.value is True
 
 
+def test_one_install_sets_the_switch_in_a_home_the_harness_cli_creates(sandbox):
+    """A first install on a machine where Qwen had never run left todo_write off.
+
+    The switch needs the harness home, and `qwen extensions install` is what
+    creates ~/.qwen, but switches were decided before registration ran, so the
+    setting only landed on a second install.
+    """
+    import json
+    import subprocess
+
+    from autorun.installer.orchestrate import install
+
+    def qwen_cli(argv):
+        if list(argv[:3]) == ["qwen", "extensions", "install"]:
+            (sandbox / ".qwen" / "extensions" / "ar").mkdir(parents=True, exist_ok=True)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    assert not (sandbox / ".qwen").exists()
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["qwen"],),
+        run_command=qwen_cli,
+        available=("qwen",),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is True
+    assert (sandbox / ".qwen" / "extensions" / "ar").is_dir(), "registration ran"
+    settings_file = sandbox / ".qwen" / "settings.json"
+    assert settings_file.is_file(), "one install must turn todo_write on"
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == {
+        "tools": {"todoWrite": {"enabled": True}}
+    }
+    assert any(note.startswith(f"set {settings_file} ") for note in result.notes), result.notes
+
+
+def test_uninstall_removes_a_settings_file_autorun_created_before_registration(sandbox):
+    """`codex plugin add` writes ~/.codex/config.toml too.
+
+    The switch goes in first wherever the home already exists, so autorun is
+    the file's creator and uninstall takes it away once both entries are gone.
+    Writing the switch after registration instead left an empty config.toml.
+    """
+    import subprocess
+
+    from autorun.installer.orchestrate import install, uninstall
+
+    config = sandbox / ".codex" / "config.toml"
+    entry = '\n[plugins."ar@personal"]\nenabled = true\n'
+
+    def codex_cli(argv):
+        text = config.read_text(encoding="utf-8") if config.exists() else ""
+        if list(argv[:3]) == ["codex", "plugin", "add"]:
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text(text + entry, encoding="utf-8")
+        elif list(argv[:3]) == ["codex", "plugin", "remove"] and config.exists():
+            config.write_text(text.replace(entry, ""), encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["codex"],),
+        run_command=codex_cli,
+        available=("codex",),
+        state_dir=sandbox / ".state",
+    )
+    assert install(**common).ok is True
+    assert "update_plan" in config.read_text(encoding="utf-8")
+    assert "ar@personal" in config.read_text(encoding="utf-8"), "registration ran"
+
+    assert uninstall(**common).ok is True
+    assert not config.exists(), config.read_text(encoding="utf-8")
+
+
+def test_no_harness_home_is_created_for_the_switch_alone(sandbox):
+    """When nothing autorun runs creates the harness home, the switch waits.
+
+    The rule this keeps: the installer never makes a harness's home only to
+    hold one setting.
+    """
+    import subprocess
+
+    from autorun.installer.orchestrate import install
+
+    def silent_cli(argv):
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["qwen"],),
+        run_command=silent_cli,
+        available=("qwen",),
+        state_dir=sandbox / ".state",
+    )
+
+    assert result.ok is True
+    assert not (sandbox / ".qwen").exists()
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
 def test_a_symlinked_settings_file_is_written_through_and_keeps_its_mode(tmp_path):
     """Dotfile managers link settings.json into a repository.

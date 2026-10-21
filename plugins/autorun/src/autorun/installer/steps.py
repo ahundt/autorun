@@ -397,7 +397,8 @@ def switches_for(
 
     A custom harness inherits its flavor's switch with its own config
     directory. A harness whose config directory does not exist gets none: the
-    installer does not create a harness's home to hold one setting.
+    installer does not create a harness's home to hold one setting. An install
+    asks again after registration, which is what first creates ~/.qwen.
     """
     if "ar" not in _plugins(ctx):
         return ()

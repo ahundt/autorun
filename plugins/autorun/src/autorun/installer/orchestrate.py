@@ -352,6 +352,7 @@ def perform(
         stale = retirements(_config_roots(selected, staged), claimed, plugins=named)
         decisions.extend(run((), staged, mode, extra=stale))
 
+        homeless = []
         for harness in selected:
             notes.extend(steps.apply_regions(
                 steps.regions_for(
@@ -360,12 +361,12 @@ def perform(
                 mode,
             ))
             # Never raises: a settings file it cannot read becomes a note.
-            notes.extend(steps.apply_switches(
-                steps.switches_for(
-                    harness, staged, removing=mode is Mode.UNINSTALL
-                ),
-                mode,
-            ))
+            switches = steps.switches_for(
+                harness, staged, removing=mode is Mode.UNINSTALL
+            )
+            if not switches:
+                homeless.append(harness)
+            notes.extend(steps.apply_switches(switches, mode))
             if mode is not Mode.UNINSTALL:
                 try:
                     notes.extend(steps.apply_hooks(
@@ -395,6 +396,15 @@ def perform(
                     removing=False, run=run_command, available=available,
                 )
             )
+
+            # Registration can create a harness home: `qwen extensions install`
+            # makes ~/.qwen. Ask again only where there was none, so a switch
+            # that could go in first still does, and autorun stays the creator
+            # of a settings file that uninstall may then remove.
+            for harness in homeless:
+                notes.extend(steps.apply_switches(
+                    steps.switches_for(harness, staged), mode
+                ))
 
     torn = (
         teardown.teardown(_config_roots(selected, ctx), state_dir=state_dir)
