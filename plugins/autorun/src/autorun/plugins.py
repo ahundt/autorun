@@ -101,7 +101,7 @@ from .task_pause import (
     task_pause_guidance,
     task_pause_status,
 )
-from .transcript_commands import current_turn_assistant_text, latest_transcript_command
+from .transcript_commands import current_turn_assistant_text, first_non_empty_line, latest_transcript_command
 
 # Import plan_export to register its @app.on() handlers with daemon
 from . import plan_export  # noqa: F401
@@ -739,6 +739,23 @@ class ScopeAccessor:
         return claimed[0] if claimed else None
 
 
+def _command_line_arguments(ctx: EventContext) -> str:
+    """Arguments typed on the command's own line, for structured commands.
+
+    The one first-line rule for /ar:ok, /ar:no and their siblings, /ar:task
+    and /ar:cache. Codex sends the whole prompt body on UserPromptSubmit, so
+    "ar:ok git push" followed by instructions once allowed the whole body, and
+    "ar:task resume" followed by "thanks" was refused for taking values. Prose
+    commands (/ar:go, /ar:pn) keep reading ctx.command_arguments, which is the
+    whole tail. This reads the activation prompt instead of command_arguments
+    because core lstrips the tail, so "/ar:task\\nthanks" arrives as "thanks",
+    and because handlers called straight from tests have only a prompt.
+    """
+    line = first_non_empty_line(ctx.activation_prompt or ctx.prompt or "")
+    parts = line.split(maxsplit=1)
+    return parts[1] if len(parts) > 1 else ""
+
+
 # MEGA DRY: Single factory for ALL block operations
 def _make_block_op(scope: str, op: str):
     """
@@ -753,32 +770,9 @@ def _make_block_op(scope: str, op: str):
     """
 
     def handler(ctx: EventContext) -> str:
-        # This is the one command family that does NOT read ctx.command_arguments,
-        # and the reason is the line rule below rather than an oversight.
-        #
-        # The matcher's tail is everything after the spelling, later lines
-        # included, because a command whose argument is prose (/ar:pn <plan
-        # description>) needs that. A scope pattern is the opposite: it must
-        # stop at the line the command was typed on. Codex sends the whole
-        # prompt body on UserPromptSubmit, so "ar:ok git push" followed by
-        # three lines of instructions once registered the entire body as the
-        # allowed pattern. test_codex_native_multiline_ar_ok_uses_only_first_line
-        # is that regression, and it still fails if this loop is deleted.
-        #
-        # Reading the tail from ctx.command_arguments and re-applying the line
-        # rule to it would be equivalent, but command_arguments is filled in by
-        # dispatch, and roughly fifteen tests in test_plugins.py call these
-        # handlers straight out of app.command_handlers with only a prompt set.
-        # Converting is a test-coupling change, not a behavior one; it is worth
-        # doing when those tests move to app.dispatch, not before.
-        prompt = ctx.activation_prompt or ctx.prompt
-        if op in {"block", "allow"}:
-            for line in prompt.splitlines():
-                stripped = line.strip()
-                if stripped:
-                    prompt = stripped
-                    break
-        args = prompt.split(maxsplit=1)[1] if " " in prompt else ""
+        # A scope pattern stops at the line the command was typed on
+        # (test_codex_native_multiline_ar_ok_uses_only_first_line).
+        args = _command_line_arguments(ctx)
 
         accessor = ScopeAccessor(ctx, scope)
         blocks = accessor.get()
@@ -2760,10 +2754,8 @@ def handle_cache(ctx: EventContext) -> str:
     """
     from .cache_guard import cache_command
 
-    prompt = ctx.activation_prompt or ctx.prompt or ""
-    # Strip the leading "/ar:cache" token to get the sub-arg string.
-    tail = prompt.split(None, 1)[1] if " " in prompt.strip() else ""
-    parts = tail.strip().split()
+    tail = _command_line_arguments(ctx)
+    parts = tail.split()
     target_session = "__global__" if parts and parts[0].lower() == "global" else ctx.session_id
     return ctx.state_synchronize(
         lambda: cache_command(tail, ctx.session_id),
@@ -2928,9 +2920,6 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
         return "\n".join(lines)
 
 
-_TASK_ROOTS = frozenset({"ar:task", "ar:tasks"})
-
-
 @dataclass(frozen=True, slots=True)
 class TaskCommand:
     operation: str
@@ -2943,22 +2932,14 @@ class TaskPauseArguments:
     reason: str
 
 
-def _parse_task_command(prompt: str) -> TaskCommand:
+def _parse_task_command(arguments: str) -> TaskCommand:
+    """Parse the words after /ar:task (or /ar:tasks) on the command's line."""
     try:
-        parts = shlex.split(prompt)
+        parts = shlex.split(arguments)
     except ValueError as exc:
         raise ValueError(f"task command has invalid quoting: {exc}") from exc
-    if not parts:
-        raise ValueError("task command must start with ar:task or ar:tasks")
-    first = parts[0].lstrip("/").lower()
-    if first == "ar" and len(parts) > 1 and parts[1].lower() in {"task", "tasks"}:
-        arguments = parts[2:]
-    elif first in _TASK_ROOTS:
-        arguments = parts[1:]
-    else:
-        raise ValueError("task command must start with ar:task or ar:tasks")
-    operation = arguments[0].lower() if arguments else "status"
-    return TaskCommand(operation, tuple(arguments[1:]))
+    operation = parts[0].lower() if parts else "status"
+    return TaskCommand(operation, tuple(parts[1:]))
 
 
 def _parse_task_pause_arguments(
@@ -3066,7 +3047,7 @@ _TASK_OPERATIONS: dict[
 def handle_task_command(ctx: EventContext) -> str:
     """Dispatch the singular/plural task command family."""
     try:
-        command = _parse_task_command(ctx.activation_prompt or ctx.prompt or "")
+        command = _parse_task_command(_command_line_arguments(ctx))
         operation = command.operation
         arguments = command.arguments
         # Preserve established spellings while routing them through the new

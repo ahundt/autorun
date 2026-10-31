@@ -47,7 +47,7 @@ def latest_transcript_command(
         return None
 
     for prompt in _iter_user_prompts_from_tail(path, max_bytes=max_bytes):
-        command_line = _first_non_empty_line(prompt.text)
+        command_line = first_non_empty_line(prompt.text)
         canonical = canonicalize_command_prompt(command_line, cli_type)
         command = canonical.split(maxsplit=1)[0] if canonical else ""
         if command not in command_names:
@@ -152,7 +152,9 @@ def _plain_text(content: Any) -> str:
     )
 
 
-def _first_non_empty_line(text: str) -> str:
+def first_non_empty_line(text: str) -> str:
+    """The line a command was typed on: the one first-line rule for command
+    arguments, here and in plugins._command_line_arguments."""
     for line in text.splitlines():
         stripped = line.strip()
         if stripped:

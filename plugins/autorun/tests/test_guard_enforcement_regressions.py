@@ -517,6 +517,29 @@ class TestOneClaimRuleAndOneFingerprint:
         assert cache_call_id == ok_call_id
 
 
+class TestStructuredCommandsReadOnlyTheirOwnLine:
+    """E-D2: Codex sends the whole prompt body; /ar:task and /ar:cache read
+    every line as arguments while /ar:ok stopped at the first."""
+
+    def _codex(self, prompt, sid, store):
+        result = plugins.app.dispatch(
+            EventContext(session_id=sid, event="UserPromptSubmit", prompt=prompt, cli_type="codex", store=store)
+        )
+        return result.get("systemMessage") or result.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+    def test_task_and_cache_ignore_following_lines(self):
+        sid, store = _sid(), ThreadSafeDB()
+        assert "❌" not in self._codex("ar:task resume\nthanks, carry on", sid, store)
+        reply = self._codex("ar:cache off\nthanks for the help", sid, store)
+        assert "disabled" in reply and "thanks" not in reply, reply
+
+    def test_ok_still_stops_at_the_first_line(self):
+        sid, store = _sid(), ThreadSafeDB()
+        self._codex("ar:ok git push\nthen open the PR", sid, store)
+        state = EventContext(session_id=sid, event="PreToolUse", store=store)
+        assert [a["pattern"] for a in state.state_get("session_allowed_patterns", [])] == ["git push"]
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""
