@@ -608,9 +608,11 @@ def _parse_allow_args(args: str) -> tuple:
 
 
 def _get_suggestion(pattern: str) -> str:
-    """Get suggestion from default integrations or generate default."""
+    """Suggestion of the default integration for exactly this pattern (its key
+    or one of its listed patterns), else a generic one. Substring matching
+    gave `/ar:no format` the rm/trash advice."""
     for k, v in default_integrations().items():
-        if k in pattern and v.get("suggestion"):
+        if (pattern == k or pattern in v.get("patterns", ())) and v.get("suggestion"):
             return v["suggestion"]
     return f"Blocked: {pattern}\n\nTo allow (default 1 use): /ar:ok {pattern}\nScope: [N|5m|permanent] (default 1 use)"
 

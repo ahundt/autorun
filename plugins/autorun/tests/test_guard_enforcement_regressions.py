@@ -559,6 +559,24 @@ class TestTaskReasonsAreFreeText:
         assert "❌" not in reply and "don't wait on CI" in reply and "5m" in reply, reply
 
 
+class TestNoSuggestionMatchesTheExactPattern:
+    """E16: /ar:no picked a default suggestion by substring, so `/ar:no
+    format` stored the rm/trash advice ("rm" is in "format")."""
+
+    def _stored_suggestion(self, prompt):
+        sid, store = _sid(), ThreadSafeDB()
+        _prompt(prompt, sid=sid, store=store)
+        blocks = EventContext(session_id=sid, event="PreToolUse", store=store).state_get("session_blocked_patterns", [])
+        return blocks[0]["suggestion"]
+
+    def test_substring_does_not_pick_another_guard(self):
+        assert "trash" not in self._stored_suggestion("/ar:no format")
+
+    def test_exact_key_and_listed_pattern_still_pick_their_guard(self):
+        assert "trash" in self._stored_suggestion("/ar:no rm")
+        assert "Time Machine" in self._stored_suggestion("/ar:no tmutil")
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""
