@@ -101,6 +101,17 @@ def test_the_wrapper_and_the_client_agree_on_the_unrecoverable_guidance():
 
     assert module._INTERVENTION_GUIDANCE == UNRECOVERABLE_GUIDANCE
 
+    # The JavaScript bridge (Pi, Prime, OpenCode) is installed by a verbatim
+    # copy, so it keeps a third spelling of both sentences.
+    import json
+
+    bridge = (
+        Path(__file__).resolve().parents[1]
+        / "src" / "autorun" / "bridge_template" / "daemon-client.mjs"
+    ).read_text(encoding="utf-8")
+    assert f"const INTERVENTION_GUIDANCE = {json.dumps(UNRECOVERABLE_GUIDANCE)};" in bridge
+    assert f"const RETRY_GUIDANCE = {json.dumps(module._RETRY_GUIDANCE)};" in bridge
+
 
 def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     """Direct `autorun --cli codex` must not let ambient Gemini env win later."""

@@ -35,13 +35,24 @@ function autorunDisabled() {
   return value === "1" || value === "true" || value === "yes";
 }
 
-function blockedBecause(message) {
+// Verbatim copies of hooks/hook_entry.py's _RETRY_GUIDANCE and
+// _INTERVENTION_GUIDANCE (= autorun.client.UNRECOVERABLE_GUIDANCE). This file is
+// installed by a plain copy, so it cannot import them;
+// test_client_fail_closed.py pins all three spellings together.
+const RETRY_GUIDANCE = "This clears on its own; retry shortly.";
+const INTERVENTION_GUIDANCE = "Retrying will not help: the same failure repeats. Repair it in a terminal (run the repair step named in the error, or `autorun --status` for diagnosis) and the next hook recovers on its own. Set AUTORUN_DISABLE=1 to stand autorun down.";
+
+// Same reason shape as hook_entry.py's fail_closed_tool_gate; the repair step
+// is the one autorun.client.build_daemon_failure_response names.
+function blockedBecause(message, recoverable = false) {
+  const guidance = recoverable
+    ? RETRY_GUIDANCE
+    : "Repair with `autorun --restart-daemon` in a terminal. " + INTERVENTION_GUIDANCE;
   return {
     hookSpecificOutput: {
       permissionDecision: "deny",
       permissionDecisionReason:
-        `[autorun] ${message}. Blocking tool use to avoid fail-open. ` +
-        "Run `autorun --restart-daemon` or `autorun --install --force`, then retry.",
+        `[autorun] ${message}. Blocking tool use to avoid fail-open. ${guidance}`,
     },
   };
 }
@@ -151,7 +162,8 @@ export function createDaemonBridge({
         return;
       }
       const timer = setTimeout(
-        () => finish(blockedBecause("hook entry timed out")),
+        // A timeout is usually a cold start, as in hook_entry's own timeout.
+        () => finish(blockedBecause("hook entry timed out", true)),
         Math.max(deadline - Date.now(), 0),
       );
       child.stdout.setEncoding("utf8");

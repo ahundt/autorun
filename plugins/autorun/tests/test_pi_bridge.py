@@ -1645,6 +1645,42 @@ console.log(JSON.stringify({{ denial: denialReason(response), elapsed: Date.now(
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
+def test_an_unreachable_daemon_deny_names_the_same_exit_as_hook_entry(tmp_path):
+    """The bridge said "Run `autorun --restart-daemon` ... then retry" and
+    never named AUTORUN_DISABLE, the one exit the Python paths give."""
+    from autorun.client import UNRECOVERABLE_GUIDANCE
+
+    driver = tmp_path / "unreachable.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: "pi",
+  socketPath: {json.dumps(str(tmp_path / "absent.sock"))},
+  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  hookEntryCommand: [],
+  timeoutMs: 2000,
+}});
+const response = await bridge.askToolGate({{
+  hook_event_name: "PreToolUse",
+  session_id: "pi-session",
+  tool_name: "bash",
+  tool_input: {{ command: "echo hello" }},
+}});
+console.log(JSON.stringify({{ denial: denialReason(response) }}));
+''',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        _javascript_command(driver), capture_output=True, text=True, timeout=30, check=False
+    )
+
+    assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[-400:]!r}"
+    denial = json.loads(result.stdout)["denial"]
+    assert denial.endswith(UNRECOVERABLE_GUIDANCE), denial
+    assert "then retry" not in denial
+
+
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
 def test_hook_entry_garbage_still_denies(tmp_path):
     """Silence is an allow; noise is still a failure.
 
