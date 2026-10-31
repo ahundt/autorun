@@ -929,7 +929,9 @@ def _normalize_heredoc_delimiters(cmd: str) -> str:
     Examples:
         python3 << 'EOF' → python3 << EOF
         cat << "END" → cat << END
+        cat <<-'END-MSG' → cat <<- END-MSG
         sh << EOF → sh << EOF (no change)
+        bash <<< 'x' → bash <<< 'x' (a here-string, no change)
 
     Args:
         cmd: Shell command string potentially containing heredoc
@@ -937,10 +939,16 @@ def _normalize_heredoc_delimiters(cmd: str) -> str:
     Returns:
         Normalized command string with unquoted heredoc delimiters
     """
-    # Match << followed by optional whitespace and quoted delimiter
-    # Capture the delimiter content (without quotes)
-    pattern = r'<<\s*(["\'])(\w+)\1'
-    return re.sub(pattern, r'<< \2', cmd)
+    return _QUOTED_HEREDOC_DELIMITER.sub(r"<<\1 \3", cmd)
+
+
+# `<<` or `<<-`, then a quoted delimiter of any non-blank characters. Not a
+# `<<<` here-string. A delimiter `\w+` alone missed `<<-'EOF'` and
+# `<<'END-MSG'`, bashlex then failed, and the shlex fallback read every body
+# line as a command. Linear: no nested quantifiers.
+_QUOTED_HEREDOC_DELIMITER: Final[re.Pattern[str]] = re.compile(
+    r"(?<!<)<<(?!<)(-?)\s*([\"'])([^\"'\s]+)\2"
+)
 
 
 def _extract_bashlex(cmd: str, depth: int) -> ExtractedCommands:

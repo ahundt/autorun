@@ -828,3 +828,30 @@ class TestCommandsHiddenBehindWrappersAndShellForms:
 def test_git_flag_spellings_match_the_same_pattern(cmd: str, pattern: str, expected: bool) -> None:
     """git reads `--force` as `-f` and `--all` as `-A`; so must the guard."""
     assert command_matches_pattern(cmd, pattern) is expected
+
+
+# ─── Heredoc delimiters bashlex needs unquoted ────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git commit -F - <<-'EOF'\nrm stale helper\nEOF",
+        "git commit -F - <<'END-MSG'\nrm stale helper\nEND-MSG",
+        'git commit -F - <<"END-MSG"\nrm stale helper\nEND-MSG',
+        "git commit -F - << 'EOF.v2'\nrm stale helper\nEOF.v2",
+    ],
+)
+def test_a_quoted_heredoc_body_is_not_read_as_commands(cmd: str) -> None:
+    """bashlex rejects these delimiters while quoted, and the shlex fallback
+    reads every body line as a command, denying a commit message."""
+    assert command_matches_pattern(cmd, "rm") is False
+    assert command_matches_pattern(cmd, "git commit") is True
+
+
+def test_heredoc_normalization_leaves_here_strings_alone() -> None:
+    from autorun.command_detection import _normalize_heredoc_delimiters
+
+    assert _normalize_heredoc_delimiters("bash <<< 'x y'") == "bash <<< 'x y'"
+    assert _normalize_heredoc_delimiters("cat <<-'EOF'") == "cat <<- EOF"
+    assert _normalize_heredoc_delimiters('cat <<"END-MSG"') == "cat << END-MSG"
