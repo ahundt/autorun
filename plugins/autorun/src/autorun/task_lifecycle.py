@@ -56,6 +56,8 @@ from .core import AI_ECHO_CHANNEL, EventContext, format_command_for_cli, logger
 from .session_manager import (
     DEFAULT_SESSION_TIMEOUT,
     MISSING,
+    TASK_DELEGATION_RECEIPT_SESSION,
+    TASK_LIFECYCLE_SESSION_PREFIX,
     get_session_manager,
     session_state,
     state_lock_timeout,
@@ -95,7 +97,6 @@ _SECONDS_PER_DAY: int = 24 * 3600  # pure unit conversion (not a config value)
 _STAGE3_OVERFLOW_NAME_COUNT: int = 3  # task names shown in stage-3 overflow message
 _MAX_CONSUMED_DELEGATION_MARKERS: int = 256
 _SESSION_START_CLAIM_DIGEST_HEX_CHARS: int = 16
-_DELEGATION_RECEIPT_SESSION = "__task_delegation_receipts__"
 _DELEGATION_RECEIPTS_FIELD = "receipts"
 _MAX_RESOLVED_DELEGATION_RECEIPTS = 256
 
@@ -946,7 +947,7 @@ class TaskLifecycle:
         self.config = config or TaskLifecycleConfig.load()
 
         # Global key for session state (per-session isolation)
-        self.global_key = f"__task_lifecycle__{self.session_id}"
+        self.global_key = f"{TASK_LIFECYCLE_SESSION_PREFIX}{self.session_id}"
 
         # Audit log path (per-session, append-only)
         self.audit_log = (
@@ -1005,13 +1006,13 @@ class TaskLifecycle:
         """Open the cross-session child-to-parent authority registry safely."""
         hook_ctx = ctx or self.ctx
         synchronization = (
-            hook_ctx.state_synchronized(session_id=_DELEGATION_RECEIPT_SESSION)
+            hook_ctx.state_synchronized(session_id=TASK_DELEGATION_RECEIPT_SESSION)
             if hook_ctx is not None
             else contextlib.nullcontext()
         )
         with synchronization:
             with session_state(
-                _DELEGATION_RECEIPT_SESSION,
+                TASK_DELEGATION_RECEIPT_SESSION,
                 timeout=self._state_lock_timeout,
             ) as state:
                 yield state
@@ -3331,7 +3332,7 @@ class TaskLifecycle:
                     namespace="task_lifecycle"
                 )
                 receipt_present = (
-                    _DELEGATION_RECEIPT_SESSION
+                    TASK_DELEGATION_RECEIPT_SESSION
                     in state_manager.list_sessions()
                 )
                 sessions_dir = config.storage_dir
@@ -3358,7 +3359,7 @@ class TaskLifecycle:
 
                 state_manager.clear_sessions_atomically(
                     (*session_keys, *(
-                        (_DELEGATION_RECEIPT_SESSION,) if receipt_present else ()
+                        (TASK_DELEGATION_RECEIPT_SESSION,) if receipt_present else ()
                     ))
                 )
                 for session_dir in session_dirs:
@@ -3418,7 +3419,7 @@ class TaskLifecycle:
 
                 state_manager.clear_sessions_atomically(
                     (manager.global_key,),
-                    related_session=_DELEGATION_RECEIPT_SESSION,
+                    related_session=TASK_DELEGATION_RECEIPT_SESSION,
                     related_updater=remove_parent_receipts,
                     timeout=manager._state_lock_timeout,
                 )
@@ -3544,7 +3545,7 @@ class TaskLifecycle:
             mgr = get_session_manager()
             sessions_dir = mgr.state_dir
             # JSON key prefix for task lifecycle sessions (matches global_key format below)
-            json_key_prefix = "__task_lifecycle__"
+            json_key_prefix = TASK_LIFECYCLE_SESSION_PREFIX
             if current_session_id is None:
                 try:
                     current_session_id = (
@@ -3658,7 +3659,7 @@ class TaskLifecycle:
                                 print(f"  PROTECT {sid[:12]}... (current session - never GC active)")
                             continue
 
-                        prefix = f"__task_lifecycle__{sid}/"
+                        prefix = f"{TASK_LIFECYCLE_SESSION_PREFIX}{sid}/"
                         state_snapshot = {key[len(prefix) :]: value for key, value in raw.items() if key.startswith(prefix)}
                         tasks = state_snapshot.get("tasks", {})
 
@@ -3729,7 +3730,7 @@ class TaskLifecycle:
                         clear_set = set(clear_sids)
                         with all_session_state(timeout=10.0, write=True) as raw:
                             for sid in sorted(clear_set):
-                                prefix = f"__task_lifecycle__{sid}/"
+                                prefix = f"{TASK_LIFECYCLE_SESSION_PREFIX}{sid}/"
                                 for key in [k for k in raw if k.startswith(prefix)]:
                                     del raw[key]
                                 audit_dir = config.storage_dir / sid

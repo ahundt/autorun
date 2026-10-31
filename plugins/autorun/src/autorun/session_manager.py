@@ -1185,6 +1185,11 @@ def _decode_state_value(session_id: str, field: str, raw: str):
         ) from exc
 
 
+# Session ids task_lifecycle.py writes: one per AI session, and one global
+# registry of delegation receipts shared by every session.
+TASK_LIFECYCLE_SESSION_PREFIX = "__task_lifecycle__"
+TASK_DELEGATION_RECEIPT_SESSION = "__task_delegation_receipts__"
+
 # Session-ID prefixes that retention policy distinguishes. An ID matching none
 # of these is an ordinary session; retention must never invent a namespace for
 # an ID it does not recognize, because the namespace decides what may be
@@ -1192,7 +1197,8 @@ def _decode_state_value(session_id: str, field: str, raw: str):
 _NAMESPACE_PREFIXES = (
     ("__global__", "global"),
     ("__plan_export__", "plan_export"),
-    ("__task_lifecycle__", "task_lifecycle"),
+    (TASK_LIFECYCLE_SESSION_PREFIX, "task_lifecycle"),
+    (TASK_DELEGATION_RECEIPT_SESSION, "task_delegation_receipts"),
     ("monitor_", "monitor"),
 )
 
@@ -2539,7 +2545,10 @@ class StateRetention:
                 anomalies.append(session_id)
                 protected.append(session_id)
                 continue
+            # The stored namespace is fixed at insert, so a row written
+            # before its prefix was registered is also classified by id now.
             if (namespace not in self.policy.SWEEPABLE_NAMESPACES
+                    or _namespace_for(session_id) not in self.policy.SWEEPABLE_NAMESPACES
                     or session_id in self.policy.protected_sessions):
                 protected.append(session_id)
                 continue

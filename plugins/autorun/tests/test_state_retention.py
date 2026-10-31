@@ -137,12 +137,26 @@ class TestNothingIsDeletedByDefault:
 class TestWhatIsProtected:
     @pytest.mark.parametrize(
         "session_id",
-        ["__global__", "__plan_export__"],
+        ["__global__", "__plan_export__", "__task_delegation_receipts__"],
     )
     def test_permanently_protected_namespaces_are_never_eligible(
         self, store, retention, session_id
     ):
         _seed(store, session_id, seconds_ago=365 * DAY)
+        assert retention.sweep_sessions()["eligible"] == []
+
+    def test_a_receipt_registry_row_stored_before_its_namespace_existed_is_protected(
+        self, store, retention
+    ):
+        """Rows keep the namespace they were inserted with; upserts never update it."""
+        session_id = "__task_delegation_receipts__"
+        _seed(store, session_id, seconds_ago=365 * DAY)
+        with store.operation_scope(30.0) as owner:
+            with store.write_transaction(owner) as conn:
+                conn.execute(
+                    "UPDATE sessions SET namespace = 'session' WHERE session = ?",
+                    (session_id,),
+                )
         assert retention.sweep_sessions()["eligible"] == []
 
     def test_an_unrecognized_namespace_is_protected(self, store, archive_dir):
