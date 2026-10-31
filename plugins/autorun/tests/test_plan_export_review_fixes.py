@@ -5,6 +5,7 @@
 - An absolute or ~ export directory is honored and reported as a success.
 - `/ar:pe rejected off` keeps every plan that was not accepted out of notes/,
   while an Option 1 acceptance still reaches notes/.
+- `/ar:pe` status shows the settings exports use, legacy keys included.
 """
 from __future__ import annotations
 
@@ -225,3 +226,13 @@ class TestRejectedOffWritesNoUnacceptedPlan:
 
         assert "never accepted" in _bodies(project / "notes")
         assert "Accepted:" in response["systemMessage"], response
+
+
+def test_status_shows_the_directory_exports_use_for_a_legacy_output_dir(project):
+    pe.CONFIG_PATH.parent.mkdir(parents=True)
+    pe.CONFIG_PATH.write_text('{"output_dir": "docs/plans"}', encoding="utf-8")
+    assert pe.PlanExportConfig.load(project).component_dir("accepted") == "docs/plans"
+
+    status = pe.plan_export_command("", project, "claude")
+
+    assert "accepted: on -> docs/plans" in status, status

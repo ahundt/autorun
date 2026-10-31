@@ -703,31 +703,30 @@ def plan_export_command(
         )
 
     if sub == "":
-        data = load_data()
-        global_enabled = bool(data.get("enabled", True))
-        pin = None
-        if project_dir is not None:
-            entry = data.get("projects", {}).get(str(project_dir), {})
-            if isinstance(entry, dict) and "enabled" in entry:
-                pin = bool(entry["enabled"])
-        effective = pin if pin is not None else global_enabled
-        layer = "project setting" if pin is not None else "global default"
+        # Report what exports will use: PlanExportConfig.load applies the pin
+        # and the legacy-key migration; the raw file only says whether a pin exists.
+        config = PlanExportConfig.load(project_dir)
+        global_enabled = PlanExportConfig.load().enabled
+        entry = (
+            load_data().get("projects", {}).get(str(project_dir))
+            if project_dir is not None
+            else None
+        )
+        pinned = isinstance(entry, dict) and "enabled" in entry
+        layer = "project setting" if pinned else "global default"
         lines = [
-            f"Plan export: {'on' if effective else 'off'} ({layer})",
+            f"Plan export: {'on' if config.enabled else 'off'} ({layer})",
             f"  Global default: {'on' if global_enabled else 'off'}",
         ]
-        if pin is not None:
-            lines.append(f"  This project ({project_dir}): {'on' if pin else 'off'}")
+        if pinned:
+            lines.append(f"  This project ({project_dir}): {'on' if config.enabled else 'off'}")
         # Read the component table rather than naming components here, so a new
         # one shows up in status without touching this function.
         for component in NOTES_COMPONENTS:
-            state = (
-                "on"
-                if data.get(component.enabled_key, component.default_enabled)
-                else "off"
+            state = "on" if config.component_enabled(component.name) else "off"
+            lines.append(
+                f"  {component.name}: {state} -> {config.component_dir(component.name)}"
             )
-            where = data.get(component.dir_key, component.default_dir)
-            lines.append(f"  {component.name}: {state} -> {where}")
         lines.append(f"  {_PLAN_EXPORT_CONFIG_HINT}")
         return render("\n".join(lines))
 
