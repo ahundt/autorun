@@ -362,7 +362,7 @@ def _start_daemon(src_dir: Path) -> bool:
         f"print(f'=== Daemon Startup Diagnostics ===', flush=True); "
         f"print(f'autorun loaded from: {{autorun.__file__}}', flush=True); "
         f"print(f'sys.path[0]: {{sys.path[0]}}', flush=True); "
-        f"print(f'Expected source: {src_dir}', flush=True); "
+        f"print('Expected source:', {str(src_dir)!r}, flush=True); "
         # Verify bashlex availability
         f"from autorun.command_detection import warm_parser; "
         f"print(f'bashlex available: {{warm_parser()}}', flush=True); "

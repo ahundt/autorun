@@ -104,6 +104,25 @@ class TestDaemonStartupDiagnostics:
         assert "no module path" in output
         assert str(log_path) in output
 
+    @pytest.mark.parametrize(
+        "src_dir",
+        [r"C:\Users\alice\autorun\src", "/tmp/o'brien/src"],
+    )
+    def test_spawned_daemon_program_parses_for_any_source_path(self, tmp_path, src_dir):
+        """`autorun --install` restarts the daemon through this program; a
+        Windows path's \\U inside a quoted literal made it a SyntaxError, so
+        the daemon never started and every install exited 1."""
+        from autorun import restart_daemon
+
+        with mock.patch.object(restart_daemon.ipc, "AUTORUN_CONFIG_DIR", tmp_path), \
+                mock.patch.object(restart_daemon, "_daemon_python_for_src", return_value=Path(sys.executable)), \
+                mock.patch.object(restart_daemon.subprocess, "Popen") as popen:
+            assert restart_daemon._start_daemon(Path(src_dir)) is True
+
+        code = popen.call_args.args[0][2]
+        compile(code, "<daemon -c>", "exec")
+        assert repr(str(Path(src_dir))) in code
+
 
 class TestRestartLockFilelock:
     """Test restart_lock() with filelock backend — RAII, thread safety, multiprocess."""

@@ -81,11 +81,14 @@ def _isolation_sources() -> list[Path]:
 
 # --- 1. paths interpolated into generated source -----------------------------
 
-# A quote, then a substitution: "...insert(0, '{src}')". The quotes belong to
-# the generated program, so the value lands inside its literal and its
-# backslashes become escapes. `{x!r}` and `json.dumps(x)` carry their own
-# quoting, which is why neither is matched.
-_QUOTED_SUBSTITUTION = re.compile(r"""['"]\{[A-Za-z0-9_][A-Za-z0-9_.\[\]()]*\}['"]""")
+# A substitution anywhere inside a quoted literal of the generated program:
+# "...insert(0, '{src}')" or "print('Expected source: {src}')". The value
+# lands inside that literal, so its backslashes become escapes and its quotes
+# end it. Literals pair left to right, so `f({x}, 'a')` is not matched.
+# `{x!r}` and `json.dumps(x)` carry their own quoting, and `{{x}}` is a brace
+# the generated program writes itself, which is why none of them is matched.
+_GENERATED_LITERAL = re.compile(r"""(['"])(?:(?!\1).)*\1""")
+_SUBSTITUTION = re.compile(r"(?<!\{)\{[A-Za-z0-9_][A-Za-z0-9_.\[\]()]*\}(?!\})")
 
 # Only strings that are themselves a program. A display message may quote a
 # value freely -- f'no session "{name}"' is correct and common -- so the
@@ -119,25 +122,53 @@ def _docstring_lines(tree: ast.AST) -> set[int]:
     return lines
 
 
+def _generated_text(node: ast.Constant | ast.JoinedStr) -> str:
+    """The program a string builds, with each substitution kept as `{expr}`.
+
+    Rendered by hand rather than with ast.unparse: unparse adds the outer
+    delimiters, which would pair with the program's own quotes, and does not
+    double the program's literal braces, which would make a brace the program
+    writes look like a value substituted into it.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value
+    parts = []
+    for value in node.values:
+        if isinstance(value, ast.Constant):
+            parts.append(value.value.replace("{", "{{").replace("}", "}}"))
+        else:
+            conversion = "!r" if value.conversion == ord("r") else ""
+            parts.append("{" + ast.unparse(value.value) + conversion + "}")
+    return "".join(parts)
+
+
 def quoted_substitutions(source: str, filename: str = "<test>") -> list[str]:
     """Return interpolations that land inside a generated program's literal."""
     tree = ast.parse(source, filename=filename)
     documentation = _docstring_lines(tree)
+    # An f-string's literal pieces are walked again on their own; they are
+    # judged as part of their f-string, where its substitutions are visible.
+    fstring_pieces = {
+        id(value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.JoinedStr)
+        for value in node.values
+    }
     offenders = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and not isinstance(node.value, str):
             continue
         if not isinstance(node, (ast.Constant, ast.JoinedStr)):
             continue
-        if node.lineno in documentation:
+        if id(node) in fstring_pieces or node.lineno in documentation:
             continue
-        text = ast.unparse(node)
+        text = _generated_text(node)
         if not any(marker in text for marker in _CODE_MARKERS):
             continue
         offenders.extend(
-            match.group(0)
-            for match in _QUOTED_SUBSTITUTION.finditer(text)
-            if "!r" not in match.group(0)
+            literal.group(0)
+            for literal in _GENERATED_LITERAL.finditer(text)
+            if _SUBSTITUTION.search(literal.group(0))
         )
     return offenders
 
@@ -164,6 +195,16 @@ def test_the_quoted_substitution_checker_catches_the_original_defect():
         '             "from autorun.daemon import main; main()").format(str(src_dir))'
     )
     assert quoted_substitutions(original), "checker missed the shipped defect"
+
+
+def test_the_quoted_substitution_checker_catches_a_value_deeper_in_a_literal():
+    """restart_daemon.py shipped this after the line above was fixed: the
+    quote does not touch the brace, so a quote-adjacent pattern missed it."""
+    shipped = (
+        'daemon_code = (f"import sys; "\n'
+        '               f"print(f\'Expected source: {src_dir}\', flush=True); ")\n'
+    )
+    assert quoted_substitutions(shipped), "checker missed the second shipped defect"
 
 
 def test_the_quoted_substitution_checker_accepts_the_fixed_forms():
