@@ -1259,10 +1259,14 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     Unified command integrations (superset of hookify).
 
     Priority:
-      TIER 1 — Session allows > Global allows (short-circuit, first match wins)
+      TIER 1 — Session allows > Global allows, per shell segment
         - /ar:ok <pattern>       → adds to session_allowed_patterns
         - /ar:globalok <pattern> → adds to global_allowed_patterns
-        - Any TIER 1 match immediately returns ctx.allow(), skipping ALL blocks/warns.
+        - An allow covers only the segments (`a && b` → a, b) it matches.
+        - Every segment covered → ctx.allow(), skipping ALL blocks/warns.
+        - Otherwise TIER 2 runs; a block hit is waived only when every segment
+          it hits is covered, and the waiving grants are spent only if the
+          line is not denied.
         - This is how users override a default deny rule for their current work.
 
       TIER 2 — ALL of these collected together, deny-wins over warn:
