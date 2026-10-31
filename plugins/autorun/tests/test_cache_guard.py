@@ -1215,3 +1215,21 @@ class TestParseQuantityAdditional:
     def test_percent_with_whitespace(self):
         from autorun.cache_guard import parse_quantity
         assert parse_quantity("  85%  ", expect="percent") == pytest.approx(0.85)
+
+
+class TestGlobalOverrideApplies:
+    """`/ar:cache global ok` stored its grant under __global__, which check()
+    never consulted: it reported success and the gate kept blocking."""
+
+    def test_global_ok_lets_one_tripped_call_through(self, tmp_state_dir):
+        from autorun.cache_guard import CacheGuard, CacheGuardConfig, cache_command, set_cache_enabled
+        sid = _sid("global-ok")
+        set_cache_enabled(sid, True)
+        CacheGuardConfig(cache_hit_ratio_min=0.5).save(sid)
+        guard = CacheGuard.from_ctx(_make_ctx(sid))
+        guard._read_usage = lambda _ctx: _FakeUsage(cache_hit_ratio=0.01)  # type: ignore[method-assign]
+        assert guard.check(_make_ctx(sid, command="git log")) is not None
+
+        assert "granted" in cache_command("global ok 1", sid)
+        assert guard.check(_make_ctx(sid, command="git status")) is None
+        assert guard.check(_make_ctx(sid, command="git diff")) is not None, "one use only"

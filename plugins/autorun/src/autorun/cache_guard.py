@@ -555,7 +555,9 @@ class CacheGuard:
     # ── overrides ────────────────────────────────────────────────
 
     def _consume_override(self, ctx: object) -> bool:
-        return _consume_by_call_id(self.session_id, call_fingerprint(ctx))
+        """Spend a session override, else a `/ar:cache global ok` one."""
+        call_id = call_fingerprint(ctx)
+        return _consume_by_call_id(self.session_id, call_id) or _consume_by_call_id(_GLOBAL_SESSION_ID, call_id)
 
     # ── UX ──────────────────────────────────────────────────────
 
