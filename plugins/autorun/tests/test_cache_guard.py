@@ -782,9 +782,14 @@ class TestCacheCommandDispatch:
         assert not is_cache_enabled(sid)
 
     def test_on_with_bad_duration_returns_error(self, tmp_state_dir):
-        from autorun.cache_guard import cache_command
-        out = cache_command("on xyz123", _sid())
-        assert "cannot parse duration" in out
+        """Rejected by the shared /ar:ok scope grammar, so the gate stays as it was."""
+        from autorun.cache_guard import cache_command, is_cache_enabled
+        sid = _sid()
+        out = cache_command("on xyz123", sid)
+        assert "scope token must be" in out and "'xyz123'" in out
+        assert not is_cache_enabled(sid)
+        assert "not a count" in cache_command("on 3", sid)
+        assert not is_cache_enabled(sid)
 
     def test_on_permanent_enables_without_ttl(self, tmp_state_dir):
         from autorun.cache_guard import cache_command, is_cache_enabled

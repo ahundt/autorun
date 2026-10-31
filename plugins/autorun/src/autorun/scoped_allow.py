@@ -56,77 +56,32 @@ def parse_duration(s: str) -> float | None:
     return float(total) if total > 0 else None
 
 
+_SCOPE_SHAPE = re.compile(r"^\d[\w.]*$")
+
+
+def looks_like_scope(token: str) -> bool:
+    """Whether ``token`` is in scope position: perm/p, or a word starting with
+    a digit (``5``, ``5m``, ``5min``, ``0d``, ``1.5h``).
+
+    Shape only. Every caller then hands such words to parse_scope_tokens,
+    which rejects the invalid ones, so ``5min`` is refused everywhere instead
+    of becoming pattern text in one command and being ignored in another.
+    """
+    token = token.strip().lower()
+    return token in _PERMANENT_KEYWORDS or bool(_SCOPE_SHAPE.match(token))
+
+
 def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
-    """Parse trailing scope args from _parse_args() desc.
+    """Parse /ar:ok-style scope words: (ttl_seconds, remaining_uses, explicit_permanent).
 
-    Returns (ttl_seconds, remaining_uses, explicit_permanent).
-
-    Args:
-        desc: Trailing text after pattern from _parse_args(),
-              e.g. "3", "5m", "permanent", "3 5m", None
-
-    Rules:
-    - Bare integer: count (remaining_uses); must be > 0 (a 0-use allow is
-      never active, so it is rejected with ValueError instead of granted)
-    - Duration string (5m, 1h, 30s, 2h30m, 2d): ttl_seconds
-    - Integer + duration: both (whichever expires first)
-    - "permanent" / "perm" / "p": explicit no-limit -> returns (None, None, True)
-    - None or empty: returns (None, None, False) -- caller applies 1-use default
+    None or empty returns (None, None, False) so the caller can apply its
+    1-use default. Every word must be a scope word (``3``, ``5m``, ``perm``);
+    the grammar is parse_scope_tokens', which raises ValueError otherwise.
     """
     if not desc or not desc.strip():
         return (None, None, False)
-
-    parts = desc.strip().split()
-    ttl: float | None = None
-    uses: int | None = None
-    permanent = False
-
-    for part in parts:
-        low = part.lower()
-        if low in _PERMANENT_KEYWORDS:
-            permanent = True
-        elif low.isdigit():
-            # Repeats are refused, not overwritten. Taking the last token
-            # silently widened the grant a user actually typed: `2 3` granted
-            # three uses. The strict sibling `parse_scope_tokens` has always
-            # refused this, and one grammar cannot have two answers.
-            if uses is not None:
-                raise ValueError(
-                    f"count may be provided once; got {part!r}; pass one "
-                    "positive count, optionally with one duration"
-                )
-            uses = int(low)
-            if uses <= 0:
-                raise ValueError(
-                    f"count must be greater than 0, got {part!r}; pass a "
-                    "positive count, a duration such as 5m or 2d, or perm"
-                )
-        elif looks_like_duration(low):
-            if ttl is not None:
-                raise ValueError(
-                    f"duration may be provided once; got {part!r}; pass one "
-                    "duration, optionally with one count"
-                )
-            parsed_ttl = parse_duration(low)
-            if parsed_ttl is None:
-                raise ValueError(
-                    f"duration must be greater than 0, got {part!r}; pass a "
-                    "duration such as 5m or 2d, a positive count, or perm"
-                )
-            ttl = parsed_ttl
-        # Any other token is free text the caller owns (pattern words).
-
-    if permanent and (ttl is not None or uses is not None):
-        # The strict sibling parser (parse_scope_tokens) rejects this too;
-        # silently letting perm win would widen an explicit 5m into a
-        # session-permanent grant.
-        raise ValueError(
-            "perm cannot be combined with a count or duration; pass perm "
-            "alone for the rest of the session, or a count/duration without it"
-        )
-    if permanent:
-        return (None, None, True)  # Explicit permanent — no limits
-    return (ttl, uses, False)
+    spec = parse_scope_tokens(desc.split(), default_scope=ScopeSpec(), count_unit="use")
+    return (spec.ttl_seconds, spec.remaining_uses, spec.permanent)
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,12 +121,14 @@ def parse_scope_tokens(
         token = raw.strip().lower()
         if token in _PERMANENT_KEYWORDS:
             if permanent or ttl_seconds is not None or remaining_uses is not None:
-                raise ValueError("perm cannot be combined with a count or duration; pass perm alone to keep the scope active until resumed")
+                raise ValueError("perm cannot be combined with a count or duration; pass perm alone, or a count or duration without it")
             permanent = True
             continue
 
         if token.isdecimal():
-            if permanent or remaining_uses is not None:
+            if permanent:
+                raise ValueError("perm cannot be combined with a count or duration; pass perm alone, or a count or duration without it")
+            if remaining_uses is not None:
                 raise ValueError(f"{count_unit} count may be provided once; got {raw!r}; pass one positive count")
             count = int(token)
             if count <= 0:
@@ -180,14 +137,19 @@ def parse_scope_tokens(
             continue
 
         duration = parse_duration(token)
+        if duration is None and looks_like_duration(token):
+            raise ValueError(
+                f"duration must be greater than 0, got {raw!r}; pass a duration "
+                f"such as 5m or 2d, a positive {count_unit} count, or perm"
+            )
         if duration is None:
             raise ValueError(
                 f"scope token must be a positive {count_unit} count, duration "
                 f"(for example 5m), or perm; got {raw!r}; pass a supported "
-                "scope token or start a free-form reason with a word"
+                "scope token, or quote text that starts with a digit"
             )
         if permanent:
-            raise ValueError("perm cannot be combined with a count or duration; pass perm alone to keep the scope active until resumed")
+            raise ValueError("perm cannot be combined with a count or duration; pass perm alone, or a count or duration without it")
         if ttl_seconds is not None:
             raise ValueError(f"duration may be provided once; got {raw!r}; pass one duration, optionally with one count")
         ttl_seconds = duration

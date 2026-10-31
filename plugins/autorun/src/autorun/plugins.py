@@ -74,11 +74,9 @@ from .session_manager import SessionPersistenceError, session_state
 from .scoped_allow import (
     ScopeSpec,
     ScopedAllow,
+    looks_like_scope,
     parse_scope_args,
     parse_scope_tokens,
-    parse_duration,
-    looks_like_duration,
-    _PERMANENT_KEYWORDS,
 )
 from .command_detection import (
     command_matches_pattern,
@@ -540,16 +538,6 @@ def _typed_pattern_unit(args: str) -> tuple[str, str, str] | None:
     return pattern, ptype, rest.strip()
 
 
-def _is_scope_token(token: str) -> bool:
-    """Return whether a token is an /ar:ok scope modifier.
-
-    Shape decides, not validity: ``0d`` is a scope token that
-    ``parse_scope_args`` then rejects, rather than pattern text.
-    """
-    token = token.strip().lower()
-    return token.isdigit() or token in _PERMANENT_KEYWORDS or looks_like_duration(token)
-
-
 def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
     """The one /ar:no and /ar:ok pattern grammar: (pattern, rest, pattern_type).
 
@@ -567,7 +555,7 @@ def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
         raise ValueError(f"Pattern too long (max {_MAX_PATTERN_LENGTH})")
 
     leading: list[str] = []
-    while scope and (head := args.split(None, 1)) and _is_scope_token(head[0]):
+    while scope and (head := args.split(None, 1)) and looks_like_scope(head[0]):
         leading.append(head[0])
         args = head[1] if len(head) > 1 else ""
 
@@ -584,13 +572,13 @@ def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
             pattern, rest = parts[0], parts[1:]
         else:
             rest = []
-            while scope and len(parts) > 1 and _is_scope_token(parts[-1]):
+            while scope and len(parts) > 1 and looks_like_scope(parts[-1]):
                 rest.insert(0, parts.pop())
             pattern = " ".join(parts)
     if not pattern:
         raise ValueError("No pattern provided")
     if scope:
-        stray = [token for token in rest if not _is_scope_token(token)]
+        stray = [token for token in rest if not looks_like_scope(token)]
         if stray:
             raise ValueError(
                 f"unexpected {' '.join(stray)!r} after the pattern {pattern!r}; quote the whole "
@@ -2985,13 +2973,9 @@ def _parse_task_pause_arguments(
 ) -> TaskPauseArguments:
     remaining = list(arguments)
     scope_tokens: list[str] = []
-    while remaining:
-        token = remaining[0].lower()
-        if token in _PERMANENT_KEYWORDS or token.isdecimal() or parse_duration(token) is not None:
-            scope_tokens.append(remaining.pop(0))
-            continue
-        break
-    if remaining and re.match(r"^[+-]?\d", remaining[0]):
+    while remaining and looks_like_scope(remaining[0]):
+        scope_tokens.append(remaining.pop(0))
+    if remaining and re.match(r"^[+-]\d", remaining[0]):
         raise ValueError(
             f"invalid count or duration {remaining[0]!r}; pass a positive logical Stop count, a duration such as 5m, or start the reason with a word"
         )

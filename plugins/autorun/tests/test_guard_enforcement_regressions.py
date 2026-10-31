@@ -434,6 +434,40 @@ class TestOrdinaryPromptsAreNotCommands:
         assert "stop" not in plugins.app.command_handlers
 
 
+class TestOneStrictScopeGrammar:
+    """E-D3: five scope parsers gave `5min` three outcomes: /ar:ok folded it
+    into the pattern, /ar:cache ok ignored it (1 use), task pause and
+    /ar:cache off rejected it."""
+
+    def test_5min_is_rejected_everywhere_with_the_same_message(self):
+        from autorun import cache_guard
+
+        sid, store = _sid(), ThreadSafeDB()
+        replies = {
+            "/ar:ok rm 5min": _prompt("/ar:ok rm 5min", sid=sid, store=store).get("systemMessage", ""),
+            "/ar:task pause 5min": _prompt("/ar:task pause 5min", sid=sid, store=store).get("systemMessage", ""),
+            "cache ok 5min": cache_guard.cache_command("ok 5min", sid),
+            "cache off 5min": cache_guard.cache_command("off 5min", sid),
+        }
+        for command, reply in replies.items():
+            assert "'5min'" in reply and "scope token must be" in reply, (command, reply)
+        state = EventContext(session_id=sid, event="PreToolUse", store=store)
+        assert state.state_get("session_allowed_patterns", []) == []
+
+    def test_unknown_word_after_cache_ok_is_rejected_not_ignored(self):
+        from autorun import cache_guard
+
+        reply = cache_guard.cache_command("ok for 5m", _sid())
+        assert "granted" not in reply and "'for'" in reply, reply
+
+    def test_valid_scopes_still_parse(self):
+        assert plugins._parse_allow_args("rm 3 5m")[1] == "3 5m"
+        from autorun.scoped_allow import parse_scope_args
+
+        assert parse_scope_args("3 5m") == (300.0, 3, False)
+        assert parse_scope_args("perm") == (None, None, True)
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""

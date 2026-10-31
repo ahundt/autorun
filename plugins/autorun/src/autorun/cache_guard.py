@@ -733,17 +733,17 @@ def _rate_limit_frac(v) -> float | None:
 # ── /ar:cache slash-command dispatcher ───────────────────────────────
 
 def _cmd_toggle(rest: list, session_id: str, target: bool) -> str:
-    dur = None
-    if rest:
-        if rest[0].lower() in _PERMANENT_WORDS:
-            dur = None
-        else:
-            dur = parse_duration(rest[0])
-            if dur is None:
-                return f"ar:cache: cannot parse duration {rest[0]!r}. Try 5m, 1h, or omit."
+    # The /ar:ok scope grammar, minus counts: a toggle lasts a duration or perm.
+    try:
+        _ttl, uses, _perm = parse_scope_args(" ".join(rest))
+    except ValueError as e:
+        return f"ar:cache: {e}"
+    if uses is not None:
+        return "ar:cache: on/off takes a duration such as 5m or 1h, or perm; not a count."
+    dur = _ttl
     set_cache_enabled(session_id, target, duration=dur)
     word = "enabled" if target else "disabled"
-    return f"ar:cache {word}{' for ' + rest[0] if dur else ''}."
+    return f"ar:cache {word}{' for ' + ' '.join(rest) if dur else ''}."
 
 
 def _cmd_on(rest: list, session_id: str) -> str:
