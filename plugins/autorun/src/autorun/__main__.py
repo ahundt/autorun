@@ -850,29 +850,42 @@ def set_bootstrap_config(enabled: bool) -> int:
         print(f"hooks.json not found at {hooks_path}")
         return 1
 
-    # Read current hooks.json (Claude events)
-    with open(hooks_path, encoding="utf-8") as f:
-        content = f.read()
+    import json
 
-    if enabled:
-        # Remove --no-bootstrap flag from commands
-        new_content = re.sub(r"(hook_entry\.py)\s+--no-bootstrap", r"\1", content)
-        if new_content == content:
-            print("Bootstrap already enabled")
-        else:
-            with open(hooks_path, "w", encoding="utf-8") as f:
-                f.write(new_content)
-            print(f"Bootstrap enabled (removed --no-bootstrap from {hooks_path})")
-    else:
-        # Add --no-bootstrap flag to commands (if not already present)
-        if "--no-bootstrap" in content:
-            print("Bootstrap already disabled")
-        else:
-            new_content = re.sub(r'(hook_entry\.py)(["\\s])', r"\1 --no-bootstrap\2", content)
-            with open(hooks_path, "w", encoding="utf-8") as f:
-                f.write(new_content)
-            print(f"Bootstrap disabled (added --no-bootstrap to {hooks_path})")
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    hooks = [
+        hook
+        for groups in data.get("hooks", {}).values()
+        for group in groups
+        for hook in group.get("hooks", [])
+        if "hook_entry.py" in hook.get("command", "")
+    ]
+    if not hooks:
+        # A wheel's hooks run the installed `autorun` command, whose
+        # dependencies are already installed, so there is no bootstrap to toggle.
+        print(f"No hook_entry.py command in {hooks_path}; nothing changed (these hooks never bootstrap).")
+        return 0
 
+    # Edit the parsed command, never the JSON text: the script path is quoted,
+    # so the flag goes after the closing quote. The removal pattern also
+    # repairs a flag that an earlier text edit put inside the quotes.
+    script = r"""(hook_entry\.py["']?)"""
+    changed = False
+    for hook in hooks:
+        command = hook["command"]
+        if enabled:
+            hook["command"] = re.sub(script + r"\s+--no-bootstrap", r"\1", command)
+        else:
+            hook["command"] = re.sub(script + r"""(?!["']?\s+--no-bootstrap)""", r"\1 --no-bootstrap", command)
+        changed |= hook["command"] != command
+
+    state = "enabled" if enabled else "disabled"
+    if not changed:
+        print(f"Bootstrap already {state}")
+        return 0
+    hooks_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    action = "removed --no-bootstrap from" if enabled else "added --no-bootstrap to"
+    print(f"Bootstrap {state} ({action} {hooks_path})")
     return 0
 
 

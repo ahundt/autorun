@@ -226,6 +226,89 @@ class TestSetBootstrapConfig:
         captured = capsys.readouterr()
         assert "not found" in captured.out.lower()
 
+    @staticmethod
+    def _shipped_hooks_copy(root: Path) -> Path:
+        """Copy the real shipped hooks.json and a hook_entry.py into ``root``."""
+        shipped = Path(__file__).parent.parent / "hooks" / "hooks.json"
+        (root / "hooks").mkdir()
+        (root / "hooks" / "hook_entry.py").write_text("", encoding="utf-8")
+        target = root / "hooks" / "hooks.json"
+        target.write_text(shipped.read_text(encoding="utf-8"), encoding="utf-8")
+        return target
+
+    @staticmethod
+    def _script_arguments(hooks_file: Path, root: Path) -> list[tuple[str, str]]:
+        """Each hook_entry.py token in the shell commands and the token after it."""
+        import shlex
+
+        data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        pairs = []
+        for groups in data["hooks"].values():
+            for group in groups:
+                for hook in group["hooks"]:
+                    command = hook["command"].replace("${CLAUDE_PLUGIN_ROOT}", str(root))
+                    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+                    lexer.whitespace_split = True
+                    tokens = list(lexer)
+                    pairs += [
+                        (token, tokens[i + 1] if i + 1 < len(tokens) else "")
+                        for i, token in enumerate(tokens)
+                        if "hook_entry.py" in token
+                    ]
+        return pairs
+
+    def test_disable_then_enable_keeps_the_shipped_script_path_runnable(self, tmp_path):
+        """The flag must land after the quoted script path, not inside it.
+
+        The shipped command quotes the script (``"${CLAUDE_PLUGIN_ROOT}/hooks/
+        hook_entry.py"``). Rewriting raw JSON text once put the flag before the
+        escaped closing quote, so Python was asked to open
+        ``hook_entry.py --no-bootstrap``, wrote stderr, and exited 2 on every
+        event, blocking every PreToolUse.
+        """
+        from autorun.__main__ import main
+
+        hooks_file = self._shipped_hooks_copy(tmp_path)
+        original = hooks_file.read_text(encoding="utf-8")
+
+        with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": str(tmp_path)}):
+            assert main(["--no-bootstrap"]) == 0
+            disabled = hooks_file.read_text(encoding="utf-8")
+            assert main(["--no-bootstrap"]) == 0
+            assert hooks_file.read_text(encoding="utf-8") == disabled
+            pairs = self._script_arguments(hooks_file, tmp_path)
+            assert pairs, "the shipped hooks.json names no hook_entry.py command"
+            for script, following in pairs:
+                assert Path(script).is_file(), f"hook script path broken: {script!r}"
+                assert following == "--no-bootstrap"
+
+            assert main(["--enable-bootstrap"]) == 0
+
+        assert hooks_file.read_text(encoding="utf-8") == original
+
+    def test_hooks_without_a_hook_entry_command_report_nothing_changed(self, tmp_path, capsys):
+        """A wheel's Claude hook runs ``autorun --cli claude``; there is no
+        bootstrap to toggle, and "Bootstrap disabled (added ...)" would be
+        false. Exit 0: the release wheel test runs both flags and no
+        bootstrap can run there."""
+        from autorun.__main__ import set_bootstrap_config
+
+        (tmp_path / "hooks").mkdir()
+        hooks_file = tmp_path / "hooks" / "hooks.json"
+        content = json.dumps(
+            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "autorun --cli claude"}]}]}},
+            indent=2,
+        ) + "\n"
+        hooks_file.write_text(content, encoding="utf-8")
+
+        with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": str(tmp_path)}):
+            assert set_bootstrap_config(enabled=False) == 0
+
+        out = capsys.readouterr().out.lower()
+        assert "nothing changed" in out
+        assert "bootstrap disabled" not in out
+        assert hooks_file.read_text(encoding="utf-8") == content
+
     def test_disable_preserves_json_structure(self, temp_hooks_dir):
         """Test that disabling bootstrap preserves overall JSON structure."""
         from autorun.__main__ import set_bootstrap_config
