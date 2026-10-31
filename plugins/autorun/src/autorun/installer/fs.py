@@ -1232,6 +1232,23 @@ def _occupied_by_a_non_directory(directory: Path) -> Decision | None:
     )
 
 
+def _collisions(
+    directory: Path, names: Iterable[str], plugin: str
+) -> tuple[dict[str, str], dict[str, str | None], tuple[str, ...]]:
+    """The per-file collision rule both shared-directory functions apply.
+
+    Returns what ``plugin`` recorded writing here, each name's live
+    fingerprint, and the names that hold something autorun did not write or
+    wrote and the user has changed since.
+    """
+    marker = read_marker(directory)
+    ours = dict(marker.files) if owns(marker, plugin) else {}
+    names = tuple(names)
+    live = {name: _fingerprint_if_present(directory / name) for name in names}
+    blocked = tuple(n for n in names if live[n] is not None and ours.get(n) != live[n])
+    return ours, live, blocked
+
+
 def decide_files(
     source: Path, directory: Path, *, plugin: str = "", backup: bool = True
 ) -> Decision:
@@ -1245,15 +1262,8 @@ def decide_files(
     occupied = _occupied_by_a_non_directory(directory)
     if occupied is not None:
         return occupied
-    marker = read_marker(directory)
-    ours = dict(marker.files) if owns(marker, plugin) else {}
     shipped = sorted(p.name for p in source.iterdir() if p.is_file()) if source.is_dir() else []
-
-    live = {name: _fingerprint_if_present(directory / name) for name in shipped}
-    blocked = tuple(
-        name for name in shipped
-        if live[name] is not None and (name not in ours or live[name] != ours[name])
-    )
+    ours, live, blocked = _collisions(directory, shipped, plugin)
     # With backup on, a collision is not a refusal: the user's file moves aside
     # and ours lands, so everything shipped is writable.
     writable = list(shipped) if backup else [n for n in shipped if n not in blocked]
@@ -1327,15 +1337,11 @@ def publish_files(
         # concurrent install that lands between the read and the lock leaves
         # `ours` describing files it has already replaced, and every name it
         # rewrote then looks like a user edit and is moved to .autorun-backup.
-        previous = read_marker(actual)
-        ours = dict(previous.files) if owns(previous, plugin) else {}
-        for candidate in sorted(p for p in source.iterdir() if p.is_file()):
-            current = actual / candidate.name
+        candidates = sorted(p for p in source.iterdir() if p.is_file())
+        ours, _live, blocked = _collisions(actual, [p.name for p in candidates], plugin)
+        for candidate in candidates:
             destination = staged / candidate.name
-            live = _fingerprint_if_present(current)
-            if live is not None and (
-                candidate.name not in ours or live != ours[candidate.name]
-            ):
+            if candidate.name in blocked:
                 if not backup:
                     kept.append(candidate.name)
                     continue
