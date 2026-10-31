@@ -439,51 +439,22 @@ class TmuxUtilities:
         Returns:
             Dict with session, window, pane info or None if not in tmux
         """
-        # Check TMUX environment variable first
+        # TMUX is /tmp/tmux-1000/default,4219,0: socket, server PID, session
+        # id. It holds no names, so only the socket comes from it.
         tmux_env = os.getenv('TMUX')
         if not tmux_env:
             return None
 
-        # Parse TMUX environment variable: /tmp/tmux-1000/default,4219,0
-        try:
-            parts = tmux_env.split(',')
-            if len(parts) >= 3:
-                socket_path = parts[0]
-                session_and_window = parts[1].split('/')[-1] if '/' in parts[1] else parts[1]
-                pane = parts[2]
-
-                # Extract session name from session_and_window (format: session.window)
-                if '.' in session_and_window:
-                    session, window = session_and_window.split('.', 1)
-                else:
-                    session = session_and_window
-                    window = "0"
-
-                return {
-                    "session": session,
-                    "window": window,
-                    "pane": pane,
-                    "socket_path": socket_path
-                }
-        except (IndexError, ValueError):
-            pass
-
-        # Fallback to tmux command-based detection
-        try:
-            result = self.execute_tmux_command(['display-message', '-p', '#S:#I:#P'])
-            if result and result['returncode'] == 0:
-                session_window_pane = result['stdout'].strip()
-                if ':' in session_window_pane:
-                    session, window, pane = session_window_pane.split(':', 2)
-                    return {
-                        "session": session,
-                        "window": window,
-                        "pane": pane
-                    }
-        except Exception:
-            pass
-
-        return None
+        location = _tmux_current_location()
+        if location is None:
+            return None
+        session, window, pane = location
+        return {
+            "session": session,
+            "window": window,
+            "pane": pane,
+            "socket_path": tmux_env.split(',')[0],
+        }
 
     def execute_tmux_command(self, cmd: List[str], session: Optional[str] = None,
                            window: Optional[str] = None, pane: Optional[str] = None) -> Optional[Dict[str, str]]:
@@ -946,17 +917,29 @@ def detect_current_tmux_session() -> Optional[str]:
         ...     tmux = TmuxUtilities(session_name=session)
         ...     send_text_and_enter(tmux, "hello", window='48')
     """
-    import subprocess
+    location = _tmux_current_location()
+    return location[0] if location else None
+
+
+def _tmux_current_location() -> Optional[Tuple[str, str, str]]:
+    """(session, window, pane) of the caller, as tmux itself reports it.
+
+    No -t: display-message then describes the client's own pane, which tmux
+    resolves from $TMUX_PANE. The one place detect_tmux_environment,
+    detect_current_tmux_session and _tmux_get_current_window ask this.
+    """
     try:
         result = subprocess.run(
-            [resolve_tmux_binary(), 'display-message', '-p', '#{session_name}'],
+            [resolve_tmux_binary(), 'display-message', '-p',
+             '#{session_name}:#{window_index}:#{pane_index}'],
             capture_output=True, text=True, timeout=2
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return None
+    except (subprocess.SubprocessError, OSError):
+        return None
+    parts = result.stdout.rstrip('\n').rsplit(':', 2)
+    if result.returncode != 0 or len(parts) != 3 or not parts[0]:
+        return None
+    return parts[0], parts[1], parts[2]
 
 
 def get_tmux_utilities(session_name: Optional[str] = None) -> TmuxUtilities:
@@ -1319,17 +1302,8 @@ def tmux_list_windows(
 
 def _tmux_get_current_window() -> Tuple[str, str]:
     """Get current tmux session:window. Returns ('', '') if not in tmux."""
-    try:
-        result = subprocess.run(
-            [resolve_tmux_binary(), 'display-message', '-p', '#{session_name}:#{window_index}'],
-            capture_output=True, text=True, timeout=2
-        )
-        if result.returncode == 0:
-            parts = result.stdout.strip().split(':')
-            return (parts[0], parts[1]) if len(parts) >= 2 else ('', '')
-    except Exception:
-        pass
-    return ('', '')
+    location = _tmux_current_location()
+    return (location[0], location[1]) if location else ('', '')
 
 
 def _tmux_list_sessions(tmux: 'TmuxUtilities') -> List[str]:

@@ -856,6 +856,27 @@ class TestSafeToSendAgreesWithThePromptDetector:
         assert [c.args[0] for c in tmux.send_keys.call_args_list] == ["continue", "C-m"]
 
 
+class TestEnvironmentDetectionAsksTmuxForNames:
+    """detect_tmux_environment parsed TMUX=socket,server_pid,session_id and
+    returned the server PID as the session name and the session id as the
+    pane, so TmuxInjector targeted (and auto-created) a session named after
+    the PID."""
+
+    def test_session_window_pane_come_from_display_message(self, monkeypatch):
+        monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,4219,0")
+        with patch.object(tmux_module.subprocess, "run",
+                          return_value=Mock(returncode=0, stdout="main:3:1\n")) as run:
+            env = TmuxUtilities("autorun").detect_tmux_environment()
+
+        assert (env["session"], env["window"], env["pane"]) == ("main", "3", "1")
+        assert env["socket_path"] == "/tmp/tmux-501/default"
+        assert "-t" not in run.call_args.args[0], "must ask about the caller's pane, not a target"
+
+    def test_outside_tmux_there_is_no_environment(self, monkeypatch):
+        monkeypatch.delenv("TMUX", raising=False)
+        assert TmuxUtilities("autorun").detect_tmux_environment() is None
+
+
 class TestWindowListingSurvivesAPipeInAField:
     """tmux_list_windows split list-windows output on '|', so a pane title or
     path containing '|' gave the wrong field count and the window vanished."""

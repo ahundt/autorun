@@ -127,6 +127,24 @@ class TestTmuxInjector:
         # Recreate for other tests
         ensure_test_session()
 
+    def test_detected_session_is_the_callers_not_the_tmux_server_pid(self, monkeypatch):
+        """TMUX is socket,server_pid,session_id; field 2 was read as the
+        session name, so the injector targeted a session named after the
+        server PID. tmux resolves the caller's pane from TMUX_PANE."""
+        from conftest import tmux_argv
+
+        subprocess.run(tmux_argv('new-window', '-t', _TEST_SESSION), capture_output=True, check=True)
+        pane = subprocess.run(
+            tmux_argv('display-message', '-p', '-t', f'{_TEST_SESSION}:1', '#{pane_id}'),
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        monkeypatch.setenv('TMUX', f"{os.environ['AUTORUN_TEST_TMUX_SOCKET']},4219,0")
+        monkeypatch.setenv('TMUX_PANE', pane)
+
+        info = TmuxInjector(_TEST_SESSION).get_tmux_session_info()
+
+        assert (info['session'], info['window'], info['pane']) == (_TEST_SESSION, '1', '0')
+
     def test_capture_current_input_no_session_detected(self):
         """Test capturing input when no tmux session is detected yet"""
         injector = TmuxInjector(_TEST_SESSION)
