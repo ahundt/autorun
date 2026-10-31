@@ -206,6 +206,37 @@ def test_gemini_hooks_json_has_gemini_tool_names():
         "Gemini hooks must NOT use Claude's ${CLAUDE_PLUGIN_ROOT}"
 
 
+@pytest.mark.parametrize(
+    ("hooks_path", "platform_name"),
+    [(get_claude_hooks_path, "claude"), (get_gemini_hooks_path, "gemini")],
+)
+def test_every_subscribed_event_reaches_a_handler(hooks_path, platform_name):
+    """A subscription nothing handles costs a hook process per event for nothing.
+
+    The Gemini template subscribed AfterModel (every model response) and
+    SessionEnd with no @app.on chain for either, and GEMINI and QWEN install
+    the template unfiltered, so each fired a subprocess that always passed
+    through. UserPromptSubmit counts as handled without a chain because the
+    daemon routes it to the command table first.
+    """
+    from autorun.core import AutorunApp
+    from autorun.platforms import PLATFORMS
+    from autorun.plugins import app
+
+    assert isinstance(app, AutorunApp)
+    with open(hooks_path(), encoding="utf-8") as f:
+        events = json.load(f)["hooks"]
+    to_autorun = PLATFORMS[platform_name].harness_cli_to_autorun_events
+
+    unhandled = []
+    for event in events:
+        autorun_event = to_autorun.get(event, event)
+        chain = "Stop" if autorun_event == "SubagentStop" else autorun_event
+        if autorun_event != "UserPromptSubmit" and not app.chains.get(chain):
+            unhandled.append(event)
+    assert not unhandled, f"{hooks_path().name} subscribes unhandled events: {unhandled}"
+
+
 def test_gemini_hooks_have_type_field():
     """Test that Gemini hooks include 'type' field (required by Gemini CLI)."""
     hooks_file = get_gemini_hooks_path()
