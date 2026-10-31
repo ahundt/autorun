@@ -1209,6 +1209,34 @@ def test_every_legacy_distribution_shares_a_script_with_the_current_one():
     assert shared == set(legacy), sorted(set(legacy) - shared)
 
 
+@pytest.mark.parametrize("layout", ["checkout", "wheel"])
+def test_codex_plugin_hook_command_follows_the_hook_command_layout(monkeypatch, isolated, tmp_path, layout):
+    """A wheel's plugin root has no pyproject.toml, so ``uv run --project
+    ${CLAUDE_PLUGIN_ROOT}`` there runs a bare interpreter without autorun's
+    dependencies. The bundled Codex hook must make the choice
+    runtime.hook_command makes for every other hook."""
+    import shlex
+    import sys
+
+    from autorun.installer import discovery, entrypoint
+
+    plugin = tmp_path / layout
+    (plugin / "hooks").mkdir(parents=True)
+    (plugin / ("pyproject.toml" if layout == "checkout" else "__main__.py")).touch()
+    monkeypatch.setattr(discovery, "plugin_dir", lambda _root, _name: plugin)
+    resolved: dict = {}
+
+    entrypoint._runtime_settings(tmp_path, resolved, (), ())
+
+    command = resolved["_codex_plugin_hook_command"]
+    if layout == "checkout":
+        assert command.startswith("uv run") and "--project ${CLAUDE_PLUGIN_ROOT}" in command, command
+    else:
+        assert "uv run" not in command, command
+        assert shlex.split(command)[:2] == [sys.executable, str(plugin / "hooks" / "hook_entry.py")]
+        assert command == resolved["_codex_hook_command"]
+
+
 def _bootstrap_only(monkeypatch, entrypoint, plugin: Path, python: Path, calls: list):
     """Run install_plugins up to and through bootstrap with a recorded runner.
 

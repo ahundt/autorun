@@ -307,6 +307,10 @@ def _runtime_settings(
         python=python,
         no_sync=no_sync,
     )
+    # The bundled plugin hook makes hook_command's choice: a checkout runs uv
+    # against the installed plugin root; a wheel's root has no pyproject.toml,
+    # so `uv run --project` there would lack autorun's dependencies, and the
+    # absolute interpreter command is used instead.
     plugin_command = (
         runtime.UvCommand(
             project=Path("${CLAUDE_PLUGIN_ROOT}"),
@@ -317,6 +321,8 @@ def _runtime_settings(
         )
         .shell()
         .replace("'${CLAUDE_PLUGIN_ROOT}'", "${CLAUDE_PLUGIN_ROOT}")
+        if isinstance(command, runtime.UvCommand)
+        else command.shell()
     )
     resolved.update(
         _hook_command=runtime.hook_command(
