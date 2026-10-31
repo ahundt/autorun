@@ -924,16 +924,22 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
         return False, 0
 
 
-def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -> bool:
+def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, event_name: str = "unknown") -> bool:
     """Try to run autorun CLI, passing pre-read stdin payload.
 
     Args:
         bin_path: Path to autorun executable
         stdin_data: Pre-read stdin payload (read once in main() to avoid
             consuming stdin before the fallback path needs it)
+        cli_type: Harness identity; detected when omitted.
+        event_name: Hook event, which decides how a timeout fails.
 
     Returns:
-        True if CLI executed successfully with valid output, False otherwise.
+        False when the CLI failed or answered with something that is not a
+        hook response, so the caller may try the fallback. Otherwise it does
+        not return: it emits the response and exits, and a timeout fails
+        closed (tool gates) or open (everything else) without a fallback,
+        which would overrun the wrapper's budget the CLI already spent.
 
     Exit Code Handling:
         Exit code 0 = CLI succeeded (even when denying tool access)
@@ -957,11 +963,19 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -
           whose installed extension root intentionally does not contain src/.
         - Previously read stdin inside try_cli, consuming it so the fallback
           path (run_fallback → run_client) couldn't read the payload.
+        - main() used to carry an inline copy of this function that logged the
+          CLI's whole stdout and stderr and was the only one production ran.
     """
     cli_type = cli_type or detect_cli_type()
+    # Skip the console-script shim: run the venv's own python as a module.
+    cmd = [str(bin_path)]
+    if ".venv/bin/autorun" in str(bin_path):
+        venv_python = bin_path.parent / "python"
+        if venv_python.exists():
+            cmd = [str(venv_python), "-m", "autorun"]
     try:
         result = subprocess.run(
-            [str(bin_path)],
+            cmd,
             input=stdin_data,
             capture_output=True,
             text=True,
@@ -972,6 +986,7 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -
         # Debug logging (ALWAYS enabled to diagnose hook issues)
         try:
             lines = [
+                f"CLI command: {' '.join(cmd)}",
                 f"CLI exit code: {result.returncode}",
                 (
                     f"CLI stdout ({len(result.stdout)} bytes):\n"
@@ -1005,8 +1020,10 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -
         sys.exit(exit_code)
 
     except subprocess.TimeoutExpired:
-        return False
-    except (subprocess.SubprocessError, OSError):
+        _append_debug_log("CLI timed out")
+        fail_after_cli_timeout(cli_type, event_name)
+    except Exception as error:  # noqa: BLE001 - any failure means "try the fallback"
+        _append_debug_log(f"CLI exception: {type(error).__name__}: {error}")
         return False
 
 
@@ -1575,44 +1592,10 @@ def main() -> None:
         log_debug("Direct daemon unavailable; using CLI recovery path")
 
     if autorun_bin:
-        try:
-            # OPTIMIZATION: Bypassing 'uv run' overhead by using venv python directly.
-            # If autorun_bin is in a .venv, we use its python to run the module.
-            cmd = [str(autorun_bin)]
-            if ".venv/bin/autorun" in str(autorun_bin):
-                venv_python = autorun_bin.parent / "python"
-                if venv_python.exists():
-                    # Check if it's a script we can run as a module
-                    cmd = [str(venv_python), "-m", "autorun"]
-                    log_debug(f"Using optimized venv path: {' '.join(cmd)}")
-
-            # Inline try_cli logic to allow for better logging
-            result = subprocess.run(
-                cmd,
-                input=stdin_data,
-                capture_output=True,
-                text=True,
-                timeout=hook_timeout_for_cli(cli_type),
-                env=cli_env_with_deadline(cli_type),
-            )
-            log_debug(f"CLI exit code: {result.returncode}")
-            log_debug(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout}")
-            if result.stderr:
-                log_debug(f"CLI stderr ({len(result.stderr)} bytes):\n{result.stderr}")
-
-            exit_code = _emit_cli_result(result)
-            if exit_code is None:
-                log_debug("✗ CLI output was not a supported hook response")
-            else:
-                log_debug(f"Hook entry finished with exit code {exit_code}")
-                flush_debug()
-                sys.exit(exit_code)
-        except subprocess.TimeoutExpired:
-            log_debug("✗ CLI timed out")
-            flush_debug()
-            fail_after_cli_timeout(cli_type, event_name)
-        except Exception as e:
-            log_debug(f"✗ CLI exception: {e}")
+        # try_cli exits on any answer, and logs its own bounded record.
+        flush_debug()
+        try_cli(autorun_bin, stdin_data, cli_type, event_name)
+        log_debug("✗ CLI failed or gave no hook response")
 
     # Restore stdin for fallback path (run_client reads from sys.stdin)
     sys.stdin = io.StringIO(stdin_data)
