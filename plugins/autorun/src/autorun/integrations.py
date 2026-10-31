@@ -48,7 +48,7 @@ from .command_detection import (
     strip_transparent_command_wrappers,
 )
 
-from autorun.config import CONFIG, DEFAULT_INTEGRATIONS
+from autorun.config import CONFIG, DEFAULT_INTEGRATIONS, _publish_guard_enabled, _version_bump_guard_enabled
 
 __all__ = [
     "Integration",
@@ -235,6 +235,29 @@ def invalidate_caches() -> None:
     _cache_mtime = {}
 
 
+_ENV_TOGGLED_GUARDS = {
+    "version-bump-command": _version_bump_guard_enabled,
+    "version-bump-manifest-edit": _version_bump_guard_enabled,
+    "version-bump-manifest-write": _version_bump_guard_enabled,
+    "publish-command": _publish_guard_enabled,
+}
+
+
+def default_integrations() -> dict:
+    """The built-in guard table as configured: CONFIG's copy, which carries the
+    user's autorun.config.json merge, minus guards an env toggle switched off.
+
+    The DEFAULT_INTEGRATIONS constant is only the shipped half; reading it
+    ignored every user-added or user-retuned guard.
+    """
+    table = CONFIG.get("default_integrations")
+    table = dict(table if isinstance(table, dict) else DEFAULT_INTEGRATIONS)
+    for name, enabled in _ENV_TOGGLED_GUARDS.items():
+        if name in table and not enabled():
+            del table[name]
+    return table
+
+
 def load_all_integrations() -> list[Integration]:
     """
     Load from Python defaults + user files. O(1) cached.
@@ -266,8 +289,8 @@ def load_all_integrations() -> list[Integration]:
     # Rebuild cache
     integrations = []
 
-    # 1. Python defaults
-    for pattern, config in DEFAULT_INTEGRATIONS.items():
+    # 1. Python defaults, as configured
+    for pattern, config in default_integrations().items():
         try:
             intg = Integration.from_dict(pattern, config)
             # Validate and log warnings

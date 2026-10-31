@@ -51,7 +51,6 @@ from .core import (
 from .command_docs import CommandEntry, command_help_inventory
 from .config import (
     CONFIG,
-    DEFAULT_INTEGRATIONS,
     BASH_TOOLS,
     WRITE_TOOLS,
     FILE_TOOLS,
@@ -86,7 +85,13 @@ from .command_detection import (
     extract_commands,
     shell_command_from_tool_input,
 )
-from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
+from .integrations import (
+    check_conditions,
+    check_when_predicate,
+    default_integrations,
+    invalidate_caches,
+    load_all_integrations,
+)
 from .message_delivery import MessageDelivery, claim_message_delivery
 from .task_pause import (
     TaskPauseIdentityError,
@@ -577,8 +582,8 @@ def _parse_allow_args(args: str) -> tuple:
 
 def _get_suggestion(pattern: str) -> str:
     """Get suggestion from default integrations or generate default."""
-    for k, v in DEFAULT_INTEGRATIONS.items():
-        if k in pattern:
+    for k, v in default_integrations().items():
+        if k in pattern and v.get("suggestion"):
             return v["suggestion"]
     return f"Blocked: {pattern}\n\nTo allow (default 1 use): /ar:ok {pattern}\nScope: [N|5m|permanent] (default 1 use)"
 

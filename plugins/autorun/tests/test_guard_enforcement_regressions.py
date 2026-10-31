@@ -8,7 +8,10 @@ nothing reaches the live daemon. None of these commands is ever executed.
 import json
 import uuid
 
-from autorun import plugins
+import pytest
+
+from autorun import config as config_module
+from autorun import integrations, plugins
 from autorun.core import EventContext, ThreadSafeDB
 
 
@@ -206,3 +209,42 @@ class TestJustifyReadsTheHarnessTranscript:
             "<AUTOFILE_JUSTIFICATION>no module parses this format yet</AUTOFILE_JUSTIFICATION>"
         )
         assert self._write(tmp_path, last_assistant_message=text) is None
+
+
+@pytest.fixture
+def user_config(tmp_path, monkeypatch):
+    """Overlay an autorun.config.json onto CONFIG for one test, then undo it."""
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+    saved = dict(config_module.CONFIG)
+
+    def apply(payload: dict) -> None:
+        (tmp_path / config_module.USER_CONFIG_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+        config_module.apply_user_config(config_module.CONFIG)
+        integrations.invalidate_caches()
+
+    yield apply
+    config_module.CONFIG.clear()
+    config_module.CONFIG.update(saved)
+    integrations.invalidate_caches()
+
+
+class TestUserDefaultIntegrationsAreEnforced:
+    """F3: config.py merged the user's default_integrations into CONFIG, but the
+    enforcement read the DEFAULT_INTEGRATIONS module constant."""
+
+    def test_user_added_guard_is_loaded_and_blocks(self, user_config):
+        user_config({"default_integrations": {"mycmd": {"action": "block", "suggestion": "mycmd is off limits"}}})
+        assert any("mycmd" in intg.patterns for intg in integrations.load_all_integrations())
+        result = plugins.check_blocked_commands(_bash("mycmd --go"))
+        assert _decision(result) == "deny" and "mycmd is off limits" in _reason(result)
+
+    def test_user_override_of_a_shipped_guard_wins(self, user_config):
+        user_config({"default_integrations": {"awk": {"action": "warn", "suggestion": "awk is fine here"}}})
+        result = plugins.check_blocked_commands(_bash("awk '{print $1}' data.txt"))
+        assert _decision(result) != "deny" and "awk is fine here" in str(result)
+
+    def test_env_toggle_still_removes_a_guard_the_user_file_names(self, user_config, monkeypatch):
+        monkeypatch.setenv("AUTORUN_PUBLISH_GUARD_ENABLED", "false")
+        user_config({"default_integrations": {"publish-command": {"patterns": ["cargo publish"], "suggestion": "x"}}})
+        names = {intg.name for intg in integrations.load_all_integrations()}
+        assert "publish-command" not in names
