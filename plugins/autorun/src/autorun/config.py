@@ -253,6 +253,12 @@ DEFAULT_INTEGRATIONS = {
         "redirect": "git stash pop",
         "when": "_stash_exists",
     },
+    "git stash clear": {
+        "action": "block",
+        "suggestion": "DANGEROUS: 'git stash clear' permanently deletes ALL stashed changes at once.\n\n**SAFER ALTERNATIVES:**\n\n1. **Apply the stashes you still need** (keeps changes):\n   git stash list   # see every stash\n   git stash apply stash@{N}\n\n2. **View stash contents first**:\n   git stash show -p stash@{N}\n\nTo allow (default 1 use): /ar:ok 'git stash clear'\nScope: [N|5m|permanent] (default 1 use)",
+        "redirect": "git stash list",
+        "when": "_stash_exists",
+    },
     "git clean -f": {
         "action": "block",
         "suggestion": "DANGEROUS: 'git clean -f' permanently deletes untracked files.\n\n**SAFER ALTERNATIVES:**\n\n1. **Preview first** (ALWAYS do this):\n   git clean -n   # dry-run, shows what would be deleted\n\n2. **Stash untracked files**:\n   git stash push -u -m \"WIP: stashing untracked files\"\n\n3. **Move to backup** (manual safety):\n   mkdir -p ../backup-untracked && git clean -n | xargs -I{} mv {} ../backup-untracked/\n\n4. **Interactive mode**:\n   git clean -i  # prompts for each file\n\nTo allow (default 1 use): /ar:ok 'git clean -f'\nScope: [N|5m|permanent] (default 1 use)",

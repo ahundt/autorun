@@ -62,6 +62,14 @@ GIT_SUBCOMMANDS: Final[frozenset[str]] = frozenset({
     "branch", "tag", "remote", "log", "diff", "status",
 })
 
+# Long spellings of a short flag a default pattern names, per subcommand. Both
+# the pattern and the command are read through this, so `git clean -f` and
+# `git clean --force` block (and `/ar:ok`) the same commands.
+_GIT_FLAG_ALIASES: Final[dict[str, dict[str, str]]] = {
+    "clean": {"--force": "-f"},
+    "add": {"--all": "-A"},
+}
+
 GIT_GLOBAL_OPTIONS_WITH_ARG: Final[frozenset[str]] = frozenset({
     "-C", "-c", "--git-dir", "--work-tree", "--namespace",
     "--git-common-dir", "--super-prefix", "--exec-path",
@@ -154,17 +162,19 @@ class ParsedPattern:
         _collect_git_global_flags(tokens, sub_idx, flags)
 
         i = sub_idx
+        aliases: dict[str, str] = {}
         if i < len(tokens):
             token = tokens[i]
             if token in GIT_SUBCOMMANDS:
                 cmd_parts.append(token)
+                aliases = _GIT_FLAG_ALIASES.get(token, {})
             else:
                 positional.add(token)
             i += 1
 
         for token in tokens[i:]:
             if token.startswith("-"):
-                _add_flag_tokens(flags, token)
+                _add_flag_tokens(flags, aliases.get(token, token))
             else:
                 positional.add(token)
 

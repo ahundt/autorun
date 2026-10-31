@@ -611,6 +611,29 @@ class TestPredicateFunctions:
                 perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
                 assert perm != "deny", f"no stash → stash drop must not be denied, got {perm!r}"
 
+    def test_stash_clear_blocked_when_stash_exists(self):
+        """git stash clear drops every stash, so it is guarded like drop."""
+        with patch.dict(integ._WHEN_PREDICATES, {"_stash_exists": lambda ctx: True}):
+            result = plugins.check_blocked_commands(self._ctx("git stash clear"))
+            assert result is not None
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm == "deny"
+            msg = result["hookSpecificOutput"]["permissionDecisionReason"]
+            assert "git stash clear" in msg
+
+    def test_stash_clear_allowed_when_no_stash(self):
+        with patch.dict(integ._WHEN_PREDICATES, {"_stash_exists": lambda ctx: False}):
+            result = plugins.check_blocked_commands(self._ctx("git stash clear"))
+            if result is not None:
+                perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+                assert perm != "deny", f"no stash → stash clear must not be denied, got {perm!r}"
+
+    def test_clean_long_force_is_blocked(self):
+        """`git clean --force -d` deletes untracked files exactly like `-fd`."""
+        result = plugins.check_blocked_commands(self._ctx("git clean --force -d"))
+        assert result is not None
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
     def test_suggestion_included_in_block_message(self):
         """Block message includes suggestion from DEFAULT_INTEGRATIONS."""
         result = plugins.check_blocked_commands(self._ctx("rm file.txt"))

@@ -803,3 +803,28 @@ class TestCommandsHiddenBehindWrappersAndShellForms:
             if not command_matches_pattern(cmd, "rm -rf"):
                 missed.append(cmd)
         assert missed == []
+
+
+# ─── Long spellings of a blocked git flag ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "cmd,pattern,expected",
+    [
+        ("git clean --force -d", "git clean -f", True),
+        ("git clean -d --force", "git clean -f", True),
+        ("git clean --force", "git clean -f", True),
+        ("rtk git -C /tmp/repo clean --force -x", "git clean -f", True),
+        ("git clean -fdx", "git clean -f", True),
+        ("git clean -n -d", "git clean -f", False),
+        ("git clean --dry-run", "git clean -f", False),
+        ("git add --all", "git add -A", True),
+        ("git add -A", "git add -A", True),
+        ("git add src/", "git add -A", False),
+        ("git stash clear", "git stash clear", True),
+        ("git stash list", "git stash clear", False),
+    ],
+)
+def test_git_flag_spellings_match_the_same_pattern(cmd: str, pattern: str, expected: bool) -> None:
+    """git reads `--force` as `-f` and `--all` as `-A`; so must the guard."""
+    assert command_matches_pattern(cmd, pattern) is expected
