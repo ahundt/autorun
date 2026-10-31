@@ -307,7 +307,7 @@ AutoFile - control file creation (slash: /ar:a, /ar:j, /ar:f, /ar:st):
   autorun file allow
   autorun file justify
   autorun file search
-  autorun file allow --global
+  autorun file search --session SESSION_ID
 
 Task lifecycle management:
   autorun task status --verbose
@@ -598,7 +598,11 @@ This is the most permissive mode - good for new projects or exploratory work.
 
 Examples:
   autorun file allow              # Set for current session
-  autorun file a --global         # Set as default for all sessions
+  autorun file a --session ID     # Set for session ID
+
+Hooks served by the autorun daemon (the default) cache session state, so
+there this exits 1 and names the slash command to run in the session;
+it writes the policy when hooks run daemonless (AUTORUN_USE_DAEMON=0).
 
 Equivalent slash commands: /ar:a, /ar:allow, /afa""",
     )
@@ -607,7 +611,7 @@ Equivalent slash commands: /ar:a, /ar:allow, /afa""",
         "-g",
         action="store_true",
         dest="file_global",
-        help="Set globally (all sessions). Default: current session only",
+        help="Rejected: there is no global AutoFile policy; every session starts at allow-all",
     )
 
     # file justify
@@ -626,7 +630,11 @@ Good for established projects where you want to minimize unnecessary new files.
 
 Examples:
   autorun file justify            # Set for current session
-  autorun file j --global         # Set as default for all sessions
+  autorun file j --session ID     # Set for session ID
+
+Hooks served by the autorun daemon (the default) cache session state, so
+there this exits 1 and names the slash command to run in the session;
+it writes the policy when hooks run daemonless (AUTORUN_USE_DAEMON=0).
 
 Equivalent slash commands: /ar:j, /ar:justify, /afj""",
     )
@@ -635,7 +643,7 @@ Equivalent slash commands: /ar:j, /ar:justify, /afj""",
         "-g",
         action="store_true",
         dest="file_global",
-        help="Set globally (all sessions). Default: current session only",
+        help="Rejected: there is no global AutoFile policy; every session starts at allow-all",
     )
 
     # file search (find) - strict mode
@@ -653,7 +661,11 @@ accidental new file creation in a mature codebase.
 
 Examples:
   autorun file search             # Set for current session
-  autorun file f --global         # Set as default for all sessions (short version)
+  autorun file f --session ID     # Set for session ID (short version)
+
+Hooks served by the autorun daemon (the default) cache session state, so
+there this exits 1 and names the slash command to run in the session;
+it writes the policy when hooks run daemonless (AUTORUN_USE_DAEMON=0).
 
 Equivalent slash commands: /ar:f, /ar:find, /afs
 Aliases: file search, file find, file f (all equivalent)""",
@@ -663,7 +675,7 @@ Aliases: file search, file find, file f (all equivalent)""",
         "-g",
         action="store_true",
         dest="file_global",
-        help="Set globally (all sessions). Default: current session only",
+        help="Rejected: there is no global AutoFile policy; every session starts at allow-all",
     )
 
     # file status
@@ -676,12 +688,12 @@ Aliases: file search, file find, file f (all equivalent)""",
 Shows whether Claude can create new files freely (allow), must justify (justify),
 or is blocked from creating new files (search/strict).
 
-By default shows policy for current session. Use --global to see the default
-policy that applies to all new sessions.
+Reads the policy the Write gate enforces for the current session (--session
+selects another). There is no global policy; every session starts at allow-all.
 
 Examples:
   autorun file status             # Show current session policy
-  autorun file st --global        # Show global default policy (short version)
+  autorun file st --session ID    # Show session ID's policy (short version)
 
 Equivalent slash commands: /ar:st, /ar:status, /afst
 Aliases: file status, file st, file s (all equivalent)""",
@@ -691,8 +703,14 @@ Aliases: file status, file st, file s (all equivalent)""",
         "-g",
         action="store_true",
         dest="file_global",
-        help="Show global policy. Default: current session policy",
+        help="Report that no global policy exists (every session starts at allow-all)",
     )
+    for file_command_parser in (allow_parser, justify_parser, search_parser, af_status_parser):
+        file_command_parser.add_argument(
+            "--session",
+            metavar="SESSION_ID",
+            help=standalone_session_help(),
+        )
 
     # Task subcommand
     task_parser = subparsers.add_parser(
@@ -1108,7 +1126,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # AutoFile (af) subcommand - file creation control
     if args.command == "file":
-        from autorun.session_manager import get_session_manager
+        from autorun.config import CONFIG
+        from autorun.core import EventContext, ThreadSafeDB, format_suggestion
+        from autorun.platforms import (
+            SessionIdentityResolutionError,
+            resolve_standalone_session_identity,
+        )
 
         if not hasattr(args, "file_command") or args.file_command is None:
             # No subcommand specified - show help
@@ -1116,94 +1139,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             file_parser.print_help()
             return 1
 
-        session_id = os.environ.get("CLAUDE_SESSION_ID")
-        is_global = getattr(args, "file_global", False)
+        file_cmd = {"a": "allow", "j": "justify", "f": "search", "find": "search", "st": "status", "s": "status"}.get(
+            args.file_command, args.file_command
+        )
+        # The key CONFIG["policies"] and the Write gate (plugins.enforce_file_policy) use.
+        policy = {"allow": "ALLOW", "justify": "JUSTIFY", "search": "SEARCH", "status": "STATUS"}[file_cmd]
+        slash = next(alias for alias, target in CONFIG["command_mappings"].items() if target == policy and alias.startswith("/ar:"))
+        default_name = CONFIG["policies"]["ALLOW"][0]
 
-        # Get session manager
-        mgr = get_session_manager()
-
-        # Normalize aliases to canonical names
-        file_cmd = args.file_command
-        alias_map = {"a": "allow", "j": "justify", "f": "search", "find": "search", "st": "status", "s": "status"}
-        file_cmd = alias_map.get(file_cmd, file_cmd)
-
-        # file status
-        if file_cmd == "status":
-            if is_global:
-                # Show global default policy
-                with mgr.session_state("__autofile_policy__global") as state:
-                    global_policy = state.get("policy", "allow-all")
-                policy_desc = {
-                    "allow-all": "ALLOW ALL: Full permission to create/modify files",
-                    "justify-create": "JUSTIFIED: Search existing first. Require justification for new files",
-                    "strict-search": "STRICT SEARCH: ONLY modify existing files. NO new files",
-                }.get(global_policy, f"Unknown policy: {global_policy}")
-                print(f"Global AutoFile policy: {global_policy}")
-                print(f"{policy_desc}")
-                print()
-                print("This is the default for new sessions.")
-                print("Override per-session with: autorun file <allow|justify|search>")
-            else:
-                # Show session-specific policy
-                if not session_id:
-                    print("Error: No CLAUDE_SESSION_ID set. Cannot show session policy.")
-                    print("Use --global to show global default policy.")
-                    return 1
-
-                with mgr.session_state(f"__autofile_policy__{session_id}") as state:
-                    session_policy = state.get("policy", None)
-
-                if session_policy:
-                    policy_desc = {
-                        "allow-all": "ALLOW ALL: Full permission to create/modify files",
-                        "justify-create": "JUSTIFIED: Search existing first. Require justification for new files",
-                        "strict-search": "STRICT SEARCH: ONLY modify existing files. NO new files",
-                    }.get(session_policy, f"Unknown policy: {session_policy}")
-                    print(f"Session AutoFile policy: {session_policy}")
-                    print(f"{policy_desc}")
-                    print()
-                    print(f"Session: {session_id[:12]}...")
-                    print("Slash command equivalent: /ar:st")
-                else:
-                    # No session override, show global default
-                    with mgr.session_state("__autofile_policy__global") as gstate:
-                        global_policy = gstate.get("policy", "allow-all")
-                    print(f"AutoFile policy: {global_policy} (using global default)")
-                    print()
-                    print(f"Session: {session_id[:12]}...")
-                    print("No session-specific override. Using global default.")
-
-            return 0
-
-        # Set policy (allow, justify, search) - file_cmd already normalized above
-        policy_value = {"allow": "allow-all", "justify": "justify-create", "search": "strict-search"}.get(file_cmd)
-
-        if not policy_value:
-            # CLI error message - use stdout (not stderr which breaks hooks)
-            print(f"Error: Unknown file command: {file_cmd}")
+        if args.file_global:
+            # Nothing stores or reads a global AutoFile policy: every session
+            # starts at allow-all (EventContext's file_policy default).
+            print(f"There is no global AutoFile policy; every session starts at {default_name}.")
+            if policy == "STATUS":
+                return 0
+            print(f"Set it per session: run {slash} in the session, or autorun file {file_cmd} --session SESSION_ID.")
             return 1
 
-        if is_global:
-            # Set global default
-            with mgr.session_state("__autofile_policy__global") as state:
-                state["policy"] = policy_value
-            print(f"Global AutoFile policy set to: {policy_value}")
-            print("This will be the default for all new sessions.")
-            print(f"Slash command equivalent: /ar:{file_cmd[0]} (or /ar:{file_cmd})")
-        else:
-            # Set for current session
-            if not session_id:
-                print("Error: No CLAUDE_SESSION_ID set. Cannot set session policy.")
-                print("Use --global to set global default policy instead.")
+        try:
+            session_id = resolve_standalone_session_identity(args.session).session_id
+        except SessionIdentityResolutionError as exc:
+            print(f"Error: {exc}")
+            return 1
+
+        # The same state access the /ar:a, /ar:j, /ar:f handlers make: ctx.file_policy.
+        ctx = EventContext(session_id=session_id, event="UserPromptSubmit", store=ThreadSafeDB())
+        if policy != "STATUS":
+            if USE_DAEMON:
+                # The daemon serves session state from memory once a session
+                # has been read, so a write from this process would leave a
+                # live session on its old policy while reporting success.
+                print(f"Error: the autorun daemon caches session state, so this command cannot change a live session's AutoFile policy. Run {slash} in session {session_id} instead.")
                 return 1
+            ctx.file_policy = policy
 
-            with mgr.session_state(f"__autofile_policy__{session_id}") as state:
-                state["policy"] = policy_value
-
-            print(f"Session AutoFile policy set to: {policy_value}")
-            print(f"Session: {session_id[:12]}...")
-            print(f"Slash command equivalent: /ar:{file_cmd[0]} (or /ar:{file_cmd})")
-
+        name, desc = CONFIG["policies"].get(ctx.file_policy, (str(ctx.file_policy), ""))
+        print(f"AutoFile policy: {name}\n{format_suggestion(desc, ctx.cli_type)}\nSession: {session_id}\nSlash command equivalent: {slash}")
         return 0
 
     # Task subcommand (modern CLI structure)

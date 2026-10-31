@@ -1,0 +1,98 @@
+"""`autorun` CLI subcommands, exercised through ``__main__.main``.
+
+Each test drives the console entry point and then checks the effect where the
+rest of autorun reads it, never only the printed message.
+"""
+
+import json
+import uuid
+
+import pytest
+
+from autorun import __main__ as entry
+from autorun.platforms import PLATFORMS
+
+
+def _clear_session_env(monkeypatch) -> None:
+    monkeypatch.delenv("AUTORUN_SESSION_ID", raising=False)
+    monkeypatch.delenv("AUTORUN_USE_IDENTITY", raising=False)
+    for platform in PLATFORMS.values():
+        for key in platform.standalone_session_env_vars:
+            monkeypatch.delenv(key, raising=False)
+
+
+def _write_decision(session: str, target, capsys) -> str:
+    """Run a daemonless PreToolUse Write and return the gate's decision."""
+    capsys.readouterr()
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": session,
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(target), "content": "x\n"},
+        "cwd": str(target.parent),
+        "cli_type": "claude",
+    }
+    try:
+        entry.run_direct(payload)
+    except SystemExit as exit_:
+        # output_hook_response exits 0 with nothing printed when no rule fired.
+        assert exit_.code == 0
+        return "allow"
+    response = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    return response.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+
+
+class TestFilePolicyCommand:
+    """`autorun file allow|justify|search|status` sets what the Write gate reads."""
+
+    @pytest.fixture(autouse=True)
+    def _direct_mode(self, monkeypatch):
+        _clear_session_env(monkeypatch)
+        monkeypatch.setenv("AUTORUN_CLI_TYPE", "claude")
+        monkeypatch.setattr(entry, "USE_DAEMON", False)
+
+    def test_file_search_from_the_session_env_denies_a_new_file_write(self, tmp_path, monkeypatch, capsys):
+        """The command used to write ``__autofile_policy__<id>`` with
+        ``strict-search``, a key and value no gate reads, and report success."""
+        session = f"file-cli-{uuid.uuid4().hex[:8]}"
+        monkeypatch.setenv("CLAUDE_SESSION_ID", session)
+        target = tmp_path / "new_module.py"
+
+        assert _write_decision(session, target, capsys) == "allow"
+        assert entry.main(["file", "search"]) == 0
+        assert "strict-search" in capsys.readouterr().out
+        assert _write_decision(session, target, capsys) == "deny"
+
+        assert entry.main(["file", "allow"]) == 0
+        assert _write_decision(session, target, capsys) == "allow"
+
+    def test_file_session_flag_selects_the_session_and_status_reads_it_back(self, tmp_path, capsys):
+        session = f"file-cli-{uuid.uuid4().hex[:8]}"
+        target = tmp_path / "another.py"
+
+        assert entry.main(["file", "justify", "--session", session]) == 0
+        assert _write_decision(session, target, capsys) == "deny"
+
+        assert entry.main(["file", "status", "--session", session]) == 0
+        assert "justify-create" in capsys.readouterr().out
+
+    def test_file_command_without_a_session_fails(self, capsys):
+        assert entry.main(["file", "search"]) == 1
+        assert "--session" in capsys.readouterr().out
+
+    def test_file_set_under_the_daemon_fails_loudly_with_the_slash_command(self, monkeypatch, capsys):
+        """The daemon serves policy from its cache, so a state write from this
+        process would be ignored by a live session. Say so; change nothing."""
+        monkeypatch.setattr(entry, "USE_DAEMON", True)
+        session = f"file-cli-{uuid.uuid4().hex[:8]}"
+
+        assert entry.main(["file", "search", "--session", session]) == 1
+        assert "/ar:f" in capsys.readouterr().out
+
+        monkeypatch.setattr(entry, "USE_DAEMON", False)
+        assert entry.main(["file", "status", "--session", session]) == 0
+        assert "allow-all" in capsys.readouterr().out
+
+    def test_file_global_fails_because_no_global_policy_exists(self, capsys):
+        assert entry.main(["file", "search", "--global"]) == 1
+        assert "/ar:f" in capsys.readouterr().out
