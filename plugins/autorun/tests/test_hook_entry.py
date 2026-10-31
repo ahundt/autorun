@@ -459,6 +459,22 @@ class TestHookEntryExecutionPriority:
             assert hook_entry.hook_timeout_for_cli(cli_type) == timeout
         assert hook_entry.hook_timeout_for_cli("unknown") == hook_entry.hook_timeout_for_cli("claude")
 
+    def test_hook_timeout_follows_the_user_config_file(self, tmp_path, monkeypatch):
+        """client.py budgets with the file's hook_wrapper_timeouts_seconds; a
+        wrapper that ignored it killed requests the client still had time for."""
+        from autorun.config import apply_user_config, default_config
+
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+        (tmp_path / "autorun.config.json").write_text(
+            json.dumps({"hook_wrapper_timeouts_seconds": {"claude": 7.5}}), encoding="utf-8"
+        )
+        resolved = apply_user_config(default_config())["hook_wrapper_timeouts_seconds"]
+        hook_entry = load_hook_entry_module()
+
+        assert resolved["claude"] == 7.5
+        for cli_type, timeout in resolved.items():
+            assert hook_entry.hook_timeout_for_cli(cli_type) == timeout
+
     @pytest.mark.parametrize("cli_type", ["claude", "gemini", "qwen"])
     def test_a_lifecycle_timeout_tells_the_user_it_timed_out(self, capsys, cli_type):
         """A timed-out Stop lets the agent go; the user must see why.

@@ -221,9 +221,32 @@ def prepare_hook_payload(payload: dict, cli_type: str) -> dict:
     return prepared
 
 
+def _file_wrapper_timeouts() -> dict:
+    """The user config file's hook_wrapper_timeouts_seconds, or {}.
+
+    client.py budgets each request with CONFIG's value, which includes this
+    file (config.apply_user_config, file name config.USER_CONFIG_FILENAME), so
+    the wrapper must wait the same time or it kills a request the client still
+    has time for.
+    """
+    try:
+        loaded = json.loads((_autorun_home() / "autorun.config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    value = loaded.get("hook_wrapper_timeouts_seconds") if isinstance(loaded, dict) else None
+    if not isinstance(value, dict):
+        return {}
+    return {
+        name: seconds
+        for name, seconds in value.items()
+        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds > 0
+    }
+
+
 def hook_timeout_for_cli(cli_type: str) -> float:
-    """Return the contract-tested wrapper timeout without package imports."""
-    return float(HOOK_TIMEOUT_BY_CLI.get(cli_type, HOOK_TIMEOUT_BY_CLI["claude"]))
+    """The wrapper timeout: HOOK_TIMEOUT_BY_CLI merged with the user config file."""
+    timeouts = {**HOOK_TIMEOUT_BY_CLI, **_file_wrapper_timeouts()}
+    return float(timeouts.get(cli_type, timeouts["claude"]))
 
 
 #: Absolute monotonic instant the wrapper stops waiting, handed to the CLI.
