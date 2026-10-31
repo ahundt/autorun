@@ -1353,7 +1353,10 @@ GEMINI = register(
         binary="gemini",
         install_by_default=False,
         detect_env_vars=("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI"),
-        detect_session_keys=("GEMINI_SESSION_ID", "sessionId", "session_id"),
+        # Not the generic "session_id": every harness's hook payload carries
+        # it, and this entry is checked before codex/qwen/pi path hints, so it
+        # classified every untagged payload as gemini.
+        detect_session_keys=("GEMINI_SESSION_ID", "sessionId"),
         standalone_session_env_vars=("GEMINI_SESSION_ID",),
         detect_event_names=frozenset(
             {

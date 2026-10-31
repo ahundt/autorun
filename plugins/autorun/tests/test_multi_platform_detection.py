@@ -426,3 +426,95 @@ class TestBackwardCompat:
         result = detect_cli_type()
         assert isinstance(result, str)
         assert result in {"claude", "gemini", "codex", "forgecode"}
+
+
+# ---------------------------------------------------------------------------
+# Untagged payloads: one fixture table, both detectors
+# ---------------------------------------------------------------------------
+
+# (payload, harness). Real hook payloads carry ``session_id`` on every harness,
+# so it cannot identify one; the transcript path and event name can.
+_UNTAGGED_PAYLOADS = [
+    ({"session_id": "s", "hook_event_name": "PreToolUse",
+      "transcript_path": "/home/u/.claude/projects/p/s.jsonl"}, "claude"),
+    ({"session_id": "s", "hook_event_name": "PreToolUse"}, "claude"),
+    ({"session_id": "s", "hook_event_name": "PreToolUse",
+      "transcript_path": "/home/u/.codex/sessions/2026/10/31/s.jsonl"}, "codex"),
+    ({"session_id": "s", "hook_event_name": "PreToolUse",
+      "transcript_path": "/home/u/.qwen/tmp/h/chats/s.jsonl"}, "qwen"),
+    ({"session_id": "s", "transcript_path": "/home/u/.pi/agent/sessions/s.jsonl"}, "pi"),
+    ({"session_id": "s", "transcript_path": "/home/u/.prime/agent/sessions/s.jsonl"}, "prime"),
+    ({"session_id": "s", "transcript_path": "/home/u/.forge/s.jsonl"}, "forgecode"),
+    ({"session_id": "s", "transcript_path": "/home/u/.config/opencode/s.json"}, "opencode"),
+    ({"session_id": "s", "hook_event_name": "PreToolUse",
+      "transcript_path": "/home/u/.gemini/antigravity/s.jsonl"}, "antigravity"),
+    ({"session_id": "s", "hook_event_name": "BeforeTool",
+      "transcript_path": "/home/u/.gemini/tmp/h/chats/s.json"}, "gemini"),
+    ({"session_id": "s", "hook_event_name": "SessionStart",
+      "transcript_path": "/home/u/.gemini/tmp/h/chats/s.json"}, "gemini"),
+]
+
+# Cases where hooks/hook_entry.py:detect_cli_type still disagrees with
+# config.detect_cli_type. hook_entry.py has its own owner; strict xfail makes
+# the fix there flip these to XPASS and fail until the entry is removed.
+_HOOK_ENTRY_KNOWN_DISAGREEMENTS = [
+    ({"session_id": "s", "hook_event_name": "SessionEnd",
+      "transcript_path": "/home/u/.claude/projects/p/s.jsonl"}, "claude",
+     "hook_entry maps every SessionEnd to gemini; Claude has SessionEnd too"),
+    ({"session_id": "s", "hook_event_name": "PermissionRequest",
+      "transcript_path": "/home/u/.claude/projects/p/s.jsonl"}, "claude",
+     "hook_entry maps every PermissionRequest to forgecode; Claude, Codex "
+     "and Qwen have PermissionRequest too"),
+    ({"sessionId": "s"}, "gemini",
+     "hook_entry does not read GEMINI's sessionId session key"),
+]
+
+
+def _clear_detection_env(monkeypatch):
+    from autorun.platforms import PLATFORMS
+
+    names = {"AUTORUN_CLI_TYPE", "GEMINI_PROJECT_DIR", "QWEN_PROJECT_DIR",
+             "CODEX_PROJECT_DIR", "ANTIGRAVITY_PROJECT_DIR"}
+    for platform in PLATFORMS.values():
+        names.update(platform.detect_env_vars)
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize(("payload", "expected"), _UNTAGGED_PAYLOADS)
+def test_config_detects_the_harness_of_an_untagged_payload(monkeypatch, payload, expected):
+    """GEMINI listed the generic ``session_id`` as a session key and is checked
+    second, so every untagged payload -- .claude, .codex, .qwen, .pi/agent
+    transcripts alike -- was classified as gemini."""
+    _clear_detection_env(monkeypatch)
+    from autorun.config import detect_cli_type
+
+    assert detect_cli_type(payload) == expected
+
+
+def _hook_entry_detect():
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "hooks" / "hook_entry.py"
+    spec = importlib.util.spec_from_file_location("autorun_hook_entry_detect", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.detect_cli_type
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    _UNTAGGED_PAYLOADS
+    + [
+        pytest.param(payload, expected, marks=pytest.mark.xfail(strict=True, reason=why))
+        for payload, expected, why in _HOOK_ENTRY_KNOWN_DISAGREEMENTS
+    ],
+)
+def test_hook_entry_detector_agrees_with_config(monkeypatch, payload, expected):
+    """hook_entry.py keeps a stdlib-only copy of detection; pin it to config's."""
+    _clear_detection_env(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["hook_entry.py"])
+    from autorun.config import detect_cli_type
+
+    assert detect_cli_type(payload) == expected
+    assert _hook_entry_detect()(payload) == expected

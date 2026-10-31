@@ -51,7 +51,8 @@ from autorun.core import (
     # Gemini session-id keys
     ({"GEMINI_SESSION_ID": "abc"}, "gemini"),
     ({"sessionId": "abc"}, "gemini"),
-    ({"session_id": "abc"}, "gemini"),
+    # Every harness sends session_id, so it identifies none of them.
+    ({"session_id": "abc"}, "claude"),
     # Codex session-id key
     ({"CODEX_THREAD_ID": "thread"}, "codex"),
     ({"CODEX_SESSION_ID": "xyz"}, "codex"),
