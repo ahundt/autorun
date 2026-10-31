@@ -1159,10 +1159,9 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if not cmd:
         return None
 
-    # Centralized prefix check (DRY): Internal autorun commands are always allowed
-    if cmd.strip().startswith("/ar:"):
-        return ctx.allow()
-
+    # No "/ar:" prefix shortcut: a shell line such as `/ar:x; rm -rf ~` runs
+    # every segment after the failing first word, so it goes through the tiers
+    # like any other command. A lone `/ar:` word matches no block and passes.
     transcript_policy_notice = _format_transcript_policy_notice(_apply_pending_transcript_policy_command(ctx))
 
     # Fingerprint for this hook invocation: identifies parallel invocations of the
