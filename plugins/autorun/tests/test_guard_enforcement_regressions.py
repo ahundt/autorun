@@ -401,6 +401,39 @@ class TestUserIntegrationFilesFollowTheSession:
         assert _decision(self._check("hometool run", project)) == "deny"
 
 
+class TestOrdinaryPromptsAreNotCommands:
+    """E6: internal action ids (stop, activate, ALLOW, ...) were registered as
+    prompt aliases, so a prompt starting with one of those words ran it."""
+
+    def test_prose_starting_with_an_internal_id_reaches_the_model(self):
+        for prompt in (
+            "stop using sed and use the Edit tool instead",
+            "activate the venv then run pytest",
+            "emergency_stop is a config key, explain it",
+            "ALLOW me to explain the design",
+            "STATUS of the release?",
+        ):
+            sid, store = _sid(), ThreadSafeDB()
+            result = _prompt(prompt, sid=sid, store=store)
+            state = EventContext(session_id=sid, event="UserPromptSubmit", store=store)
+            assert result.get("continue") is not False, (prompt, result)
+            assert not result.get("systemMessage"), (prompt, result)
+            assert not state.autorun_active, prompt
+
+    def test_slash_spellings_still_dispatch(self):
+        sid, store = _sid(), ThreadSafeDB()
+        assert "Autorun" in _prompt("/ar:go build the parser", sid=sid, store=store).get("systemMessage", "")
+        assert EventContext(session_id=sid, event="UserPromptSubmit", store=store).autorun_active
+        assert _prompt("/ar:x", sid=sid, store=store).get("continue") is False
+
+    def test_a_configured_mapping_to_an_internal_id_still_registers(self, monkeypatch):
+        monkeypatch.setitem(config_module.CONFIG["command_mappings"], "/ar:mystop", "stop")
+        monkeypatch.setattr(plugins.app, "command_handlers", dict(plugins.app.command_handlers))
+        plugins._register_command_mappings()
+        assert plugins.app.command_handlers["/ar:mystop"] is plugins.handle_stop
+        assert "stop" not in plugins.app.command_handlers
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""

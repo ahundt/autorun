@@ -47,7 +47,7 @@ class TestFilePolicyPlugin:
         ctx.activation_prompt = "/ar:a"
 
         # Find and call the handler
-        handler = app.command_handlers.get("ALLOW")
+        handler = plugins._INTERNAL_COMMANDS.get("ALLOW")
         assert handler is not None
 
         result = handler(ctx)
@@ -58,7 +58,7 @@ class TestFilePolicyPlugin:
         ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:j")
         ctx.activation_prompt = "/ar:j"
 
-        handler = app.command_handlers.get("JUSTIFY")
+        handler = plugins._INTERNAL_COMMANDS.get("JUSTIFY")
         assert handler is not None
 
         result = handler(ctx)
@@ -69,7 +69,7 @@ class TestFilePolicyPlugin:
         ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:f")
         ctx.activation_prompt = "/ar:f"
 
-        handler = app.command_handlers.get("SEARCH")
+        handler = plugins._INTERNAL_COMMANDS.get("SEARCH")
         assert handler is not None
 
         result = handler(ctx)
@@ -82,7 +82,7 @@ class TestFilePolicyPlugin:
         ctx.activation_prompt = "/ar:st"
         ctx.file_policy = "SEARCH"
 
-        handler = app.command_handlers.get("STATUS")
+        handler = plugins._INTERNAL_COMMANDS.get("STATUS")
         assert handler is not None
 
         result = handler(ctx)
@@ -317,7 +317,7 @@ class TestAutorunPlugin:
         )
         ctx.activation_prompt = "/ar:go build something"
 
-        handler = app.command_handlers.get("activate")
+        handler = plugins._INTERNAL_COMMANDS.get("activate")
         assert handler is not None
 
         handler(ctx)
@@ -333,7 +333,7 @@ class TestAutorunPlugin:
         )
         ctx.activation_prompt = "/ar:gp build something"
 
-        handler = app.command_handlers.get("activate")
+        handler = plugins._INTERNAL_COMMANDS.get("activate")
         handler(ctx)
 
         assert ctx.autorun_mode == "procedural"
@@ -345,7 +345,7 @@ class TestAutorunPlugin:
         ctx.activation_prompt = "/ar:x"
         ctx.autorun_active = True
 
-        handler = app.command_handlers.get("stop")
+        handler = plugins._INTERNAL_COMMANDS.get("stop")
         handler(ctx)
 
         assert ctx.autorun_active is False
@@ -357,7 +357,7 @@ class TestAutorunPlugin:
         ctx.activation_prompt = "/ar:sos"
         ctx.autorun_active = True
 
-        handler = app.command_handlers.get("emergency_stop")
+        handler = plugins._INTERNAL_COMMANDS.get("emergency_stop")
         result = handler(ctx)
 
         assert ctx.autorun_active is False
@@ -491,11 +491,11 @@ class TestHandlerRegistration:
     """Tests for plugin handler registration."""
 
     def test_policy_handlers_registered(self):
-        """Policy handlers should be registered in app."""
-        assert "ALLOW" in app.command_handlers
-        assert "JUSTIFY" in app.command_handlers
-        assert "SEARCH" in app.command_handlers
-        assert "STATUS" in app.command_handlers
+        """Policy ids resolve to handlers but are never prompt aliases:
+        the matcher would run them for any prompt starting with the word."""
+        for internal_id in ("ALLOW", "JUSTIFY", "SEARCH", "STATUS"):
+            assert internal_id in plugins._INTERNAL_COMMANDS
+            assert internal_id not in app.command_handlers
 
     def test_block_handlers_registered(self):
         """Block handlers should be registered in app."""
@@ -507,10 +507,11 @@ class TestHandlerRegistration:
         assert "/ar:globalstatus" in app.command_handlers
 
     def test_autorun_handlers_registered(self):
-        """Autorun handlers should be registered in app."""
-        assert "activate" in app.command_handlers
-        assert "stop" in app.command_handlers
-        assert "emergency_stop" in app.command_handlers
+        """Autorun ids resolve to handlers but are never prompt aliases
+        ("stop using sed" must not stop autorun)."""
+        for internal_id in ("activate", "stop", "emergency_stop"):
+            assert internal_id in plugins._INTERNAL_COMMANDS
+            assert internal_id not in app.command_handlers
 
     def test_plan_handlers_registered(self):
         """Plan handlers should be registered in app."""
@@ -1205,7 +1206,8 @@ class TestPolicyAliasesRegistered:
         ctx = EventContext(session_id=f"test-alias-{alias.strip('/')}", event="UserPromptSubmit",
                            prompt=prompt, store=store)
         ctx.activation_prompt = prompt
-        handler = app.command_handlers.get(alias)
+        # Internal ids (ALLOW, ...) are reachable only through command_mappings.
+        handler = app.command_handlers.get(alias) or plugins._INTERNAL_COMMANDS.get(alias)
         assert handler is not None, f"Handler for '{alias}' not registered"
         result = handler(ctx)
         return result, ctx
@@ -1311,7 +1313,7 @@ class TestPolicySwitching:
         assert ctx.file_policy == "SEARCH"
 
         ctx.activation_prompt = "/ar:st"
-        status_result = app.command_handlers["STATUS"](ctx)
+        status_result = plugins._INTERNAL_COMMANDS["STATUS"](ctx)
         assert "strict-search" in status_result.lower()
 
 

@@ -42,6 +42,7 @@ from typing import Optional, Dict, Callable
 from .core import (
     app,
     apply_command_match,
+    command_starts_agent_turn,
     EventContext,
     logger,
     format_command_for_cli,
@@ -228,11 +229,17 @@ _POLICY_ALIASES = {
     "SEARCH": ("/ar:f", "/ar:find", "/afs", "/ar:afs"),
 }
 
+# Internal ids that CONFIG["command_mappings"] values name. They are NOT
+# registered as prompt aliases: the matcher accepts any prompt that starts
+# with an alias plus a space, so "stop using sed" ran /ar:stop and "activate
+# the venv" started autorun. _register_command_mappings resolves them.
+_INTERNAL_COMMANDS: Dict[str, Callable] = {}
+
 for policy, aliases in _POLICY_ALIASES.items():
-    app.command(*aliases, policy)(_make_policy_handler(policy))
+    _INTERNAL_COMMANDS[policy] = app.command(*aliases)(_make_policy_handler(policy))
 
 
-@app.command("/ar:st", "/ar:status", "/afst", "/ar:afst", "STATUS")
+@app.command("/ar:st", "/ar:status", "/afst", "/ar:afst")
 def handle_status(ctx: EventContext) -> str:
     """
     Unified status: Shows file policy + session/global blocks and allows.
@@ -1595,7 +1602,6 @@ def _is_procedural_mode(prompt: str) -> bool:
     "/ar:proc",
     "/autorun",
     "/autoproc",
-    "activate",
     starts_agent_turn=True,
 )
 def handle_activate(ctx: EventContext) -> str:
@@ -1638,18 +1644,26 @@ def _deactivate(ctx: EventContext, msg: str) -> str:
     return msg
 
 
-@app.command("/ar:x", "/ar:stop", "/autostop", "stop")
+@app.command("/ar:x", "/ar:stop", "/autostop")
 def handle_stop(ctx: EventContext) -> str:
     """Graceful stop."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, "✅ Stopped")
 
 
-@app.command("/ar:sos", "/ar:estop", "/estop", "emergency_stop")
+@app.command("/ar:sos", "/ar:estop", "/estop")
 def handle_sos(ctx: EventContext) -> str:
     """Emergency stop."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, f"⚠️ EMERGENCY STOP\n{CONFIG['emergency_stop']}")
+
+
+_INTERNAL_COMMANDS.update(
+    STATUS=handle_status,
+    activate=handle_activate,
+    stop=handle_stop,
+    emergency_stop=handle_sos,
+)
 
 
 def _task_ignore(ctx: EventContext, arguments: tuple[str, ...]) -> str:
@@ -3358,9 +3372,24 @@ _PLAN_ALIASES = {
 }
 
 for plan_type, (short_cmd, long_cmd, skill) in _PLAN_ALIASES.items():
-    app.command(short_cmd, long_cmd, plan_type, starts_agent_turn=True)(
+    _INTERNAL_COMMANDS[plan_type] = app.command(short_cmd, long_cmd, starts_agent_turn=True)(
         _make_plan_handler(skill)
     )
+
+
+def _register_command_mappings() -> None:
+    """Register every slash spelling CONFIG["command_mappings"] gives an internal id.
+
+    This is the only way an internal id is reached, so a spelling a user adds
+    in autorun.config.json still works while the bare id stays unmatched.
+    """
+    for spelling, internal_id in CONFIG["command_mappings"].items():
+        handler = _INTERNAL_COMMANDS.get(internal_id)
+        if handler and spelling.startswith("/") and spelling not in app.command_handlers:
+            app.command(spelling, starts_agent_turn=command_starts_agent_turn(handler))(handler)
+
+
+_register_command_mappings()
 
 
 # ============================================================================

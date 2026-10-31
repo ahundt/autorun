@@ -294,16 +294,20 @@ def test_handler_variations_available():
             assert alias in handlers, f"Missing policy handler alias: {alias} (policy: {policy})"
 
     # Status command — multiple aliases
-    for alias in ["/ar:st", "/ar:status", "/afst", "STATUS"]:
+    for alias in ["/ar:st", "/ar:status", "/afst"]:
         assert alias in handlers, f"Missing status handler alias: {alias}"
 
     # Stop commands
-    for alias in ["/ar:x", "/ar:stop", "/autostop", "stop"]:
+    for alias in ["/ar:x", "/ar:stop", "/autostop"]:
         assert alias in handlers, f"Missing stop handler alias: {alias}"
 
     # Emergency stop
-    for alias in ["/ar:sos", "/ar:estop", "/estop", "emergency_stop"]:
+    for alias in ["/ar:sos", "/ar:estop", "/estop"]:
         assert alias in handlers, f"Missing emergency_stop handler alias: {alias}"
+
+    # Internal ids are not prompt aliases: "stop using sed" must reach the model.
+    for internal_id in ["STATUS", "stop", "emergency_stop", "activate", "ALLOW"]:
+        assert internal_id not in handlers, f"Internal id registered as a prompt alias: {internal_id}"
 
     # Activation command
     for alias in ["/ar:go", "/ar:run", "/autorun"]:
