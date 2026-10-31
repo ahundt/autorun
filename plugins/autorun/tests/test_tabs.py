@@ -274,7 +274,7 @@ class TestAnalyzeSessionsHeuristic:
     def test_detects_idle_status(self):
         sessions = [{
             'session_name': 'test', 'window_id': '0', 'tmux_target': 'test:0',
-            'content': 'Task completed\nReady for input >'
+            'content': 'Task completed\n> '
         }]
         result = analyze_sessions_heuristic(sessions)
         assert result[0]['status'] == 'idle'
@@ -282,7 +282,7 @@ class TestAnalyzeSessionsHeuristic:
     def test_detects_awaiting_input(self):
         sessions = [{
             'session_name': 'test', 'window_id': '0', 'tmux_target': 'test:0',
-            'content': 'Some output here\nWaiting for your selection >'
+            'content': 'Some output here\nWould you like to proceed?\n❯ 1. Yes\n  2. No\n'
         }]
         result = analyze_sessions_heuristic(sessions)
         assert result[0]['awaiting'] is True
@@ -502,3 +502,51 @@ def test_discovery_calls_tmux_list_windows_with_its_real_signature():
         sessions = discover_claude_sessions(tmux)
 
     assert [s["tmux_target"] for s in sessions] == ["main:1"]
+
+
+class TestTabsUsesThePromptDetector:
+    """analyze_sessions_heuristic had its own idea of waiting: content ending
+    in '>' or containing 'waiting for'/'your selection'. A generating window
+    that printed 'waiting for build' was awaiting; Claude Code idle at its
+    '❯' prompt, with status lines below it, was not. discover_claude_sessions
+    also dropped the prompt_type and is_active that tmux_list_windows computed."""
+
+    IDLE = (
+        "⏺ All tests pass.\n\n"
+        "────────────────────────────────────────\n"
+        "❯ \n"
+        "────────────────────────────────────────\n"
+        "  ? for shortcuts\n"
+    )
+    GENERATING = (
+        "Started the build, waiting for build to finish\n"
+        "✳ Building… (esc to interrupt · 7s · ↓ 44 tokens)\n"
+    )
+
+    def _analyze(self, **session):
+        return analyze_sessions_heuristic([{'tmux_target': 's:0', **session}])[0]
+
+    def test_a_generating_window_that_mentions_waiting_is_not_awaiting(self):
+        result = self._analyze(content=self.GENERATING)
+        assert (result['awaiting'], result['status']) == (False, 'active')
+
+    def test_claude_idle_at_the_chevron_prompt_is_awaiting(self):
+        result = self._analyze(content=self.IDLE)
+        assert (result['awaiting'], result['status']) == (True, 'idle')
+
+    def test_discovery_carries_prompt_type_and_is_active_into_the_analysis(self):
+        from unittest.mock import create_autospec
+
+        from autorun import tmux_utils
+
+        listing = create_autospec(tmux_utils.tmux_list_windows, return_value=[
+            {'session': 'main', 'w': 1, 'content': 'plain text', 'title': 't',
+             'prompt_type': 'input', 'is_active': False},
+        ])
+        tmux = Mock()
+        tmux.is_claude_session.return_value = True
+        with patch.object(tmux_utils, 'tmux_list_windows', listing):
+            session = discover_claude_sessions(tmux)[0]
+
+        assert (session['prompt_type'], session['is_active']) == ('input', False)
+        assert analyze_sessions_heuristic([session])[0]['awaiting'] is True

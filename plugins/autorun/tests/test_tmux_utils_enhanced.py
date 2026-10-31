@@ -817,3 +817,40 @@ class TestSetModeReachesTheRequestedWindow:
 
         assert sent and all(target == ("main", "5") for target in sent)
         assert result["success_count"] == 0, result
+
+
+CLAUDE_IDLE_SCREEN = (
+    "⏺ All tests pass.\n"
+    "\n"
+    "────────────────────────────────────────\n"
+    "❯ \n"
+    "────────────────────────────────────────\n"
+    "  ? for shortcuts\n"
+)
+
+
+class TestSafeToSendAgreesWithThePromptDetector:
+    """tmux_detect_prompt_type calls a '❯' line or an indented '  > ' line the
+    input prompt, but check_safe_to_send re-parsed only lines starting with
+    '>' and returned unknown_state, so send_message_to_claude and /ar:tabw
+    continue refused at Claude Code's own prompt."""
+
+    def test_an_empty_chevron_prompt_is_ready(self):
+        assert tmux_module.check_safe_to_send(CLAUDE_IDLE_SCREEN) == (True, "ready")
+
+    def test_an_indented_empty_prompt_is_ready(self):
+        assert tmux_module.check_safe_to_send("some output\n  > \n") == (True, "ready")
+
+    def test_text_after_the_chevron_is_user_typing(self):
+        screen = CLAUDE_IDLE_SCREEN.replace("❯ \n", "❯ fix the lint\n")
+        assert tmux_module.check_safe_to_send(screen) == (False, "user_typing")
+
+    def test_tabw_continue_reaches_a_window_at_the_chevron_prompt(self):
+        tmux = Mock()
+        tmux.execute_tmux_command.return_value = {"returncode": 0, "stdout": CLAUDE_IDLE_SCREEN}
+        tmux.send_keys.return_value = True
+        with patch("time.sleep"):
+            result = tmux_dangerous_batch_execute(tmux, ACTION_CONTINUE, "main:5")
+
+        assert result["success_count"] == 1, result
+        assert [c.args[0] for c in tmux.send_keys.call_args_list] == ["continue", "C-m"]

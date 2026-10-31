@@ -1399,6 +1399,23 @@ PROMPT_TYPE_CLARIFICATION = 'clarification'
 PROMPT_TYPE_ERROR = 'error_prompt'
 
 
+def _prompt_lines(content: str) -> List[str]:
+    """The last 15 non-blank lines of the last 800 chars, stripped."""
+    return [line.strip() for line in content[-800:].split('\n') if line.strip()][-15:]
+
+
+def _input_prompt_line(last_lines: List[str]) -> Optional[str]:
+    """The main input prompt line among the last 5 of last_lines, or None.
+
+    A bare '>' or a line starting with '❯' (Claude Code's prompt, possibly
+    followed by typed or placeholder text) that is not a numbered menu item.
+    """
+    for line in last_lines[-5:]:
+        if line == '>' or (line.startswith('❯') and not re.search(r'[1-9]\.\s', line)):
+            return line
+    return None
+
+
 def tmux_detect_prompt_type(content: str) -> Optional[str]:
     """Detect Claude Code CLI prompt type from terminal content.
 
@@ -1436,9 +1453,7 @@ def tmux_detect_prompt_type(content: str) -> Optional[str]:
     if not content:
         return None
 
-    # Analyze last 800 chars for prompt detection
-    last_800 = content[-800:]
-    last_lines = [line.strip() for line in last_800.split('\n') if line.strip()][-15:]
+    last_lines = _prompt_lines(content)
     last_text = '\n'.join(last_lines)
 
     # 1. Plan/Feature approval - "Would you like to proceed?" with selector
@@ -1459,13 +1474,8 @@ def tmux_detect_prompt_type(content: str) -> Optional[str]:
         return PROMPT_TYPE_QUESTION
 
     # 5. Main input prompt - standalone > or ❯ (Claude Code uses Unicode ❯)
-    for line in last_lines[-5:]:
-        if line == '>' or line == '> ':
-            return PROMPT_TYPE_INPUT
-        # Claude Code uses ❯ as its main input prompt (with optional placeholder text)
-        # Exclude numbered menus (already handled by checks 1, 3, 4) and plan approval
-        if line.startswith('❯') and not re.search(r'[1-9]\.\s', line):
-            return PROMPT_TYPE_INPUT
+    if _input_prompt_line(last_lines) is not None:
+        return PROMPT_TYPE_INPUT
 
     # 6. Happy-cli mode prompts
     if '📱 Press space' in last_text:
@@ -1725,19 +1735,12 @@ def check_safe_to_send(content: str) -> tuple[bool, str]:
     ]:
         return False, f"special_prompt:{prompt_type}"
 
-    # For regular input prompt, check if user is typing
+    # For regular input prompt, text after the prompt character means the user
+    # may be typing. Same line tmux_detect_prompt_type matched, so the two agree.
     if prompt_type == PROMPT_TYPE_INPUT:
-        # Look for the last '>' prompt and check if there's text after it
-        lines = content.rstrip().split('\n')
-        for line in reversed(lines[-10:]):
-            if line.startswith('>'):
-                # Check what's after the prompt
-                after_prompt = line[1:].strip()
-                if after_prompt:
-                    # There's text after '>' - user may be typing
-                    return False, "user_typing"
-                # Empty prompt - safe to send
-                return True, "ready"
+        if _input_prompt_line(_prompt_lines(content))[1:].strip():
+            return False, "user_typing"
+        return True, "ready"
 
     # Error prompts or clarification - might be ok but be cautious
     if prompt_type in [PROMPT_TYPE_ERROR, PROMPT_TYPE_CLARIFICATION]:
@@ -2355,8 +2358,9 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
     the 'tmux_target' key (format: 'session:window') used by
     execute_session_selections() and send_to_session().
 
-    Returns list of session dicts containing all tmux_list_windows() fields
-    plus: tmux_target, session_name, window_id, content_preview, branch.
+    Returns list of session dicts with tmux_target, session_name, window_id,
+    content, content_preview, title, cmd, path, pid, active, activity, flags,
+    branch, and the prompt_type and is_active tmux_list_windows() detected.
     """
     all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES)
     sessions = []
@@ -2377,6 +2381,8 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
                 'activity': win.get('activity', 0),
                 'flags': win.get('flags', ''),
                 'branch': win.get('branch'),
+                'prompt_type': win.get('prompt_type'),
+                'is_active': win.get('is_active', False),
             })
     return sessions
 

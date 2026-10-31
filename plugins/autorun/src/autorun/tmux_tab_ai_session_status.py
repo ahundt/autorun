@@ -24,6 +24,8 @@ from .tmux_utils import (
     discover_claude_sessions,
     execute_session_selections,
     get_tmux_utilities,
+    tmux_detect_claude_active,
+    tmux_detect_prompt_type,
 )
 
 # Optional Anthropic SDK — falls back to heuristic analysis when unavailable
@@ -94,9 +96,15 @@ def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
     session dict in-place. Uses pre-populated tmux_list_windows() fields (path,
     title) when available, falling back to regex extraction from content.
 
+    'awaiting' is tmux_utils' own answer: a prompt tmux_detect_prompt_type
+    recognises while tmux_detect_claude_active sees no generation. The
+    prompt_type and is_active from discover_claude_sessions are used when
+    present, otherwise detected from content.
+
     Status detection (in priority order):
+      'active'    — Claude is generating
       'error'     — 'error', 'failed', or 'exception' in content
-      'idle'      — content ends with '>' or contains 'waiting'
+      'idle'      — awaiting input
       'completed' — 'completed' or 'done' in content
       'active'    — default
     """
@@ -106,21 +114,22 @@ def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
 
         session['directory'] = session.get('path') or extract_directory(content)
 
-        if 'error' in content_lower or 'failed' in content_lower or 'exception' in content_lower:
+        is_active = (session['is_active'] if 'is_active' in session
+                     else tmux_detect_claude_active(content))
+        prompt_type = (session['prompt_type'] if 'prompt_type' in session
+                       else tmux_detect_prompt_type(content))
+        session['awaiting'] = prompt_type is not None and not is_active
+
+        if is_active:
+            session['status'] = 'active'
+        elif 'error' in content_lower or 'failed' in content_lower or 'exception' in content_lower:
             session['status'] = 'error'
-        elif content.rstrip().endswith('>') or 'waiting' in content_lower:
+        elif session['awaiting']:
             session['status'] = 'idle'
         elif 'completed' in content_lower or 'done' in content_lower:
             session['status'] = 'completed'
         else:
             session['status'] = 'active'
-
-        last_lines = content[-200:] if len(content) > 200 else content
-        session['awaiting'] = (
-            last_lines.rstrip().endswith('>')
-            or 'waiting for' in content_lower
-            or 'your selection' in content_lower
-        )
 
         session['purpose'] = session.get('title') or extract_purpose(content)
         session['actions'] = get_default_actions(session['status'])
