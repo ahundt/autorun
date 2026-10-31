@@ -76,9 +76,10 @@ _PLUGIN_DISTRIBUTIONS = {
     # script stayed `autorun`.
     #
     # Listing a name here means "retire it if that is safe", not "uninstall it".
-    # `_retire_legacy_distributions` keeps any uv-installed entry whose console
-    # script is also one of ours, because `uv tool uninstall` removes scripts by
-    # name across the one shared bin directory; the pip route still sweeps.
+    # `_retire_legacy_distributions` keeps any owned entry whose console script
+    # is also one of ours: `uv tool uninstall` removes scripts by name across
+    # the one shared bin directory, and a pip receipt only counts for this
+    # interpreter, whose bin directory the current distribution shares.
     "ar": ("autorun-ai", "autorun", "autorun-pdf-extractor", "pdf-extractor"),
 }
 
@@ -435,22 +436,19 @@ def _retire_legacy_distributions(plugin: str) -> list[runtime.Outcome]:
     """
     outcomes: list[runtime.Outcome | None] = []
     for package in _PLUGIN_DISTRIBUTIONS.get(plugin, ())[1:]:
-        # The uv-tool route only. Every uv tool shares one bin directory, so
-        # uninstalling any of them removes that script name for all of them.
-        # A pip-installed retired package lives in its own environment, where
-        # removing it takes only its own copy, so that sweep still runs.
-        if (
-            bool(shutil.which("uv"))
-            and _uv_tool_installed(package)
-            and _UV_TOOL_SCRIPTS[package] in runtime.CLI_SCRIPTS
-        ):
-            outcomes.append(_shared_script_orphan(package))
+        # Both routes share a bin directory with the current distribution:
+        # every uv tool shares one, and a pip receipt only counts when its
+        # python is this interpreter (_pip_package_owned). Either uninstaller
+        # removes the shared script name, so such a package is kept.
+        uv_owned = bool(shutil.which("uv")) and _uv_tool_installed(package)
+        if _UV_TOOL_SCRIPTS[package] in runtime.CLI_SCRIPTS and (uv_owned or _pip_package_owned(package)):
+            outcomes.append(_shared_script_orphan(package, uv=uv_owned))
             continue
         outcomes.append(_remove_distribution(package))
     return [outcome for outcome in outcomes if outcome is not None]
 
 
-def _shared_script_orphan(package: str) -> runtime.Outcome:
+def _shared_script_orphan(package: str, *, uv: bool = True) -> runtime.Outcome:
     """Report, without removing, a legacy distribution we must not uninstall.
 
     ``uv tool uninstall`` deletes console scripts by *name*, not by owner, so
@@ -478,15 +476,23 @@ def _shared_script_orphan(package: str) -> runtime.Outcome:
     working command, and only one of those is recoverable without knowing to run
     a command nobody documented.
 
+    A pip install in this interpreter is the same case: pip deletes every file
+    in the retired package's RECORD, the shared script included. Its reclaim
+    command names no reinstall source, because this copy may be editable.
+
     Ownership is the caller's question, already settled before this is reached.
     """
+    current = _PLUGIN_DISTRIBUTIONS["ar"][0]
+    reclaim = (
+        f"uv tool uninstall {package} && uv tool install --force {current}"
+        if uv
+        else f"{sys.executable} -m pip uninstall -y {package}, then reinstall {current} the way you installed it"
+    )
     return runtime.Outcome(
         f"{package} CLI",
         True,
         f"left installed: removing it would delete {_UV_TOOL_SCRIPTS[package]!r}, "
-        f"which {_PLUGIN_DISTRIBUTIONS['ar'][0]} also provides. "
-        f"To reclaim the disk: uv tool uninstall {package} "
-        f"&& uv tool install --force {_PLUGIN_DISTRIBUTIONS['ar'][0]}",
+        f"which {current} also provides. To reclaim the disk: {reclaim}",
     )
 
 

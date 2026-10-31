@@ -277,14 +277,17 @@ def test_empty_home_uninstall_is_a_true_no_op_even_when_every_cli_is_on_path(
     assert tuple(isolated.rglob("*")) == before
 
 
-def test_a_pip_installed_retired_pdf_distribution_is_swept(monkeypatch, isolated):
-    """An older autorun pip-installed a separate pdf package; remove it.
+def test_a_pip_installed_retired_pdf_distribution_is_kept_and_reported(monkeypatch, isolated):
+    """An older autorun pip-installed a separate pdf package into *this*
+    interpreter; removing it would remove our ``extract-pdfs``.
 
-    ``pdf_extraction`` and ``extract-pdfs`` now ship inside ``autorun`` under the
-    ``pdf`` extra, so nothing publishes these names any more and no ownership
-    marker exists for ``traversal.retirements`` to find. The receipt an older
-    version wrote is the only record that this home installed one, and it is
-    what makes attempting the removal safe rather than a guess.
+    The receipt only counts when its python is ``sys.executable``, so the
+    retired package shares this environment's bin directory with
+    ``autorun-ai``, whose ``pdf`` extra provides ``extract-pdfs`` too. pip
+    removes every file in the retired package's RECORD, the shared script
+    included, so ``pip uninstall -y pdf-extractor`` here costs the user a
+    working command exactly as ``uv tool uninstall`` does. Keep it and say how
+    to reclaim the disk.
     """
     from autorun.installer import entrypoint
 
@@ -312,18 +315,12 @@ def test_a_pip_installed_retired_pdf_distribution_is_swept(monkeypatch, isolated
 
     retired = entrypoint._retire_legacy_distributions("ar")
 
+    assert calls == [], "pip uninstall here would delete this env's extract-pdfs"
+    assert receipt.exists()
     assert [outcome.ok for outcome in retired] == [True]
-    assert calls == [
-        (
-            entrypoint.sys.executable,
-            "-m",
-            "pip",
-            "uninstall",
-            "-y",
-            "pdf-extractor",
-        )
-    ]
-    assert not receipt.exists()
+    detail = retired[0].detail
+    assert "extract-pdfs" in detail and "pip uninstall -y pdf-extractor" in detail
+    assert "uv tool" not in detail, "a pip install is reclaimed with pip"
 
 
 def test_removing_the_pdf_plugin_never_reaches_a_python_distribution(isolated):
