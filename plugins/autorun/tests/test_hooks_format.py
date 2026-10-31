@@ -143,6 +143,11 @@ def test_gemini_hooks_json_is_gemini_format():
     description = hooks_data.get("description", "")
     assert "gemini" in description.lower(), \
         f"Description should mention Gemini, got: {description}"
+    # Shipped in every Gemini/Qwen manifest; a version here goes stale
+    # ("autorun v0.10" shipped with 1.0.0). The package carries the version.
+    import re
+    assert not re.search(r"\bv?\d+\.\d+", description), \
+        f"Description must not carry a version literal, got: {description}"
 
     # Check uses ${extensionPath} not CLAUDE_PLUGIN_ROOT
     hooks_json_str = json.dumps(hooks_data)

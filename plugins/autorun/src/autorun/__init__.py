@@ -139,157 +139,17 @@ except ImportError:
 
 # Export CONFIG and log_info for tests
 # COMMAND_HANDLERS removed — use plugins.app.commands + app.dispatch() (canonical)
+# CONFIG has one source, config.py, which imports only the stdlib at module
+# level and so needs no fallback. A hand-copied fallback CONFIG used to stand
+# in whenever `.main` failed to import, and it had drifted from config.py.
+from .config import CONFIG
+
+COMMAND_HANDLERS = {}  # Removed: use plugins.app.commands + app.dispatch()
+
 try:
-    # Import CONFIG from centralized config.py (DRY principle - single source of truth)
-    from .config import CONFIG
     # Import log_info from main.py (thin shim → logging_utils)
     from .main import log_info
-    # COMMAND_HANDLERS was removed from main.py — provide empty stub for test compat
-    COMMAND_HANDLERS = {}  # Removed: use plugins.app.commands + app.dispatch()
-
 except ImportError:
-    # Complete fallback CONFIG for tests - matches config.py three-stage system
-    CONFIG = {
-        # ─── Stage 1: Initial Work ────────────────────────────────────────────────
-        # What we inject to AI (descriptive text explaining what Stage 1 is)
-        "stage1_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan",
-        # What AI outputs when Stage 1 complete (ALL-CAPS confirmation)
-        "stage1_message": "AUTORUN_INITIAL_TASKS_COMPLETED",
-
-        # What we inject to guide AI through Stage 1 (detailed methodology)
-        "stage1_instruction": """
-1. Read through ENTIRE task description carefully
-2. Identify all requirements, constraints, and success criteria
-3. List any ambiguities requiring clarification
-4. Create task checkbox structure with concrete outcomes
-5. Verify bias mitigation: not skipping steps, checking own work
-6. Execute the task with full tool permissions (Bash, Edit, Write, etc.)
-7. After EVERY step, say "Wait," and execute the Wait Process""",
-
-        # ─── Stage 2: Critical Evaluation ─────────────────────────────────────────
-        # What we inject to AI (descriptive text - same as output for Stage 2)
-        "stage2_completion": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
-        # What AI outputs when Stage 2 complete (same as completion for Stage 2)
-        "stage2_message": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
-
-        # What we inject to guide AI through Stage 2 (detailed methodology)
-        "stage2_instruction": """
-1. Critique work overall and line-by-line against best practices
-2. Pre-mortem analysis: identify potential failure modes and weaknesses
-3. Propose ≥3 concrete solutions to each identified issue
-4. Synthesize insights from all critiques and solutions
-5. Choose optimal solution with compelling justification
-6. If errors found, execute corrective steps immediately""",
-
-        # ─── Stage 3: Final Verification ──────────────────────────────────────────
-        # What we inject to AI (compound descriptive text explaining Stage 3)
-        "stage3_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan AND critically evaluated own work and verified all tasks are completed",
-        # What AI outputs when Stage 3 complete (ALL-CAPS confirmation)
-        "stage3_message": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
-
-        # What we inject to guide AI through Stage 3 (detailed methodology)
-        "stage3_instruction": """
-1. Verify ALL requirements from original request are met
-2. Confirm no tasks silently dropped or skipped
-3. Double-check (AI is often overconfident)
-4. Verify all file references match actual codebase
-5. Confirm code examples are syntactically correct
-6. If ANY requirement missing, return to relevant stage""",
-
-        # ─── Descriptive Completion Markers ──────────────────────────────────────
-        # NOTE: These are DESCRIPTIVE strings the AI outputs to communicate what it accomplished.
-        # The hook system recognizes BOTH the short stage markers AND these descriptive versions.
-        # Markdown command files use these descriptive strings for clarity.
-        "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
-
-        # ─── Emergency Stop ───────────────────────────────────────────────────────
-        # NOTE: This is a DESCRIPTIVE string that the AI outputs to communicate its action.
-        # It should describe WHAT the AI is doing, not just be a state variable name.
-        "emergency_stop": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
-
-        # ─── Timing ───────────────────────────────────────────────────────────────
-        "max_recheck_count": 3,
-        "monitor_stop_delay_seconds": 300,
-        "stage3_countdown_calls": 5,
-
-        "command_mappings": {
-            "/autorun": "activate",
-            "/autoproc": "activate",
-            "/autostop": "stop",
-            "/estop": "emergency_stop",
-            "/afs": "SEARCH",
-            "/afa": "ALLOW",
-            "/afj": "JUSTIFY",
-            "/afst": "STATUS"
-        },
-        "policies": {
-            "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
-            "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
-            "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use platform-native search. NO new files.")
-        },
-        "policy_blocked": {
-            "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality with platform-native search, 3) Find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
-            "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files related to your functionality with platform-native search, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
-        },
-        "injection_template": "Template placeholder",
-        "recheck_template": "Recheck template placeholder"
-    }
-
-    # Fallback COMMAND_HANDLERS for tests - use CONFIG for DRY compliance
-    def handle_search(state):
-        state["file_policy"] = "SEARCH"
-        policy_name, policy_desc = CONFIG["policies"]["SEARCH"]
-        return f"AutoFile policy: {policy_name} - {policy_desc}"
-
-    def handle_allow(state):
-        state["file_policy"] = "ALLOW"
-        policy_name, policy_desc = CONFIG["policies"]["ALLOW"]
-        return f"AutoFile policy: {policy_name} - {policy_desc}"
-
-    def handle_justify(state):
-        state["file_policy"] = "JUSTIFY"
-        policy_name, policy_desc = CONFIG["policies"]["JUSTIFY"]
-        return f"AutoFile policy: {policy_name} - {policy_desc}"
-
-    def handle_status(state):
-        current_policy = state.get("file_policy", "ALLOW")
-        policy_name, _ = CONFIG["policies"][current_policy]
-        return f"Current policy: {policy_name}"
-
-    def handle_stop(state):
-        state["session_status"] = "stopped"
-        return "Autorun stopped"
-
-    def handle_emergency_stop(state):
-        state["session_status"] = "emergency_stopped"
-        return "Emergency stop activated"
-
-    def handle_activate(state, prompt):
-        state["session_status"] = "active"
-        state["autorun_stage"] = "INITIAL"
-        state["activation_prompt"] = prompt
-        return "Your primary objective is to continue **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals."
-
-    COMMAND_HANDLERS = {
-        # Policy commands (both versions available)
-        "SEARCH": handle_search,
-        "search": handle_search,
-        "ALLOW": handle_allow,
-        "allow": handle_allow,
-        "JUSTIFY": handle_justify,
-        "justify": handle_justify,
-        "STATUS": handle_status,
-        "status": handle_status,
-
-        # Control commands (both versions available)
-        "activate": handle_activate,
-        "ACTIVATE": handle_activate,
-        "stop": handle_stop,
-        "STOP": handle_stop,
-        "emergency_stop": handle_emergency_stop,
-        "EMERGENCY_STOP": handle_emergency_stop
-    }
-
     def log_info(message):
         """Fallback log_info function"""
         pass

@@ -588,9 +588,10 @@ class AntigravityHookProtocol(HookProtocol):
         ):
             native["command"] = f"{command} --event {event}"
         # The shared Gemini manifest stores milliseconds; Antigravity's field
-        # is seconds. Five seconds preserves the same wrapper budget.
-        if native.get("timeout") == 5000:
-            native["timeout"] = 5
+        # is seconds. Round up so a sub-second budget never becomes 0.
+        timeout = native.get("timeout")
+        if isinstance(timeout, (int, float)) and not isinstance(timeout, bool):
+            native["timeout"] = max(1, -(-int(timeout) // 1000))
         return native
 
     def translate_manifest(

@@ -1,5 +1,5 @@
 {
-  "description": "autorun v0.10 - Gemini CLI native compatibility hooks",
+  "description": "autorun - Gemini CLI native compatibility hooks",
   "hooks": {
     "SessionStart": [
       {

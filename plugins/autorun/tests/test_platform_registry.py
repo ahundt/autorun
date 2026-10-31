@@ -388,6 +388,17 @@ def test_antigravity_protocol_translation_flattens_only_flat_events():
     }
 
 
+@pytest.mark.parametrize(("milliseconds", "seconds"), [(5000, 5), (8000, 8), (1500, 2), (200, 1)])
+def test_antigravity_converts_any_millisecond_timeout_to_seconds(milliseconds, seconds):
+    """The shared manifest is in ms and Agy's field is in s. Only 5000 used to
+    be converted, so retuning the template left Agy waiting e.g. 8000 seconds.
+    Rounds up so a sub-second budget never becomes 0."""
+    protocol = PLATFORMS["antigravity"].hook_protocol
+    source = {"hooks": {"AfterAgent": [{"hooks": [{"command": "x", "timeout": milliseconds}]}]}}
+    translated = protocol.translate_manifest(source, {"AfterAgent": "Stop"})
+    assert translated["autorun"]["Stop"] == [{"command": "x", "timeout": seconds}]
+
+
 def test_hook_protocol_translation_ignores_malformed_groups_without_mutating_input():
     protocol = PLATFORMS["antigravity"].hook_protocol
     source = {"hooks": {"BeforeTool": "invalid", "AfterAgent": [None, 3]}}

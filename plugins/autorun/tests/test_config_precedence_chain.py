@@ -187,6 +187,43 @@ def test_the_live_config_reflects_the_file_at_import(config_home):
     assert result.stdout.strip() == "7", f"the file tier is not applied at import: {detail}"
 
 
+_NO_DEPENDENCIES_PROBE = textwrap.dedent(
+    """
+    import sys
+    sys.path.insert(0, sys.argv[1])
+
+    class _Missing:
+        def find_spec(self, name, path=None, target=None):
+            if name.split(".")[0] in {"filelock", "psutil", "bashlex", "yaml",
+                                      "packaging", "tomlkit"}:
+                raise ImportError("blocked: " + name)
+            return None
+
+    sys.meta_path.insert(0, _Missing())
+    import autorun
+    from autorun import config
+    print(autorun.CONFIG is config.CONFIG)
+    """
+)
+
+
+def test_the_package_config_is_the_config_module_without_dependencies(config_home):
+    """``autorun.CONFIG`` is config.CONFIG even when a dependency is missing.
+
+    __init__.py fell back to a hand-copied CONFIG whenever `.main` failed to
+    import (it needs filelock), and that copy had drifted: a different
+    stage2_completion, no /ar: command_mappings, older SEARCH policy text.
+    config.py imports only the stdlib at module level, so it needs no fallback.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _NO_DEPENDENCIES_PROBE, str(SRC_DIR)],
+        capture_output=True, text=True, timeout=120,
+    )
+    detail = f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert result.returncode == 0, detail
+    assert result.stdout.strip() == "True", detail
+
+
 @pytest.mark.parametrize(
     "setting",
     ["daemon_client_response_timeouts_seconds", "hook_wrapper_timeouts_seconds"],
