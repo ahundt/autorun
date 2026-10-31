@@ -1209,6 +1209,36 @@ def test_every_legacy_distribution_shares_a_script_with_the_current_one():
     assert shared == set(legacy), sorted(set(legacy) - shared)
 
 
+@pytest.mark.parametrize(
+    "listing, registered",
+    [
+        ("No plugins are installed.\n", False),
+        ("autorun-tools\nradar\n", False),
+        ("ar\n", True),
+        ("Installed plugins:\n  ar (1.0.0)\n", True),
+    ],
+)
+def test_antigravity_verification_matches_the_plugin_name_as_a_token(listing, registered):
+    """registration.register verifies Agy by ``agy plugin list`` output. A
+    substring match on "ar" passed for "No plugins are installed." ("are")."""
+    from autorun.installer import registration
+
+    def run(argv, **_kwargs):
+        if tuple(argv)[:3] == ("agy", "plugin", "validate"):
+            return subprocess.CompletedProcess(argv, 1, "", "invalid native bundle")
+        stdout = listing if tuple(argv)[:3] == ("agy", "plugin", "list") else ""
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+    outcomes = registration.register(
+        "antigravity",
+        {"name": "ar", "market": "autorun", "root": "/repo", "extension": "/durable/ar"},
+        run=run,
+        available=("agy",),
+    )
+
+    assert all(outcome.ok for outcome in outcomes) is registered
+
+
 @pytest.mark.parametrize("layout", ["checkout", "wheel"])
 def test_codex_plugin_hook_command_follows_the_hook_command_layout(monkeypatch, isolated, tmp_path, layout):
     """A wheel's plugin root has no pyproject.toml, so ``uv run --project

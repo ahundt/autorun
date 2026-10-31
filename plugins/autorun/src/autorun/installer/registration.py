@@ -36,6 +36,7 @@ one timeout rather than several.
 from __future__ import annotations
 
 import inspect
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass, field
@@ -311,9 +312,14 @@ def _perform(
             f"{type(error).__name__}: {error}",
             timed_out=isinstance(error, subprocess.TimeoutExpired),
         )
+    # A whole token, not a substring: "ar" is inside "No plugins are installed."
     if _ran(result, absent=absent, already=already) and (
         not required_text
-        or required_text.lower() in f"{result.stdout or ''}{result.stderr or ''}".lower()
+        or re.search(
+            rf"(?<![\w-]){re.escape(required_text)}(?![\w-])",
+            f"{result.stdout or ''}\n{result.stderr or ''}",
+            re.IGNORECASE,
+        )
     ):
         return Outcome(step, True, "")
     if result.returncode == 0 and required_text:
