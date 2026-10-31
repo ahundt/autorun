@@ -392,8 +392,10 @@ def stage_plugin(
     def ignore(directory: str, names: list[str]) -> set[str]:
         source = Path(directory)
         skipped = set(ignored(directory, names))
-        if source == plugin_dir and not include_skills:
-            skipped.add("skills")
+        if source == plugin_dir:
+            skipped.add("tests")  # a checkout's test suite is not the plugin
+            if not include_skills:
+                skipped.add("skills")
         if source == plugin_dir / "skills":
             skipped.update(
                 name for name in names

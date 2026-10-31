@@ -42,6 +42,26 @@ def events(path: Path) -> dict:
     return json.loads(path.read_text())["hooks"]
 
 
+def test_the_staged_codex_plugin_leaves_out_the_checkout_test_suite(tmp_path):
+    """A checkout install copied plugins/autorun/tests/ into ~/plugins/ar."""
+    from autorun.installer.codex import stage_plugin
+
+    plugin = tmp_path / "plugin"
+    (plugin / ".codex-plugin").mkdir(parents=True)
+    (plugin / ".codex-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+    (plugin / "tests").mkdir()
+    (plugin / "tests" / "test_x.py").write_text("", encoding="utf-8")
+    skill = plugin / "skills" / "demo"
+    (skill / "tests").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    (skill / "tests" / "case.md").write_text("", encoding="utf-8")
+
+    staged = stage_plugin(plugin, tmp_path / "staged")
+
+    assert not (staged / "tests").exists()
+    assert (staged / "skills" / "demo" / "tests" / "case.md").is_file(), "only the top level"
+
+
 # ─── Rule 1: an unknown top-level key drops every hook in the file ───────────
 
 

@@ -924,6 +924,29 @@ def test_registry_transactions_serialize_the_complete_read_modify_write(tmp_path
     }
 
 
+OS_METADATA = (".DS_Store", "._SKILL.md", "Thumbs.db", "desktop.ini")
+
+
+def test_os_file_manager_metadata_is_neither_shipped_nor_an_edit(tmp_path, source):
+    """Finder writes .DS_Store into any directory a user opens.
+
+    It was fingerprinted like any other file, so one in an installed tree made
+    every install KEEP it ("you edited files we installed (.DS_Store)") and
+    uninstall never removed it; a checkout's own .DS_Store was copied in.
+    """
+    (source / ".DS_Store").write_bytes(b"\0finder")
+    target = tmp_path / "dst" / "demo"
+    publish_tree(source, target, plugin="ar")
+    assert not (target / ".DS_Store").exists(), "a checkout's metadata was shipped"
+
+    for name in OS_METADATA:
+        (target / name).write_bytes(b"\0")
+
+    assert decide(target, source, plugin="ar").verdict is Verdict.SKIP
+    assert withdrawn(target, plugin="ar") is True
+    assert not target.exists()
+
+
 # ─── Interrupts after the first rename (the only copy is in the stage) ───────
 
 

@@ -138,6 +138,10 @@ IGNORED_GLOBS: tuple[str, ...] = (
     "*.pyc", "*.pyo", "*.tmp", "*~", "*.bak",
     ".coverage", ".coverage.*", "coverage.xml",
     ".*-extension-install.json", "qwen-extension.json",
+    # File-manager metadata written into any directory a user opens. Recorded,
+    # it made every later install KEEP the tree as "edited" and uninstall
+    # leave it behind.
+    ".DS_Store", "._*", "Thumbs.db", "desktop.ini",
 )
 _LINK = "link:"
 
