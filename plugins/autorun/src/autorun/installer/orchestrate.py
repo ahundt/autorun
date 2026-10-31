@@ -375,7 +375,10 @@ def perform(
         # user reading the report to learn what was preserved saw one path twice
         # and could not tell that from two different trees having been kept.
         stale = retirements(_config_roots(selected, staged), claimed, plugins=named)
-        decisions.extend(run((), staged, mode, extra=stale))
+        spared = _held_by_unselected(selected, staged)
+        decisions.extend(run(
+            (), staged, mode, extra=(i for i in stale if not spared(i.target))
+        ))
 
         homeless = []
         for harness in selected:
@@ -976,6 +979,32 @@ def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
     except OSError:
         pass
     return found
+
+
+def _held_by_unselected(harnesses: Iterable[object], ctx: Context):
+    """A predicate: is this path inside an unselected harness's config dir?
+
+    Roots nest: Antigravity's ``~/.gemini/config/`` lies inside Gemini's
+    ``~/.gemini/``, so sweeping Gemini's root alone found Antigravity's trees,
+    which nothing in a Gemini-only run claims, and retired them. A path belongs
+    to the most specific registered config dir holding it, retired roots
+    included (Antigravity's ``~/.gemini/antigravity-cli/``); one held by no
+    harness (the shared skills root, staging) is the selection's to sweep.
+    """
+    names = {getattr(h, "name", "") for h in harnesses}
+    selected: dict[Path, bool] = {}
+    for platform in (*PLATFORMS.values(), *(getattr(h, "platform", h) for h in harnesses)):
+        base = discovery.config_dir(platform, home=ctx.home)
+        retired = getattr(platform, "retired_config_dirs", ()) or ()
+        for root in (base, *(discovery.expand_home(r, home=ctx.home) for r in retired)):
+            if root is not None:
+                selected[root] = selected.get(root, False) or getattr(platform, "name", "") in names
+
+    def held(path: Path) -> bool:
+        holders = [base for base in selected if path.is_relative_to(base)]
+        return bool(holders) and not selected[max(holders, key=lambda b: len(b.parts))]
+
+    return held
 
 
 def install(**kwargs) -> Result:
