@@ -281,55 +281,6 @@ class TestLazyTranscript:
 
         assert transcript.contains("nonexistent") is False
 
-    def test_search_regex_finds_pattern(self):
-        """search_regex should find pattern with regex."""
-        raw = [{"content": "<AUTOFILE_JUSTIFICATION>valid reason</AUTOFILE_JUSTIFICATION>"}]
-        transcript = LazyTranscript(raw)
-
-        match = transcript.search_regex(r"<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>")
-        assert match is not None
-        assert match.group(1) == "valid reason"
-
-    def test_search_regex_cached(self):
-        """search_regex should cache results."""
-        raw = [{"content": "test pattern"}]
-        transcript = LazyTranscript(raw)
-
-        # Call twice with same pattern
-        result1 = transcript.search_regex(r"test")
-        result2 = transcript.search_regex(r"test")
-
-        # Results should be cached (same object)
-        assert result1 is result2
-
-    def test_has_justification_valid(self):
-        """has_justification should return True for valid justification."""
-        raw = [{"content": "<AUTOFILE_JUSTIFICATION>Need new config file for auth module</AUTOFILE_JUSTIFICATION>"}]
-        transcript = LazyTranscript(raw)
-
-        assert transcript.has_justification() is True
-
-    def test_has_justification_empty(self):
-        """has_justification should return False for empty content."""
-        raw = [{"content": "<AUTOFILE_JUSTIFICATION></AUTOFILE_JUSTIFICATION>"}]
-        transcript = LazyTranscript(raw)
-
-        assert transcript.has_justification() is False
-
-    def test_has_justification_placeholder(self):
-        """has_justification should return False for placeholder 'reason'."""
-        raw = [{"content": "<AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION>"}]
-        transcript = LazyTranscript(raw)
-
-        assert transcript.has_justification() is False
-
-    def test_has_justification_missing(self):
-        """has_justification should return False when tag is missing."""
-        raw = [{"content": "no justification here"}]
-        transcript = LazyTranscript(raw)
-
-        assert transcript.has_justification() is False
-
 
 # ============================================================================
 # P1.2: ThreadSafeDB Tests
@@ -712,12 +663,6 @@ class TestEventContext:
         transcript = ctx.transcript
         assert isinstance(transcript, LazyTranscript)
         assert transcript.contains("AUTOFILE")
-
-    def test_has_justification_property(self):
-        """has_justification should delegate to transcript."""
-        ctx = EventContext(session_id="test", event="test", session_transcript=[{"content": "<AUTOFILE_JUSTIFICATION>valid</AUTOFILE_JUSTIFICATION>"}])
-
-        assert ctx.has_justification is True
 
     def test_file_exists_property_true(self, tmp_path):
         """file_exists should return True for existing file."""

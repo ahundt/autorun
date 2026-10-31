@@ -1396,19 +1396,6 @@ class LazyTranscript:
             return identity, text
         return None
 
-    @lru_cache(maxsize=16)
-    def search_regex(self, pattern: str) -> Optional[re.Match]:
-        """Cached regex search."""
-        return re.search(pattern, self.text, re.DOTALL | re.IGNORECASE)
-
-    def has_justification(self) -> bool:
-        """Check for valid AUTOFILE_JUSTIFICATION tag."""
-        match = self.search_regex(r"<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>")
-        if match:
-            content = match.group(1).strip().lower()
-            return content not in {"", "reason"}  # Exclude placeholders
-        return False
-
 
 # === MAGIC STATE CONTEXT ===
 # =============================================================================
@@ -2425,10 +2412,6 @@ class EventContext:
             t = LazyTranscript(self._session_transcript)
             object.__setattr__(self, "_transcript", t)
         return t
-
-    @property
-    def has_justification(self) -> bool:
-        return self.transcript.has_justification()
 
     @property
     def file_exists(self) -> bool:
