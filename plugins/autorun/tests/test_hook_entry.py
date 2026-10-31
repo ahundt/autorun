@@ -1032,6 +1032,31 @@ class TestTryCliRobustness:
         logged = (tmp_path / "home" / "hook_entry_debug.log").read_text(encoding="utf-8")
         assert len(logged) < 4 * hook_entry.DEBUG_VALUE_MAX_CHARS, len(logged)
 
+    def test_main_names_the_same_launching_process_on_the_cli_path(self, tmp_path, monkeypatch):
+        """_pid is the process that launched the hook, on every hook_entry path.
+
+        The daemon fast path sent os.getppid(); the CLI path sent nothing, so
+        the client substituted its own psutil walk and one session's hooks
+        could reach the daemon under two different process identities.
+        """
+        hook_entry = load_hook_entry_module()
+        sent = []
+
+        def fake_run(cmd, **kwargs):
+            sent.append(json.loads(kwargs["input"]))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "home"))
+        monkeypatch.setattr(hook_entry, "get_autorun_bin", lambda: tmp_path / "autorun")
+        monkeypatch.setattr(hook_entry.subprocess, "run", fake_run)
+        monkeypatch.setattr(sys, "argv", ["hook_entry.py", "--cli", "codex"])
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "SessionStart"})))
+
+        with pytest.raises(SystemExit):
+            hook_entry.main()
+
+        assert sent and sent[0]["_pid"] == os.getppid()
+
     def test_main_does_not_fallback_when_cli_allows_with_empty_stdout(self, tmp_path):
         """Empty successful CLI output must not trigger fallback source lookup."""
         write_fake_cli(tmp_path)

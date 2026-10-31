@@ -497,7 +497,9 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
     """
     payload = dict(payload or {})
 
-    # Inject context for daemon lifecycle management.
+    # Inject context for daemon lifecycle management. A _pid already present
+    # came from hooks/hook_entry.py (os.getppid(), on both of its paths) or a
+    # JS bridge (its own pid) and wins; the walk is for direct invocations.
     process = get_stable_process_identity()
     if "_pid" not in payload:
         payload["_pid"] = process.pid

@@ -176,6 +176,11 @@ def prepare_hook_payload(payload: dict, cli_type: str) -> dict:
     """Attach command-owned event identity, task-tool switches, and Antigravity aliases."""
     prepared = dict(payload)
     prepared["cli_type"] = cli_type
+    # _pid is the process that launched this hook (the harness, or its
+    # launcher), on the daemon fast path and the CLI path alike; the client
+    # keeps a supplied _pid. JS bridges send their own in-process pid, and only
+    # a direct `autorun` call lets the client pick one by walking its parents.
+    prepared.setdefault("_pid", os.getppid())
     switches = {name: os.environ[name] for name in TASK_TOOL_SWITCH_ENV if name in os.environ}
     if switches:
         prepared["autorun_harness_env"] = switches
@@ -885,7 +890,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     if not isinstance(payload, dict):
         return False, 0
 
-    payload.setdefault("_pid", os.getppid())
+    payload.setdefault("_pid", os.getppid())  # same rule as prepare_hook_payload
     # Every supported harness reports the project directory as "cwd". Prefer it
     # over this process's own directory: plan_export.py's project_dir uses this
     # value to pick which project's notes/ receives the archived plan, and the
