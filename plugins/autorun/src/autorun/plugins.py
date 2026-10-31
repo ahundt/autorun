@@ -83,6 +83,7 @@ from .scoped_allow import (
 from .command_detection import (
     command_matches_pattern,
     command_tokens_for,
+    extract_commands,
     shell_command_from_tool_input,
 )
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
@@ -1105,6 +1106,77 @@ def handle_reload(ctx: EventContext) -> str:
     return f"✅ Reloaded {count} integrations from Python defaults + user files"
 
 
+def _command_segments(cmd: str, event_type: str) -> tuple[str, ...]:
+    """The separately run commands of a line, which is what an allow covers.
+
+    A file path, or a line the parser finds no command in, is one segment.
+    """
+    if event_type == "bash":
+        strings = extract_commands(cmd)[1]
+        if strings:
+            return tuple(sorted(strings))
+    return (cmd,)
+
+
+def _hit_segments(cmd: str, segments: tuple[str, ...], pattern: str, ptype: str) -> tuple[str, ...]:
+    """Segments ``pattern`` matches.
+
+    A lone segment is also matched as typed, so a regex or glob that names a
+    wrapper (`regex:^sudo rm`) behaves as it did before segments existed. On a
+    multi-segment line a hit no single segment explains (a regex spanning
+    `&&`) is attributed to none, so no allow can waive it.
+    """
+    if len(segments) == 1:
+        hit = _match(segments[0], pattern, ptype) or _match(cmd, pattern, ptype)
+        return segments if hit else ()
+    return tuple(segment for segment in segments if _match(segment, pattern, ptype))
+
+
+def _segment_grants(ctx: EventContext, cmd: str, segments: tuple[str, ...], call_id: str) -> dict:
+    """Map each segment to the first valid allow covering it (session first)."""
+    grants: dict = {}
+    for scope_name in ("session", "global"):
+        accessor = ScopeAccessor(ctx, scope_name)
+        allows = accessor.get_allowed()
+        for entry in allows:
+            sa = ScopedAllow.from_dict(entry)
+            if not sa.is_valid(call_id):
+                continue
+            for segment in _hit_segments(cmd, segments, sa.pattern, sa.pattern_type):
+                grants.setdefault(segment, (accessor, sa))
+        # Lazy cleanup: remove expired entries on pass-through
+        cleaned = [a for a in allows if ScopedAllow.from_dict(a).is_valid()]
+        if len(cleaned) != len(allows):
+            accessor.set_allowed(cleaned)
+    return grants
+
+
+def _claim_grants(grants, call_id: str) -> list[ScopedAllow] | None:
+    """Spend one use of each distinct grant; None if any was already spent.
+
+    `sa` in each pair is a read from before the lock, so it can only rule a
+    grant out; `claim_allowed` re-reads and decides under the lock.
+    """
+    claimed: list[ScopedAllow] = []
+    done: set = set()
+    for accessor, sa in grants:
+        identity = (accessor.scope, sa.pattern, sa.pattern_type)
+        if identity in done:
+            continue
+        done.add(identity)
+        consumed = accessor.claim_allowed(sa, call_id)
+        if consumed is None:
+            return None
+        claimed.append(consumed)
+    return claimed
+
+
+def _allowed_notice(claimed: list[ScopedAllow]) -> str:
+    return "\n".join(
+        f"Allowed '{grant.pattern}' ({grant.status_label()})" for grant in claimed if grant.status_label() != "permanent"
+    )
+
+
 @app.on("PreToolUse")
 def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     """
@@ -1184,39 +1256,31 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     )
     call_id = fingerprint_call(fingerprint_session, ctx.tool_name, cmd)
 
-    # TIER 1: Allows (short-circuit, first match wins — explicit allow overrides everything)
-    for scope_name in ("session", "global"):
-        accessor = ScopeAccessor(ctx, scope_name)
-        allows = accessor.get_allowed()
-        for a in allows:
-            sa = ScopedAllow.from_dict(a)
-            if not sa.is_valid(call_id):
-                continue  # Expired/exhausted — skip (lazy cleanup)
-            if _match(cmd, sa.pattern, sa.pattern_type):
-                # `sa` is a read from before the lock, so it can only rule the
-                # grant out; `claim_allowed` re-reads and decides under the
-                # lock, and returns None when a concurrent call already spent
-                # the last use.
-                consumed = accessor.claim_allowed(sa, call_id)
-                if consumed is None:
-                    continue
-                label = consumed.status_label()
-                if label != "permanent":
-                    allowed_msg = f"Allowed '{sa.pattern}' ({label})"
-                    return ctx.respond(
-                        "allow",
-                        _prepend_transcript_policy_notice(
-                            transcript_policy_notice,
-                            allowed_msg,
-                        ),
-                    )
-                if transcript_policy_notice:
-                    return ctx.respond("allow", transcript_policy_notice)
-                return ctx.allow()
-        # Lazy cleanup: remove expired entries on pass-through
-        cleaned = [a for a in allows if ScopedAllow.from_dict(a).is_valid()]
-        if len(cleaned) != len(allows):
-            accessor.set_allowed(cleaned)
+    # TIER 1: Allows, per shell segment. An allow covers the segments it
+    # matches and nothing else, so `/ar:ok rm` cannot carry a force-push that
+    # shares its line. When every segment is covered the line is allowed
+    # outright (skipping the cache gate and every block, as before).
+    segments = _command_segments(cmd, event_type)
+    grants = _segment_grants(ctx, cmd, segments, call_id)
+    if all(segment in grants for segment in segments):
+        claimed = _claim_grants(grants.values(), call_id)
+        if claimed is not None:
+            notice = _prepend_transcript_policy_notice(transcript_policy_notice, _allowed_notice(claimed))
+            return ctx.respond("allow", notice) if notice else ctx.allow()
+        # A concurrent call spent a grant between read and claim: decide with
+        # no waivers at all (fail closed).
+        grants = {}
+
+    def waiving_grants(pattern: str, ptype: str) -> list | None:
+        """Grants that cover every segment this block hit, or None."""
+        hits = _hit_segments(cmd, segments, pattern, ptype)
+        if hits and all(hit in grants for hit in hits):
+            return [grants[hit] for hit in hits]
+        return None
+
+    # (decision, message, grants) for block hits an allow waived; they are
+    # claimed only if the line is not denied anyway.
+    waived: list[tuple[str, str, list]] = []
 
     # TIER 1.5: /ar:cache gate — cache-pressure / cache-miss protection.
     # Runs AFTER TIER 1 allows (so `/ar:ok <cmd>` still overrides when armed)
@@ -1243,28 +1307,23 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # Different patterns (e.g. "rm" vs "rm -rf") are distinct and both shown if they match.
     seen: set = set()  # dedup by pattern string — same pattern from ANY tier shows once
 
-    # Session blocks (always deny)
-    for b in ScopeAccessor(ctx, "session").get():
-        if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
+    # Session blocks, then global blocks (always deny)
+    for scope_name, ok_command in (("session", "/ar:ok"), ("global", "/ar:globalok")):
+        for b in ScopeAccessor(ctx, scope_name).get():
+            ptype = b.get("pattern_type", "literal")
+            if not _match(cmd, b["pattern"], ptype):
+                continue
             key = b["pattern"]
-            if key not in seen:
-                seen.add(key)
-                suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
-                allow_hint = f"\n\nTo allow (default 1 use): /ar:ok {b['pattern']}\nScope: [N|5m|permanent] (default 1 use)"
-                if "To allow:" not in suggestion:
-                    suggestion += allow_hint
-                deny_parts.append(suggestion)
-
-    # Global blocks (always deny)
-    for b in ScopeAccessor(ctx, "global").get():
-        if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            key = b["pattern"]
-            if key not in seen:
-                seen.add(key)
-                suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
-                allow_hint = f"\n\nTo allow (default 1 use): /ar:globalok {b['pattern']}\nScope: [N|5m|permanent] (default 1 use)"
-                if "To allow:" not in suggestion:
-                    suggestion += allow_hint
+            if key in seen:
+                continue
+            seen.add(key)
+            suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
+            if "To allow" not in suggestion:
+                suggestion += f"\n\nTo allow (default 1 use): {ok_command} {b['pattern']}\nScope: [N|5m|permanent] (default 1 use)"
+            used = waiving_grants(b["pattern"], ptype)
+            if used:
+                waived.append(("deny", suggestion, used))
+            else:
                 deny_parts.append(suggestion)
 
     # User files + Python defaults (deny or warn per action field)
@@ -1334,7 +1393,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                                     file_val = non_flag_parts[-1] if non_flag_parts else args
                                     redirect_cmd = redirect_cmd.replace("{file}", file_val)
                                 msg += f"\n\nUse instead: `{redirect_cmd}`"
-                            if decision == "warn":
+                            used = waiving_grants(pattern, "literal")
+                            if used:
+                                waived.append((decision, msg, used))
+                            elif decision == "warn":
                                 logger.info(f"Integration warning for '{pattern}': {intg.name}")
                                 warn_parts.append(msg)
                                 delivery = None
@@ -1356,15 +1418,39 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         logger.error(f"Error in check_blocked_commands: {e}")
         # Fail-open: allow command on error (never crash Claude Code)
 
+    # Spend the waiving grants only when the line will actually run. A grant
+    # spent concurrently since the read turns its waived hits back on.
+    claimed_waivers = False
+    if waived and not deny_parts:
+        claimed = _claim_grants([grant for _, _, used in waived for grant in used], call_id)
+        if claimed is None:
+            for decision, msg, _used in waived:
+                if decision == "warn":
+                    warn_parts.append(msg)
+                    warn_deliveries.append(None)
+                else:
+                    deny_parts.append(msg)
+        else:
+            claimed_waivers = True
+            transcript_policy_notice = (
+                _prepend_transcript_policy_notice(transcript_policy_notice, _allowed_notice(claimed)) or None
+            )
+
     # Apply deny-wins: combine all messages, deny takes precedence over warn
     if deny_parts or warn_parts:
         combined = "\n\n".join(p for p in (deny_parts + warn_parts) if p)
-        # Deduplicate "To allow" lines — keep only the last occurrence
-        lines = combined.split("\n")
-        to_allow_idx = [i for i, line in enumerate(lines) if line.strip().startswith("To allow")]
-        if len(to_allow_idx) > 1:
-            lines = [line for i, line in enumerate(lines) if i not in set(to_allow_idx[:-1])]
-            combined = "\n".join(lines)
+        # Every blocked pattern keeps its own "To allow" hint; only exact
+        # repeats are dropped.
+        hints: set[str] = set()
+        lines = []
+        for line in combined.split("\n"):
+            hint = line.strip()
+            if hint.startswith("To allow"):
+                if hint in hints:
+                    continue
+                hints.add(hint)
+            lines.append(line)
+        combined = "\n".join(lines)
         combined = _prepend_transcript_policy_notice(
             transcript_policy_notice,
             combined,
@@ -1399,7 +1485,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if transcript_policy_notice:
         return ctx.respond("allow", transcript_policy_notice)
 
-    return None
+    return ctx.allow() if claimed_waivers else None
 
 
 # ============================================================================
