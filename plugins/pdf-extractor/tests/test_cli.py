@@ -143,6 +143,23 @@ class TestCliMain:
         captured = capsys.readouterr()
         assert 'Extracted 2 PDFs' in captured.out
 
+    def test_directory_extraction_honors_format_and_input_tree(self, tmp_path, echo_backend):
+        """Batch --format txt writes .txt, mirroring each PDF's folder under the output dir."""
+        input_dir = tmp_path / 'input'
+        output_dir = tmp_path / 'output'
+        (input_dir / 'a').mkdir(parents=True)
+        (input_dir / 'a' / 'report.pdf').write_bytes(b'%PDF-1.4 fake pdf')
+
+        with patch.object(sys, 'argv', [
+            'extract-pdfs', str(input_dir), str(output_dir),
+            '--format', 'txt', '--backends', echo_backend
+        ]):
+            main()
+
+        assert sorted(p.relative_to(output_dir).as_posix() for p in output_dir.rglob('*.*')) == [
+            'a/report.txt'
+        ]
+
 
 class TestCliArguments:
     """Tests for CLI argument parsing."""

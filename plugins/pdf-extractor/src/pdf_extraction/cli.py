@@ -166,8 +166,8 @@ Examples:
         print(f"Output directory: {output_dir}")
         print(f"Backends: {', '.join(backends)}")
 
-        results = pdf_to_txt(input_path, output_dir,
-                             resume=not args.no_resume, backends=backends)
+        results = pdf_to_txt(input_path, output_dir, resume=not args.no_resume,
+                             backends=backends, output_format=args.format)
         print(f"\nExtracted {len(results)} PDFs to {output_dir}")
 
 

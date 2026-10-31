@@ -4,6 +4,7 @@ import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import pytest
 from pdf_extraction.extractors import extract_single_pdf, pdf_to_txt
 
 
@@ -214,5 +215,30 @@ class TestPdfToTxt:
                 return_metadata=True
             )
 
-            # Should find the nested PDF
-            assert 'nested.pdf' in metadata
+            # Should find the nested PDF, keyed by its path under input_dir
+            assert os.path.join('subdir', 'nested.pdf') in metadata
+
+    @pytest.mark.parametrize('resume', [True, False])
+    def test_same_name_in_different_subdirectories_gets_separate_outputs(
+        self, tmp_path, echo_backend, resume
+    ):
+        """a/report.pdf and b/report.pdf must both be extracted, neither skipped nor overwritten."""
+        input_dir = tmp_path / 'input'
+        output_dir = tmp_path / 'output'
+        for sub in ('a', 'b'):
+            (input_dir / sub).mkdir(parents=True)
+            (input_dir / sub / 'report.pdf').write_bytes(b'%PDF-1.4 fake pdf')
+
+        files, metadata = pdf_to_txt(
+            str(input_dir), str(output_dir),
+            resume=resume, backends=[echo_backend], return_metadata=True
+        )
+
+        assert {pdf: meta['backend_used'] for pdf, meta in metadata.items()} == {
+            os.path.join('a', 'report.pdf'): echo_backend,
+            os.path.join('b', 'report.pdf'): echo_backend,
+        }
+        for sub in ('a', 'b'):
+            output = output_dir / sub / 'report.md'
+            assert output.read_text() == str(input_dir / sub / 'report.pdf')
+        assert sorted(files) == [str(output_dir / sub / 'report.md') for sub in ('a', 'b')]

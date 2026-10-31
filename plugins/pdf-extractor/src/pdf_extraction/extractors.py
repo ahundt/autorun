@@ -100,9 +100,12 @@ def extract_single_pdf(input_file: str, output_file: str, backends: list = None)
 
 
 def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empty: bool = False,
-               backends: list = None, return_metadata: bool = False):
+               backends: list = None, return_metadata: bool = False, output_format: str = 'md'):
     """
     Convert all PDF files in input_dir to text files and save them in output_dir.
+
+    Each output mirrors its PDF's path under input_dir, so a/report.pdf becomes
+    output_dir/a/report.md and never collides with b/report.pdf.
 
     Args:
         input_dir: Path to the directory containing PDF files.
@@ -112,10 +115,12 @@ def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empt
         backends: The tools to use for PDF to text conversion.
             If None, auto-detects based on GPU availability.
         return_metadata: If True, returns (txt_files, metadata_dict).
+        output_format: Output file extension, 'md' or 'txt'.
 
     Returns:
         If return_metadata=False: List of paths to the output text files
-        If return_metadata=True: Tuple of (txt_files list, metadata dict)
+        If return_metadata=True: Tuple of (txt_files list, metadata dict keyed by
+            each PDF's path relative to input_dir)
     """
     input_dir = os.path.expanduser(input_dir)
     output_dir = os.path.expanduser(output_dir)
@@ -140,14 +145,14 @@ def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empt
     extraction_metadata = {}
 
     for pdf_file in tqdm(pdf_files, desc="Extracting PDFs"):
-        # Use .md extension by default (markdown output)
-        txt_file = os.path.splitext(os.path.basename(pdf_file))[0] + '.md'
-        txt_path = os.path.join(output_dir, txt_file)
+        # Key outputs and metadata by the path under input_dir, not the basename:
+        # os.walk recurses, so a/report.pdf and b/report.pdf share a basename.
+        pdf_relpath = os.path.relpath(pdf_file, input_dir)
+        txt_path = os.path.join(output_dir, os.path.splitext(pdf_relpath)[0] + '.' + output_format)
         txt_files.append(txt_path)
 
         # Initialize metadata for this PDF
-        pdf_basename = os.path.basename(pdf_file)
-        extraction_metadata[pdf_basename] = {
+        extraction_metadata[pdf_relpath] = {
             'backend_used': None,
             'extraction_time_seconds': None,
             'output_size_bytes': None,
@@ -161,8 +166,8 @@ def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empt
             if os.path.exists(txt_path) and resume:
                 if os.path.getsize(txt_path) > 0:
                     print(f"Skipping {pdf_file} because {txt_path} already exists.")
-                    extraction_metadata[pdf_basename]['success'] = True
-                    extraction_metadata[pdf_basename]['backend_used'] = 'cached'
+                    extraction_metadata[pdf_relpath]['success'] = True
+                    extraction_metadata[pdf_relpath]['backend_used'] = 'cached'
                     continue
                 else:
                     print(f"Converting {pdf_file} because {txt_path} exists but is empty.")
@@ -172,7 +177,7 @@ def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empt
             result = extract_single_pdf(pdf_file, txt_path, backends=backends)
 
             # Copy result to extraction_metadata
-            meta = extraction_metadata[pdf_basename]
+            meta = extraction_metadata[pdf_relpath]
             meta['backend_used'] = result['backend_used']
             meta['extraction_time_seconds'] = result['extraction_time_seconds']
             meta['output_size_bytes'] = result['output_size_bytes']
@@ -183,7 +188,7 @@ def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empt
 
         except Exception as e:
             print(f"Error converting {pdf_file}: {e}")
-            extraction_metadata[pdf_basename]['error'] = str(e)
+            extraction_metadata[pdf_relpath]['error'] = str(e)
 
     if return_metadata:
         return txt_files, extraction_metadata
