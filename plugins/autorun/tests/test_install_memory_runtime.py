@@ -543,15 +543,29 @@ def test_the_retired_plugin_method_still_resolves(present, expected):
 def test_the_disable_switch_for_the_context_guidance_block_has_a_reader(monkeypatch):
     """A documented env var that nothing consults is worse than no switch: the
     user sets it and the workaround keeps running with nothing to say why."""
-    from autorun.installer.memory import CONTEXT_GUIDANCE_FLAG, context_guidance_enabled
+    from autorun.installer.steps import regions_for
+    from autorun.installer.traversal import Context
+    from autorun.platforms import PLATFORMS
 
-    assert context_guidance_enabled() is True, "a workaround is on until turned off"
+    claude = PLATFORMS["claude"]
+    plugin = Path(__file__).resolve().parents[1]
+    ctx = Context(
+        marketplace_root=plugin.parents[1],
+        plugin_dirs=(plugin,),
+        settings={"_guidance": {"claude": "guidance"}},
+    )
+
+    def enabled() -> bool:
+        return bool(regions_for(claude, ctx)[0].body)
+
+    monkeypatch.delenv(claude.memory_workaround_flag, raising=False)
+    assert enabled() is True, "a workaround is on until turned off"
     for token in ("false", "0", "never"):
-        monkeypatch.setenv(CONTEXT_GUIDANCE_FLAG, token)
-        assert context_guidance_enabled() is False, token
+        monkeypatch.setenv(claude.memory_workaround_flag, token)
+        assert enabled() is False, token
     for token in ("true", "1", "auto", "always"):
-        monkeypatch.setenv(CONTEXT_GUIDANCE_FLAG, token)
-        assert context_guidance_enabled() is True, token
+        monkeypatch.setenv(claude.memory_workaround_flag, token)
+        assert enabled() is True, token
 
 
 def test_the_daemon_restart_goes_through_the_installing_interpreter(monkeypatch):

@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from autorun.core import AI_ECHO_CHANNEL, EventContext  # noqa: E402
-from autorun.installer.memory import Block, context_guidance_enabled, splice, strip  # noqa: E402
+from autorun.installer.memory import Block, splice, strip  # noqa: E402
 
 START = "<!-- autorun:audit-test:start -->"
 END = "<!-- autorun:audit-test:end -->"
@@ -146,10 +146,21 @@ def test_the_54673_workaround_key_exists_in_config():
 def test_the_54673_workaround_can_be_disabled_via_config(monkeypatch):
     """Env-only meant it could not be disabled for a hook subprocess."""
     from autorun.config import CONFIG
+    from autorun.installer.steps import regions_for
+    from autorun.installer.traversal import Context
+    from autorun.platforms import PLATFORMS
+
     key = "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED"
+    plugin = Path(__file__).resolve().parents[1]
+    ctx = Context(
+        marketplace_root=plugin.parents[1],
+        plugin_dirs=(plugin,),
+        settings={"_guidance": {"claude": "guidance"}},
+    )
     monkeypatch.delenv(key, raising=False)
+    assert regions_for(PLATFORMS["claude"], ctx)[0].body == "guidance"
     monkeypatch.setitem(CONFIG, key, False)
-    assert context_guidance_enabled() is False
+    assert regions_for(PLATFORMS["claude"], ctx)[0].body == "", "an empty body strips it"
 
 
 def test_every_bug_workaround_key_in_config_is_read_by_the_code():

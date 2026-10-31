@@ -637,8 +637,13 @@ def regions_for(
     if not guidance and not removing:
         return ()
     flag = str(getattr(platform, "memory_workaround_flag", "") or "")
-    if flag and not removing and not settings.workaround_enabled(flag):
-        return ()
+    if flag and not settings.workaround_enabled(flag):
+        # A bug workaround's gate (Claude's: anthropics/claude-code#54673,
+        # AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED;
+        # delete the platform's memory_workaround_flag when fixed). Off now,
+        # maybe not when an earlier install wrote the block: an empty body
+        # strips it, where returning nothing left it in place for good.
+        guidance = ""
     slug = str(getattr(platform, "memory_sentinel_slug", "") or "")
     return (Region(base / filename, memory.Block(slug), guidance),) if slug else ()
 
@@ -726,6 +731,7 @@ def apply_regions(regions: Iterable[Region], mode: Mode) -> list[str]:
 
     ``PREVIEW`` reports and writes nothing, the same contract the owned-tree
     walk keeps, so ``--status`` and ``--dry-run`` remain the same code path.
+    An empty body means the block should not be there, in every mode.
     """
     notes: list[str] = []
     for region in regions:
@@ -733,8 +739,11 @@ def apply_regions(regions: Iterable[Region], mode: Mode) -> list[str]:
             present = region.path.is_file() and memory.bounds(
                 region.path.read_text(encoding="utf-8"), region.block
             ) is not None
-            notes.append(f"{'present' if present else 'would add'} {region.describe()}")
-        elif mode is Mode.UNINSTALL:
+            if region.body:
+                notes.append(f"{'present' if present else 'would add'} {region.describe()}")
+            elif present:
+                notes.append(f"would remove {region.describe()}")
+        elif mode is Mode.UNINSTALL or not region.body:
             if memory.strip(region.path, region.block):
                 notes.append(f"removed {region.describe()}")
         elif memory.splice(region.path, region.body, region.block):

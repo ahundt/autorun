@@ -24,7 +24,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from autorun.installer.memory import Block, context_guidance_enabled  # noqa: E402
+from autorun.installer.memory import Block  # noqa: E402
 from autorun.installer.steps import apply_regions, regions_for  # noqa: E402
 from autorun.installer.traversal import Context, Mode  # noqa: E402
 from autorun.platforms import PLATFORMS  # noqa: E402
@@ -66,7 +66,10 @@ def strip_platform_memory(platform, config_dir):
     return bool(apply_regions(regions, Mode.UNINSTALL))
 
 
-_claude_memory_workaround_enabled = context_guidance_enabled
+def _claude_memory_workaround_enabled() -> bool:
+    """Whether an install would write Claude's block, asked as install asks."""
+    regions = _regions(PLATFORMS["claude"], REAL_PLUGIN_DIR, REAL_PLUGIN_DIR / "unused")
+    return bool(regions and regions[0].body)
 
 
 @pytest.fixture(params=MEMORY_PLATFORMS)
@@ -277,3 +280,22 @@ def test_memory_workaround_accepts_the_shared_enable_tokens(monkeypatch, value):
         value,
     )
     assert _claude_memory_workaround_enabled() is True
+
+
+def test_turning_the_workaround_off_removes_the_block_an_install_wrote(
+    tmp_path, monkeypatch
+):
+    """regions_for returned nothing once the flag was off, so the block an
+    earlier install wrote into CLAUDE.md was never removed."""
+    key = "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED"
+    monkeypatch.delenv(key, raising=False)
+    claude = PLATFORMS["claude"]
+    memory = tmp_path / claude.memory_filename
+    memory.write_text("# Mine\n", encoding="utf-8")
+    assert install_platform_memory(claude, REAL_PLUGIN_DIR, tmp_path) is True
+    assert platform_memory_sentinels(claude)[0] in memory.read_text(encoding="utf-8")
+
+    monkeypatch.setenv(key, "false")
+    install_platform_memory(claude, REAL_PLUGIN_DIR, tmp_path)
+
+    assert memory.read_text(encoding="utf-8") == "# Mine\n"
