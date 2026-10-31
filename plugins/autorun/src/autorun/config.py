@@ -611,8 +611,6 @@ CONFIG = {
     "task_pause_default_ttl_seconds": TASK_PAUSE_DEFAULT_TTL_SECONDS,
     "task_pause_generation_token_bytes": TASK_PAUSE_GENERATION_TOKEN_BYTES,
     # ─── Stage 1: Initial Work ────────────────────────────────────────────────
-    # What we inject to AI (descriptive text explaining what Stage 1 is)
-    "stage1_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan",
     # What AI outputs when Stage 1 complete (ALL-CAPS confirmation)
     "stage1_message": "AUTORUN_INITIAL_TASKS_COMPLETED",
     # What we inject to guide AI through Stage 1 (detailed methodology)
@@ -625,9 +623,7 @@ CONFIG = {
 6. Execute the task with full tool permissions (Bash, Edit, Write, etc.)
 7. After EVERY step, say "Wait," and execute the Wait Process""",
     # ─── Stage 2: Critical Evaluation ─────────────────────────────────────────
-    # What we inject to AI (descriptive text - same as output for Stage 2)
-    "stage2_completion": "critically evaluating previous work and continuing tasks as needed",
-    # What AI outputs when Stage 2 complete (same as completion for Stage 2)
+    # What AI outputs when Stage 2 complete (ALL-CAPS confirmation)
     "stage2_message": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
     # What we inject to guide AI through Stage 2 (detailed methodology)
     "stage2_instruction": """
@@ -638,8 +634,6 @@ CONFIG = {
 5. Choose optimal solution with compelling justification
 6. If errors found, execute corrective steps immediately""",
     # ─── Stage 3: Final Verification ──────────────────────────────────────────
-    # What we inject to AI (compound descriptive text explaining Stage 3)
-    "stage3_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan AND critically evaluated own work and verified all tasks are completed",
     # What AI outputs when Stage 3 complete (ALL-CAPS confirmation)
     "stage3_message": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
     # What we inject to guide AI through Stage 3 (detailed methodology)
@@ -667,10 +661,6 @@ CONFIG = {
     # all | user | subagent. Both Claude Code and Codex identify subagent hook
     # calls with agent_id; agent_type alone is not a reliable discriminator.
     "task_staleness_agent_scope": "all",
-    # Backward-compatible fixed-threshold aliases. New runtime decisions use
-    # the explicit two-phase keys above.
-    "task_staleness_threshold": 50,
-    "task_staleness_no_tasks_threshold": 25,
     # Injected when threshold crossed. {threshold} replaced at runtime.
     # V4 strings: no emoji, complete tool syntax, dependency wiring, disable instruction.
     # Warn-then-deny enforcement: 2 PostToolUse levels only (1st + 2nd).
@@ -891,9 +881,6 @@ CONFIG = {
         "prime": 4.5,
     },
     # ─── Plan Acceptance ───────────────────────────────────────────────────
-    # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
-    # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py
-    "plan_accepted_marker": "PLAN ACCEPTED",
     "tdd_scaffolding_message": (
         "\nTDD SCAFFOLDING REQUIRED: you must create TDD and EXEC tasks before writing ANY implementation code: "
         '1. {{task_create}}({{task_title}}="[TDD] Step N: [test description]"): one per plan step '
@@ -975,7 +962,6 @@ CONFIG = {
     "AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUND_ENABLED": True,
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,
-    "monitor_stop_delay_seconds": 300,
     "stage3_countdown_calls": 5,
     # ─── Injection Template ───────────────────────────────────────────────────
     "injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
@@ -1004,26 +990,6 @@ This system ensures thorough, high-quality work through a structured three-stage
     * When Stage 3 is complete, output **{stage3_message}** for final completion
 8.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM:** Only when all three stages are complete and verified, output **{stage3_message}** to stop the system
 9.  **FILE CREATION POLICY:** {policy_instructions}""",
-    # ─── Recheck Template ─────────────────────────────────────────────────────
-    "recheck_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.
-
-Original Task: {activation_prompt}
-
-CRITICAL VERIFICATION INSTRUCTIONS:
-1. Carefully review ALL aspects of the original task above
-2. Verify EVERY requirement has been fully met and tested
-3. Check for any incomplete, partial, or missed elements
-4. Test any implemented functionality thoroughly
-5. Double-check your work against the original requirements
-6. Verify all files are in their correct final state
-7. Ensure no temporary or incomplete work remains
-{verification_requirements}
-
-Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {stage3_message}
-
-If ANY aspect is incomplete, uncertain, or needs additional work, continue until truly finished.
-
-This is verification attempt #{recheck_count} of {max_recheck_count}.""",
     # ─── Forced Compliance Template ───────────────────────────────────────────
     "forced_compliance_template": """AUTORUN FORCED COMPLIANCE OVERRIDE: System has detected prolonged verification cycles.
 
@@ -1160,7 +1126,6 @@ After every step and substep you must say "Wait," and execute this sequential th
     # which is exactly the kind of difference this key exists to absorb.
     "shared_agents_dir": "~/.agents",
     "shared_agents_skills_subdir": "skills",
-    "shared_agents_plugins_subdir": "plugins",
     # Old name -> replacement name for autorun-owned shared skill directories.
     # Install removes an old directory only after publishing its replacement
     # and rechecking the ownership marker under the shared install lock.

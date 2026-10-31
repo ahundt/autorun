@@ -522,12 +522,6 @@ class TestTemplateContent:
         for component in critical:
             assert component in template, f"Missing critical component: {component}"
 
-    def test_recheck_template_has_verification_components(self):
-        """Recheck template has verification-specific components."""
-        template = CONFIG["recheck_template"]
-        assert "AUTORUN TASK VERIFICATION" in template
-        assert "verification attempt" in template.lower() or "recheck_count" in template.lower()
-
     def test_stage_messages_are_distinct(self):
         """All three stage messages are different strings."""
         assert CONFIG["stage1_message"] != CONFIG["stage2_message"]

@@ -18,21 +18,18 @@ def test_three_stage_confirmations():
     """Test three-stage confirmation markers are properly configured with DESCRIPTIVE strings"""
     # Stage 1 - dual-key pattern
     assert "stage1_instruction" in CONFIG, "Missing stage1_instruction"
-    assert "stage1_completion" in CONFIG, "Missing stage1_completion"
     assert "stage1_message" in CONFIG, "Missing stage1_message"
     assert CONFIG["stage1_message"] == "AUTORUN_INITIAL_TASKS_COMPLETED", \
         f"Stage 1 message mismatch: {CONFIG['stage1_message']}"
 
     # Stage 2 - dual-key pattern
     assert "stage2_instruction" in CONFIG, "Missing stage2_instruction"
-    assert "stage2_completion" in CONFIG, "Missing stage2_completion"
     assert "stage2_message" in CONFIG, "Missing stage2_message"
     assert CONFIG["stage2_message"] == "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED", \
         f"Stage 2 message mismatch: {CONFIG['stage2_message']}"
 
     # Stage 3 - dual-key pattern
     assert "stage3_instruction" in CONFIG, "Missing stage3_instruction"
-    assert "stage3_completion" in CONFIG, "Missing stage3_completion"
     assert "stage3_message" in CONFIG, "Missing stage3_message"
     assert CONFIG["stage3_message"] == "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY", \
         f"Stage 3 message mismatch: {CONFIG['stage3_message']}"
@@ -136,27 +133,6 @@ def test_injection_template():
 
     print("✅ Injection template contains all three-stage system components")
 
-def test_recheck_template():
-    """Test recheck template matches expected format"""
-    template = CONFIG["recheck_template"]
-
-    # Check for key recheck phrases
-    required_phrases = [
-        "AUTORUN TASK VERIFICATION",
-        "CRITICAL VERIFICATION INSTRUCTIONS",
-        "verification attempt #{recheck_count} of {max_recheck_count}"
-    ]
-
-    for phrase in required_phrases:
-        assert phrase in template, f"Missing required phrase in recheck template: '{phrase}'"
-
-    # Check for placeholders
-    assert "{activation_prompt}" in template, "Missing activation_prompt placeholder"
-    assert "{recheck_count}" in template, "Missing recheck_count placeholder"
-    assert "{max_recheck_count}" in template, "Missing max_recheck_count placeholder"
-
-    print("✅ Recheck template matches expected format")
-
 def test_command_mappings():
     """Test command mappings are correctly configured"""
     expected_mappings = {
@@ -220,7 +196,6 @@ def test_new_ar_command_mappings():
 def test_config_values():
     """Test configuration values are correct"""
     assert CONFIG["max_recheck_count"] == 3, f"max_recheck_count should be 3, got {CONFIG['max_recheck_count']}"
-    assert CONFIG["monitor_stop_delay_seconds"] == 300, f"monitor_stop_delay_seconds should be 300, got {CONFIG['monitor_stop_delay_seconds']}"
 
     print("✅ All configuration values are correct")
 
@@ -421,7 +396,6 @@ def main():
     test_policy_descriptions()
     test_policy_blocked_messages()
     test_injection_template()
-    test_recheck_template()
     test_command_mappings()
     test_new_ar_command_mappings()
     test_config_values()

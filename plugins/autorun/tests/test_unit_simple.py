@@ -47,7 +47,6 @@ class TestConfiguration:
         """Test three-stage confirmation markers are present and correct"""
         # Stage 1 - dual-key pattern
         assert "stage1_instruction" in CONFIG
-        assert "stage1_completion" in CONFIG  # Text injected TO AI
         assert "stage1_message" in CONFIG  # AI outputs BACK
         assert isinstance(CONFIG["stage1_message"], str)
         assert len(CONFIG["stage1_message"]) > 0
@@ -55,7 +54,6 @@ class TestConfiguration:
 
         # Stage 2 - dual-key pattern
         assert "stage2_instruction" in CONFIG
-        assert "stage2_completion" in CONFIG  # Text injected TO AI
         assert "stage2_message" in CONFIG  # AI outputs BACK
         assert isinstance(CONFIG["stage2_message"], str)
         assert len(CONFIG["stage2_message"]) > 0
@@ -63,7 +61,6 @@ class TestConfiguration:
 
         # Stage 3 - dual-key pattern
         assert "stage3_instruction" in CONFIG
-        assert "stage3_completion" in CONFIG  # Text injected TO AI
         assert "stage3_message" in CONFIG  # AI outputs BACK
         assert isinstance(CONFIG["stage3_message"], str)
         assert len(CONFIG["stage3_message"]) > 0
@@ -118,18 +115,6 @@ class TestConfiguration:
             "{stage3_message}",  # Updated: AI output confirmation
             "{policy_instructions}",
         ]
-
-        for placeholder in required_placeholders:
-            assert placeholder in template, f"Missing placeholder: {placeholder}"
-
-    @pytest.mark.unit
-    def test_recheck_template_present(self):
-        """Test recheck template is present"""
-        assert "recheck_template" in CONFIG
-        template = CONFIG["recheck_template"]
-
-        # Check for required placeholders
-        required_placeholders = ["{activation_prompt}", "{recheck_count}", "{max_recheck_count}"]
 
         for placeholder in required_placeholders:
             assert placeholder in template, f"Missing placeholder: {placeholder}"

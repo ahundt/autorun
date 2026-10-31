@@ -7,7 +7,6 @@ Covers 10 task lifecycle bugs (see notes/2026_03_11_task_system_architecture_and
 - Fix 5: is_premature_stop() docstring documents chain ordering mitigation
 - Fix 6: No standalone helper functions; get_plan_approval_injection() returns str
 - Fix 7: PlanNotifyConfig @dataclass load/save roundtrip
-- Fix 9: stage2_completion lowercase (was duplicate of ALL-CAPS stage2_message)
 
 TDD approach: tests written BEFORE implementation to verify failures, then fixes applied.
 """
@@ -116,17 +115,6 @@ def isolated_session_manager(tmp_path):
     yield new_manager
 
     _reset_for_testing()
-
-
-# --- Fix 9: stage2_completion must differ from stage2_message ---
-
-
-class TestFix9Stage2Completion:
-    def test_stage2_completion_differs_from_stage2_message(self):
-        assert CONFIG["stage2_completion"] != CONFIG["stage2_message"], "stage2_completion should be a lowercase descriptive, not identical to stage2_message"
-
-    def test_stage2_completion_is_lowercase(self):
-        assert not CONFIG["stage2_completion"].isupper(), "stage2_completion should be lowercase descriptive text"
 
 
 # --- Fix 1: BLOCKING_STATUSES renamed to NON_BLOCKING_STATUSES ---

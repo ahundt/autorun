@@ -98,6 +98,32 @@ def test_an_unknown_key_is_ignored_rather_than_accepted(config_home):
     assert merged["log_file_backup_count"] == 4
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("stage1_completion", "x"),
+        ("stage2_completion", "x"),
+        ("stage3_completion", "x"),
+        ("recheck_template", "x"),
+        ("plan_accepted_marker", "x"),
+        ("monitor_stop_delay_seconds", 60),
+        ("task_staleness_threshold", 30),
+        ("task_staleness_no_tasks_threshold", 30),
+        ("shared_agents_plugins_subdir", "x"),
+    ],
+)
+def test_a_key_nothing_reads_is_not_a_setting(config_home, key, value):
+    """These were declared, accepted from the file, and read only by tests.
+
+    `autorun --status` reported the file's value while nothing outside
+    config.py consulted it (task_staleness_threshold only when
+    task_staleness_subsequent_threshold was itself invalid).
+    """
+    _write(config_home, {key: value})
+    merged = config_module.apply_user_config(dict(config_module.default_config()))
+    assert key not in merged
+
+
 def test_a_wrong_type_is_declined(config_home):
     """A string where an int belongs must not reach arithmetic later."""
     _write(config_home, {"log_file_max_bytes": "quite large"})

@@ -265,7 +265,6 @@ class TestCONFIGStructure:
     def test_timing_values(self):
         """Test timing configuration values"""
         assert CONFIG["max_recheck_count"] == 3
-        assert CONFIG["monitor_stop_delay_seconds"] == 300
         assert CONFIG["stage3_countdown_calls"] == 5
 
 
@@ -281,13 +280,6 @@ class TestInjectionTemplates:
             "{stage3_instruction}", "{stage3_message}",
             "{emergency_stop}", "{policy_instructions}"
         ]
-        for placeholder in required:
-            assert placeholder in template, f"Missing {placeholder}"
-
-    def test_recheck_template_has_placeholders(self):
-        """Test recheck template has required placeholders"""
-        template = CONFIG["recheck_template"]
-        required = ["{activation_prompt}", "{recheck_count}", "{max_recheck_count}"]
         for placeholder in required:
             assert placeholder in template, f"Missing {placeholder}"
 

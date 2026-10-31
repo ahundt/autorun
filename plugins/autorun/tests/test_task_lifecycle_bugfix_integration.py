@@ -201,7 +201,7 @@ class TestPlanAcceptanceDualNotification:
 
         # Counter should be pre-set to threshold - 2 (side effect still works)
         from autorun.config import CONFIG
-        threshold = CONFIG.get("task_staleness_threshold", 25)
+        threshold = CONFIG["task_staleness_subsequent_threshold"]
         assert ctx.tool_calls_since_task_update == max(0, threshold - 2), \
             f"Staleness counter should be {max(0, threshold - 2)}, got {ctx.tool_calls_since_task_update}"
 

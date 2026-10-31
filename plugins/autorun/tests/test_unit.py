@@ -106,22 +106,6 @@ class TestConfiguration:
         for placeholder in required_placeholders:
             assert placeholder in template, f"Missing placeholder: {placeholder}"
 
-    @pytest.mark.unit
-    def test_recheck_template_present(self):
-        """Test recheck template is present"""
-        assert "recheck_template" in CONFIG
-        template = CONFIG["recheck_template"]
-
-        # Check for required placeholders
-        required_placeholders = [
-            "{activation_prompt}",
-            "{recheck_count}",
-            "{max_recheck_count}"
-        ]
-
-        for placeholder in required_placeholders:
-            assert placeholder in template, f"Missing placeholder: {placeholder}"
-
 
 class TestCommandHandlers:
     """Test command handler functions.
