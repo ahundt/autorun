@@ -3554,7 +3554,7 @@ class AutorunDaemon:
             self._daemon_lock = None
 
         # Remove lock and flock files
-        for lock_file in [LOCK_PATH, LOCK_PATH.with_suffix(".flock")]:
+        for lock_file in [LOCK_PATH, ipc.daemon_flock_path(LOCK_PATH)]:
             try:
                 if lock_file.exists():
                     lock_file.unlink()
@@ -3576,7 +3576,7 @@ class AutorunDaemon:
         """
         from filelock import FileLock, Timeout
 
-        flock_path = LOCK_PATH.with_suffix(".flock")
+        flock_path = ipc.daemon_flock_path(LOCK_PATH)
         try:
             self._daemon_lock = FileLock(str(flock_path), timeout=0)
             self._daemon_lock.acquire()

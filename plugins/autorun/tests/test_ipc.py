@@ -263,6 +263,38 @@ class TestIPCCodeQuality:
                 assert 'HAS_UNIX_SOCKETS' in context or 'hasattr' in context, \
                     f"socket.AF_UNIX at line {i+1} not guarded by HAS_UNIX_SOCKETS"
 
+    # Not yet routed through ipc; remove a name once its module is migrated.
+    _LOCK_SPELLINGS_NOT_YET_MIGRATED = {"__main__.py"}
+
+    def test_daemon_lock_paths_are_spelled_only_in_ipc(self):
+        """The daemon's flock and restart lock are named once.
+
+        A client that probes one spelling while the daemon holds another sees
+        no daemon and spawns a competitor, so every module asks ipc.
+        """
+        from autorun import ipc
+
+        package = Path(ipc.__file__).parent
+        offenders = [
+            f"{path.relative_to(package)}: {spelling}"
+            for path in sorted(package.rglob("*.py"))
+            if str(path.relative_to(package)) not in {"ipc.py"} | self._LOCK_SPELLINGS_NOT_YET_MIGRATED
+            for spelling in ('"daemon-restart.lock"', 'with_suffix(".flock")', "with_suffix('.flock')")
+            if spelling in path.read_text(encoding="utf-8")
+        ]
+        assert not offenders, offenders
+
+    def test_daemon_lock_paths_follow_the_configured_home(self, monkeypatch, tmp_path):
+        """Derived on each call, so a redirected home redirects the locks too."""
+        from autorun import ipc
+
+        monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", tmp_path / "daemon.lock")
+
+        assert ipc.daemon_flock_path() == tmp_path / "daemon.flock"
+        assert ipc.daemon_flock_path(tmp_path / "x" / "daemon.lock") == tmp_path / "x" / "daemon.flock"
+        assert ipc.daemon_restart_lock_path() == tmp_path / "daemon-restart.lock"
+
 class TestDetachedSpawnKwargs:
     """The daemon must survive the process that starts it, on both platforms.
 

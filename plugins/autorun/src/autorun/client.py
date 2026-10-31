@@ -671,8 +671,7 @@ def run_client() -> int:
             try:
                 from filelock import FileLock, Timeout as FlockTimeout
 
-                restart_lock_path = ipc.AUTORUN_CONFIG_DIR / "daemon-restart.lock"
-                restart_probe = FileLock(str(restart_lock_path), timeout=0)
+                restart_probe = FileLock(str(ipc.daemon_restart_lock_path()), timeout=0)
                 restart_probe.acquire()
                 restart_probe.release()
                 # restart_lock is free — no restart in progress
@@ -685,8 +684,7 @@ def run_client() -> int:
             if not restart_in_progress:
                 # Check 2: Is a daemon alive (holding flock)?
                 try:
-                    flock_path = ipc.AUTORUN_LOCK_PATH.with_suffix(".flock")
-                    daemon_probe = FileLock(str(flock_path), timeout=0)
+                    daemon_probe = FileLock(str(ipc.daemon_flock_path()), timeout=0)
                     daemon_probe.acquire()
                     daemon_probe.release()
                     # Flock is free — no daemon holds it

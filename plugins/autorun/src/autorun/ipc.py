@@ -54,6 +54,19 @@ AUTORUN_SOCKET_PATH = AUTORUN_CONFIG_DIR / "daemon.sock"
 AUTORUN_PORT_FILE = AUTORUN_CONFIG_DIR / "daemon.port"
 AUTORUN_LOCK_PATH = AUTORUN_CONFIG_DIR / "daemon.lock"
 AUTORUN_LOG_FILE = AUTORUN_CONFIG_DIR / "daemon.log"
+
+
+# Functions rather than constants: both are derived from the paths above, and a
+# redirected home (tests, sandboxes) patches those, so a frozen copy would
+# point the flock and the PID record at different directories.
+def daemon_flock_path(lock_path: Path | None = None) -> Path:
+    """The lock a live daemon holds for its lifetime, beside its PID record."""
+    return (lock_path or AUTORUN_LOCK_PATH).with_suffix(".flock")
+
+
+def daemon_restart_lock_path() -> Path:
+    """The lock held while `autorun --restart-daemon` replaces the daemon."""
+    return AUTORUN_CONFIG_DIR / "daemon-restart.lock"
 PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
 
 # Backward-compatible aliases (used internally by ipc functions below)

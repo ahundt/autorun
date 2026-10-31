@@ -40,7 +40,7 @@ from filelock import FileLock, Timeout
 from . import ipc
 
 LOCK_PATH = ipc.AUTORUN_LOCK_PATH
-RESTART_LOCK_PATH = ipc.AUTORUN_CONFIG_DIR / "daemon-restart.lock"
+RESTART_LOCK_PATH = ipc.daemon_restart_lock_path()
 
 
 def _pid_matches_src(pid: int, src_dir: Path) -> bool:
@@ -95,7 +95,7 @@ def get_daemon_pid(
             return pid
 
     # Fallback: daemon.flock exists but daemon.lock missing — find by cmdline
-    flock_path = LOCK_PATH.with_suffix('.flock')
+    flock_path = ipc.daemon_flock_path(LOCK_PATH)
     if flock_path.exists():
         for proc in psutil.process_iter(['pid', 'cmdline']):
             try:
