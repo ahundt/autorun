@@ -559,6 +559,16 @@ def flavors() -> tuple[str, ...]:
     return tuple(sorted(CUSTOM_HARNESS_FLAVOR_ALIASES))
 
 
+def flavor_base(flavor: str) -> str:
+    """The registered harness a custom ``flavor`` is cloned from.
+
+    A custom ``claude`` flavor is the documented portable, no-hook layout:
+    Claude-format markdown commands plus AGENTS.md. ForgeCode is the registry
+    entry with exactly that install shape; every other flavor is itself.
+    """
+    return "forgecode" if flavor == "claude" else flavor
+
+
 def synthesize(custom: CustomHarness) -> object:
     """Turn a spec into a real ``Platform``, cloned from the flavor it names.
 
@@ -577,10 +587,7 @@ def synthesize(custom: CustomHarness) -> object:
 
     from ..platforms import PLATFORMS
 
-    # A custom ``claude`` flavor is the documented portable, no-hook layout:
-    # Claude-format markdown commands plus AGENTS.md. ForgeCode is the existing
-    # registry entry with exactly that install shape.
-    base = PLATFORMS["forgecode" if custom.flavor == "claude" else custom.flavor]
+    base = PLATFORMS[flavor_base(custom.flavor)]
     return replace(
         base,
         name=custom.name,
@@ -600,8 +607,7 @@ def steps_for_custom(
     One entry, so ``targets()`` finds the synthesized platform without learning
     that custom harnesses exist.
     """
-    flavor = "forgecode" if custom.flavor == "claude" else custom.flavor
-    return {**steps, custom.name: steps.get(flavor, ())}
+    return {**steps, custom.name: steps.get(flavor_base(custom.flavor), ())}
 
 
 #: Installing the `autorun` and `autorun-install` executables as a uv tool, so

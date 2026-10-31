@@ -276,7 +276,7 @@ def _guidance(
             continue
         body = source.read_text(encoding="utf-8")
         if spec := custom_by_name.get(getattr(platform, "name", "")):
-            original = PLATFORMS["forgecode" if spec.flavor == "claude" else spec.flavor].display_name
+            original = PLATFORMS[settings.flavor_base(spec.flavor)].display_name
             body = body.replace(original, spec.display_name)
         bodies[getattr(platform, "name", "")] = body
     return bodies
