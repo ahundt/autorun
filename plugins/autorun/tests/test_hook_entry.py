@@ -478,6 +478,44 @@ class TestHookEntryExecutionPriority:
         timeout = f"{hook_entry.hook_timeout_for_cli(cli_type):g}s"
         assert response["systemMessage"] == f"[autorun] autorun CLI timed out after {timeout}"
 
+    @pytest.mark.parametrize(
+        ("event", "expected"),
+        [("Stop", {"decision": ""}), ("SubagentStop", {"decision": ""}), ("PostToolUse", {})],
+    )
+    def test_an_antigravity_lifecycle_timeout_is_event_native(self, capsys, event, expected):
+        """fail_open_for_cli printed {} for every Antigravity event, while the
+        registry and the daemon fast path answer Stop with {"decision": ""}."""
+        hook_entry = load_hook_entry_module()
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.fail_after_cli_timeout("antigravity", event)
+
+        assert exc.value.code == 0
+        assert json.loads(capsys.readouterr().out) == expected
+
+    def test_the_stdlib_no_op_matches_the_registry_for_every_platform_and_event(self):
+        """hook_entry cannot import the registry, so its copy is pinned here.
+
+        None means "print nothing", which is what the client does with the
+        registry's {} when the protocol does not require JSON.
+        """
+        from autorun.platforms import PLATFORMS
+
+        hook_entry = load_hook_entry_module()
+        for name, platform in PLATFORMS.items():
+            protocol = platform.hook_protocol
+            events = (
+                set(platform.native_hook_events)
+                | set(platform.installed_hook_events)
+                | set(platform.autorun_to_harness_cli_events)
+                | set(platform.autorun_to_harness_cli_events.values())
+                | {"PreToolUse", "Stop", "SubagentStop", "unknown"}
+            )
+            for event in sorted(events):
+                expected = protocol.response_for_unhandled_hook(event)
+                printed = expected if expected or protocol.requires_json_for_unhandled_hook else None
+                assert hook_entry._unhandled_response(name, event) == printed, (name, event)
+
     def test_hook_timeout_hot_path_does_not_import_autorun(self, monkeypatch):
         """Short-lived wrappers read the contract mirror without package startup."""
         hook_entry = load_hook_entry_module()

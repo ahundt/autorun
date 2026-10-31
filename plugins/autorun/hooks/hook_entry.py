@@ -421,28 +421,24 @@ def fail_open(message: str = "") -> NoReturn:
     sys.exit(0)
 
 
-def fail_open_for_cli(message: str, cli_type: str) -> NoReturn:
+def fail_open_for_cli(message: str, cli_type: str, event_name: str) -> NoReturn:
     """Return the harness-native no-op shape for a non-permission event.
 
     The bootstrap file cannot import the full platform registry: this path is
     specifically for the state where autorun or one of its dependencies could
-    not be imported.  Keep the small mapping in this stdlib-only entry point
-    and exercise it against the registry in ``test_hook_entry.py``.
+    not be imported.  The no-op itself comes from ``_unhandled_response``,
+    the one stdlib copy of the registry's, so Antigravity's Stop gets the same
+    ``{"decision": ""}`` here as on the daemon fast path.
     """
     if cli_type == "claude":
         fail_open(message)
-    if cli_type in {"gemini", "qwen"}:
+    response = dict(_unhandled_response(cli_type, event_name) or {})
+    if message and cli_type in {"gemini", "qwen"}:
         # systemMessage reaches the user here too. Without it a timeout reads
-        # exactly like a hook that ran and had nothing to say.
-        response = {"continue": True}
-        if message:
-            response["systemMessage"] = f"[autorun] {message}"
-        print(json.dumps(response))
-    else:
-        # Codex, Antigravity, ForgeCode, and OpenCode accept an empty native
-        # no-op.  Claude common fields are invalid on Antigravity's root-only
-        # protocol and must never leak into its fallback response.
-        print("{}")
+        # exactly like a hook that ran and had nothing to say. Claude common
+        # fields are invalid on Antigravity's protocol and never added there.
+        response["systemMessage"] = f"[autorun] {message}"
+    print(json.dumps(response))
     sys.exit(0)
 
 
@@ -603,7 +599,7 @@ def fail_after_cli_timeout(cli_type: str, event_name: str) -> NoReturn:
     if is_tool_gate_event(event_name):
         # A timeout is usually a cold daemon, which the next event finds warm.
         fail_closed_tool_gate(message, cli_type, event_name, recoverable=True)
-    fail_open_for_cli(message, cli_type)
+    fail_open_for_cli(message, cli_type, event_name)
 
 
 def fail_after_fallback_error(message: str, *, recoverable: bool = False) -> NoReturn:
@@ -617,7 +613,7 @@ def fail_after_fallback_error(message: str, *, recoverable: bool = False) -> NoR
     cli_type = detect_cli_type()
     if is_tool_gate_event(event_name):
         fail_closed_tool_gate(message, cli_type, event_name, recoverable=recoverable)
-    fail_open_for_cli(message, cli_type)
+    fail_open_for_cli(message, cli_type, event_name)
 
 
 # =============================================================================
@@ -818,11 +814,15 @@ def _can_use_direct_daemon(autorun_bin: Path | None) -> bool:
 
 
 def _unhandled_response(cli_type: str, event_name: str) -> dict | None:
-    """Return stdlib-only native no-op output for the daemon fast path."""
+    """Return the native no-op output, or None when nothing should be printed.
+
+    A stdlib-only copy of ``HookProtocol.response_for_unhandled_hook``, pinned
+    against the registry by ``test_hook_entry.py``.
+    """
     if cli_type == "antigravity":
         if event_name == "PreToolUse":
             return {"decision": "allow"}
-        if event_name == "Stop":
+        if event_name in {"Stop", "SubagentStop"}:
             return {"decision": ""}
         return {}
     if cli_type in {"gemini", "qwen"}:
@@ -917,7 +917,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
             _append_debug_log(message)
             if is_tool_gate_event(event_name):
                 fail_closed_tool_gate(message, cli_type, event_name)
-            fail_open_for_cli(message, cli_type)
+            fail_open_for_cli(message, cli_type, event_name)
         return False, 0
 
 
@@ -1415,7 +1415,7 @@ def run_fallback() -> None:
         cli_type = detect_cli_type()
         if is_tool_gate_event(event_name):
             fail_closed_tool_gate("Cannot locate plugin source", cli_type, event_name)
-        fail_open_for_cli("Cannot locate plugin source", cli_type)
+        fail_open_for_cli("Cannot locate plugin source", cli_type, event_name)
 
     # Add to Python path for imports
     src_str = str(src_dir)
@@ -1498,7 +1498,7 @@ def main() -> None:
     # import that fails would never run. This is the last resort when even the
     # repair-command allowance in fail_closed_tool_gate is not enough.
     if os.environ.get("AUTORUN_DISABLE", "").strip().lower() in ("1", "true", "yes"):
-        fail_open_for_cli("", detect_cli_type())
+        fail_open_for_cli("", detect_cli_type(), _peek_event_name())
 
     import io
 
