@@ -1212,9 +1212,10 @@ After every step and substep you must say "Wait," and execute this sequential th
 # ─── Settings precedence: CLI parameter > environment > config file > default ──
 #
 # The dict above is the DEFAULT tier. The file tier is overlaid onto it once,
-# here, rather than consulted at each of the ~50 `CONFIG.get` call sites: that
-# is what makes the tier arrive everywhere at once instead of wherever someone
-# remembered to add it, and it is why an absent file changes nothing.
+# at the end of this module, rather than consulted at each of the ~50
+# `CONFIG.get` call sites: that is what makes the tier arrive everywhere at
+# once instead of wherever someone remembered to add it, and it is why an
+# absent file changes nothing.
 #
 # The environment tier stays above the file because the resolvers that read env
 # vars consult them before CONFIG, and that ordering is the point: a value
@@ -1307,6 +1308,16 @@ def apply_user_config(target: dict) -> dict:
         if key not in _DEFAULT_CONFIG:
             continue
         declared = _DEFAULT_CONFIG[key]
+        if (
+            key.startswith("AUTORUN_BUG_")
+            and key.endswith("_WORKAROUND_ENABLED")
+            and isinstance(value, str)
+        ):
+            # Bug flags are declared True but documented, at every tier, as
+            # the always/never/auto/range grammar workaround_applies resolves.
+            if _workaround_mode_verdict(value, affected=True) is not None:
+                target[key] = value
+            continue
         if isinstance(declared, bool) != isinstance(value, bool):
             continue
         if isinstance(declared, (int, float)) and not isinstance(value, (int, float)):
@@ -1333,9 +1344,6 @@ def apply_user_config(target: dict) -> dict:
             continue
         target[key] = value
     return target
-
-
-apply_user_config(CONFIG)
 
 
 # =============================================================================
@@ -1552,35 +1560,48 @@ def workaround_applies(
     tiers.append(configured if isinstance(configured, str) else "")
 
     for raw in tiers:
-        mode = raw.strip().lower()
-        if not mode:
-            continue
-        if mode == _WORKAROUND_ALWAYS:
-            return True
-        if mode in _WORKAROUND_DISABLED:
-            return False
-        if mode in _WORKAROUND_AUTO:
-            return bool(affected)
-        if mode.startswith(_RANGE_LEADS):
-            specifier = _parse_version_range(mode)
-            if specifier is None:
-                continue  # malformed spec: treat like a typo, try the next tier
-            if not affected:
-                # A range narrows an affected platform; it never widens the
-                # workaround to a harness that does not have the bug.
-                return False
-            verdict = _version_satisfies(specifier, version)
-            if verdict is None:
-                # Version unknown or unparseable. Keep the behavior this flag
-                # had before ranges existed rather than guessing: silently
-                # dropping a workaround a harness needs is a regression
-                # wearing precision as a disguise.
-                return True
+        verdict = _workaround_mode_verdict(raw, affected, version)
+        if verdict is not None:
             return verdict
 
     if not configured:
         return False
     return bool(affected)
+
+
+def _workaround_mode_verdict(raw: str, affected: bool, version=None):
+    """One tier's answer, or None when ``raw`` is empty or outside the grammar.
+
+    The single owner of the grammar: ``workaround_applies`` resolves with it and
+    ``apply_user_config`` validates file values with it, so a word the resolver
+    would ignore cannot enter CONFIG and be reported as a setting.
+    """
+    mode = raw.strip().lower()
+    if not mode:
+        return None
+    if mode == _WORKAROUND_ALWAYS:
+        return True
+    if mode in _WORKAROUND_DISABLED:
+        return False
+    if mode in _WORKAROUND_AUTO:
+        return bool(affected)
+    if not mode.startswith(_RANGE_LEADS):
+        return None
+    specifier = _parse_version_range(mode)
+    if specifier is None:
+        return None  # malformed spec: treat like a typo, try the next tier
+    if not affected:
+        # A range narrows an affected platform; it never widens the
+        # workaround to a harness that does not have the bug.
+        return False
+    verdict = _version_satisfies(specifier, version)
+    if verdict is None:
+        # Version unknown or unparseable. Keep the behavior this flag had
+        # before ranges existed rather than guessing: silently dropping a
+        # workaround a harness needs is a regression wearing precision as a
+        # disguise.
+        return True
+    return verdict
 
 
 # --- BUG #4669 WORKAROUND START --- DELETE WHEN FIXED ---
@@ -1630,3 +1651,9 @@ def should_use_exit2_workaround(payload: dict = None) -> bool:
 
 
 # --- BUG #4669 WORKAROUND END --- DELETE WHEN FIXED ---
+
+
+# The file tier is applied last so the workaround grammar it validates bug
+# flags against (`_workaround_mode_verdict`) is defined. Nothing above reads
+# CONFIG at import time.
+apply_user_config(CONFIG)

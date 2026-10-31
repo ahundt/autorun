@@ -125,10 +125,44 @@ def test_the_environment_still_outranks_the_file(config_home, monkeypatch):
     session, and the narrower scope wins.
     """
     flag = "AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED"
-    monkeypatch.setitem(config_module.CONFIG, flag, "never")
+    _write(config_home, {flag: "never"})
+    config_module.apply_user_config(config_module.CONFIG)
+    assert config_module.CONFIG[flag] == "never", "the file must reach CONFIG"
     monkeypatch.setenv(flag, "always")
 
     assert config_module.workaround_applies(flag, affected=False) is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "cli_type", "expected"),
+    [("never", "claude", False), ("always", "gemini", True), (">=0", "claude", True)],
+)
+def test_a_file_sets_a_workaround_with_the_documented_words(
+    config_home, monkeypatch, mode, cli_type, expected
+):
+    """The file tier speaks the same grammar as the environment tier.
+
+    These keys are declared ``True``, and the type check used to accept only a
+    JSON bool for them, so ``"never"`` -- the word every comment and AGENTS.md
+    documents -- was dropped without a sign and exit 2 stayed on.
+    """
+    flag = config_module.BUG_4669_FLAG
+    for name in (flag, config_module.BUG_4669_LEGACY_FLAG):
+        monkeypatch.delenv(name, raising=False)
+    _write(config_home, {flag: mode})
+    config_module.apply_user_config(config_module.CONFIG)
+
+    assert config_module.CONFIG[flag] == mode
+    assert config_module.should_use_exit2_workaround({"cli_type": cli_type}) is expected
+
+
+@pytest.mark.parametrize("mode", ["nevr", ">=not a version", 3])
+def test_a_workaround_value_outside_the_grammar_is_declined(config_home, mode):
+    """A typo must not reach CONFIG and be reported as a setting."""
+    flag = config_module.BUG_4669_FLAG
+    _write(config_home, {flag: mode})
+    merged = config_module.apply_user_config(dict(config_module.default_config()))
+    assert merged[flag] is True
 
 
 def test_the_live_config_reflects_the_file_at_import(config_home):
