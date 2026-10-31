@@ -849,9 +849,9 @@ class TmuxUtilities:
             True if window contains active Claude Code session
 
         Implementation:
-            1. Query tmux for pane PID using execute_tmux_command
-            2. Use pgrep -P to find child processes of shell
-            3. Check process names for Claude CLI indicators:
+            1. Query tmux for the PID of every pane in the window
+            2. Use pgrep -P to find child processes of those shells
+            3. Check each child's executable name (see _is_claude_process):
                - 'claude' (official CLI)
                - 'happy' (Claude CLI wrapper)
                - 'happy-dev' (development build)
@@ -874,44 +874,54 @@ class TmuxUtilities:
             if not result or result['returncode'] != 0 or not result['stdout'].strip():
                 return False
 
-            pane_pid = result['stdout'].strip()
+            # One pid per pane; pgrep -P takes a comma-separated list and
+            # rejects the newline-separated one list-panes prints.
+            pane_pids = ','.join(result['stdout'].split())
 
-            # Get child processes
             child_result = subprocess.run(
-                ['pgrep', '-P', pane_pid],
+                ['pgrep', '-P', pane_pids],
                 capture_output=True,
                 text=True,
                 timeout=2
             )
 
-            if child_result.returncode != 0 or not child_result.stdout.strip():
+            if child_result.returncode != 0:
                 return False
 
-            # Check each child process for Claude indicators
-            claude_indicators = {'claude', 'happy', 'happy-dev'}
-
-            for child_pid in child_result.stdout.strip().split('\n'):
-                if not child_pid.strip():
-                    continue
-
-                ps_result = subprocess.run(
-                    ['ps', '-p', child_pid.strip(), '-o', 'command='],
-                    capture_output=True,
-                    text=True,
-                    timeout=2
-                )
-
-                if ps_result.returncode == 0:
-                    cmd_lower = ps_result.stdout.lower()
-                    # Check for any Claude CLI indicator
-                    if any(indicator in cmd_lower for indicator in claude_indicators):
-                        return True
-
-            return False
+            return any(_is_claude_process(pid) for pid in child_result.stdout.split())
 
         except (subprocess.TimeoutExpired, Exception):
             # Fail safely - don't report as Claude session if detection fails
             return False
+
+
+CLAUDE_EXECUTABLES = frozenset({'claude', 'happy', 'happy-dev'})
+SCRIPT_INTERPRETERS = frozenset({'node', 'bun', 'deno'})
+
+
+def _ps_field(pid: str, field: str) -> str:
+    result = subprocess.run(['ps', '-p', pid, '-o', f'{field}='],
+                            capture_output=True, text=True, timeout=2)
+    return result.stdout.strip() if result.returncode == 0 else ''
+
+
+def _is_claude_process(pid: str) -> bool:
+    """True when the process IS claude/happy, not when its arguments mention it.
+
+    Matches the executable basename (ps comm, or argv[0]) and, for a script
+    interpreter such as node, the script basename in argv[1]. A substring
+    match on the whole command line made `vim ~/.claude/settings.json` count.
+    """
+    comm = os.path.basename(_ps_field(pid, 'comm')).lower()
+    if comm in CLAUDE_EXECUTABLES:
+        return True
+    # Known limit: args is split on whitespace, so an argv[1] script path
+    # containing a space is not matched (comm still covers argv[0]).
+    argv = [os.path.basename(a).lower() for a in _ps_field(pid, 'args').split()[:2]]
+    if argv and argv[0] in CLAUDE_EXECUTABLES:
+        return True
+    interpreted = comm in SCRIPT_INTERPRETERS or (argv and argv[0] in SCRIPT_INTERPRETERS)
+    return bool(interpreted and len(argv) > 1 and argv[1] in CLAUDE_EXECUTABLES)
 
 
 # Global instance for consistent usage

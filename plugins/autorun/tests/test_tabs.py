@@ -80,7 +80,8 @@ class TestIsClaudeSession:
             mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),
-                Mock(returncode=0, stdout='/bin/bash\n'),
+                Mock(returncode=0, stdout='/bin/bash\n'),  # ps -o comm=
+                Mock(returncode=0, stdout='bash\n'),       # ps -o args=
             ]
 
             assert tmux.is_claude_session('test-session', '0') is False
@@ -104,6 +105,65 @@ class TestIsClaudeSession:
             mock_tmux.return_value = {'returncode': 1, 'stdout': ''}
 
             assert tmux.is_claude_session('test-session', '0') is False
+
+
+def _fake_process_table(children, procs):
+    """subprocess.run stand-in for pgrep -P and ps -p, keyed on the arguments.
+
+    children maps a parent pid to its child pids; procs maps a pid to
+    (comm, args). pgrep rejects a ppid list that is not comma-separated
+    digits with exit 2, as the real macOS and procps pgrep do.
+    """
+    import re
+
+    def run(cmd, **kwargs):
+        if cmd[0] == 'pgrep':
+            if not re.fullmatch(r'\d+(,\d+)*', cmd[2]):
+                return Mock(returncode=2, stdout='')
+            kids = [k for p in cmd[2].split(',') for k in children.get(p, [])]
+            return Mock(returncode=0 if kids else 1, stdout=''.join(f'{k}\n' for k in kids))
+        if cmd[0] == 'ps':
+            comm, args = procs[cmd[2]]
+            return Mock(returncode=0, stdout=(comm if cmd[4] == 'comm=' else args) + '\n')
+        raise AssertionError(f'unexpected command {cmd}')
+    return run
+
+
+class TestIsClaudeSessionMatchesTheProcessNotItsArguments:
+    """is_claude_session passed list-panes output ('111\\n222') to pgrep -P
+    whole, so a split window was never detected, and it matched 'claude' as a
+    substring of the full command line, so `vim ~/.claude/settings.json`
+    counted as Claude and /ar:tabs all:continue typed into the editor."""
+
+    def _detect(self, pane_pids, children, procs):
+        tmux = TmuxUtilities(session_name="test-session")
+        with patch.object(tmux, 'execute_tmux_command',
+                          return_value={'returncode': 0, 'stdout': pane_pids}), \
+                patch('autorun.tmux_utils.subprocess.run',
+                      side_effect=_fake_process_table(children, procs)):
+            return tmux.is_claude_session('test-session', '0')
+
+    def test_claude_in_the_second_pane_of_a_split_window_is_detected(self):
+        assert self._detect(
+            '111\n222\n',
+            {'222': ['333']},
+            {'333': ('/usr/local/bin/claude', 'claude')},
+        ) is True
+
+    @pytest.mark.parametrize('comm,args', [
+        ('/usr/bin/vim', 'vim /Users/u/.claude/settings.json'),
+        ('/usr/bin/python3', 'python3 -m autorun --home /Users/u/.claude/autorun'),
+        ('/usr/bin/less', 'less claude'),
+    ])
+    def test_a_command_line_that_only_mentions_claude_is_not_claude(self, comm, args):
+        assert self._detect('111\n', {'111': ['333']}, {'333': (comm, args)}) is False
+
+    def test_node_running_the_claude_script_is_detected(self):
+        assert self._detect(
+            '111\n',
+            {'111': ['333']},
+            {'333': ('/usr/local/bin/node', 'node /usr/local/bin/claude --resume')},
+        ) is True
 
 
 @pytest.mark.tmux
