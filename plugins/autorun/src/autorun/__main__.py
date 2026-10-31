@@ -1114,7 +1114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.uninstall is not None:
         from autorun.install import uninstall_plugins
 
-        return uninstall_plugins(args.uninstall, force=args.force)
+        return uninstall_plugins(args.uninstall, force=args.force, custom_harnesses=args.custom_harness)
 
     # Update mode
     if args.update:

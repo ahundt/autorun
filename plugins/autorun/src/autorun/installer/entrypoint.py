@@ -633,17 +633,24 @@ def install_plugins(
     return 0 if ok else 1
 
 
-def uninstall_plugins(selection: str = "all", *, force: bool = False) -> int:
+def uninstall_plugins(
+    selection: str = "all",
+    *,
+    force: bool = False,
+    custom_harnesses: Sequence[str] = (),
+) -> int:
     """Remove exactly the selected plugins, even when their source is gone.
 
     ``force`` widens removal exactly as it widens installation: an owned tree
     whose marker predates file hashes is retired after a backup instead of
     being kept as a possible edit. A recorded edit is kept either way.
+    ``custom_harnesses`` are resolved as install resolves them, so a target
+    installed with ``--custom-harness`` is found by the same spec.
     """
     root = _marketplace_root()
     try:
         plugins = parse_selection(root, selection)
-        resolved, custom = _resolved_settings()
+        resolved, custom = _resolved_settings(custom_harnesses=custom_harnesses)
         harnesses, table, available, _ = _harnesses(root, plugins, custom, uninstalling=True)
     except ValueError as error:
         print(f"Error: {error}")

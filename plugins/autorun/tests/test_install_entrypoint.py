@@ -493,6 +493,31 @@ def test_custom_claude_flavor_uses_the_portable_commands_and_agents_layout(monke
     assert "Mine" in guidance and "ForgeCode" not in guidance
 
 
+def test_uninstall_with_a_custom_harness_removes_what_install_put_there(monkeypatch, isolated):
+    """``--uninstall --custom-harness SPEC`` used to drop the spec, exit 0, and
+    leave every file the matching install had published under its root."""
+    from autorun import __main__ as entry
+    from autorun.installer import entrypoint
+
+    monkeypatch.setattr(
+        entrypoint,
+        "_run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv, 0, "ar\n" if tuple(argv)[:3] == ("agy", "plugin", "list") else "", ""
+        ),
+    )
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
+    spec = "mine=claude:mine:~/.mine::Mine"
+    root = isolated / ".mine"
+
+    assert entry.main(["--install", "ar", "--custom-harness", spec, "--no-conductor"]) == 0
+    assert list((root / "commands").glob("ar-*.md"))
+
+    assert entry.main(["--uninstall", "ar", "--custom-harness", spec]) == 0
+    assert not list((root / "commands").glob("ar-*.md"))
+    assert "Mine" not in ((root / "AGENTS.md").read_text() if (root / "AGENTS.md").exists() else "")
+
+
 def test_custom_extension_flavor_registers_with_its_declared_binary(monkeypatch, isolated):
     from autorun.installer import entrypoint
 
