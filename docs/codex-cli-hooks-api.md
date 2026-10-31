@@ -70,11 +70,17 @@ error: hook returned invalid user prompt submit JSON output
 User-level: `~/.codex/hooks.json` (default, always active, no marketplace
 required).
 
-Codex plugin packaging: `~/.agents/plugins/marketplace.json` lists an
-`autorun` plugin with local source `./plugins/autorun`, which resolves to
-`~/plugins/autorun`. That plugin source contains `.codex-plugin/plugin.json`
-and `skills/`, so Codex can discover autorun's skills through its native
-plugin marketplace path.
+Codex plugin packaging: `~/.agents/plugins/marketplace.json` lists an `ar`
+plugin whose local source is derived from CONFIG `codex_plugin_source_dir`
+(default `~/plugins`, Codex's own personal-plugin default), so the default
+entry is `./plugins/ar`, resolving to `~/plugins/ar`. Codex resolves the path
+against the home directory and refuses one outside it, so autorun refuses such
+a setting before writing anything. Releases through 1.0.0rc3 always wrote
+`./plugins/<name>`; that entry is replaced when the setting moves. A
+`~/plugins/ar` that is not autorun's (no marker) is kept, left out of the
+marketplace, and not registered with `codex plugin add`. The plugin source
+contains `.codex-plugin/plugin.json` and `skills/`, so Codex can discover
+autorun's skills through its native plugin marketplace path.
 
 Autorun makes the Codex hook source explicit with
 `--codex-hook-source user|plugin|both|none`. The default is `user`, which keeps
