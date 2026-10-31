@@ -206,3 +206,14 @@ def test_our_own_ownership_marker_is_sufficient(tmp_path, template, plugin):
     publish_tree(plugin / "commands", installed, plugin="ar")
 
     assert refreshable(installed, template, plugin="ar") is True
+
+
+def test_a_marker_recorded_under_our_old_plugin_name_is_ours(tmp_path, template, plugin):
+    """fs.owns accepts "autorun" for ar (PLUGIN_ALIASES); refreshable compared
+    names itself, so such an extension was never refreshed."""
+    from autorun.installer.fs import publish_tree
+
+    installed = tmp_path / "installed"
+    publish_tree(plugin / "commands", installed, plugin="autorun")
+
+    assert refreshable(installed, template, plugin="ar") is True

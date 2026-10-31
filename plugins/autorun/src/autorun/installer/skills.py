@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, Mapping
 
 from . import discovery
-from .fs import _strip_extended_prefix, read_marker
+from .fs import _strip_extended_prefix, owns, read_marker
 from .discovery import redirected_home
 from .traversal import Context, Intent, Kind
 
@@ -166,8 +166,7 @@ def blocked_names(shipped: Mapping[str, Path], destination: Path, plugin: str) -
         entry = existing.get(name.casefold())
         if entry is None:
             continue
-        marker = read_marker(entry)
-        if marker is None or (marker.plugin and marker.plugin != plugin):
+        if not owns(read_marker(entry), plugin):
             blocked.add(name)
     return frozenset(blocked)
 

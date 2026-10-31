@@ -337,8 +337,7 @@ def refreshable(
     """
     if not installed.is_dir():
         return False
-    marker = read_marker(installed)
-    if marker is not None and (not plugin or not marker.plugin or marker.plugin == plugin):
+    if owns(read_marker(installed), plugin):
         return True
     return receipt_names_any_source(installed, (source, *tuple(legacy_sources)))
 

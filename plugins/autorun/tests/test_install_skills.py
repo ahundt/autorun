@@ -302,6 +302,17 @@ def test_a_directory_we_own_is_not_blocked(plugin, shared, ctx):
     assert blocked_names(shippable_skills(plugin), shared, "ar") == frozenset()
 
 
+def test_a_tree_marked_with_our_old_plugin_name_is_not_blocked(plugin, shared):
+    """fs.owns accepts a marker recorded as "autorun" for ar (PLUGIN_ALIASES);
+    blocked_names compared names itself and refused it."""
+    from autorun.installer.fs import publish_tree
+
+    shared.mkdir(parents=True)
+    publish_tree(plugin / "skills" / "commit", shared / "commit", plugin="autorun")
+
+    assert blocked_names(shippable_skills(plugin), shared, "ar") == frozenset()
+
+
 def test_another_plugins_tree_blocks_the_name(plugin, shared):
     from autorun.installer.fs import publish_tree
 
