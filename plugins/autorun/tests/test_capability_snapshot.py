@@ -157,6 +157,56 @@ def test_capability_snapshot_covers_installed_skills_with_descriptions():
     assert all(skill["description"] for skill in snapshot["skills"].values())
 
 
+def test_capability_snapshot_without_its_source_says_unavailable(tmp_path, monkeypatch):
+    """A non-editable wheel has no marketplace above it: say so, not "none"."""
+    from autorun import capability_snapshot
+
+    wheel_file = tmp_path / "lib" / "python3.13" / "site-packages" / "autorun" / "capability_snapshot.py"
+    monkeypatch.setattr(capability_snapshot, "__file__", str(wheel_file))
+
+    snapshot = capability_snapshot.build_capability_snapshot()
+
+    for key in ("skills", "plugin_skills", "command_docs"):
+        assert snapshot[key] == "unavailable", (key, snapshot[key])
+    assert snapshot["pi_disposition"]["skills"] == "unavailable"
+    assert snapshot["pi_disposition"]["command_docs"] == "unavailable"
+    assert snapshot["commands"], "the command registry needs no source tree"
+
+
+def test_capability_snapshot_reads_the_source_tree_it_runs_from(tmp_path, monkeypatch):
+    """A worktree nested in another checkout documents itself, not the outer one.
+
+    Discovery returns the outermost marketplace above the running file, which
+    for .claude/worktrees/<w> inside a checkout is that checkout.
+    """
+    from autorun import capability_snapshot
+
+    manifest = '{"name": "autorun", "plugins": [{"name": "ar", "source": "./plugins/autorun"}]}'
+    outer = tmp_path / "outer"
+    (outer / ".claude-plugin").mkdir(parents=True)
+    (outer / ".claude-plugin" / "marketplace.json").write_text(manifest)
+    worktree = outer / ".claude" / "worktrees" / "w"
+    (worktree / ".claude-plugin").mkdir(parents=True)
+    (worktree / ".claude-plugin" / "marketplace.json").write_text(manifest)
+    plugin = worktree / "plugins" / "autorun"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "marketplace.json").write_text(
+        '{"name": "autorun", "plugins": [{"name": "ar", "source": "./"}]}'
+    )
+    (plugin / "skills" / "only-in-worktree").mkdir(parents=True)
+    (plugin / "skills" / "only-in-worktree" / "SKILL.md").write_text(
+        "---\nname: only-in-worktree\ndescription: present only here\n---\n"
+    )
+    monkeypatch.setattr(
+        capability_snapshot, "__file__", str(plugin / "src" / "autorun" / "capability_snapshot.py")
+    )
+
+    snapshot = capability_snapshot.build_capability_snapshot()
+
+    assert snapshot["skills"] != "unavailable"
+    assert set(snapshot["skills"]) == {"only-in-worktree"}
+
+
 def test_capability_snapshot_cli_writes_json_without_touching_home(tmp_path):
     output_path = tmp_path / "capabilities.json"
     fake_home = tmp_path / "home"

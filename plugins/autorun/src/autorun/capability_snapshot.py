@@ -15,6 +15,8 @@ from typing import Any
 
 from . import __commit__, __version__
 from .command_docs import command_docs_inventory, marketplace_skill_docs_inventory
+from .installer.codex import PLUGIN_NAME
+from .installer.discovery import is_marketplace_root, marketplace_root, plugin_dir
 from .platforms import PLATFORMS, Platform
 
 
@@ -224,13 +226,43 @@ def _pi_disposition(
     }
 
 
+def _plugin_root() -> Path | None:
+    """The plugin directory whose documents describe the running code, or None.
+
+    The source tree this module runs from wins: discovery returns the outermost
+    marketplace above it, which for a git worktree nested in another checkout
+    is that other checkout. A non-editable wheel has no source tree above it,
+    so discovery answers, and None means it found nothing.
+    """
+    source = Path(__file__).resolve().parents[2]
+    if is_marketplace_root(source):
+        return source
+    root = marketplace_root(Path(__file__))
+    return plugin_dir(root, PLUGIN_NAME) if root is not None else None
+
+
 def build_capability_snapshot() -> dict[str, Any]:
     """Return a stable, JSON-serializable autorun capability inventory."""
     commands, command_aliases, command_turn_behavior = _command_inventory()
     hooks = _hook_inventory()
-    plugin_root = Path(__file__).resolve().parents[2]
-    skills, plugin_skills = marketplace_skill_docs_inventory(plugin_root.parent)
-    command_docs = command_docs_inventory(plugin_root / "commands")
+    plugin_root = _plugin_root()
+    skills: dict | str = {}
+    plugin_skills: dict | str = {}
+    command_docs: dict | str = {}
+    if plugin_root is not None:
+        skills, plugin_skills = marketplace_skill_docs_inventory(plugin_root.parent)
+        command_docs = command_docs_inventory(plugin_root / "commands")
+    pi_disposition = _pi_disposition(
+        commands=commands,
+        hooks=hooks,
+        skills=skills,
+        command_docs=command_docs,
+    )
+    if plugin_root is None:
+        # Installed without its source tree (a non-editable wheel): the
+        # documents cannot be read, which is not the same as there being none.
+        skills = plugin_skills = command_docs = "unavailable"
+        pi_disposition["skills"] = pi_disposition["command_docs"] = "unavailable"
     return {
         "version": __version__,
         "commit": _git_commit(),
@@ -242,12 +274,7 @@ def build_capability_snapshot() -> dict[str, Any]:
         "skills": skills,
         "plugin_skills": plugin_skills,
         "hook_events": hooks,
-        "pi_disposition": _pi_disposition(
-            commands=commands,
-            hooks=hooks,
-            skills=skills,
-            command_docs=command_docs,
-        ),
+        "pi_disposition": pi_disposition,
     }
 
 
