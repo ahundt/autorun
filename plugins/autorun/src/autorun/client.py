@@ -57,9 +57,19 @@ except ImportError:
     DEBUG_ENABLED = False
 
 from . import ipc
+from .platforms import PLATFORMS as _PLATFORMS
 
 DEBUG_LOG = ipc.AUTORUN_LOG_FILE
-_TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
+#: The autorun tool gates plus every harness name for them in the registry
+#: (legacy Gemini's BeforeTool). hooks/hook_entry.py keeps a stdlib copy,
+#: pinned to this by test_hook_entry.py.
+_AUTORUN_TOOL_GATES = frozenset({"PreToolUse", "PermissionRequest"})
+_TOOL_GATE_EVENTS = _AUTORUN_TOOL_GATES | {
+    harness_event
+    for platform in _PLATFORMS.values()
+    for harness_event, autorun_event in platform.harness_cli_to_autorun_events.items()
+    if autorun_event in _AUTORUN_TOOL_GATES
+}
 _STABLE_PID_PARENT_SCAN_DEPTH = 12
 _PROCESS_BIRTH_UNITS_PER_SECOND = ipc.PROCESS_BIRTH_UNITS_PER_SECOND
 DAEMON_START_RETRY_SECONDS = 0.1

@@ -138,6 +138,9 @@ def _append_debug_log(message: str) -> None:
 
 
 _VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode", "pi", "prime")
+# Stdlib copies of registry data (this file must run when autorun cannot be
+# imported). test_hook_entry.py::test_event_sets_are_pinned_to_the_registry
+# holds them to client._TOOL_GATE_EVENTS and Antigravity's native events.
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _VALID_EXPLICIT_EVENTS = {
     "PreToolUse",

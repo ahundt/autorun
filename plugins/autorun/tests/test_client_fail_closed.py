@@ -29,6 +29,17 @@ def test_client_recognizes_all_supported_tool_gate_events():
     assert is_tool_gate_event("UserPromptSubmit") is False
 
 
+def test_every_harness_name_for_a_tool_gate_fails_closed():
+    """A harness alias of PreToolUse or PermissionRequest is a tool gate too;
+    a new one in the registry must not fail open for lack of a hand edit."""
+    from autorun.platforms import PLATFORMS
+
+    for platform in PLATFORMS.values():
+        for harness_event, autorun_event in platform.harness_cli_to_autorun_events.items():
+            if autorun_event in {"PreToolUse", "PermissionRequest"}:
+                assert is_tool_gate_event(harness_event), (platform.name, harness_event)
+
+
 def _fail_closed_reason(cli_type: str) -> str:
     """The text a blocked reader actually sees, whatever the platform shape."""
     response = build_daemon_failure_response(

@@ -712,6 +712,17 @@ class TestHookEntryExecutionPriority:
             f"detector: {missing}"
         )
 
+    def test_event_sets_are_pinned_to_the_registry(self):
+        """Two more stdlib hand copies: which events fail closed, and which
+        `--event` values an installed command may carry (only Antigravity's
+        manifest translation appends `--event`, one per native event)."""
+        from autorun.client import _TOOL_GATE_EVENTS
+        from autorun.platforms import PLATFORMS
+
+        hook_entry = load_hook_entry_module()
+        assert hook_entry._TOOL_GATE_EVENTS == set(_TOOL_GATE_EVENTS)
+        assert hook_entry._VALID_EXPLICIT_EVENTS == set(PLATFORMS["antigravity"].native_hook_events)
+
     @pytest.mark.parametrize("cli_type", sorted(p.name for p in _hook_platforms()))
     def test_tool_gate_fail_closed_matches_canonical_platform_schema(
         self, capsys, cli_type
