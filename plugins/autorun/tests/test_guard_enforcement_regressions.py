@@ -369,6 +369,7 @@ class TestUserIntegrationFilesFollowTheSession:
     @pytest.fixture(autouse=True)
     def _isolated(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
         monkeypatch.chdir(tmp_path)  # the "daemon" cwd: holds no rules
         integrations.invalidate_caches()
         yield
