@@ -282,6 +282,19 @@ def test_memory_workaround_accepts_the_shared_enable_tokens(monkeypatch, value):
     assert _claude_memory_workaround_enabled() is True
 
 
+@pytest.mark.parametrize("value", ["never", "false", "0"])
+def test_memory_workaround_honors_a_config_file_word(monkeypatch, value):
+    """autorun.config.json may hold a bug flag as a grammar word, which
+    apply_user_config accepts; bool("never") is True, so a resolver that only
+    tested truthiness left the block switched on."""
+    from autorun.config import CONFIG
+
+    key = "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED"
+    monkeypatch.delenv(key, raising=False)
+    monkeypatch.setitem(CONFIG, key, value)
+    assert _claude_memory_workaround_enabled() is False
+
+
 def test_turning_the_workaround_off_removes_the_block_an_install_wrote(
     tmp_path, monkeypatch
 ):

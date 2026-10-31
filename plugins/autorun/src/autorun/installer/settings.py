@@ -57,22 +57,19 @@ def autorun_config() -> Mapping[str, object]:
 def workaround_enabled(key: str) -> bool:
     """Whether one ``AUTORUN_BUG_*_WORKAROUND_ENABLED`` gate is on. Default on.
 
-    One resolver for every bug gate, so the accepted tokens cannot drift between
-    them: ``false``/``0``/``never`` disable, ``true``/``1``/``auto``/``always``
-    enable, and anything else falls through to CONFIG. Kept separate from
-    :func:`truthy` because the vocabularies differ and the default is the
-    opposite: a workaround is on until someone turns it off.
+    Asked only for a harness that declares the bug, so ``affected=True``.
+    ``config.workaround_applies`` owns the grammar (env var, then CONFIG with
+    the user file applied; ``always``/``never``/``auto``/ranges). The copy this
+    replaced tested the CONFIG tier for truthiness, so a file's ``"never"``
+    left the workaround on.
 
     A key nothing reads is the failure this exists to prevent. The documented
     disable switch silently stops working, and the workaround it names runs
     forever with no way to turn it off.
     """
-    value = os.environ.get(key, "").strip().lower()
-    if value in ("false", "0", "never"):
-        return False
-    if value in ("true", "1", "auto", "always"):
-        return True
-    return bool(autorun_config().get(key, True))
+    from ..config import workaround_applies
+
+    return workaround_applies(key, affected=True)
 
 
 @dataclass(frozen=True, slots=True)

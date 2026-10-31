@@ -638,7 +638,7 @@ def regions_for(
         return ()
     flag = str(getattr(platform, "memory_workaround_flag", "") or "")
     if flag and not settings.workaround_enabled(flag):
-        # A bug workaround's gate (Claude's: anthropics/claude-code#54673,
+        # A bug workaround's gate (Claude's: https://github.com/anthropics/claude-code/issues/54673,
         # AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED;
         # delete the platform's memory_workaround_flag when fixed). Off now,
         # maybe not when an earlier install wrote the block: an empty body
