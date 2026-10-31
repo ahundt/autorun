@@ -581,7 +581,9 @@ def install_plugins(
                 print(retired.describe())
             boot = runtime.bootstrap(
                 plugin,
-                uv_tool_env="/uv/tools/" in str(Path(sys.executable)),
+                # The parent, not the interpreter: a tool env's python is a
+                # symlink into uv's Python store and resolves outside the root.
+                uv_tool_env=runtime._is_within(Path(sys.executable).parent, _uv_tool_root()),
                 install_tool=bool(resolved["tool"]),
                 run=_run,
             )
@@ -691,20 +693,19 @@ def uninstall_plugins(selection: str = "all", *, force: bool = False) -> int:
     return 0 if ok else 1
 
 
+def _uv_tool_root() -> Path:
+    """Where uv keeps tool environments: UV_TOOL_DIR, else XDG_DATA_HOME/uv/tools,
+    else ~/.local/share/uv/tools."""
+    if configured := os.environ.get("UV_TOOL_DIR"):
+        return Path(configured)
+    data = os.environ.get("XDG_DATA_HOME")
+    return Path(data) / "uv" / "tools" if data else discovery.process_home() / ".local" / "share" / "uv" / "tools"
+
+
 def _uv_tool_installed(package: str) -> bool:
     """Whether the selected home positively owns this uv tool install."""
     executable = shutil.which(_UV_TOOL_SCRIPTS[package])
-    configured = os.environ.get("UV_TOOL_DIR")
-    if configured:
-        tool_root = Path(configured)
-    else:
-        data = os.environ.get("XDG_DATA_HOME")
-        tool_root = (
-            Path(data) / "uv" / "tools"
-            if data
-            else discovery.process_home() / ".local" / "share" / "uv" / "tools"
-        )
-    expected = (tool_root / package).resolve()
+    expected = (_uv_tool_root() / package).resolve()
     if executable:
         resolved = Path(executable).resolve()
         if resolved == expected or expected in resolved.parents:

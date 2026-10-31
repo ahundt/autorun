@@ -1123,3 +1123,73 @@ def test_every_legacy_distribution_shares_a_script_with_the_current_one():
         if entrypoint._UV_TOOL_SCRIPTS[package] in runtime.CLI_SCRIPTS
     }
     assert shared == set(legacy), sorted(set(legacy) - shared)
+
+
+def _bootstrap_only(monkeypatch, entrypoint, plugin: Path, python: Path, calls: list):
+    """Run install_plugins up to and through bootstrap with a recorded runner.
+
+    The walk and the daemon restart are stood in for: the subject is which
+    commands bootstrap issues for this interpreter and plugin layout.
+    """
+    from autorun.installer import orchestrate
+    from autorun.installer.traversal import Mode
+
+    def record(argv, **_kwargs):
+        call = tuple(str(part) for part in argv)
+        calls.append(call)
+        editable_wheel = call[:3] == ("uv", "tool", "install") and not (plugin / "pyproject.toml").is_file()
+        return subprocess.CompletedProcess(
+            argv, 2 if editable_wheel else 0, "", "does not appear to be a Python project" if editable_wheel else ""
+        )
+
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.touch()
+    monkeypatch.setattr(entrypoint.sys, "executable", str(python))
+    monkeypatch.setattr(entrypoint, "_run", record)
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(entrypoint, "_uv_tool_installed", lambda _package: False)
+    monkeypatch.setattr(entrypoint, "_runtime_settings", lambda *_args, **_kwargs: plugin)
+    monkeypatch.setattr(orchestrate, "install", lambda **_kwargs: orchestrate.Result(Mode.INSTALL))
+    monkeypatch.setenv("AUTORUN_USE_DAEMON", "0")
+
+
+def test_tool_install_from_a_wheel_in_a_uv_tool_env_reaches_the_walk(monkeypatch, isolated, tmp_path, capsys):
+    """``autorun --install --tool`` from a wheel installed with ``uv tool``.
+
+    The plugin directory is ``site-packages/autorun``: no pyproject.toml, so
+    ``uv tool install --editable`` on it fails, and that failure used to end
+    the install with FAIL before the walk ran. The package installer already
+    supplied the CLI; there is nothing for --tool to add.
+    """
+    from autorun.installer import entrypoint
+
+    wheel = tmp_path / "site-packages" / "autorun"
+    wheel.mkdir(parents=True)
+    (wheel / "__main__.py").touch()
+    monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    calls: list[tuple[str, ...]] = []
+    _bootstrap_only(
+        monkeypatch, entrypoint, wheel, tmp_path / "data" / "uv" / "tools" / "autorun-ai" / "bin" / "python", calls
+    )
+
+    assert entrypoint.install_plugins("ar", tool=True, conductor=False) == 0
+    assert not [call for call in calls if call[:3] == ("uv", "tool", "install")], calls
+    assert "supplied by the package installer" in capsys.readouterr().out
+
+
+def test_a_custom_uv_tool_dir_is_recognised_as_a_uv_tool_env(monkeypatch, isolated, tmp_path):
+    """One answer to "where do uv tools live": UV_TOOL_DIR counts for the
+    bootstrap choice exactly as it does for ownership, so a checkout installed
+    as a uv tool under a custom root gets ``uv pip install``, not ``uv sync``."""
+    from autorun.installer import entrypoint
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "pyproject.toml").touch()
+    monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path / "tools"))
+    calls: list[tuple[str, ...]] = []
+    _bootstrap_only(monkeypatch, entrypoint, checkout, tmp_path / "tools" / "autorun-ai" / "bin" / "python", calls)
+
+    assert entrypoint.install_plugins("ar", tool=False, conductor=False) == 0
+    assert calls[0][:3] == ("uv", "pip", "install"), calls

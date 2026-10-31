@@ -332,10 +332,13 @@ def bootstrap(
     dependencies did not resolve produces a CLI that imports nothing, and the
     failure then surfaces inside a hook rather than during the install that
     caused it.
+
+    An installed wheel (no ``pyproject.toml``) is skipped in every environment,
+    a uv tool one included: its installer already supplied the dependencies and
+    the CLI, and ``uv tool install --editable site-packages/autorun`` fails.
     """
     if (
-        not uv_tool_env
-        and not (plugin_dir / "pyproject.toml").is_file()
+        not (plugin_dir / "pyproject.toml").is_file()
         and (plugin_dir / "__main__.py").is_file()
     ):
         return (
