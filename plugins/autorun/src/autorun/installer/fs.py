@@ -1373,6 +1373,44 @@ def publish_files(
     return Decision(Verdict.PUBLISH, directory, reason, tuple(kept) + tuple(backed_up))
 
 
+def _link_is_ours(
+    link: Path,
+    inside: Path,
+    *,
+    base: Path | None = None,
+    exact_target: Path | None = None,
+    ownership_proof: Callable[[Path], bool] | None = None,
+) -> tuple[Path | None, str]:
+    """Where ``link`` resolves, and why it is not ours ("" when it is).
+
+    The one link-ownership rule, for :func:`decide_link` and
+    :func:`withdraw_link`. ``base`` resolves a relative link: its own directory
+    by default, or the one it came from once renamed into a stage.
+    ``ownership_proof`` is the retirement check, asked only when given.
+    """
+    if not link.is_symlink():
+        return None, "not a link"
+    try:
+        pointed = Path(os.readlink(link))
+        pointed = pointed if pointed.is_absolute() else ((base or link.parent) / pointed)
+        resolved = _strip_extended_prefix(pointed.resolve())
+    except (OSError, RuntimeError):
+        return None, "unreadable link"
+    try:
+        resolved.relative_to(_strip_extended_prefix(inside.resolve()))
+    except (OSError, RuntimeError, ValueError):
+        return resolved, "links outside the shared root"
+    if exact_target is not None and resolved != _strip_extended_prefix(exact_target.resolve()):
+        return resolved, "links to a different source"
+    if ownership_proof is not None:
+        try:
+            if not ownership_proof(link):
+                return resolved, "linked source contains user edits"
+        except (OSError, RuntimeError, ValueError):
+            return resolved, "could not verify linked source contents"
+    return resolved, ""
+
+
 def decide_link(
     source: Path | None,
     target: Path,
@@ -1392,36 +1430,15 @@ def decide_link(
     ``source is None`` is the retirement question, as everywhere else.
     """
     if target.is_symlink():
-        try:
-            pointed = Path(os.readlink(target))
-            pointed = pointed if pointed.is_absolute() else (target.parent / pointed)
-            resolved = _strip_extended_prefix(pointed.resolve())
-        except (OSError, RuntimeError):
-            return Decision(Verdict.KEEP, target, "unreadable link")
-        try:
-            resolved.relative_to(_strip_extended_prefix(inside.resolve()))
-        except ValueError:
-            return Decision(Verdict.KEEP, target, "links outside the shared root")
-        if (
-            exact_target is not None
-            and resolved != _strip_extended_prefix(exact_target.resolve())
-        ):
-            return Decision(Verdict.KEEP, target, "links to a different source")
+        resolved, refused = _link_is_ours(
+            target,
+            inside,
+            exact_target=exact_target,
+            ownership_proof=ownership_proof if source is None else None,
+        )
+        if refused:
+            return Decision(Verdict.KEEP, target, refused)
         if source is None:
-            if ownership_proof is not None:
-                try:
-                    if not ownership_proof(target):
-                        return Decision(
-                            Verdict.KEEP,
-                            target,
-                            "linked source contains user edits",
-                        )
-                except (OSError, RuntimeError, ValueError):
-                    return Decision(
-                        Verdict.KEEP,
-                        target,
-                        "could not verify linked source contents",
-                    )
             return Decision(Verdict.RETIRE, target, "no longer bridged")
         return (
             Decision(Verdict.SKIP, target, "already linked")
@@ -1529,6 +1546,7 @@ def withdraw_link(
     inside: Path,
     *,
     exact_target: Path | None = None,
+    ownership_proof: Callable[[Path], bool] | None = None,
 ) -> bool:
     """Remove a link autorun made, identified by where it points.
 
@@ -1550,31 +1568,19 @@ def withdraw_link(
 
     If the frozen link turns out not to be ours it goes back, and if the user
     has meanwhile filled the path it is parked rather than dropped on top of
-    what they wrote.
+    what they wrote. Under the lock the rule is :func:`decide_link`'s,
+    ``ownership_proof`` included, so a source edited since the decision keeps
+    its link.
     """
-    def ours(link: Path, base: Path) -> bool:
-        # ``base`` rather than ``link.parent``: a relative link keeps pointing
-        # at what it pointed at when it is renamed into the staging directory,
-        # so it must still be resolved against the directory it came from.
-        if not link.is_symlink():
-            return False
-        try:
-            resolved = Path(os.readlink(link))
-            resolved = resolved if resolved.is_absolute() else (base / resolved)
-            resolved = _strip_extended_prefix(resolved.resolve())
-            resolved.relative_to(
-                _strip_extended_prefix(inside.resolve())
-            )
-            if (
-                exact_target is not None
-                and resolved != _strip_extended_prefix(exact_target.resolve())
-            ):
-                return False
-        except (OSError, ValueError, RuntimeError):
-            return False
-        return True
+    def ours(link: Path, *, proof: Callable[[Path], bool] | None = None) -> bool:
+        # ``base`` is the directory the link came from: a relative link renamed
+        # into the stage still points where it pointed from there.
+        return not _link_is_ours(
+            link, inside, base=target.parent, exact_target=exact_target,
+            ownership_proof=proof,
+        )[1]
 
-    if not ours(target, target.parent):
+    if not ours(target):
         return False
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
         with tempfile.TemporaryDirectory(
@@ -1588,7 +1594,7 @@ def withdraw_link(
             except OSError:
                 return False
             try:
-                if not ours(quarantined, target.parent):
+                if not ours(quarantined, proof=ownership_proof):
                     _put_back(quarantined, target)
                     return False
                 quarantined.unlink()

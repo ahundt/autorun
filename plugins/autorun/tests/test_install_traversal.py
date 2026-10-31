@@ -227,3 +227,26 @@ def test_a_target_keeps_its_platform_reachable():
 
     assert target.name == "codex"
     assert target.platform is PLATFORMS["codex"]
+
+
+def test_retiring_a_link_rejudges_its_ownership_proof_under_the_lock(tmp_path):
+    """decide_link keeps a link whose ownership proof fails ("linked source
+    contains user edits"), but withdraw_link re-judged ownership without the
+    proof, so a RETIRE decided before the source was edited still removed it."""
+    from autorun.installer.fs import Decision
+    from autorun.installer.traversal import _perform
+
+    source = tmp_path / "sources" / "ar"
+    source.mkdir(parents=True)
+    link = tmp_path / "extensions" / "ar"
+    link.parent.mkdir()
+    link.symlink_to(source, target_is_directory=True)
+    intent = Intent(
+        target=link, source=source, plugin="ar", kind=Kind.LINK,
+        ownership_proof=lambda _installed: False,
+    )
+
+    decided = _perform(intent, Decision(Verdict.RETIRE, link, "no longer bridged"))
+
+    assert link.is_symlink(), "the link was removed though its proof now fails"
+    assert decided.verdict is Verdict.KEEP

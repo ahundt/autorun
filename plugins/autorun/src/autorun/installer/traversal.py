@@ -280,11 +280,7 @@ def _perform(
                 intent.target,
                 plugin=intent.plugin,
                 ownership_proof=intent.ownership_proof,
-                exact_target=(
-                    intent.source
-                    if intent.settings.get("registration_link") == "1"
-                    else None
-                ),
+                exact_target=_exact_target(intent),
                 **intent.settings,
             )
         return publishers[intent.kind](
@@ -298,11 +294,8 @@ def _perform(
                 removed = withdraw_link(
                     intent.target,
                     root,
-                    exact_target=(
-                        intent.source
-                        if intent.settings.get("registration_link") == "1"
-                        else None
-                    ),
+                    exact_target=_exact_target(intent),
+                    ownership_proof=intent.ownership_proof,
                 )
             else:
                 removed = withdrawn(
@@ -326,6 +319,11 @@ def _perform(
         if not removed:
             return Decision(Verdict.KEEP, intent.target, "could not remove", decision.edited)
     return decision
+
+
+def _exact_target(intent: Intent) -> Path | None:
+    """The one path a registration link must point at, or None for a bridge."""
+    return intent.source if intent.settings.get("registration_link") == "1" else None
 
 
 def _link_root(intent: Intent) -> Path | None:
@@ -466,11 +464,7 @@ def run(
                     inside,
                     plugin=intent.plugin,
                     ownership_proof=intent.ownership_proof,
-                    exact_target=(
-                        intent.source
-                        if intent.settings.get("registration_link") == "1"
-                        else None
-                    ),
+                    exact_target=_exact_target(intent),
                 )
                 if inside is not None
                 else Decision(
