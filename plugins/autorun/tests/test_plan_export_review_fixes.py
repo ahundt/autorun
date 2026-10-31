@@ -119,3 +119,56 @@ class TestExitPlanModeUsesTheCallingSessionsPlan:
         )
         exporter = pe.PlanExport(_event("S2", project, "PreToolUse", "ExitPlanMode"))
         assert exporter.get_current_plan() is None
+
+
+def _exit_plan_mode(project, tool_result):
+    """Run the PostToolUse(ExitPlanMode) export and return its notifications."""
+    ctx = _event("S1", project, "PostToolUse", "ExitPlanMode", tool_result=tool_result)
+    pe.export_on_exit_plan_mode(ctx)
+    return " ".join(message for message, _channel in ctx._chain_notifications)
+
+
+class TestDirectoriesOutsideTheProject:
+    def test_absolute_dir_exports_and_reports_success(self, tmp_path, project, plans_dir):
+        archive = tmp_path / "archive"
+        pe.plan_export_command(f"dir {archive}", project, "claude")
+        plan = _plan(plans_dir, "abs", "absolute archive")
+
+        notice = _exit_plan_mode(project, {"filePath": str(plan)})
+
+        assert "FAILED" not in notice, notice
+        assert str(archive) in notice, notice
+        assert "absolute archive" in _bodies(archive)
+
+    def test_tilde_dir_expands_to_home(self, tmp_path, project, plans_dir):
+        pe.plan_export_command("dir ~/plans-archive", project, "claude")
+        plan = _plan(plans_dir, "tilde", "home archive")
+
+        notice = _exit_plan_mode(project, {"filePath": str(plan)})
+
+        assert "FAILED" not in notice, notice
+        assert not (project / "~").exists(), "a directory literally named ~ was created"
+        assert "home archive" in _bodies(tmp_path / "home" / "plans-archive")
+
+    def test_tilde_path_in_exit_message_is_found(self, project, plans_dir):
+        _plan(plans_dir, "said", "named in the message")
+
+        notice = _exit_plan_mode(
+            project, "Your plan has been saved to: ~/.claude/plans/said.md"
+        )
+
+        assert "no plan content found" not in notice, notice
+        assert "named in the message" in _bodies(project / "notes")
+
+    def test_absolute_rejected_dir_backup_returns_its_path(
+        self, tmp_path, project, plans_dir
+    ):
+        rejected = tmp_path / "rejected-archive"
+        pe.plan_export_command(f"rejected dir {rejected}", project, "claude")
+        plan = _plan(plans_dir, "rej", "absolute rejected")
+        exporter = pe.PlanExport(_event("S1", project, "PreToolUse", "ExitPlanMode"))
+
+        backup = exporter.backup_to_rejected(plan, "plan")
+
+        assert backup is not None
+        assert Path(backup).parent == rejected

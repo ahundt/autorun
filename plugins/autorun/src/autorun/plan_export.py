@@ -988,7 +988,7 @@ class PlanExport:
                 match = re.search(r"saved to:\s*([^\n]+\.md)\b", value, re.IGNORECASE)
                 if match:
                     path_str = match.group(1).strip()
-                    path = Path(path_str)
+                    path = Path(path_str).expanduser()
                     if path.exists():
                         logger.info(f"Extracted plan path from ExitPlanMode message: {path}")
                         return path
@@ -1060,7 +1060,8 @@ class PlanExport:
         useful_name = self.extract_useful_name(plan_path)
 
         expanded_dir = self.expand_template(output_dir, plan_path, useful_name)
-        notes_dir = self.project_dir / expanded_dir
+        # An absolute (or ~) directory replaces project_dir in the join.
+        notes_dir = self.project_dir / Path(expanded_dir).expanduser()
         notes_dir.mkdir(parents=True, exist_ok=True)
 
         base_filename = self._sanitize_filename(
@@ -1080,6 +1081,17 @@ class PlanExport:
                 "already taken. Move or remove the existing exports."
             ),
         )
+
+    def _display_path(self, path: Path) -> str:
+        """Project-relative path for messages, or the full path outside it.
+
+        as_posix keeps the displayed path in the same vocabulary as CONFIG
+        ("notes/rejected"); str(Path) would print notes\\... on Windows.
+        """
+        try:
+            return path.relative_to(self.project_dir).as_posix()
+        except ValueError:
+            return str(path)
 
     def _write_reserved_destination(self, plan_path: Path, dest_path: Path) -> None:
         """Fill in a destination this exporter already reserved.
@@ -1332,10 +1344,7 @@ class PlanExport:
         receipt["phase"] = "COMPLETE"
         self._write_receipt(receipt_path, receipt)
 
-        # as_posix keeps the displayed path in the same vocabulary as CONFIG
-        # ("notes/rejected") and the hardcoded fallback messages below, which
-        # all use forward slashes. str(Path) would print notes\\... on Windows.
-        rel_path = dest_path.relative_to(self.project_dir).as_posix()
+        rel_path = self._display_path(dest_path)
         log_warning(f"Exported plan to {rel_path}", self.config)
         return {
             "success": True,
@@ -1391,8 +1400,11 @@ class PlanExport:
                 plans[plan_key] = entry
                 state["active_plans"] = plans
 
-            rel = dest_path.relative_to(self.project_dir).as_posix()
-            log_warning(f"Backed up plan to {rel} (pending acceptance decision)", self.config)
+            log_warning(
+                f"Backed up plan to {self._display_path(dest_path)} "
+                "(pending acceptance decision)",
+                self.config,
+            )
             return backup_path_str
 
         except Exception as e:
@@ -1431,13 +1443,8 @@ class PlanExport:
                 new_plans.pop(plan_key, None)
                 state["active_plans"] = new_plans
 
-            # Compute relative path for human-readable message (same pattern as export() lines 753-755)
             if backup_path:
-                try:
-                    rel = Path(backup_path).relative_to(self.project_dir).as_posix()
-                    msg = f"Plan retained in {rel} (not accepted)"
-                except ValueError:
-                    msg = "Plan retained in notes/rejected/ (not accepted)"
+                msg = f"Plan retained in {self._display_path(Path(backup_path))} (not accepted)"
             else:
                 msg = "Plan retained in notes/rejected/ (not accepted)"
 
@@ -1770,11 +1777,10 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
                 # dedup-skip (plan_export.py:733,755) — one branch covers both.
                 dest = result.get("destination", "")
                 if dest:
-                    try:
-                        dest_display = Path(dest).relative_to(exporter.project_dir).as_posix()
-                    except ValueError:
-                        dest_display = dest
-                    export_msg = f"📋 Plan exported from {plan} to: {dest_display}"
+                    export_msg = (
+                        f"📋 Plan exported from {plan} to: "
+                        f"{exporter._display_path(Path(dest))}"
+                    )
                 else:
                     export_msg = f"📋 {result['message']}"
 
