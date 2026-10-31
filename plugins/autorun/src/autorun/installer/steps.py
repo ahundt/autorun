@@ -318,6 +318,17 @@ STEPS: Mapping[str, tuple[Step, ...]] = {
 }
 
 
+def is_codex(harness: object) -> bool:
+    """Whether this harness speaks Codex: by flavor, so a custom one counts.
+
+    Deciding by name in some places and by flavor in others let a Codex-flavor
+    custom harness sweep ~/plugins without ever staging the plugin there.
+    """
+    platform = getattr(harness, "platform", harness)
+    flavor = getattr(platform, "install_flavor", "") or getattr(platform, "name", "")
+    return flavor == "codex"
+
+
 def pi_family_names() -> tuple[str, ...]:
     """Names of every harness that publishes the Pi in-process adapter."""
     return tuple(name for name, row in STEPS.items() if pi_extension_step in row)
@@ -643,8 +654,7 @@ def hooks_for(
     if "ar" not in _plugins(ctx):
         return ()
     platform = getattr(harness, "platform", harness)
-    flavor = getattr(platform, "install_flavor", "") or getattr(platform, "name", "")
-    if flavor != "codex":
+    if not is_codex(harness):
         return ()
     if (
         not removing
@@ -669,9 +679,8 @@ def marketplaces_for(
     through 1.0.0rc3 wrote ``./plugins/<name>`` whatever the setting, so that
     identity is retired when the configured path differs.
     """
-    platform = getattr(harness, "platform", harness)
     if (
-        getattr(platform, "name", "") != "codex"
+        not is_codex(harness)
         or (
             not removing
             and str(ctx.settings.get("codex_plugin_marketplace", "personal"))
@@ -911,7 +920,7 @@ def prepared(
                     continue
                 staged[name][plugin] = directory
         if (
-            any(getattr(harness, "name", "") == "codex" for harness in harnesses)
+            any(is_codex(harness) for harness in harnesses)
             and str(ctx.settings.get("codex_plugin_marketplace", "personal")) == "personal"
         ):
             from ..platforms import CODEX

@@ -71,3 +71,39 @@ def test_a_gemini_only_install_leaves_antigravitys_trees_inside_gemini_home(sand
         harnesses=(PLATFORMS["gemini"],), available=(), teardown_enabled=False,
     )
     assert (antigravity / "README.md").is_file(), "--uninstall --gemini removed Antigravity's"
+
+
+def test_a_codex_flavor_custom_harness_keeps_the_codex_plugin_and_its_entry(sandbox):
+    """`--install --claude` with a Codex-flavor custom harness selected.
+
+    prepared() staged the Codex plugin only for a harness *named* codex,
+    while _config_roots swept ~/plugins for any harness of Codex *flavor*, so
+    ~/plugins/ar was retired while the personal marketplace still listed it.
+    """
+    import json
+
+    from autorun.installer import settings, steps
+
+    spec = settings.CustomHarness("work", "codex", "codex", "~/.codex-work")
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}, "codex_plugin_marketplace": "personal"},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+    assert orchestrate.install(harnesses=(PLATFORMS["codex"],), **common).ok
+    plugin = sandbox / "plugins" / "ar" / ".codex-plugin" / "plugin.json"
+    market = sandbox / ".agents" / "plugins" / "marketplace.json"
+    assert plugin.is_file()
+
+    result = orchestrate.install(
+        harnesses=(PLATFORMS["claude"], settings.synthesize(spec)),
+        step_table=settings.steps_for_custom(spec, steps.STEPS),
+        **common,
+    )
+
+    assert result.ok, result.findings
+    assert plugin.is_file(), "the Codex plugin a listed marketplace entry names was retired"
+    assert [p["name"] for p in json.loads(market.read_text())["plugins"]] == ["ar"]

@@ -267,13 +267,15 @@ def perform(
         if any(finding.level is status.Level.BROKEN for finding in findings):
             return Result(mode, findings=tuple(findings), missing=missing)
         try:
-            marketplaces = tuple(
-                marketplace
+            # Keyed by file and plugin: every Codex-flavor harness, custom ones
+            # included, shares one personal marketplace and one plugin tree.
+            marketplaces = tuple({
+                marketplace.describe(): marketplace
                 for harness in selected
                 for marketplace in steps.marketplaces_for(
                     harness, staged, removing=mode is Mode.UNINSTALL
                 )
-            )
+            }.values())
         except ValueError as error:  # a Codex plugin location outside home
             findings.append(status.Finding(
                 "Codex plugin location", status.Level.BROKEN, str(error),
@@ -374,7 +376,11 @@ def perform(
         # still there, still marked, found again, and reported a second time. A
         # user reading the report to learn what was preserved saw one path twice
         # and could not tell that from two different trees having been kept.
-        stale = retirements(_config_roots(selected, staged), claimed, plugins=named)
+        stale = retirements(
+            _config_roots(selected, staged, removing=mode is Mode.UNINSTALL),
+            claimed,
+            plugins=named,
+        )
         spared = _held_by_unselected(selected, staged)
         decisions.extend(run(
             (), staged, mode, extra=(i for i in stale if not spared(i.target))
@@ -916,13 +922,19 @@ def _companions_wanted(ctx: Context) -> list[str]:
     return ["conductor"] if ctx.settings.get("conductor", True) else []
 
 
-def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
+def _config_roots(
+    harnesses: Iterable[object], ctx: Context, *, removing: bool = False
+) -> list[Path]:
     """Every config directory this run touched, for the lock sweep.
 
     Only roots this selection can fully re-claim are swept: a tree the sweep
     finds unclaimed is retired as "no longer shipped", so a root that other,
     unselected harnesses still populate must stay out of the list. An empty
     selection touches nothing and sweeps nothing.
+
+    The Codex plugin root is swept only when this run staged a Codex plugin
+    (so it claims what it keeps) or is removing: otherwise nothing claims
+    ~/plugins/ar while the personal marketplace still lists it.
     """
     harnesses = tuple(harnesses)  # iterated twice: config dirs, then staging
     if not harnesses:
@@ -940,10 +952,7 @@ def _config_roots(harnesses: Iterable[object], ctx: Context) -> list[Path]:
             discovery.expand_home(retired, home=ctx.home)
             for retired in getattr(platform, "retired_config_dirs", ()) or ()
         )
-        if (
-            getattr(platform, "install_flavor", "")
-            or getattr(platform, "name", "")
-        ) == "codex":
+        if steps.is_codex(platform) and (removing or ctx.settings.get("_staged_codex")):
             found.append(discovery.codex_plugin_source(home=ctx.home).parent)
     selected_names = {
         getattr(harness, "name", "") for harness in harnesses
