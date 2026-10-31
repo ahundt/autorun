@@ -807,6 +807,17 @@ class TestSessionStartEdgeCases:
         assert "Pending B" in msg
         assert "🤝" in msg  # delegated icon
 
+    def test_session_start_names_a_returned_delegation(self, isolated_session, cfg):
+        """delegation-returned blocks Stop, so SessionStart must name it too."""
+        mgr = _mgr("ss-returned", cfg)
+        mgr.create_task("r", {"subject": "Returned R"}, "created")
+        mgr.update_task("r", {"status": "delegation-returned"}, "subagent finished")
+        result = mgr.handle_session_start(_ss_ctx("ss-returned"))
+        assert result is not None
+        msg = result.get("systemMessage", "")
+        assert "#r: Returned R (📥" in msg, msg
+        assert "more" not in msg, msg
+
     def test_session_start_no_injection_all_complete(self, isolated_session, cfg):
         mgr = _mgr("ss-alldone", cfg)
         for i in range(5):

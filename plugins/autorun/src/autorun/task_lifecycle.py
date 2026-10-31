@@ -2281,21 +2281,23 @@ class TaskLifecycle:
         recent_incomplete = [t for t in prioritized if now - t["created_at"] < recent_threshold]
         older_incomplete = [t for t in prioritized if now - t["created_at"] >= recent_threshold]
 
-        in_progress_tasks = [t for t in recent_incomplete if t["status"] == "in_progress"]
-        pending_tasks = [t for t in recent_incomplete if t["status"] == "pending"]
+        # Every blocking status, in_progress first; the stable sort keeps the
+        # dependency-aware order within each group.
+        recent_ordered = sorted(recent_incomplete, key=lambda t: t["status"] != "in_progress")
 
         # Build numbered task list (inline, minimal newlines)
         task_items = []
         total_shown = 0
         max_tasks = self.config.max_resume_tasks
 
-        for t in in_progress_tasks[: max_tasks - total_shown]:
-            task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} (🔄)")
-            total_shown += 1
-
-        for t in pending_tasks[: max_tasks - total_shown]:
+        for t in recent_ordered[: max_tasks - total_shown]:
             blockers = t.get("blockedBy", [])
-            icon = f"⚠️ blocked by {blockers}" if blockers else "✅ ready"
+            if t["status"] == "in_progress":
+                icon = "🔄"
+            elif t["status"] == "delegation-returned":
+                icon = "📥 delegation returned — verify the results"
+            else:
+                icon = f"⚠️ blocked by {blockers}" if blockers else "✅ ready"
             task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} ({icon})")
             total_shown += 1
 
