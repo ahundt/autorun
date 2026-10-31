@@ -18,9 +18,8 @@
 Utility shim module for autorun.
 
 Provides shared utility functions (sanitize_log_message, log_info,
-is_safe_regex_pattern, command_matches_pattern, parse_pattern_and_description,
-build_hook_response, has_valid_justification) and a thin main() shim that
-delegates to __main__.run_hook_handler().
+build_hook_response) and a thin main() shim that delegates to
+__main__.run_hook_handler().
 
 Production hook dispatch path:
   hook_entry.py → __main__.run_hook_handler() → client.py → daemon → plugins.py
@@ -50,12 +49,15 @@ Removed (with canonical replacements):
 - HANDLERS dict, COMMAND_HANDLERS dict → plugins.app.commands + app.dispatch()
 - _manage_monitor, get_injection_monitor, update_injection_outcome → removed
 - get_global_tmux_utils → tmux_utils.get_tmux_utilities() directly
+- parse_pattern_and_description → plugins._parse_args
+- is_safe_regex_pattern → plugins._is_safe_regex
+- command_matches_pattern → plugins._match (command_detection for literals)
+- has_valid_justification → plugins.has_valid_justification
 """
 
 import os
 import sys
 import time
-import re as regex_module
 
 from .session_manager import session_state  # noqa: F401 - compatibility re-export
 from .session_manager import state_directory
@@ -79,16 +81,6 @@ from .config import (  # noqa: F401 - compatibility re-exports
     PLAN_TOOLS,
     PATTERN_DISPLAY_MAX_LEN,
 )
-
-# Import robust command detection (fixes substring matching bug)
-# Uses bashlex AST parsing when available, falls back to shlex
-try:
-    from .command_detection import command_matches_pattern as ast_command_matches_pattern
-
-    AST_COMMAND_DETECTION_AVAILABLE = True
-except ImportError:
-    AST_COMMAND_DETECTION_AVAILABLE = False
-    ast_command_matches_pattern = None
 
 # Import schema validation for dual-platform compatibility
 try:
@@ -199,223 +191,6 @@ def log_info(message):
 # =============================================================================
 
 
-def parse_pattern_and_description(args: str) -> tuple[str, str | None, str]:
-    """
-    Parse pattern and optional description from command arguments.
-
-    Supports multiple formats:
-    1. /ar:no pattern                    # No description, uses DEFAULT_INTEGRATIONS
-    2. /ar:no "pattern with spaces"      # Quoted pattern, no description
-    3. /ar:no "pattern" description      # Quoted pattern with custom description
-    4. /ar:no pattern description text   # Unquoted pattern with description
-
-    Pattern type prefixes (opt-in):
-    5. /ar:no regex:pattern              # Regex pattern matching
-    6. /ar:no glob:pattern               # Glob pattern matching
-    7. /ar:no "/regex.*$/"               # Auto-detect regex using /pattern/ syntax
-
-    Args:
-        args: Command arguments after the command name
-
-    Returns:
-        Tuple of (pattern, description, pattern_type)
-        - pattern: The pattern string to match
-        - description: Custom description or None
-        - pattern_type: One of "literal", "regex", "glob"
-
-    Examples:
-        >>> parse_pattern_and_description("rm")
-        ('rm', None, 'literal')
-        >>> parse_pattern_and_description('"rm -rf"')
-        ('rm -rf', None, 'literal')
-        >>> parse_pattern_and_description('"exec(" unsafe function')
-        ('exec(', 'unsafe function', 'literal')
-        >>> parse_pattern_and_description('regex:exec\\(')
-        ('exec\\(', None, 'regex')
-        >>> parse_pattern_and_description('glob:*.tmp')
-        ('*.tmp', None, 'glob')
-    """
-    import shlex
-
-    args = args.strip()
-    if not args:
-        raise ValueError("No pattern provided")
-
-    pattern_type = "literal"  # Default to literal matching
-
-    # Check for regex: prefix
-    if args.startswith("regex:"):
-        pattern_type = "regex"
-        args = args[6:].lstrip()
-
-    # Check for glob: prefix
-    elif args.startswith("glob:"):
-        pattern_type = "glob"
-        args = args[5:].lstrip()
-
-    # Use shlex to parse quoted strings
-    try:
-        parts = shlex.split(args)
-    except ValueError:
-        # Fallback to simple split if shlex fails
-        parts = args.split(None, 1)
-
-    if not parts:
-        raise ValueError("No pattern provided")
-
-    pattern = parts[0]
-
-    # Re-check the prefix on the unquoted first token: the raw-args checks above
-    # run before shlex strips quotes, so a quoted pattern like 'regex:foo' (leading
-    # quote) is missed there and arrives here as the literal 'regex:foo'. This makes
-    # /ar:no 'regex:foo' behave the same as /ar:no regex:foo.
-    if pattern_type == "literal":
-        if pattern.startswith("regex:"):
-            pattern_type = "regex"
-            pattern = pattern[6:].lstrip()
-        elif pattern.startswith("glob:"):
-            pattern_type = "glob"
-            pattern = pattern[5:].lstrip()
-
-    # Check for /pattern/ regex syntax (auto-detect) on first token
-    # This must happen after splitting to handle descriptions correctly
-    if pattern_type == "literal" and pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
-        potential_regex = pattern[1:-1]
-        # Simple heuristic: if it has regex metacharacters, treat as regex
-        regex_chars = set(r"[]{}()*+?|^$.\" ")
-        if any(c in potential_regex for c in regex_chars):
-            pattern_type = "regex"
-            pattern = potential_regex
-
-    # Everything after the pattern is the description
-    description = None
-    if len(parts) > 1:
-        description = " ".join(parts[1:])
-
-    return pattern, description, pattern_type
-
-
-def is_safe_regex_pattern(pattern: str, max_length: int = 200) -> bool:
-    """Validate regex pattern for safety against ReDoS attacks.
-
-    Security: User-provided regex patterns can cause catastrophic backtracking
-    (ReDoS). This function rejects patterns with known dangerous constructs.
-
-    Args:
-        pattern: Regex pattern to validate
-        max_length: Maximum allowed pattern length
-
-    Returns:
-        True if pattern is considered safe, False otherwise
-
-    Dangerous patterns blocked:
-        - Nested quantifiers: (a+)+, (a*)+, (a+)*, etc.
-        - Overlapping alternations with quantifiers
-        - Excessively long patterns
-    """
-    if len(pattern) > max_length:
-        return False
-
-    # Detect nested quantifiers - the primary cause of catastrophic backtracking
-    # Pattern: quantifier followed by another quantifier on the same group
-    # Examples: (a+)+, (a*)+, (a+)*, (a?)*, (.+)+, ((a+))+, etc.
-    nested_quantifier_patterns = [
-        r"\([^)]*[+*?]\)[+*?]",  # (x+)+, (x*)+, etc.
-        r"\([^)]*[+*?]\)\{",  # (x+){n}, (x*){n}, etc.
-        r"\[[^\]]*\][+*?][+*?]",  # [abc]+*, etc.
-        r"[+*?]\{[0-9,]+\}[+*?]",  # a{2,}+, etc.
-        r"\)\)+[+*?]",  # ))+ nested groups with quantifier
-        r"\([^)]*\([^)]*[+*?]\)",  # ((x+)) nested capturing groups
-    ]
-
-    for dangerous_pattern in nested_quantifier_patterns:
-        try:
-            if regex_module.search(dangerous_pattern, pattern):
-                return False
-        except regex_module.error:
-            return False
-
-    # Also try to compile to catch syntax errors early
-    try:
-        regex_module.compile(pattern)
-    except regex_module.error:
-        return False
-
-    return True
-
-
-def command_matches_pattern(command: str, pattern: str, pattern_type: str = "literal") -> bool:
-    """
-    Check if a command matches a blocked pattern.
-
-    Args:
-        command: Full command string
-        pattern: Pattern to match against
-        pattern_type: One of "literal", "regex", "glob" (default: "literal")
-
-    Returns:
-        True if command matches pattern
-
-    Security:
-        Regex patterns are validated against ReDoS attacks before execution.
-        Invalid or dangerous patterns fall back to literal substring matching.
-    """
-    import fnmatch
-
-    command = command.strip()
-    pattern = pattern.strip()
-
-    if not command or not pattern:
-        return False
-
-    # Regex matching with ReDoS protection
-    if pattern_type == "regex":
-        # Validate pattern safety before execution
-        if not is_safe_regex_pattern(pattern):
-            log_info(f"Unsafe regex pattern rejected (ReDoS protection): {pattern[:PATTERN_DISPLAY_MAX_LEN]}")
-            # Fall back to literal matching for safety
-            return pattern in command
-        try:
-            return bool(regex_module.search(pattern, command))
-        except regex_module.error:
-            # Invalid regex, fall back to literal substring match
-            return pattern in command
-
-    # Glob matching
-    if pattern_type == "glob":
-        return fnmatch.fnmatch(command, pattern)
-
-    # Literal matching (default) - use AST-based detection to avoid substring bugs
-    # The AST-based function correctly handles:
-    # - "/ar:plannew" does NOT match "rm" (substring in "plannew")
-    # - "sudo rm file" DOES match "rm" (command position)
-    # - "echo rm" does NOT match "rm" (argument position)
-    if AST_COMMAND_DETECTION_AVAILABLE:
-        return ast_command_matches_pattern(command, pattern)
-
-    # Fallback if AST detection unavailable: use safer heuristics
-    # Exact match
-    if command == pattern:
-        return True
-
-    # Command name match (pattern is just the command)
-    # Split by shell operators and spaces
-    command_parts = regex_module.split(r"[|&;\s]+", command)
-    if pattern in command_parts:
-        return True
-
-    # Multi-word pattern match (e.g., "dd if=")
-    if " " in pattern:
-        if pattern in command:
-            return True
-
-    # Pattern starts with command name
-    if command.startswith(pattern + " "):
-        return True
-
-    return False
-
-
 # =============================================================================
 # Predicate Functions — MOVED to integrations.py (fallback copies removed)
 # =============================================================================
@@ -512,27 +287,6 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
         response["reason"] = reason
 
     return validate_hook_response(event_name, response, cli_type=cli_type)
-
-
-def has_valid_justification(*texts: str) -> bool:
-    """
-    Check if any provided text contains a valid AUTOFILE_JUSTIFICATION tag.
-
-    Validates that the content between tags is not:
-    - The default placeholder "reason"
-    - Empty or whitespace-only
-
-    Args:
-        *texts: One or more strings to search (transcript, file content, etc.)
-
-    Returns:
-        True if valid justification found, False otherwise
-    """
-    combined = " ".join(texts)
-    excluded = {"reason", ""}
-    pattern = r"<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>"
-    matches = regex_module.findall(pattern, combined, regex_module.DOTALL | regex_module.IGNORECASE)
-    return any(m.strip().lower() not in excluded for m in matches)
 
 
 # HANDLERS dict — REMOVED: use plugins.app.commands + app.dispatch() (canonical)

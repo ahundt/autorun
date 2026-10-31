@@ -13,7 +13,7 @@ Tests the new functionality for:
 """
 
 import pytest
-from autorun.main import parse_pattern_and_description, command_matches_pattern
+from autorun.plugins import _parse_args as parse_pattern_and_description, _match as command_matches_pattern
 
 
 class TestParsePatternAndDescription:

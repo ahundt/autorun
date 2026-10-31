@@ -38,7 +38,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from autorun.main import command_matches_pattern
+from autorun.plugins import _match as command_matches_pattern
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
 

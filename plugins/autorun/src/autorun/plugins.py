@@ -380,8 +380,16 @@ def _is_safe_regex(pattern: str, max_len: int = 200) -> bool:
     if len(pattern) > max_len:
         return False
 
-    # Detect nested quantifiers (catastrophic backtracking)
-    dangerous = [r"\([^)]*[+*?]\)[+*?]", r"\([^)]*[+*?]\)\{", r"\[[^\]]*\][+*?][+*?]"]
+    # Detect nested quantifiers (catastrophic backtracking). `((a+))+b`
+    # backtracks exponentially and matches only the last two shapes.
+    dangerous = [
+        r"\([^)]*[+*?]\)[+*?]",  # (x+)+, (x*)+
+        r"\([^)]*[+*?]\)\{",  # (x+){n}
+        r"\[[^\]]*\][+*?][+*?]",  # [abc]+*
+        r"[+*?]\{[0-9,]+\}[+*?]",  # a+{2,}+
+        r"\)\)+[+*?]",  # ((x))+
+        r"\([^)]*\([^)]*[+*?]\)",  # ((x+))
+    ]
     for d in dangerous:
         if re.search(d, pattern):
             return False

@@ -30,7 +30,7 @@ import pytest
 from unittest.mock import patch
 
 # command_matches_pattern is kept in main.py as a utility function
-from autorun.main import command_matches_pattern
+from autorun.plugins import _match as command_matches_pattern
 from autorun.command_detection import command_tokens_for
 from autorun.config import DEFAULT_INTEGRATIONS
 import autorun.integrations as integ

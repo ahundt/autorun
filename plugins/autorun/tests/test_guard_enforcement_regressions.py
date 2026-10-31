@@ -252,6 +252,24 @@ class TestUserDefaultIntegrationsAreEnforced:
         assert "publish-command" not in names
 
 
+class TestOneRegexGuard:
+    """E-D5/F6: main.py's six-check guard rejected ((a+))+b; the live
+    three-check copy accepted it and _match backtracked exponentially."""
+
+    def test_nested_group_quantifier_is_rejected_and_match_returns_quickly(self):
+        assert plugins._is_safe_regex("((a+))+b") is False
+        started = time.monotonic()
+        plugins._match("a" * 24 + "c", "((a+))+b", "regex")
+        assert time.monotonic() - started < 0.5
+
+    def test_main_no_longer_carries_parallel_copies(self):
+        from autorun import main
+
+        for stale in ("parse_pattern_and_description", "is_safe_regex_pattern",
+                      "command_matches_pattern", "has_valid_justification"):
+            assert not hasattr(main, stale), stale
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""

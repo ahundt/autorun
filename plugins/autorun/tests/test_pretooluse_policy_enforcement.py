@@ -9,7 +9,8 @@ from pathlib import Path
 # Add the src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun.main import session_state, CONFIG, has_valid_justification
+from autorun.main import session_state, CONFIG
+from autorun.plugins import has_valid_justification
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
 

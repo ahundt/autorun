@@ -350,7 +350,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_is_safe_regex_rejects_nested_quantifiers(self):
         """Test ReDoS protection rejects dangerous patterns"""
-        from autorun.main import is_safe_regex_pattern
+        from autorun.plugins import _is_safe_regex as is_safe_regex_pattern
 
         # Dangerous patterns with nested quantifiers
         dangerous_patterns = [
@@ -367,7 +367,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_is_safe_regex_accepts_safe_patterns(self):
         """Test that safe regex patterns are accepted"""
-        from autorun.main import is_safe_regex_pattern
+        from autorun.plugins import _is_safe_regex as is_safe_regex_pattern
 
         safe_patterns = [
             r"rm\s+-rf",
@@ -383,7 +383,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_is_safe_regex_rejects_long_patterns(self):
         """Test that excessively long patterns are rejected"""
-        from autorun.main import is_safe_regex_pattern
+        from autorun.plugins import _is_safe_regex as is_safe_regex_pattern
 
         long_pattern = "a" * 300
         assert is_safe_regex_pattern(long_pattern) is False, "Long pattern should be rejected"
@@ -391,7 +391,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_is_safe_regex_rejects_invalid_patterns(self):
         """Test that invalid regex syntax is rejected"""
-        from autorun.main import is_safe_regex_pattern
+        from autorun.plugins import _is_safe_regex as is_safe_regex_pattern
 
         invalid_patterns = [
             "[unclosed",
