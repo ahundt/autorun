@@ -540,6 +540,25 @@ class TestStructuredCommandsReadOnlyTheirOwnLine:
         assert [a["pattern"] for a in state.state_get("session_allowed_patterns", [])] == ["git push"]
 
 
+class TestTaskReasonsAreFreeText:
+    """E15: /ar:task shlex-split its whole line, so an apostrophe in a reason
+    failed with "invalid quoting" and balanced quotes were silently eaten."""
+
+    def _pause(self, prompt):
+        return plugins.app.dispatch(EventContext(
+            session_id=_sid(), event="UserPromptSubmit", prompt=prompt,
+            session_identity_authority="payload", store=ThreadSafeDB(),
+        )).get("systemMessage", "")
+
+    def test_apostrophes_in_a_pause_reason(self):
+        reply = self._pause("/ar:task pause Let's discuss the release")
+        assert "❌" not in reply and "Let's discuss the release" in reply, reply
+
+    def test_scope_words_still_parse_before_the_reason(self):
+        reply = self._pause("/ar:task pause 5m don't wait on CI")
+        assert "❌" not in reply and "don't wait on CI" in reply and "5m" in reply, reply
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""

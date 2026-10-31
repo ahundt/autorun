@@ -2933,11 +2933,13 @@ class TaskPauseArguments:
 
 
 def _parse_task_command(arguments: str) -> TaskCommand:
-    """Parse the words after /ar:task (or /ar:tasks) on the command's line."""
-    try:
-        parts = shlex.split(arguments)
-    except ValueError as exc:
-        raise ValueError(f"task command has invalid quoting: {exc}") from exc
+    """Parse the words after /ar:task (or /ar:tasks) on the command's line.
+
+    Whitespace words, not shlex: operations, ids, counts and durations need
+    no quoting, and a free-text reason ("Let's discuss the release") is kept
+    as typed instead of failing on, or silently eating, its apostrophes.
+    """
+    parts = arguments.split()
     operation = parts[0].lower() if parts else "status"
     return TaskCommand(operation, tuple(parts[1:]))
 
