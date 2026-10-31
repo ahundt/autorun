@@ -922,3 +922,84 @@ def test_registry_transactions_serialize_the_complete_read_modify_write(tmp_path
             "second": {"enabled": True},
         }
     }
+
+
+# ─── Interrupts after the first rename (the only copy is in the stage) ───────
+
+
+def _in_stage(path: Path) -> bool:
+    return path.parent.name.startswith(installer_fs._STAGE_PREFIXES)
+
+
+def _raise_in_stage(monkeypatch, owner, name: str, exc: BaseException) -> None:
+    """Make ``owner.<name>`` raise ``exc`` when called on a path inside a stage."""
+    real = getattr(owner, name)
+
+    def failing(path, *args, **kwargs):
+        if _in_stage(Path(path)):
+            raise exc
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(owner, name, failing)
+
+
+def test_an_interrupt_after_the_swap_rename_restores_the_users_directory(
+    tmp_path, monkeypatch
+):
+    """``_swapped`` renamed the target into its stage, then hashed it outside
+    the rollback ``try``; a KeyboardInterrupt there let the stage cleanup
+    delete the user's commands/ directory, the only copy."""
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    shipped = tmp_path / "shipped"
+    shipped.mkdir()
+    (shipped / "ar-go.md").write_text("ours\n", encoding="utf-8")
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    (commands / "mine.md").write_text("theirs\n", encoding="utf-8")
+    _raise_in_stage(monkeypatch, installer_fs, "_identity", KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        installer_fs.publish_files(shipped, commands, plugin="ar")
+
+    assert (commands / "mine.md").read_text(encoding="utf-8") == "theirs\n"
+
+
+def test_a_failed_backup_during_forced_withdrawal_keeps_the_legacy_tree(
+    tmp_path, monkeypatch
+):
+    """`--uninstall --force` on a hashless tree parks a copy before deleting.
+
+    The park ran outside the rollback ``try``; ENOSPC there let the stage
+    cleanup delete the quarantined tree with no backup written.
+    """
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    legacy = tmp_path / "skills" / "old"
+    legacy.mkdir(parents=True)
+    (legacy / OWNED_MARKER_NAME).write_text(
+        json.dumps({"plugin": "ar", "files": []}), encoding="utf-8"
+    )
+    (legacy / "SKILL.md").write_text("maybe edited\n", encoding="utf-8")
+    _raise_in_stage(
+        monkeypatch, installer_fs, "_park_backup", OSError(28, "No space left on device")
+    )
+
+    with pytest.raises(OSError):
+        withdrawn(legacy, plugin="ar", force=True, backup_root=tmp_path / "backups")
+
+    assert (legacy / "SKILL.md").read_text(encoding="utf-8") == "maybe edited\n"
+
+
+def test_an_interrupt_while_judging_a_withdrawn_link_restores_it(tmp_path, monkeypatch):
+    """``withdraw_link`` re-judged the renamed link outside any ``try``."""
+    shared = tmp_path / "shared"
+    (shared / "skill").mkdir(parents=True)
+    link = tmp_path / "harness" / "skill"
+    link.parent.mkdir()
+    link.symlink_to(shared / "skill", target_is_directory=True)
+    _raise_in_stage(monkeypatch, installer_fs.os, "readlink", KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        installer_fs.withdraw_link(link, shared)
+
+    monkeypatch.undo()
+    assert link.is_symlink() and link.resolve() == (shared / "skill").resolve()

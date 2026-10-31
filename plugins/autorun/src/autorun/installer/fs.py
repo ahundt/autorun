@@ -856,11 +856,6 @@ def _swapped(target: Path) -> Iterator[Path]:
         ) as tmp:
             staged, backup = Path(tmp) / "next", Path(tmp) / "previous"
             yield staged
-            if target.exists() or target.is_symlink():
-                os.replace(target, backup)
-                frozen = _identity(backup)
-                if judged is None or frozen is None or frozen != judged:
-                    _park_backup(backup, _default_backup_root(), name=target.name)
             collision_index = 0
 
             def preserve_collision() -> None:
@@ -895,6 +890,14 @@ def _swapped(target: Path) -> Iterator[Path]:
                     os.replace(staged, target)
 
             try:
+                # Inside the rollback from the first rename on: once the
+                # target is ``previous`` the stage holds its only copy, and an
+                # interrupt or a failed park here would let cleanup delete it.
+                if target.exists() or target.is_symlink():
+                    os.replace(target, backup)
+                    frozen = _identity(backup)
+                    if judged is None or frozen is None or frozen != judged:
+                        _park_backup(backup, _default_backup_root(), name=target.name)
                 # A writer can recreate ``target`` after the first rename and
                 # before this one.  Preserve that new object and retry rather
                 # than either deleting it or losing the frozen previous tree
@@ -1118,53 +1121,58 @@ def withdrawn(
             except OSError:
                 return False
 
-            frozen_snapshot = _identity(quarantined)
-            proven_legacy = bool(
-                pre_quarantine_proof
-                and proof_snapshot is not None
-                and frozen_snapshot is not None
-                and proof_snapshot == frozen_snapshot
-            )
-            manifest = read_marker(quarantined)
-            park = False
-            allowed = True
-            if manifest is None:
-                allowed = proven_legacy
-            elif plugin is not None and not owns(manifest, plugin):
-                allowed = False
-            elif any(compare(quarantined, manifest)):
-                if manifest.files or not (
-                    proven_legacy or (force and backup_root is not None)
-                ):
-                    allowed = False
-                else:
-                    park = not proven_legacy
-
-            if not allowed:
-                if target.exists() or target.is_symlink():
-                    _park_backup(
-                        quarantined, _default_backup_root(), name=target.name
-                    )
-                else:
-                    os.replace(quarantined, target)
-                return False
-
-            if park:
-                assert backup_root is not None
-                _park_backup(quarantined, backup_root, name=target.name)
+            # From here the stage holds the only copy: every exit that does
+            # not delete it on purpose puts it back, or cleanup would.
             try:
+                frozen_snapshot = _identity(quarantined)
+                proven_legacy = bool(
+                    pre_quarantine_proof
+                    and proof_snapshot is not None
+                    and frozen_snapshot is not None
+                    and proof_snapshot == frozen_snapshot
+                )
+                manifest = read_marker(quarantined)
+                park = False
+                allowed = True
+                if manifest is None:
+                    allowed = proven_legacy
+                elif plugin is not None and not owns(manifest, plugin):
+                    allowed = False
+                elif any(compare(quarantined, manifest)):
+                    if manifest.files or not (
+                        proven_legacy or (force and backup_root is not None)
+                    ):
+                        allowed = False
+                    else:
+                        park = not proven_legacy
+
+                if not allowed:
+                    _put_back(quarantined, target)
+                    return False
+
+                if park:
+                    assert backup_root is not None
+                    _park_backup(quarantined, backup_root, name=target.name)
                 shutil.rmtree(quarantined)
             except BaseException:
-                if quarantined.exists() or quarantined.is_symlink():
-                    if target.exists() or target.is_symlink():
-                        _park_backup(
-                            quarantined, _default_backup_root(), name=target.name
-                        )
-                    else:
-                        os.replace(quarantined, target)
+                _put_back(quarantined, target)
                 raise
             removed = not (target.exists() or target.is_symlink())
     return removed
+
+
+def _put_back(held: Path, target: Path) -> None:
+    """Return an object renamed aside to ``target``, or park it if refilled.
+
+    A path written at ``target`` meanwhile is the newer object and stays; the
+    one in hand goes to ``~/.autorun/installer/backups/`` rather than on top.
+    """
+    if not (held.exists() or held.is_symlink()):
+        return
+    if target.exists() or target.is_symlink():
+        _park_backup(held, _default_backup_root(), name=target.name)
+    else:
+        os.replace(held, target)
 
 
 #: Suffix for a file autorun moved aside. Numbered when they stack, so a second
@@ -1570,13 +1578,14 @@ def withdraw_link(
                 os.replace(target, quarantined)
             except OSError:
                 return False
-            if not ours(quarantined, target.parent):
-                if target.exists() or target.is_symlink():
-                    _park_backup(quarantined, _default_backup_root(), name=target.name)
-                else:
-                    os.replace(quarantined, target)
-                return False
-            quarantined.unlink()
+            try:
+                if not ours(quarantined, target.parent):
+                    _put_back(quarantined, target)
+                    return False
+                quarantined.unlink()
+            except BaseException:
+                _put_back(quarantined, target)
+                raise
     return True
 
 
