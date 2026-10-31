@@ -926,15 +926,24 @@ class PlanExport:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Fall back to active plans for this project
+        # Fall back to this session's newest active plan in this project. Another
+        # session's plan is never returned: at PreToolUse(ExitPlanMode) that
+        # would mark it exit_attempted, and Option 1 recovery would then export
+        # it as accepted and the plan actually accepted as rejected. With no
+        # plan of its own the caller skips the backup, and PostToolUse falls
+        # through to get_plan_from_exit_message().
         try:
             project_dir = str(self.project_dir)
         except ValueError:
             return None
-        for path, info in self.active_plans.items():
-            if info.get("cwd") == project_dir and Path(path).exists():
-                return Path(path)
-        return None
+        own = [
+            (info.get("recorded_at", ""), path)
+            for path, info in self.active_plans.items()
+            if info.get("cwd") == project_dir
+            and info.get("session_id") == self.ctx.session_id
+            and Path(path).exists()
+        ]
+        return Path(max(own)[1]) if own else None
 
     def get_plan_from_exit_message(self) -> Optional[Path]:
         """Extract plan file path from ExitPlanMode response message.
@@ -1368,12 +1377,14 @@ class PlanExport:
             with session_state(GLOBAL_SESSION_ID) as state:
                 # Update active_plans only. Do NOT touch tracking — preserves get_unexported().
                 # Upsert: create entry if absent (e.g. after Option 1 recovery removed it)
-                # so get_current_plan() can find the plan via active_plans fallback in PostToolUse.
+                # so get_current_plan() can find the plan via active_plans fallback in PostToolUse;
+                # that fallback matches on session_id, so the upsert records it too.
                 plans = state.get("active_plans", {})
                 plan_key = str(plan_path)
                 entry = plans.get(plan_key, {})
                 if "cwd" not in entry:
                     entry["cwd"] = str(self.ctx.cwd) if self.ctx.cwd else str(self.project_dir)
+                entry.setdefault("session_id", self.ctx.session_id)
                 entry["exit_attempted"] = True
                 entry["mode_at_exit_attempt"] = permission_mode
                 entry["backup_path"] = backup_path_str
