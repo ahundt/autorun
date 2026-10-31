@@ -335,6 +335,44 @@ class TestContentionDoesNotDuplicateDelivery:
             "each emit the same warning."
         )
 
+    def test_a_contended_claim_through_the_real_store_is_retried(
+        self, delivery_config, hook_deadline, monkeypatch
+    ):
+        """The fakes above chain the cause by hand; this is the real chain.
+
+        ThreadSafeDB.update wraps the lock timeout and EventContext.state_update
+        must keep that cause, or the retry below never runs.
+        """
+        import contextlib
+
+        from autorun import core
+
+        real_session_state = core.session_state
+        attempts = []
+
+        @contextlib.contextmanager
+        def first_attempt_times_out(*args, **kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise SessionTimeoutError("Could not acquire state lock for 'x' after 0.5s")
+            with real_session_state(*args, **kwargs) as state:
+                yield state
+
+        monkeypatch.setattr(core, "session_state", first_attempt_times_out)
+        ctx = EventContext(
+            f"message-delivery-store-{uuid.uuid4().hex}",
+            "PreToolUse",
+            cli_type="codex",
+            store=core.ThreadSafeDB(),
+            deadline_monotonic=hook_deadline(30.0),
+        )
+
+        assert claim_message_delivery(ctx, _warning(), "Git commit rules", now=100.0)
+        assert len(attempts) == 2, "a lock timeout must be retried, not delivered fail-open"
+        assert not claim_message_delivery(ctx, _warning(), "Git commit rules", now=100.1), (
+            "the retried claim must have been stored, so the next one is suppressed"
+        )
+
     def test_without_a_hook_deadline_the_historic_fail_open_is_unchanged(
         self, delivery_config
     ):

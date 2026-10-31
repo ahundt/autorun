@@ -2236,8 +2236,12 @@ class EventContext:
                 error = SessionPersistenceError(f"State update was not saved for {target_session} ({name}): {exc}")
             # Chain before reporting, not only at the raise below: the reporter
             # reads __cause__ to tell a lock timeout apart from lost data, and
-            # `raise ... from exc` would set it too late to be seen.
-            error.__cause__ = exc
+            # `raise ... from exc` would set it too late to be seen. Only a new
+            # wrapper is chained: ThreadSafeDB.update already chained its
+            # SessionTimeoutError, and overwriting that with the error itself
+            # reported contention as data loss and skipped its retry.
+            if error is not exc:
+                error.__cause__ = exc
             report_state_persistence_failure(self, [name], target_session, error)
             if error is exc:
                 raise

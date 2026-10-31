@@ -413,6 +413,25 @@ class TestPersistenceFailureReachesTheCaller:
 
         assert ctx.state_get("counter") == 1
 
+    def test_a_contended_update_through_the_store_is_reported_as_contention(
+        self, isolated_state
+    ):
+        """ThreadSafeDB.update chains the lock timeout; state_update must keep it."""
+        from autorun.session_manager import state_failure_is_contention
+
+        ctx = self._context(ThreadSafeDB())
+
+        with failing_persistence():
+            with pytest.raises(SessionPersistenceError) as raised:
+                ctx.state_update("counter", lambda value: value + 1, 0)
+
+        assert state_failure_is_contention(raised.value), (
+            f"cause chain lost the SessionTimeoutError: {raised.value.__cause__!r}"
+        )
+        combined = " ".join(message for message, _channel in ctx._chain_notifications)
+        assert "could not take the state lock" in combined, combined
+        assert "discarded" not in combined, combined
+
 
 class TestAContendedReadDoesNotDestroyTheResponse:
     """Losing a race for the lock must not lose the whole hook.
