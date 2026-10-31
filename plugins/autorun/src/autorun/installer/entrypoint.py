@@ -862,8 +862,10 @@ def _latest_version(current: str) -> str:
         return "unknown"
 
 
-def perform_self_update(method: str = "auto") -> runtime.Outcome:
-    """Update through the detected installation route."""
+def perform_self_update(method: str | None = None) -> runtime.Outcome:
+    """Update through ``method``, resolved CLI > AUTORUN_UPDATE_METHOD > config
+    > "auto" (the detected installation route)."""
+    method = settings.UPDATE_METHOD.resolve(method).value
     name = _PLUGIN_DISTRIBUTIONS["ar"][0]
     try:
         # The *distribution* name, not the import package: `version("autorun")`

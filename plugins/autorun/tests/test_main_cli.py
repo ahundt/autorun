@@ -42,6 +42,54 @@ def _write_decision(session: str, target, capsys) -> str:
     return response.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
 
 
+class TestArgumentHandling:
+    def test_a_misspelled_install_flag_is_an_error_not_a_silent_default(self, monkeypatch, capsys):
+        """``--codex-hook-sorce=plugin`` used to be swallowed by
+        parse_known_args, so the install ran with the default source."""
+        called = []
+        monkeypatch.setattr("autorun.install.install_plugins", lambda *a, **k: called.append(1) or 0)
+
+        with pytest.raises(SystemExit) as exit_:
+            entry.main(["--install", "--codex-hook-sorce=plugin"])
+
+        assert exit_.value.code == 2
+        assert "unrecognized arguments: --codex-hook-sorce=plugin" in capsys.readouterr().err
+        assert called == []
+
+    def test_the_event_argument_antigravity_hooks_append_is_accepted(self, monkeypatch):
+        """platforms._native_handler appends ``--event <name>`` to every
+        Antigravity hook command, including ``autorun --cli ...``; rejecting
+        unknown arguments must not reject that one."""
+        handled = []
+        monkeypatch.setattr(entry, "run_hook_handler", lambda: handled.append(1) or 0)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
+
+        assert entry.main(["--cli", "gemini", "--event", "BeforeTool"]) == 0
+        assert handled == [1]
+
+    def test_update_method_comes_from_the_environment_when_no_flag_is_given(self, monkeypatch):
+        """CLI > env > config > default: AUTORUN_UPDATE_METHOD was ignored
+        because --update-method defaulted to "auto" in the parser."""
+        import subprocess
+
+        from autorun.installer import entrypoint
+
+        calls = []
+        monkeypatch.setenv("AUTORUN_UPDATE_METHOD", "gemini")
+        monkeypatch.setattr(entrypoint, "version", lambda _name: "1.0.0")
+        monkeypatch.setattr(entrypoint, "_latest_version", lambda _current: "1.0.1")
+        monkeypatch.setattr(
+            entrypoint, "_run", lambda argv, **_k: calls.append(tuple(argv)) or subprocess.CompletedProcess(argv, 0, "", "")
+        )
+
+        assert entry.main(["--update"]) == 0
+        assert calls[0][:3] == ("gemini", "extensions", "update"), calls
+
+        calls.clear()
+        assert entry.main(["--update", "--update-method", "claude"]) == 0
+        assert calls[0][:3] == ("claude", "plugin", "update"), "the flag outranks the environment"
+
+
 class TestFilePolicyCommand:
     """`autorun file allow|justify|search|status` sets what the Write gate reads."""
 

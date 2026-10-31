@@ -495,6 +495,14 @@ For more information: https://github.com/ahundt/autorun
         "Passed by hook_entry.py so every pathway receives CLI identity. "
         "When present, also sets AUTORUN_CLI_TYPE env var for downstream use.",
     )
+    hook_group.add_argument(
+        "--event",
+        default=None,
+        metavar="EVENT",
+        help="Hook event name. Antigravity hook commands append it "
+        "(platforms.Platform._native_handler); hook_entry.py reads it, and the "
+        "payload's hook_event_name wins.",
+    )
 
     info_group = parser.add_argument_group("Information")
     info_group.add_argument(
@@ -570,8 +578,11 @@ For more information: https://github.com/ahundt/autorun
     update_group.add_argument(
         "--update-method",
         choices=_update_method_choices(),
-        default="auto",
-        help="Force specific update method (default: auto-detect)",
+        # None so AUTORUN_UPDATE_METHOD and the config file can answer; see
+        # --codex-hook-source above. perform_self_update resolves it.
+        default=None,
+        help="Force specific update method (default: auto-detect). "
+        "AUTORUN_UPDATE_METHOD also sets this; the flag wins.",
     )
 
     # Subcommands (modern CLI structure)
@@ -1019,7 +1030,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     use_utf8_output()
 
     parser = create_parser()
-    args, remaining = parser.parse_known_args(argv)
+    # parse_args, not parse_known_args: a misspelled flag such as
+    # --codex-hook-sorce=plugin must stop with an error naming it rather than
+    # run with the default it was meant to change.
+    args = parser.parse_args(argv)
 
     # Version check
     if args.version:
