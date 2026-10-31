@@ -456,27 +456,38 @@ class TestSchemaMigrationEdgeCases:
 
 class TestGCAndPruning:
 
-    def test_gc_preserves_session_with_delegated_task(self, isolated_session, cfg, tmp_path):
-        """Session with delegated task: GC runs without crash. Delegated is NON_BLOCKING
-        so it is NOT counted as incomplete; GC may clear it. Test documents this known gap
-        and verifies no crash."""
-        mgr = _mgr("gc-del", cfg)
-        mgr.create_task("t1", {"subject": "Delegated research"}, "created")
-        mgr.update_task("t1", {"status": "delegated"}, "delegated")
+    @pytest.mark.parametrize("status", ["delegated", "paused"])
+    def test_gc_preserves_session_with_delegated_task(self, isolated_session, cfg, status):
+        """A delegated or paused task is unfinished work; GC must keep it.
 
-        # cli_gc signature: (archive, dry_run, pattern, ttl_days, config, confirm)
-        # confirm=False required for non-interactive use in tests
-        try:
-            TaskLifecycle.cli_gc(
-                config=cfg,
-                dry_run=True,  # safe preview only
-                confirm=False,
-                archive=False,
-            )
-        except Exception:
-            pass  # GC may fail without interactive terminal — just verify no state corruption
-        with session_state(mgr.global_key) as state:
-            _ = state.get("tasks", {})  # verify no crash reading state
+        Both are non-blocking for Stop but not prunable (STATUS_POLICY), and
+        with archive=False a cleared session is gone for good. The completed
+        control session proves the same GC run really deleted something.
+        """
+        old = time.time() - 999999
+        for sid, final in ((f"gc-{status}", status), ("gc-done", "completed")):
+            mgr = _mgr(sid, cfg)
+            mgr.create_task("t1", {"subject": f"{final} work"}, "created")
+            mgr.update_task("t1", {"status": final}, final)
+            with session_state(mgr.global_key) as state:
+                tasks = dict(state.get("tasks", {}))
+                tasks["t1"] = dict(tasks["t1"], updated_at=old)
+                state["tasks"] = tasks
+
+        exit_code = TaskLifecycle.cli_gc(
+            config=cfg,
+            dry_run=False,
+            ttl_days=0,
+            archive=False,
+            confirm=False,
+            current_session_id="not-a-gc-candidate",
+        )
+
+        assert exit_code == 0
+        assert _mgr("gc-done", cfg).tasks == {}, "control: GC did not run"
+        assert _mgr(f"gc-{status}", cfg).tasks["t1"]["status"] == status, (
+            f"GC deleted a session whose only task was {status}"
+        )
 
     def test_gc_skips_session_with_inprogress_task(self, isolated_session, cfg):
         """Session with in_progress task is never GC'd."""

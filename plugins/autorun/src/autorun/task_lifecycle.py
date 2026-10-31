@@ -3436,7 +3436,8 @@ class TaskLifecycle:
 
         SAFETY GUARANTEES (fail-safe design):
         1. Protects the resolved current harness session - NEVER deleted
-        2. Skips sessions with incomplete tasks (in_progress/pending work)
+        2. Skips sessions with any task not in PRUNABLE_STATUSES (pending,
+           in_progress, paused, delegated, delegation-returned)
         3. Respects TTL - only cleans sessions older than ttl_days
         4. Uses session_state() for lock protection (never bypasses locking)
         5. Archives non-empty data to JSON before deletion (restorable backup)
@@ -3637,7 +3638,7 @@ class TaskLifecycle:
                         state_snapshot = {key[len(prefix) :]: value for key, value in raw.items() if key.startswith(prefix)}
                         tasks = state_snapshot.get("tasks", {})
 
-                        incomplete = [t for t in tasks.values() if isinstance(t, dict) and t.get("status") not in cls.NON_BLOCKING_STATUSES]
+                        incomplete = [t for t in tasks.values() if isinstance(t, dict) and t.get("status") not in cls.PRUNABLE_STATUSES]
                         if incomplete:
                             skip_incomplete += 1
                             if dry_run:
