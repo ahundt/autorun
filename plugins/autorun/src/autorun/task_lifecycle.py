@@ -73,6 +73,7 @@ from .platforms import (
     SessionIdentityResolutionError,
     agent_spawn_tools_for,
     platform_for,
+    registered_task_tools,
     resolve_standalone_session_identity,
     task_enforcement_capability_available,
     task_tool_role,
@@ -206,6 +207,11 @@ def _delegate_action(cli_type: str | None) -> str:
     return f"print {_delegate_marker_example()}"
 
 
+def _claude_task_tool_names() -> list[str]:
+    """Claude's task tools from the registry, in a stable order."""
+    return sorted(registered_task_tools("claude"))
+
+
 # --- BUG #80305/#80401 WORKAROUND START --- DELETE WHEN FIXED ---
 # Claude Code can gate TaskCreate/Get/Update/List off at process start (#80305)
 # or unregister the same deferred-tool bundle mid-session (#80401). A Stop or
@@ -258,10 +264,11 @@ def task_tool_recovery_sentence(cli_type: str | None) -> str:
     settings = " and ".join(
         [f"`{switch.env}={switch.value}`", *(f"`{name}=1`" for name in switch.env_off)]
     )
+    names = _claude_task_tool_names()
     return (
-        " If TaskCreate, TaskUpdate, TaskList, or TaskGet is unavailable or "
+        f" If {', '.join(names[:-1])}, or {names[-1]} is unavailable or "
         "vanished, use ToolSearch once with "
-        "`select:TaskCreate,TaskUpdate,TaskList,TaskGet`. If it returns no "
+        f"`select:{','.join(names)}`. If it returns no "
         "match, do not retry unavailable Task tools in this session: tell the "
         f"user to set {settings}, then restart Claude Code."
     )
@@ -274,7 +281,7 @@ def _deferred_task_tool_instruction(ctx: EventContext) -> str:
     """The SessionStart load instruction, with one recovery path, not two."""
     load = (
         "Before tracked work, use ToolSearch once with "
-        "`select:TaskCreate,TaskUpdate,TaskList,TaskGet` to load Claude Code's "
+        f"`select:{','.join(_claude_task_tool_names())}` to load Claude Code's "
         "deferred task tools. If it returns no match, do not loop"
     )
     unconfirmed = _unconfirmed_task_tools_notice(ctx)

@@ -66,6 +66,13 @@ def cfg(tmp_path):
     )
 
 
+def _claude_task_tool_select() -> str:
+    """The ToolSearch query for every task tool the registry lists for Claude."""
+    from autorun.platforms import registered_task_tools
+
+    return "select:" + ",".join(sorted(registered_task_tools("claude")))
+
+
 def _ctx(session_id: str, event: str, cli_type: str = "claude", source: str = "startup",
          tool_result: str = "", active_tools=...) -> EventContext:
     ctx = EventContext(
@@ -244,7 +251,7 @@ class TestClaudeTaskToolGateRecovery:
 
         reason = mgr.handle_stop(_ctx("gated-stop", "Stop", "claude"))["reason"]
 
-        assert "ToolSearch" in reason and "select:TaskCreate,TaskUpdate,TaskList,TaskGet" in reason
+        assert "ToolSearch" in reason and _claude_task_tool_select() in reason
         assert "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" in reason
         assert "CLAUDE_CODE_ENABLE_TASKS=1" in reason
         assert "do not retry" in reason.lower()
@@ -334,7 +341,28 @@ class TestClaudeDeferredTaskToolLoading:
         )
 
         assert "ToolSearch" in text
-        assert "select:TaskCreate,TaskUpdate,TaskList,TaskGet" in text
+        assert _claude_task_tool_select() in text
+
+    def test_the_load_instruction_names_the_registry_task_tools(
+        self, isolated_session, monkeypatch
+    ):
+        """The select list is the registry's, so a new task tool reaches it."""
+        import dataclasses
+
+        from autorun import platforms, plugins
+
+        claude = platforms.PLATFORMS["claude"]
+        monkeypatch.setitem(
+            platforms.PLATFORMS,
+            "claude",
+            dataclasses.replace(
+                claude, task_review_tools=claude.task_review_tools | {"TaskOutput"}
+            ),
+        )
+        text = str(plugins.app.dispatch(_ctx("load-registry", "SessionStart", "claude")))
+
+        assert _claude_task_tool_select() in text
+        assert "TaskOutput" in _claude_task_tool_select()
 
     def test_a_session_without_evidence_is_told_tracking_is_off_and_how_to_fix_it(
         self, isolated_session
