@@ -297,10 +297,11 @@ class TestSharedContract:
         `EventContext(...)` call site updated" — written after
         `transcript_path` did the same thing.
 
-        Comparing keyword *names* alone would not state the property: both
-        sites pass `store` and `session_id`, and only the daemon has a
-        `server_url`, all legitimately. What must match is narrower and exact:
-        the keywords whose value is read out of `normalized`.
+        Every keyword must match, not only those read out of `normalized`:
+        `server_url` comes from the raw payload, and the daemonless copy
+        dropped it, so an OpenCode attach under `AUTORUN_USE_DAEMON=0` saw an
+        empty server URL. A site is found by reading `normalized`; what it
+        must pass is everything the other passes.
         """
         def payload_derived_keywords(path: Path) -> dict[str, set[str]]:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -310,17 +311,13 @@ class TestSharedContract:
                         and isinstance(node.func, ast.Name)
                         and node.func.id == "EventContext"):
                     continue
-                keywords = {
-                    keyword.arg
+                reads_payload = any(
+                    isinstance(inner, ast.Name) and inner.id == "normalized"
                     for keyword in node.keywords
-                    if keyword.arg
-                    and any(
-                        isinstance(inner, ast.Name) and inner.id == "normalized"
-                        for inner in ast.walk(keyword.value)
-                    )
-                }
-                if keywords:
-                    found[f"{path.name}:{node.lineno}"] = keywords
+                    for inner in ast.walk(keyword.value)
+                )
+                if reads_payload:
+                    found[f"{path.name}:{node.lineno}"] = {keyword.arg for keyword in node.keywords if keyword.arg}
             return found
 
         sites = {}

@@ -61,6 +61,9 @@ class TestArgumentHandling:
         Antigravity hook command, including ``autorun --cli ...``; rejecting
         unknown arguments must not reject that one."""
         handled = []
+        # main() exports --cli as AUTORUN_CLI_TYPE; setting it here first lets
+        # monkeypatch restore it rather than leak "gemini" into later tests.
+        monkeypatch.setenv("AUTORUN_CLI_TYPE", "gemini")
         monkeypatch.setattr(entry, "run_hook_handler", lambda: handled.append(1) or 0)
         monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
 
@@ -88,6 +91,20 @@ class TestArgumentHandling:
         calls.clear()
         assert entry.main(["--update", "--update-method", "claude"]) == 0
         assert calls[0][:3] == ("claude", "plugin", "update"), "the flag outranks the environment"
+
+
+def test_run_direct_passes_the_payload_server_url_to_handlers(monkeypatch):
+    """The daemon gives EventContext the payload's server_url (OpenCode's
+    attach reads it); the daemonless entry point must too."""
+    from autorun import core
+
+    seen = []
+    monkeypatch.setattr(core.app, "dispatch", lambda ctx: seen.append(ctx.server_url) or {})
+    with pytest.raises(SystemExit):
+        entry.run_direct(
+            {"hook_event_name": "SessionStart", "session_id": "s", "cli_type": "opencode", "server_url": "http://127.0.0.1:4096"}
+        )
+    assert seen == ["http://127.0.0.1:4096"]
 
 
 class TestFilePolicyCommand:

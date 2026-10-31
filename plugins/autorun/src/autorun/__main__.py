@@ -993,6 +993,7 @@ def run_direct(payload: dict | None = None) -> int:
         last_assistant_message=normalized["last_assistant_message"],
         background_tasks=normalized["background_tasks"],
         session_crons=normalized["session_crons"],
+        server_url=payload.get("server_url", ""),
     )
 
     response = app.dispatch(ctx)
