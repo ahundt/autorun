@@ -862,7 +862,7 @@ Three-tier policy system enforced via PreToolUse hooks:
 | Glob | `glob:` | Glob pattern matching | `glob:*.tmp` | `file.tmp` |
 | Auto | `/.../` | Auto-detects regex | `/eval\(./` | `eval(...` |
 
-**Default integrations (48 entries):**
+**Default integrations (49 entries):**
 - `rm` → Suggests 'trash' CLI (safe file deletion with recovery)
 - `rm -rf` → Dangerous, suggests trash CLI alternatives
 - `git reset --hard` → CRITICAL: Permanently discards uncommitted changes, suggests safer git alternatives
@@ -870,6 +870,7 @@ Three-tier policy system enforced via PreToolUse hooks:
 - `git checkout --` → CAUTION: Discards unstaged changes to specific file, suggests git stash push
 - `git checkout` → CAUTION: Discards unstaged changes (modern syntax without --), suggests git restore
 - `git stash drop` → CAUTION: Permanently deletes stashed changes, suggests git stash pop
+- `git stash clear` → CAUTION: Permanently deletes every stash at once, suggests git stash list
 - `git clean -f` → DANGEROUS: Permanently deletes untracked files, suggests git clean -n dry-run first
 - `git reset HEAD~` → CAUTION: Undoes commits, suggests backup branch or git revert
 - `dd if=` → Disk write warning, suggests backup tools

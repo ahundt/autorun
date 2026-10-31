@@ -329,7 +329,7 @@ chmod +x ~/.claude/plugins/cache/autorun/autorun/*/hooks/hook_entry.py
 **Gemini CLI hooks** should use:
 - `${extensionPath}` variable
 - Tool names: `write_file`, `run_shell_command`, `replace`
-- Events: `SessionStart`, `SessionEnd`, `BeforeTool`, `AfterTool`
+- Events: `SessionStart`, `BeforeAgent`, `BeforeTool`, `AfterAgent`, `AfterTool`, `PreCompress`
 
 **Claude Code hooks** should use:
 - `${CLAUDE_PLUGIN_ROOT}` variable
