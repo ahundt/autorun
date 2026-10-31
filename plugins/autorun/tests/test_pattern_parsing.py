@@ -48,18 +48,24 @@ class TestParsePatternAndDescription:
         assert pattern_type == "literal"
 
     def test_regex_prefix(self):
-        """Test regex: prefix for regex patterns."""
-        pattern, description, pattern_type = parse_pattern_and_description("regex:exec(")
-        assert pattern == "exec("
+        """Test regex: prefix for regex patterns; backslashes are kept verbatim."""
+        pattern, description, pattern_type = parse_pattern_and_description(r"regex:exec\(")
+        assert pattern == r"exec\("
         assert description is None
         assert pattern_type == "regex"
 
     def test_regex_prefix_with_description(self):
         """Test regex: prefix with custom description."""
-        pattern, description, pattern_type = parse_pattern_and_description('regex:exec( unsafe exec function')
-        assert pattern == "exec("
+        pattern, description, pattern_type = parse_pattern_and_description(r'regex:exec\( unsafe exec function')
+        assert pattern == r"exec\("
         assert description == "unsafe exec function"
         assert pattern_type == "regex"
+
+    def test_invalid_regex_is_rejected(self):
+        """An invalid regex used to be stored and matched as a substring."""
+        for args in ("regex:exec(", "/exec(.*/", "regex:(eval|assert)("):
+            with pytest.raises(ValueError, match="Invalid regex"):
+                parse_pattern_and_description(args)
 
     def test_quoted_regex_prefix(self):
         """REGRESSION: a quoted regex: prefix must be detected, not kept literal.
@@ -93,16 +99,16 @@ class TestParsePatternAndDescription:
     def test_slash_delimited_regex_auto_detect(self):
         """Test /pattern/ syntax auto-detects regex."""
         # /pattern/ format should be used without descriptions (use regex: prefix instead)
-        pattern, description, pattern_type = parse_pattern_and_description("/exec(.*/")
-        assert pattern == "exec(.*"
+        pattern, description, pattern_type = parse_pattern_and_description(r"/exec\(.*/")
+        assert pattern == r"exec\(.*"
         assert description is None
         assert pattern_type == "regex"
 
     def test_slash_delimited_with_description(self):
         """Test /pattern/ syntax with description - use regex: prefix instead."""
         # For patterns with descriptions, use the regex: prefix
-        pattern, description, pattern_type = parse_pattern_and_description('regex:exec(.* unsafe function')
-        assert pattern == "exec(.*"
+        pattern, description, pattern_type = parse_pattern_and_description(r'regex:exec\(.* unsafe function')
+        assert pattern == r"exec\(.*"
         assert description == "unsafe function"
         assert pattern_type == "regex"
 
@@ -116,8 +122,8 @@ class TestParsePatternAndDescription:
     def test_complex_regex_pattern(self):
         """Test complex regex pattern."""
         # Use pattern that actually works
-        pattern, description, pattern_type = parse_pattern_and_description('regex:(eval|assert)(')
-        assert pattern == "(eval|assert)("
+        pattern, description, pattern_type = parse_pattern_and_description(r'regex:(eval|assert)\(')
+        assert pattern == r"(eval|assert)\("
         assert description is None
         assert pattern_type == "regex"
 

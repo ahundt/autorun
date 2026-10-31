@@ -270,6 +270,36 @@ class TestOneRegexGuard:
             assert not hasattr(main, stale), stale
 
 
+class TestRegexPatternsAreTakenVerbatim:
+    """E7: shlex ate regex backslashes (`terraform\\s+destroy` was stored as
+    `terraforms+destroy`), and an invalid regex silently became a substring."""
+
+    def _stored(self, sid, store, key="session_blocked_patterns"):
+        return EventContext(session_id=sid, event="PreToolUse", store=store).state_get(key, [])
+
+    def test_backslash_regex_block_is_stored_and_enforced(self):
+        sid, store = _sid(), ThreadSafeDB()
+        _prompt(r"/ar:no regex:terraform\s+destroy", sid=sid, store=store)
+        assert [b["pattern"] for b in self._stored(sid, store)] == [r"terraform\s+destroy"]
+        denied = plugins.check_blocked_commands(_bash("terraform destroy -auto-approve", sid=sid, store=store))
+        assert _decision(denied) == "deny", denied
+        assert _decision(plugins.check_blocked_commands(_bash("terraform plan", sid=sid, store=store))) != "deny"
+
+    def test_quoted_regex_keeps_backslashes_and_spaces(self):
+        pattern, _desc, ptype = plugins._parse_args(r"'regex:git\s+push --force' no force pushes")
+        assert (pattern, ptype) == (r"git\s+push --force", "regex")
+        pattern, _desc, ptype = plugins._parse_allow_args(r"regex:terraform\s+destroy 5m")
+        assert (pattern, ptype) == (r"terraform\s+destroy", "regex")
+
+    def test_invalid_or_unsafe_regex_is_rejected_at_creation(self):
+        for prompt in ("/ar:no regex:exec(", "/ar:no regex:((a+))+b", "/ar:ok regex:[unclosed"):
+            sid, store = _sid(), ThreadSafeDB()
+            message = _prompt(prompt, sid=sid, store=store).get("systemMessage", "")
+            assert message.startswith("❌"), (prompt, message)
+            assert "regex" in message.lower(), (prompt, message)
+            assert self._stored(sid, store) == [] and self._stored(sid, store, "session_allowed_patterns") == []
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""

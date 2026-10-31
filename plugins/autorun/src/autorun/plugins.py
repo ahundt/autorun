@@ -417,12 +417,13 @@ def _compile_pattern(pattern: str, ptype: str):
         ValueError: If regex is unsafe (ReDoS) or invalid - NOT cached
     """
     if ptype == "regex":
-        if not _is_safe_regex(pattern):
-            raise ValueError(f"Unsafe regex (ReDoS): {pattern[:PATTERN_DISPLAY_MAX_LEN]}")
         try:
-            return re.compile(pattern)
+            compiled = re.compile(pattern)
         except re.error as e:
             raise ValueError(f"Invalid regex: {e}")
+        if not _is_safe_regex(pattern):
+            raise ValueError(f"Unsafe regex (ReDoS): {pattern[:PATTERN_DISPLAY_MAX_LEN]}")
+        return compiled
     return pattern
 
 
@@ -469,37 +470,55 @@ def _split_command_args(args: str) -> list[str]:
         return args.split()
 
 
-def _extract_pattern_type(args: str) -> tuple[str, str]:
-    """Extract optional regex:/glob: prefix from command-control args."""
-    if args.startswith("regex:"):
-        return "regex", args[6:].lstrip()
-    if args.startswith("glob:"):
-        return "glob", args[5:].lstrip()
-    return "literal", args
-
-
-def _resolve_quoted_prefix(pattern: str, ptype: str) -> tuple[str, str]:
-    """Re-detect a regex:/glob: prefix that a surrounding quote hid initially.
-
-    The prefix check in _parse_args/_parse_allow_args runs on the RAW arg string,
-    which for a quoted pattern (`'regex:foo'`) starts with the quote char — so the
-    prefix is missed and shlex then leaves `regex:foo` as a literal. After shlex
-    has stripped the quotes we re-check the unquoted pattern token here, so
-    `/ar:ok 'regex:foo'` behaves the same as `/ar:ok regex:foo`. No-op when a
-    prefix was already detected, or for an ordinary literal pattern.
-    """
-    if ptype == "literal":
-        new_ptype, new_pattern = _extract_pattern_type(pattern)
-        return new_pattern, new_ptype
-    return pattern, ptype
-
-
 def _auto_detect_regex(pattern: str, ptype: str) -> tuple[str, str]:
     """Preserve /regex/ shorthand detection for parsed command patterns."""
     if ptype == "literal" and pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
         if any(c in pattern[1:-1] for c in r"[]{}()*+?|^$.\ "):
             return pattern[1:-1], "regex"
     return pattern, ptype
+
+
+_QUOTES = ("'", '"')
+
+
+def _typed_pattern_unit(args: str) -> tuple[str, str, str] | None:
+    """A regex:/glob:/ `/re/` pattern taken verbatim, as (pattern, ptype, rest).
+
+    shlex treats backslashes as shell escapes, so `terraform\\s+destroy` was
+    stored as `terraforms+destroy`; typed patterns never go through it. A
+    pattern containing spaces is quoted, and only the quotes come off. None
+    for a literal pattern. An invalid or unsafe regex raises ValueError here,
+    at creation, rather than degrading to a substring match at every check.
+    """
+    quote = args[0] if args[:1] in _QUOTES else ""
+    body = args[1:] if quote else args
+    ptype = "literal"
+    for prefix in ("regex:", "glob:"):
+        if body.startswith(prefix):
+            ptype, body = prefix[:-1], body[len(prefix):]
+            break
+    if quote:
+        end = body.find(quote)
+        if end < 0:
+            return None
+        pattern, rest = body[:end], body[end + 1:]
+    else:
+        parts = body.split(None, 1)
+        if not parts:
+            raise ValueError("No pattern provided")
+        pattern, rest = parts[0], parts[1] if len(parts) > 1 else ""
+    if ptype == "literal":
+        pattern, ptype = _auto_detect_regex(pattern, ptype)
+        if ptype == "literal":
+            return None
+    if not pattern:
+        raise ValueError("No pattern provided")
+    if ptype == "regex":
+        try:
+            _compile_pattern(pattern, "regex")
+        except ValueError as exc:
+            raise ValueError(f"{exc}; nothing was changed") from None
+    return pattern, ptype, rest.strip()
 
 
 def _is_scope_token(token: str) -> bool:
@@ -532,18 +551,17 @@ def _parse_args(args: str) -> tuple:
     if len(args) > _MAX_PATTERN_LENGTH:
         raise ValueError(f"Pattern too long (max {_MAX_PATTERN_LENGTH})")
 
-    ptype, args = _extract_pattern_type(args)
-    parts = _split_command_args(args)
+    typed = _typed_pattern_unit(args)
+    if typed:
+        pattern, ptype, rest = typed
+        return pattern, " ".join(_split_command_args(rest)) or None, ptype
 
+    parts = _split_command_args(args)
     if not parts:
         raise ValueError("No pattern provided")
 
-    pattern = parts[0]
-    pattern, ptype = _resolve_quoted_prefix(pattern, ptype)
-    pattern, ptype = _auto_detect_regex(pattern, ptype)
-
     desc = " ".join(parts[1:]) if len(parts) > 1 else None
-    return pattern, desc, ptype
+    return parts[0], desc, "literal"
 
 
 def _parse_allow_args(args: str) -> tuple:
@@ -564,15 +582,24 @@ def _parse_allow_args(args: str) -> tuple:
     if len(args) > _MAX_PATTERN_LENGTH:
         raise ValueError(f"Pattern too long (max {_MAX_PATTERN_LENGTH})")
 
-    ptype, args = _extract_pattern_type(args)
-    parts = _split_command_args(args)
-    if not parts:
-        raise ValueError("No pattern provided")
-
     leading_scope: list[str] = []
-    while parts and _is_scope_token(parts[0]):
-        leading_scope.append(parts.pop(0))
+    while (head := args.split(None, 1)) and _is_scope_token(head[0]):
+        leading_scope.append(head[0])
+        args = head[1] if len(head) > 1 else ""
 
+    typed = _typed_pattern_unit(args) if args else None
+    if typed:
+        pattern, ptype, rest = typed
+        trailing_scope = rest.split()
+        stray = [token for token in trailing_scope if not _is_scope_token(token)]
+        if stray:
+            raise ValueError(
+                f"unexpected {' '.join(stray)!r} after the {ptype} pattern; quote a pattern that "
+                "contains spaces, and put only a count, duration or perm after it"
+            )
+        return pattern, " ".join(leading_scope + trailing_scope) or None, ptype
+
+    parts = _split_command_args(args)
     trailing_scope: list[str] = []
     while parts and _is_scope_token(parts[-1]):
         trailing_scope.insert(0, parts.pop())
@@ -580,9 +607,7 @@ def _parse_allow_args(args: str) -> tuple:
     if not parts:
         raise ValueError("No pattern provided")
 
-    pattern = " ".join(parts)
-    pattern, ptype = _resolve_quoted_prefix(pattern, ptype)
-    pattern, ptype = _auto_detect_regex(pattern, ptype)
+    pattern, ptype = " ".join(parts), "literal"
     scope_args = leading_scope + trailing_scope
     desc = " ".join(scope_args) if scope_args else None
     return pattern, desc, ptype
