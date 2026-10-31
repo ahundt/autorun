@@ -26,6 +26,15 @@ function daemonTarget(socketPath, portFile) {
   return null;
 }
 
+// AUTORUN_DISABLE stands autorun down, with the same truthy set as
+// hooks/hook_entry.py. Read here because these bridges ask the daemon first and
+// never reach hook_entry while it is up, so a denying daemon could not be
+// escaped through the exit every fail-closed reason names.
+function autorunDisabled() {
+  const value = String(process.env.AUTORUN_DISABLE ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 function blockedBecause(message) {
   return {
     hookSpecificOutput: {
@@ -114,6 +123,7 @@ export function createDaemonBridge({
   }
 
   async function askDaemon(payload) {
+    if (autorunDisabled()) return null;
     return (await exchange(payload, Date.now() + timeoutMs)).response;
   }
 
@@ -193,6 +203,7 @@ export function createDaemonBridge({
   }
 
   async function askToolGate(payload) {
+    if (autorunDisabled()) return null;
     // One deadline for both routes, so a tool call waits at most timeoutMs.
     const deadline = Date.now() + timeoutMs;
     const { response, connected } = await exchange(payload, deadline);
@@ -214,6 +225,9 @@ export function createDaemonBridge({
       cwd: String(cwd ?? ""),
     });
     if (response) return response;
+    if (autorunDisabled()) {
+      return { systemMessage: "autorun is stood down by AUTORUN_DISABLE; unset it to use /ar commands." };
+    }
     return {
       systemMessage:
         "autorun daemon unreachable; command dispatch is fail-open. " +

@@ -1497,6 +1497,86 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
+@pytest.mark.parametrize("value", ["1", "true", " YES "])
+def test_autorun_disable_stands_the_bridge_down_while_the_daemon_denies(tmp_path, value):
+    """AUTORUN_DISABLE=1 is the exit every fail-closed reason names.
+
+    hook_entry.py honours it, but Pi, Prime and OpenCode never run hook_entry
+    while the daemon is up: they ask the daemon first, so they stayed denied.
+    """
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("synthetic server uses AF_UNIX")
+
+    socket_path = Path("/tmp") / f"arpi-{os.getpid()}-{tmp_path.name[-5:]}.sock"
+    socket_path.unlink(missing_ok=True)
+    frames: list[bytes] = []
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(4)
+    server.settimeout(0.1)
+    stop = threading.Event()
+
+    def serve():
+        try:
+            while not stop.is_set():
+                try:
+                    conn, _ = server.accept()
+                except OSError:  # socket.timeout included: poll the stop flag
+                    continue
+                with conn:
+                    frames.append(conn.recv(65536))
+                    conn.sendall(
+                        b'{"hookSpecificOutput": {"permissionDecision": "deny", '
+                        b'"permissionDecisionReason": "daemon says no"}}\n'
+                    )
+        finally:
+            socket_path.unlink(missing_ok=True)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    driver = tmp_path / "disabled.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: "pi",
+  socketPath: {json.dumps(str(socket_path))},
+  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  hookEntryCommand: [],
+  timeoutMs: 2000,
+}});
+const response = await bridge.askToolGate({{
+  hook_event_name: "PreToolUse",
+  session_id: "pi-session",
+  tool_name: "bash",
+  tool_input: {{ command: "echo hello" }},
+}});
+const stop = await bridge.askDaemon({{ hook_event_name: "Stop", session_id: "pi-session" }});
+console.log(JSON.stringify({{ denial: denialReason(response), stop }}));
+''',
+        encoding="utf-8",
+    )
+    try:
+        result = subprocess.run(
+            _javascript_command(driver),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env={**os.environ, "AUTORUN_DISABLE": value},
+        )
+    finally:
+        stop.set()
+        thread.join(timeout=10)
+        server.close()
+
+    assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[-400:]!r}"
+    payload = json.loads(result.stdout)
+    assert payload["denial"] is None, f"AUTORUN_DISABLE={value!r} left the gate denying"
+    assert payload["stop"] is None
+    assert frames == [], "a stood-down bridge still contacted the daemon"
+
+
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
 def test_a_daemon_that_took_the_request_but_timed_out_is_not_asked_again(tmp_path):
     """A daemon timeout is not a daemon outage.
 
