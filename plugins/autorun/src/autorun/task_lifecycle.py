@@ -451,6 +451,17 @@ def windows_tty_is_a_console(stream) -> bool:
 CONFIG_PATH = ipc.AUTORUN_CONFIG_DIR / "task-lifecycle.config.json"
 
 
+def _positive_seconds(value: object, default: float) -> float:
+    """``value`` as a positive finite float, else ``default``."""
+    if isinstance(value, bool):
+        return default
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return default
+    return seconds if math.isfinite(seconds) and seconds > 0 else default
+
+
 @dataclass
 class TaskLifecycleConfig:
     """Task lifecycle configuration (follows PlanExportConfig pattern)."""
@@ -477,12 +488,16 @@ class TaskLifecycleConfig:
                 data = json.loads(CONFIG_PATH.read_text())
                 if "storage_dir" in data and isinstance(data["storage_dir"], str):
                     data["storage_dir"] = Path(data["storage_dir"])
-                try:
-                    state_timeout = float(data.get("state_lock_timeout_seconds", DEFAULT_SESSION_TIMEOUT))
-                except (TypeError, ValueError):
-                    state_timeout = DEFAULT_SESSION_TIMEOUT
-                if state_timeout < DEFAULT_SESSION_TIMEOUT:
-                    data["state_lock_timeout_seconds"] = DEFAULT_SESSION_TIMEOUT
+                # A lock timeout that is not a positive finite number reaches
+                # the Stop gate as an exception, which it treats as "allow".
+                data["state_lock_timeout_seconds"] = max(
+                    _positive_seconds(data.get("state_lock_timeout_seconds"), DEFAULT_SESSION_TIMEOUT),
+                    DEFAULT_SESSION_TIMEOUT,
+                )
+                data["hook_state_lock_timeout_seconds"] = _positive_seconds(
+                    data.get("hook_state_lock_timeout_seconds"),
+                    cls.hook_state_lock_timeout_seconds,
+                )
                 pause_ttl = data.get(
                     "task_pause_default_ttl_seconds",
                     cls.task_pause_default_ttl_seconds,

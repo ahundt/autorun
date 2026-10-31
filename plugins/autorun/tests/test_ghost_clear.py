@@ -518,6 +518,51 @@ def test_config_persistence(tmp_path, monkeypatch):
     assert loaded.ghost_clear_hash_length == 16
 
 
+@pytest.mark.parametrize(
+    "hook_value, state_value, expected",
+    [
+        ("0.5", "45", (0.5, 45.0)),
+        ("fast", "slow", (0.5, 30.0)),
+        ("nan", "inf", (0.5, 30.0)),
+        (-1, 0, (0.5, 30.0)),
+        (True, None, (0.5, 30.0)),
+    ],
+)
+def test_lock_timeouts_load_as_positive_finite_floats(
+    tmp_path, monkeypatch, hook_value, state_value, expected
+):
+    import json
+
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps({
+        "hook_state_lock_timeout_seconds": hook_value,
+        "state_lock_timeout_seconds": state_value,
+    }))
+    monkeypatch.setattr(tl, "CONFIG_PATH", path)
+    loaded = tl.TaskLifecycleConfig.load()
+    actual = (loaded.hook_state_lock_timeout_seconds, loaded.state_lock_timeout_seconds)
+    assert actual == expected
+    assert all(type(value) is float for value in actual)
+
+
+def test_a_string_hook_lock_timeout_does_not_disable_the_stop_gate(tmp_path, monkeypatch):
+    """prevent_premature_stop turns any exception into an allowed stop."""
+    import json
+
+    monkeypatch.setattr(tl, "CONFIG_PATH", tmp_path / "task-lifecycle.config.json")
+    tl.CONFIG_PATH.write_text(json.dumps({
+        "storage_dir": str(tmp_path / "task-tracking"),
+        "hook_state_lock_timeout_seconds": "0.5",
+    }))
+    mgr = tl.TaskLifecycle(session_id=_sid(tmp_path), config=_task_cfg(tmp_path))
+    _add_task(mgr, "72", "Real work")
+
+    ctx = _make_stop_ctx(tmp_path)
+    result = plg.app.dispatch(ctx)
+
+    assert "72" in str(result), f"the Stop gate allowed with a task open: {result!r}"
+
+
 # ─── Section 16: ctx override precedence ─────────────────────────────────────
 
 def test_ctx_override_precedence(tmp_path):
