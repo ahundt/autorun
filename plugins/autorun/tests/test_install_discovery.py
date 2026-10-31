@@ -100,8 +100,9 @@ def test_an_editable_checkout_whose_path_has_a_space_still_resolves(tmp_path):
     (checkout / "plugins" / "autorun").mkdir(parents=True)
     assert "%20" in checkout.as_uri(), "this platform did not encode the space"
 
-    # Where the strategy looks: two levels above the running file.
-    running = tmp_path / "site-packages" / "autorun" / "discovery.py"
+    # Where the strategy looks: beside the autorun package, which holds
+    # installer/discovery.py.
+    running = tmp_path / "site-packages" / "autorun" / "installer" / "discovery.py"
     # A synthetic version: the glob is `autorun*.dist-info`, and naming the
     # real one here would make this file a release-checklist obligation.
     dist_info = tmp_path / "site-packages" / "autorun-0.0.0.dist-info"
@@ -138,7 +139,7 @@ def test_an_editable_checkout_on_a_network_share_keeps_its_host(tmp_path):
     """
     from autorun.installer.discovery import _from_editable_install
 
-    running = tmp_path / "site-packages" / "autorun" / "discovery.py"
+    running = tmp_path / "site-packages" / "autorun" / "installer" / "discovery.py"
     running.parent.mkdir(parents=True)
     dist_info = tmp_path / "site-packages" / "autorun-0.0.0.dist-info"
     dist_info.mkdir(parents=True)
@@ -170,7 +171,7 @@ def test_a_localhost_authority_is_not_mistaken_for_a_file_server(tmp_path):
     """
     from autorun.installer.discovery import _from_editable_install
 
-    running = tmp_path / "site-packages" / "autorun" / "discovery.py"
+    running = tmp_path / "site-packages" / "autorun" / "installer" / "discovery.py"
     running.parent.mkdir(parents=True)
     dist_info = tmp_path / "site-packages" / "autorun-0.0.0.dist-info"
     dist_info.mkdir(parents=True)

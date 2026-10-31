@@ -135,8 +135,14 @@ def _from_editable_install(origin: Path) -> Iterator[Path]:
     left both, so the resolver looked for a directory that does not exist and
     silently fell through to the last-resort search. ``url2pathname`` is the
     decoder for exactly this, on each platform's own terms.
+
+    ``origin`` is ``site-packages/autorun/installer/discovery.py``, so the
+    dist-info sits three levels up; two was the path before this module moved
+    into ``installer/``, and the strategy then never found anything.
     """
-    for dist_info in origin.parent.parent.glob("autorun*.dist-info"):
+    if len(origin.parents) < 3:
+        return
+    for dist_info in origin.parents[2].glob("autorun*.dist-info"):
         try:
             data = json.loads((dist_info / "direct_url.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
