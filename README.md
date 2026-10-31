@@ -1232,11 +1232,18 @@ autorun --enable-bootstrap           # Re-enable automatic bootstrap
 
 ```bash
 autorun file status                  # Show current policy (aliases: st, s)
-autorun file status --global         # Read the global policy instead of session policy
+autorun file status --session ID     # Show another session's policy
 autorun file allow                   # Allow all file creation (alias: a)
 autorun file justify                 # Require justification for new files (alias: j)
 autorun file search                  # Only modify existing files (aliases: find, f)
 ```
+
+There is no global policy (`--global` prints that and, with `allow`, `justify` or
+`search`, exits 1): every session starts at allow-all. While hooks run
+through the autorun daemon (the default), `allow`, `justify` and `search` exit 1
+and name the slash command to run in the session instead (`/ar:a`, `/ar:j`,
+`/ar:f`), because the daemon holds the session's state; they write the policy
+when hooks run without it (`AUTORUN_USE_DAEMON=0`).
 
 **Task subcommand** (task lifecycle management):
 

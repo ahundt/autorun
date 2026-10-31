@@ -116,8 +116,10 @@ that need it. No disk access: stage generated content to a temp dir and point th
   install: the only local path is `.../site-packages/autorun`, the import
   package, which `uv tool install` refuses. So
   `entrypoint._retire_legacy_distributions` keeps such a distribution and
-  reports it with the command to reclaim the disk. The pip route still sweeps —
-  a pip-installed retired package owns its own environment.
+  reports it with the command to reclaim the disk. The pip route keeps one
+  too when its receipt is in this interpreter (`_pip_package_owned`): pip in
+  the same environment shares the bin directory and removes scripts by name
+  the same way.
 - **The installer runs before its dependencies exist.** `hooks/hook_entry.py` is
   stdlib-only; on `ImportError` it spawns an install of *this source* — the
   plugin directory when it has a `pyproject.toml`, else `BOOTSTRAP_SOURCE`, the
