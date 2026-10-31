@@ -1026,15 +1026,22 @@ def is_bootstrap_disabled() -> bool:
     return False
 
 
+# The worker runs two steps of up to this long each. A lock younger than both
+# plus a margin may belong to a worker that is still installing; treating it as
+# stale earlier started a second install alongside the first.
+_BOOTSTRAP_STEP_TIMEOUT_SECONDS = 180
+_BOOTSTRAP_LOCK_STALE_SECONDS = 2 * _BOOTSTRAP_STEP_TIMEOUT_SECONDS + 60
+
+
 def is_bootstrap_running() -> bool:
     """Check if bootstrap is already running via lockfile."""
     lockfile = _bootstrap_path("bootstrap.lock")
     if not lockfile.exists():
         return False
-    # Check if lockfile is stale (older than 60 seconds)
+    # A lock older than any worker can run has no live owner.
     try:
         age = time.time() - lockfile.stat().st_mtime
-        if age > 60:
+        if age > _BOOTSTRAP_LOCK_STALE_SECONDS:
             lockfile.unlink()
             return False
         return True
@@ -1241,15 +1248,25 @@ def _manual_bootstrap_command(plugin_root: Path) -> str:
     return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
 
 
+def _read_bootstrap_lock(lockfile: Path) -> str | None:
+    try:
+        return lockfile.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
 def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
     """Install dependencies and publish native assets outside hook timeout."""
     lockfile = _bootstrap_path("bootstrap.lock")
+    # The token spawn_background_bootstrap wrote for this worker. If a later
+    # hook took the lock over, the path now holds another worker's token.
+    own_lock = _read_bootstrap_lock(lockfile)
     try:
         installed = subprocess.run(
             _bootstrap_install_argv(tool, plugin_root),
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=_BOOTSTRAP_STEP_TIMEOUT_SECONDS,
         )
         if installed.returncode != 0:
             detail = next(
@@ -1262,7 +1279,7 @@ def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
             (sys.executable, "-m", "autorun", "--install", "--force"),
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=_BOOTSTRAP_STEP_TIMEOUT_SECONDS,
         )
         detail = next(
             (line.strip() for line in (published.stderr or published.stdout).splitlines() if line.strip()),
@@ -1280,7 +1297,8 @@ def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
         )
         return 1
     finally:
-        lockfile.unlink(missing_ok=True)
+        if own_lock is not None and _read_bootstrap_lock(lockfile) == own_lock:
+            lockfile.unlink(missing_ok=True)
 
 
 def spawn_background_bootstrap() -> bool:
@@ -1309,7 +1327,13 @@ def spawn_background_bootstrap() -> bool:
     try:
         lockfile.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         descriptor = os.open(lockfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        os.close(descriptor)
+        try:
+            # Identifies this worker's lock, so it removes only its own.
+            os.write(descriptor, f"{os.getpid()}:{time.time_ns()}".encode())
+        except OSError:
+            pass  # an empty token still works; it just cannot tell two apart
+        finally:
+            os.close(descriptor)
     except FileExistsError:
         return True
     except OSError:

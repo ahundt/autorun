@@ -937,8 +937,26 @@ class TestIsBootstrapRunning:
         finally:
             os.unlink(lockfile_path)
 
+    def test_a_lock_younger_than_the_worker_budget_is_not_stale(self, tmp_path):
+        """The worker may run two 180 s steps; at 120 s it is mid-install.
+
+        A 60 s threshold declared it stale, deleted it, and let the next hook
+        start a second install concurrently with the first.
+        """
+        import time
+
+        hook_entry = get_hook_entry_module()
+        lockfile = tmp_path / "bootstrap.lock"
+        lockfile.touch()
+        two_minutes_ago = time.time() - 120
+        os.utime(lockfile, (two_minutes_ago, two_minutes_ago))
+
+        with mock.patch.object(hook_entry, "BOOTSTRAP_LOCKFILE", str(lockfile)):
+            assert hook_entry.is_bootstrap_running() is True
+        assert lockfile.exists()
+
     def test_removes_stale_lockfile(self):
-        """Test that is_bootstrap_running removes stale (>60s) lockfile."""
+        """A lock older than the worker's whole budget has no live owner."""
         import time
 
         hook_entry = get_hook_entry_module()
@@ -947,8 +965,8 @@ class TestIsBootstrapRunning:
             lockfile_path = f.name
 
         try:
-            # Make the file appear old
-            old_time = time.time() - 120  # 2 minutes ago
+            # Make the file appear older than any worker can run
+            old_time = time.time() - hook_entry._BOOTSTRAP_LOCK_STALE_SECONDS - 1
             os.utime(lockfile_path, (old_time, old_time))
 
             with mock.patch.object(hook_entry, "BOOTSTRAP_LOCKFILE", lockfile_path):
@@ -1046,6 +1064,34 @@ class TestBootstrapWorker:
         assert argv[2:4] == ("--bootstrap-worker", "uv")
         assert "shell" not in kwargs
         assert (tmp_path / "state" / "bootstrap.lock").is_file()
+
+    @pytest.mark.parametrize("replaced", [False, True])
+    def test_worker_removes_only_the_lock_spawned_for_it(
+        self, monkeypatch, tmp_path, replaced
+    ):
+        """A slow worker must not delete the lock of a worker started after it."""
+        hook_entry = get_hook_entry_module()
+        plugin = tmp_path / "plugin"
+        plugin.mkdir()
+        (plugin / "pyproject.toml").touch()
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "state"))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin))
+        monkeypatch.setattr(hook_entry.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
+        monkeypatch.setattr(hook_entry.subprocess, "Popen", lambda *_a, **_k: None)
+        lockfile = tmp_path / "state" / "bootstrap.lock"
+        assert hook_entry.spawn_background_bootstrap() is True
+
+        def install(*_args, **_kwargs):
+            if replaced:
+                # What a stale-lock takeover by a later hook leaves behind.
+                lockfile.unlink()
+                assert hook_entry.spawn_background_bootstrap() is True
+            return hook_entry.subprocess.CompletedProcess((), 0, "ok", "")
+
+        monkeypatch.setattr(hook_entry.subprocess, "run", install)
+        hook_entry.run_bootstrap_worker("uv", plugin)
+
+        assert lockfile.exists() is replaced
 
 
 class TestFailOpen:
