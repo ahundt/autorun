@@ -957,6 +957,7 @@ def prepared(
                         hook_command=str(
                             ctx.settings.get("_codex_plugin_hook_command", "") or ""
                         ),
+                        hook_events=_CODEX_EVENTS,
                     )
                 except (OSError, ValueError) as error:
                     failures.append(f"codex/{plugin}: {error}")

@@ -380,8 +380,13 @@ def stage_plugin(
     include_skills: bool = True,
     skill_names: Iterable[str] | None = None,
     hook_command: str = "",
+    hook_events: Sequence[str] = (),
 ) -> Path:
-    """Build the local Codex plugin tree without touching its live target."""
+    """Build the local Codex plugin tree without touching its live target.
+
+    ``hook_events`` comes from the caller (``steps._CODEX_EVENTS``), the one
+    list the user-file hooks also register.
+    """
     selected_skills = None if skill_names is None else set(skill_names)
     include_skills = include_skills and selected_skills != set()
     ignored = shutil.ignore_patterns(
@@ -422,18 +427,14 @@ def stage_plugin(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
         )
     if include_hooks:
-        if not hook_command:
-            raise ValueError("Codex plugin hooks require a command")
+        if not hook_command or not hook_events:
+            raise ValueError("Codex plugin hooks require a command and events")
         hooks = staging / "hooks"
         hooks.mkdir(parents=True, exist_ok=True)
         shutil.copy2(plugin_dir / "hooks" / "hook_entry.py", hooks / "hook_entry.py")
-        events = (
-            "PreToolUse", "PostToolUse", "UserPromptSubmit",
-            "SessionStart", "Stop", "SubagentStop",
-        )
         (hooks / "hooks.json").write_text(
             json.dumps(
-                {"hooks": {event: [wrap((hook_command,))] for event in events}},
+                {"hooks": {event: [wrap((hook_command,))] for event in hook_events}},
                 indent=2,
             )
             + "\n",

@@ -1066,6 +1066,31 @@ def test_codex_plugin_hook_mode_packages_hooks_without_user_hooks(sandbox):
     assert not (sandbox / ".codex" / "hooks.json").exists()
 
 
+def test_codex_plugin_hooks_register_the_one_event_list(sandbox, monkeypatch):
+    """codex.stage_plugin hard-coded its own copy of steps._CODEX_EVENTS, so
+    the user-file hooks and the plugin hooks could register different events."""
+    from autorun.installer.orchestrate import install
+
+    monkeypatch.setattr(steps, "_CODEX_EVENTS", ("Stop", "SessionStart"))
+    install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={
+            "skill_placement": {"": "auto"},
+            "codex_hook_source": "plugin",
+            "codex_plugin_marketplace": "personal",
+            "_codex_plugin_hook_command": "uv run hook_entry.py --cli codex",
+        },
+        home=sandbox,
+        harnesses=(PLATFORMS["codex"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+    hooks = json.loads((sandbox / "plugins" / "ar" / "hooks" / "hooks.json").read_text())
+    assert sorted(hooks["hooks"]) == ["SessionStart", "Stop"]
+
+
 def test_codex_github_mode_registers_remote_identity_without_local_package(sandbox):
     import subprocess
 
