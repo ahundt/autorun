@@ -96,10 +96,12 @@ def test_extraction_ignores_string_content():
 
 
 def test_extraction_handles_complex_heredocs():
-    """Test extraction with complex heredocs containing multiple command names."""
+    """Heredoc content is data for most commands, but a shell runs it.
 
-    heredoc_with_many_keywords = """bash << 'EOF'
-# This heredoc contains many command names as content
+    This test used `bash << 'EOF'` and asserted none of the body's commands
+    matched; bash executes every body line, so that pinned a guard bypass.
+    """
+    body = """# This heredoc contains many command names as content
 grep something
 head file.txt
 tail -n 10 log.txt
@@ -107,17 +109,20 @@ cat README.md
 python3 script.py
 EOF"""
 
-    # NONE of these should match - they're all heredoc content
-    for pattern in ['grep', 'head', 'tail', 'cat', 'python3']:
-        result = command_matches_pattern(heredoc_with_many_keywords, pattern)
+    # Data: python3 reads the heredoc as its program text, not shell commands.
+    as_data = "python3 << 'EOF'\n" + body
+    for pattern in ['grep', 'head', 'tail', 'cat']:
+        result = command_matches_pattern(as_data, pattern)
         assert result == False, (
             f"Pattern '{pattern}' should NOT match in heredoc content\n"
-            f"Command: {heredoc_with_many_keywords}"
+            f"Command: {as_data}"
         )
+    assert command_matches_pattern(as_data, 'python3') == True
 
-    # Only 'bash' should match (the actual command)
-    bash_matches = command_matches_pattern(heredoc_with_many_keywords, 'bash')
-    assert bash_matches == True, "'bash' SHOULD match - it's the actual command"
+    # Script: bash runs each line, so each command in it is seen.
+    as_script = "bash << 'EOF'\n" + body
+    for pattern in ['bash', 'grep', 'head', 'tail', 'cat', 'python3']:
+        assert command_matches_pattern(as_script, pattern) == True, pattern
 
 
 def test_extraction_respects_bashlex_availability():
