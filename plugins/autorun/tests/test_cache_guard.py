@@ -1233,3 +1233,24 @@ class TestGlobalOverrideApplies:
         assert "granted" in cache_command("global ok 1", sid)
         assert guard.check(_make_ctx(sid, command="git status")) is None
         assert guard.check(_make_ctx(sid, command="git diff")) is not None, "one use only"
+
+
+class TestRepeatedTemporaryToggleKeepsTheStandingState:
+    """`/ar:cache off 1h` twice read `prior` from the first temporary entry
+    (off), so when the hour ended the gate stayed off for good."""
+
+    def test_second_off_keeps_the_original_prior(self, tmp_state_dir, monkeypatch):
+        from autorun import cache_guard
+        from autorun.cache_guard import cache_command, is_cache_enabled, set_cache_enabled
+
+        sid = _sid("double-off")
+        clock = _FrozenClock(3_000_000.0)
+        monkeypatch.setattr(cache_guard, "time", clock)
+        set_cache_enabled(sid, True)
+        cache_command("off 1h", sid)
+        clock.now += 60
+        cache_command("off 1h", sid)
+        assert is_cache_enabled(sid) is False
+
+        clock.now += 3601
+        assert is_cache_enabled(sid) is True, "reverts to the standing enable"

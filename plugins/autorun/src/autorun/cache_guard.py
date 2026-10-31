@@ -148,7 +148,14 @@ def _read_toggle_from_ctx(ctx: object, session_id: str) -> dict:
 
 def set_cache_enabled(session_id: str, enabled: bool, duration: float | None = None) -> None:
     with session_state(session_id) as st:
-        prior = is_cache_enabled(session_id)   # captured inside the lock (reentrant)
+        current = st.get(_TOGGLE_KEY)
+        if isinstance(current, dict) and current.get("expires_at") and time.time() < current["expires_at"]:
+            # Replacing a still-running temporary entry: its prior is the
+            # standing state. Reading the effective state instead stored the
+            # temporary value, so `off 1h` twice left the gate off for good.
+            prior = bool(current.get("prior", False))
+        else:
+            prior = is_cache_enabled(session_id)   # captured inside the lock (reentrant)
         entry: dict = {"enabled": enabled}
         if duration is not None:
             entry["expires_at"] = time.time() + duration
