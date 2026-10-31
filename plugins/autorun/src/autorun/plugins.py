@@ -1324,17 +1324,13 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     #   Hook A (direct plugin)  → is_valid(call_id) True (uses still > 0)
     #                           → consume(call_id)   stamps consumed_at + last_call_id
     #   Hook B (rtk-spawned)    → is_valid(call_id) True (grace: time < 1s AND fingerprint matches)
-    #                           → consume(call_id)   refreshes consumed_at (no double-count)
+    #                           → consume(call_id)   free replay; the window stays fixed
     #
     # is_valid uses the stored last_call_id to verify fingerprint-match before granting grace.
     # consume stores call_id so the next parallel invocation can verify it.
-    from .scoped_allow import fingerprint_call
+    from .scoped_allow import call_fingerprint
 
-    _fp_platform = platform_for(ctx.cli_type)
-    fingerprint_session = (
-        _fp_platform.name if _fp_platform.fingerprint_ignores_session_id else ctx.session_id
-    )
-    call_id = fingerprint_call(fingerprint_session, ctx.tool_name, cmd)
+    call_id = call_fingerprint(ctx)
 
     # TIER 1: Allows, per shell segment. An allow covers the segments it
     # matches and nothing else, so `/ar:ok rm` cannot carry a force-push that

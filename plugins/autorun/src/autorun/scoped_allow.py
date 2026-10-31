@@ -175,6 +175,25 @@ def fingerprint_call(session_id: str, tool_name: str, cmd: str) -> str:
     return hashlib.md5(f"{session_id}:{tool_name}:{cmd}".encode()).hexdigest()[:16]
 
 
+def call_fingerprint(ctx) -> str:
+    """The one call id for a hook's tool call, used by /ar:ok grants and
+    /ar:cache overrides alike.
+
+    The command is the shell text, or the file path for file tools. Platforms
+    whose double hook reports different session ids for one call (Codex)
+    fingerprint by platform name instead; cache_guard used the raw session id,
+    so its overrides could be spent twice by one Codex call.
+    """
+    from .command_detection import shell_command_from_tool_input
+    from .platforms import platform_for
+
+    tool_input = ctx.tool_input if isinstance(ctx.tool_input, dict) else {}
+    cmd = shell_command_from_tool_input(tool_input) or str(tool_input.get("file_path") or "")
+    platform = platform_for(ctx.cli_type)
+    session = platform.name if platform.fingerprint_ignores_session_id else ctx.session_id
+    return fingerprint_call(session, ctx.tool_name, cmd)
+
+
 # Seconds after last consumption that a count=0 allow still passes is_valid().
 #
 # Root cause: autorun runs twice per Bash command — once via the plugin's own
@@ -412,19 +431,19 @@ class ScopedAllow(ScopedGrant):
                      same fingerprint can use the grace period.
 
         Every counted call is stamped, and a repeat of the stamped call inside
-        the grace window refreshes the stamp without decrementing — the same
-        rule `ScopedGrant.claim_once` applies. Stamping only on the way to 0
-        left every higher count unprotected: `is_valid` returns True by the
-        ordinary route while uses remain, so both invocations of one Bash
+        the grace window is free. With a call id this IS `ScopedGrant.claim_once`
+        (one claim rule): the window is fixed from the first claim. Refreshing
+        the stamp on each replay made it rolling, so one call repeated every
+        0.9 s kept a spent 1-use grant alive forever. Stamping only on the way
+        to 0 left every higher count unprotected: `is_valid` returns True by
+        the ordinary route while uses remain, so both invocations of one Bash
         command decremented and `/ar:ok rm 3` bought one command and a half.
         """
         if self.remaining_uses is None:
             return self
+        if call_id:
+            return self.claim_once(call_id, now=now).grant
         timestamp = time.time() if now is None else now
-        if call_id and self.last_call_id == call_id and self.consumed_at > 0:
-            grace_seconds = self.grace_seconds if self.grace_seconds is not None else _configured_parallel_grace_seconds()
-            if 0 <= timestamp - self.consumed_at < grace_seconds:
-                return dataclasses.replace(self, consumed_at=timestamp)
         return dataclasses.replace(
             self,
             remaining_uses=max(0, self.remaining_uses - 1),

@@ -468,6 +468,55 @@ class TestOneStrictScopeGrammar:
         assert parse_scope_args("perm") == (None, None, True)
 
 
+class _Clock:
+    def __init__(self, now: float):
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+
+class TestOneClaimRuleAndOneFingerprint:
+    """E-D4: ScopedAllow.consume refreshed consumed_at on every replay, so a
+    1-use grant repeated with the same call id every 0.9 s never expired; and
+    cache_guard fingerprinted calls differently from /ar:ok."""
+
+    def test_replay_grace_is_a_fixed_window_from_the_first_claim(self, monkeypatch):
+        from autorun import scoped_allow
+
+        sid, store = _sid(), ThreadSafeDB()
+        _prompt("/ar:ok rm", sid=sid, store=store)
+        clock = _Clock(time.time() + 1)
+        monkeypatch.setattr(scoped_allow, "time", clock)
+        decisions = []
+        for _ in range(3):
+            decisions.append(_decision(plugins.check_blocked_commands(_bash("rm -rf x", sid=sid, store=store))))
+            clock.now += 0.9
+        # claim, replay inside the 1 s window, then 1.8 s after the claim: spent
+        assert decisions[0] != "deny" and decisions[1] != "deny" and decisions[2] == "deny", decisions
+
+    def test_cache_override_and_ok_grant_record_the_same_call_id(self):
+        from autorun.cache_guard import _GRANT_KEY, CacheGuard, grant_override
+        from autorun.session_manager import session_state
+
+        sid, store = _sid(), ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm -rf x"}, cli_type="codex", store=store,
+        )
+        plugins.app.dispatch(EventContext(
+            session_id=sid, event="UserPromptSubmit", prompt="/ar:ok rm", cli_type="codex", store=store,
+        ))
+        assert _decision(plugins.check_blocked_commands(ctx)) != "deny"
+        ok_call_id = ctx.state_get("session_allowed_patterns", [])[0]["last_call_id"]
+
+        grant_override(sid, uses=1)
+        CacheGuard.from_ctx(ctx)._consume_override(ctx)
+        with session_state(sid) as st:
+            cache_call_id = st[_GRANT_KEY][0]["last_call_id"]
+        assert cache_call_id == ok_call_id
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""
