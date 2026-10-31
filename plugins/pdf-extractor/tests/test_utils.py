@@ -1,5 +1,6 @@
 """Tests for pdf_extraction.utils module."""
 
+import pytest
 from pdf_extraction.utils import (
     calculate_extraction_quality_metrics,
     detect_gpu_availability,
@@ -32,19 +33,28 @@ class TestDetectGpuAvailability:
         assert result['device_count'] >= 0
 
     def test_recommended_backends_is_list(self):
-        """recommended_backends should be a non-empty list."""
+        """recommended_backends should be a list (empty when no backend is installed)."""
         result = detect_gpu_availability()
         assert isinstance(result['recommended_backends'], list)
-        assert len(result['recommended_backends']) > 0
 
-    def test_recommended_backends_contains_cpu_fallbacks(self):
-        """recommended_backends should include CPU fallback backends."""
-        result = detect_gpu_availability()
-        # These should always be available regardless of GPU
-        cpu_backends = {'pdfminer', 'pypdf2', 'pdfplumber'}
-        recommended = set(result['recommended_backends'])
-        assert cpu_backends.issubset(recommended), \
-            f"Missing CPU backends: {cpu_backends - recommended}"
+    @pytest.mark.parametrize('gpu, expected', [
+        (False, ['markitdown', 'pymupdf4llm', 'pdfbox', 'pdfplumber', 'pdfminer', 'pypdf2',
+                 'pdftotext', 'docling', 'marker']),
+        (True, ['docling', 'marker', 'markitdown', 'pymupdf4llm', 'pdfbox', 'pdfplumber',
+                'pdfminer', 'pypdf2', 'pdftotext']),
+    ])
+    def test_recommended_backends_are_every_installed_backend(self, environment, gpu, expected):
+        """Every installed backend is tried; GPU backends go first only when a GPU is found."""
+        environment('docling', 'marker', 'markitdown', 'pymupdf4llm', 'pdfbox', 'pdfplumber',
+                    'pdfminer', 'pypdf', 'pdftotext', gpu=gpu)
+
+        assert detect_gpu_availability()['recommended_backends'] == expected
+
+    def test_recommended_backends_skip_uninstalled_backends(self, environment):
+        """With nothing installed the default is empty, so callers report what to install."""
+        environment()
+
+        assert detect_gpu_availability()['recommended_backends'] == []
 
 
 class TestCalculateExtractionQualityMetrics:

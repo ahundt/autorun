@@ -30,6 +30,13 @@ class BackendExtractor:
     Subclasses override only _extract_impl() for backend-specific logic.
     """
 
+    # What backend_availability() probes for: an importable module, or for a
+    # command-line tool, an executable on PATH. Each backend sets one.
+    module = None
+    executable = None
+    # GPU backends are tried first when a CUDA GPU is detected, last otherwise.
+    gpu = False
+
     def __init__(self, name: str, converter_factory):
         """
         Initialize backend extractor.
@@ -116,6 +123,9 @@ class BackendExtractor:
 class DoclingExtractor(BackendExtractor):
     """Docling backend - IBM document processor with layout analysis (MIT license)."""
 
+    module = 'docling'
+    gpu = True
+
     def __init__(self):
         def create_docling():
             from docling.document_converter import DocumentConverter
@@ -130,6 +140,9 @@ class DoclingExtractor(BackendExtractor):
 
 class MarkerExtractor(BackendExtractor):
     """Marker backend - Vision-based PDF to Markdown (GPL-3.0, GPU-accelerated)."""
+
+    module = 'marker'
+    gpu = True
 
     def __init__(self):
         def create_marker():
@@ -146,6 +159,8 @@ class MarkerExtractor(BackendExtractor):
 
 class MarkItDownExtractor(BackendExtractor):
     """MarkItDown backend - Microsoft multi-format converter (MIT license)."""
+
+    module = 'markitdown'
 
     def __init__(self):
         def create_markitdown():
@@ -166,6 +181,8 @@ class MarkItDownExtractor(BackendExtractor):
 class Pymupdf4llmExtractor(BackendExtractor):
     """PyMuPDF4LLM backend - LLM-optimized output (AGPL-3.0)."""
 
+    module = 'pymupdf4llm'
+
     def __init__(self):
         def create_pymupdf4llm():
             import pymupdf4llm
@@ -180,6 +197,8 @@ class Pymupdf4llmExtractor(BackendExtractor):
 
 class PdfboxExtractor(BackendExtractor):
     """PDFBox backend - Java-based, good for tables (Apache-2.0)."""
+
+    module = 'pdfbox'
 
     def __init__(self):
         def create_pdfbox():
@@ -205,6 +224,8 @@ class PdfboxExtractor(BackendExtractor):
 class PdfminerExtractor(BackendExtractor):
     """PDFMiner backend - Pure Python (MIT license)."""
 
+    module = 'pdfminer'
+
     def __init__(self):
         def create_pdfminer():
             from pdfminer.high_level import extract_text
@@ -219,6 +240,8 @@ class PdfminerExtractor(BackendExtractor):
 
 class Pypdf2Extractor(BackendExtractor):
     """pypdf backend under the legacy ``pypdf2`` CLI id (BSD-3)."""
+
+    module = 'pypdf'
 
     def __init__(self):
         def create_pypdf2():
@@ -240,6 +263,8 @@ class Pypdf2Extractor(BackendExtractor):
 class PdfplumberExtractor(BackendExtractor):
     """PDFPlumber backend - Excellent for tables (MIT license)."""
 
+    module = 'pdfplumber'
+
     def __init__(self):
         def create_pdfplumber():
             import pdfplumber
@@ -256,6 +281,8 @@ class PdfplumberExtractor(BackendExtractor):
 
 class PdftotextExtractor(BackendExtractor):
     """Pdftotext backend - Command-line tool (requires system install)."""
+
+    executable = 'pdftotext'
 
     def __init__(self):
         super().__init__('pdftotext', lambda: subprocess)
@@ -277,41 +304,37 @@ class PdftotextExtractor(BackendExtractor):
 # BACKEND REGISTRY
 # =============================================================================
 
+# One row per backend: the class is the factory and carries its module, its
+# executable and its GPU flag. Insertion order is the default try order
+# (utils.detect_gpu_availability keeps it, moving GPU backends by GPU presence).
+# pdftotext goes last: it is the only backend with no Python dependency, so it
+# is what remains when the package is installed without extras and poppler
+# happens to be on the system.
 BACKEND_REGISTRY = {
     # Modern backends (2024-2025)
-    'docling': lambda: DoclingExtractor(),
-    'marker': lambda: MarkerExtractor(),
-    'markitdown': lambda: MarkItDownExtractor(),
+    'docling': DoclingExtractor,
+    'marker': MarkerExtractor,
+    'markitdown': MarkItDownExtractor,
 
     # Traditional backends
-    'pymupdf4llm': lambda: Pymupdf4llmExtractor(),
-    'pdfbox': lambda: PdfboxExtractor(),
-    'pdfminer': lambda: PdfminerExtractor(),
-    'pypdf2': lambda: Pypdf2Extractor(),
-    'pdfplumber': lambda: PdfplumberExtractor(),
-    'pdftotext': lambda: PdftotextExtractor()
-}
-
-
-_BACKEND_MODULES = {
-    'docling': 'docling',
-    'marker': 'marker',
-    'markitdown': 'markitdown',
-    'pymupdf4llm': 'pymupdf4llm',
-    'pdfbox': 'pdfbox',
-    'pdfminer': 'pdfminer',
-    'pypdf2': 'pypdf',
-    'pdfplumber': 'pdfplumber',
+    'pymupdf4llm': Pymupdf4llmExtractor,
+    'pdfbox': PdfboxExtractor,
+    'pdfplumber': PdfplumberExtractor,
+    'pdfminer': PdfminerExtractor,
+    'pypdf2': Pypdf2Extractor,
+    'pdftotext': PdftotextExtractor,
 }
 
 
 def backend_availability() -> dict[str, bool]:
     """Report installed backends without importing their heavy modules."""
     available: dict[str, bool] = {}
-    for name, module in _BACKEND_MODULES.items():
+    for name, extractor in BACKEND_REGISTRY.items():
+        if extractor.executable:
+            available[name] = shutil.which(extractor.executable) is not None
+            continue
         try:
-            available[name] = importlib.util.find_spec(module) is not None
-        except (ImportError, ModuleNotFoundError, ValueError):
+            available[name] = importlib.util.find_spec(extractor.module) is not None
+        except (ImportError, ValueError):
             available[name] = False
-    available['pdftotext'] = shutil.which('pdftotext') is not None
     return available

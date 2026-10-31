@@ -101,10 +101,8 @@ Examples:
         gpu_info = detect_gpu_availability(probe_runtime=False)
         print("Available backends:")
         for name in BACKEND_REGISTRY:
-            if not availability[name]:
-                continue
-            recommended = " (recommended)" if name in gpu_info['recommended_backends'] else ""
-            print(f"  - {name}{recommended}")
+            if availability[name]:
+                print(f"  - {name}")
         unavailable = [name for name in BACKEND_REGISTRY if not availability[name]]
         if unavailable:
             print("\nSupported but not installed:")
@@ -119,16 +117,8 @@ Examples:
     if not args.input:
         parser.error("input is required (use --list-backends to see available backends)")
 
-    # Determine backends
-    backends = args.backends
-    if not backends:
-        gpu_info = detect_gpu_availability()
-        from pdf_extraction.backends import backend_availability
-
-        available = backend_availability()
-        backends = [
-            name for name in gpu_info['recommended_backends'] if available.get(name)
-        ]
+    # Default: every installed backend, ordered for this machine's GPU
+    backends = args.backends or detect_gpu_availability()['recommended_backends']
 
     input_path = os.path.expanduser(args.input)
 

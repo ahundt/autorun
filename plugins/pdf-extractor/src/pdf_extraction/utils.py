@@ -3,6 +3,9 @@
 PDF Extraction Utilities - GPU detection, quality metrics, encryption check.
 """
 
+from .backends import BACKEND_REGISTRY, backend_availability
+
+
 def detect_gpu_availability(*, probe_runtime: bool = True) -> dict:
     """
     Detect if GPU is available for GPU-accelerated backends.
@@ -12,33 +15,32 @@ def detect_gpu_availability(*, probe_runtime: bool = True) -> dict:
         - available: bool (True if GPU detected)
         - device_count: int (Number of GPUs)
         - device_name: str (GPU model name or 'CPU')
-        - recommended_backends: list (Backends optimized for this hardware)
+        - recommended_backends: list (installed backends in the order they are
+          tried: BACKEND_REGISTRY order, GPU backends first with a GPU and last
+          without; empty when none is installed)
     """
     gpu_info = {
         'available': False,
         'device_count': 0,
         'device_name': 'CPU',
-        # pdftotext goes last everywhere: it is the only backend with no Python
-        # dependency, so it is what remains when the package is installed
-        # without extras and poppler happens to be on the system.
-        'recommended_backends': ['markitdown', 'pdfbox', 'pdfplumber', 'pdfminer', 'pypdf2', 'pdftotext']
     }
 
     try:
-        if not probe_runtime:
-            return gpu_info
-        import torch
-        if torch.cuda.is_available():
-            gpu_info['available'] = True
-            gpu_info['device_count'] = torch.cuda.device_count()
-            gpu_info['device_name'] = torch.cuda.get_device_name(0)
-            gpu_info['recommended_backends'] = [
-                'docling', 'marker', 'markitdown',
-                'pdfbox', 'pdfplumber', 'pdfminer', 'pypdf2', 'pdftotext'
-            ]
+        if probe_runtime:
+            import torch
+            if torch.cuda.is_available():
+                gpu_info['available'] = True
+                gpu_info['device_count'] = torch.cuda.device_count()
+                gpu_info['device_name'] = torch.cuda.get_device_name(0)
     except ImportError:
         pass  # PyTorch not installed, use CPU backends
 
+    available = backend_availability()
+    # sorted() is stable, so registry order holds within the GPU and CPU groups.
+    gpu_info['recommended_backends'] = sorted(
+        (name for name in BACKEND_REGISTRY if available[name]),
+        key=lambda name: BACKEND_REGISTRY[name].gpu != gpu_info['available'],
+    )
     return gpu_info
 
 

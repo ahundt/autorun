@@ -22,6 +22,35 @@ class TestCliMain:
         assert 'pdfplumber' in captured.out
         assert 'GPU available:' in captured.out
 
+    def test_list_backends_shows_every_registered_backend(self, capsys, echo_backend):
+        """A registry entry is listed from its own row, not looked up in a second table."""
+        with patch.object(sys, 'argv', ['extract-pdfs', '--list-backends']):
+            main()
+
+        installed = capsys.readouterr().out.split('Supported but not installed')[0]
+        assert f'  - {echo_backend}\n' in installed
+
+    @pytest.mark.parametrize('backend', ['pymupdf4llm', 'docling', 'marker'])
+    def test_default_backends_use_an_installed_extra_only_backend(self, tmp_path, environment, backend):
+        """Only pdf-llm, or pdf-gpu without CUDA, installed: the default still uses that backend."""
+        environment(backend)
+        pdf = tmp_path / 'doc.pdf'
+        pdf.write_bytes(b'%PDF-1.4 fake pdf')
+
+        with (
+            patch.object(sys, 'argv', ['extract-pdfs', str(pdf)]),
+            patch('pdf_extraction.cli.extract_single_pdf') as mock_extract,
+        ):
+            mock_extract.return_value = {
+                'success': True,
+                'backend_used': backend,
+                'extraction_time_seconds': 1.0,
+                'output_size_bytes': 100,
+            }
+            main()
+
+        assert mock_extract.call_args.kwargs['backends'] == [backend]
+
     def test_no_input_shows_error(self, capsys):
         """Should show error when no input provided."""
         with patch.object(sys, 'argv', ['extract-pdfs']):
