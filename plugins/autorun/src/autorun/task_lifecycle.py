@@ -82,6 +82,7 @@ from .task_pause import (
     task_pause_guidance,
 )
 from .task_status import (
+    AUTORUN_OWNED_TASK_STATUSES,
     COMPLETED_TASK_STATUSES,
     NON_BLOCKING_TASK_STATUSES,
     PRUNABLE_TASK_STATUSES,
@@ -2021,8 +2022,7 @@ class TaskLifecycle:
                     and t.get("metadata", {}).get("source") == task_source
                 )
             ]
-            for tid in to_remove:
-                tasks.pop(tid)
+            previous = {tid: tasks.pop(tid) for tid in to_remove}
 
             # Explicit ids win; index fallbacks (Gemini todos carry none) skip
             # any id an explicit todo already claims, so two todos never fold
@@ -2061,6 +2061,11 @@ class TaskLifecycle:
                     status = "deleted"
                 elif status not in STATUS_POLICY:
                     status = "pending"
+                metadata = {"source": task_source}
+                prior = previous.get(task_id) or {}
+                if prior.get("status") in AUTORUN_OWNED_TASK_STATUSES and status not in COMPLETED_TASK_STATUSES:
+                    status = prior["status"]
+                    metadata = {**prior.get("metadata", {}), "source": task_source}
                 tasks[task_id] = {
                     "id": task_id,
                     "subject": subject,
@@ -2073,7 +2078,7 @@ class TaskLifecycle:
                     "owner": None,
                     "blockedBy": [],
                     "blocks": [],
-                    "metadata": {"source": task_source},
+                    "metadata": metadata,
                     "tool_outputs": [],
                 }
 
@@ -2127,6 +2132,8 @@ class TaskLifecycle:
                 task_id = f"plan-{i}"
                 current_ids.add(task_id)
                 existing = tasks.get(task_id, {})
+                if existing.get("status") in AUTORUN_OWNED_TASK_STATUSES and status not in COMPLETED_TASK_STATUSES:
+                    status = existing["status"]
                 metadata = dict(existing.get("metadata", {}))
                 metadata.update(
                     {

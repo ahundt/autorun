@@ -296,6 +296,95 @@ class TestCodexPlanChecklistSync:
         assert manager_b.tasks["plan-1"]["subject"] == "B checklist item"
 
 
+# Statuses only autorun sets (/ar:task ignore, the delegation marker,
+# /ar:task pause, the SubagentStop gate). The harness list never carries them,
+# so a resync that reports the item as pending must not undo them.
+_AUTORUN_OWNED = ["ignored", "delegated", "delegation-returned", "paused"]
+
+
+def _set_status(manager, task_id, status):
+    if status == "ignored":
+        assert manager.ignore_task(task_id, reason="stale")
+    else:
+        assert manager.update_task(task_id, {"status": status}, status) is None
+    assert manager.tasks[task_id]["status"] == status
+
+
+class TestHarnessResyncKeepsAutorunOwnedStatus:
+    @staticmethod
+    def _plan_ctx(session_id, plan):
+        return EventContext(
+            session_id=session_id,
+            event="PostToolUse",
+            prompt="",
+            tool_name="update_plan",
+            tool_input={"plan": plan},
+            tool_result="plan updated",
+            cli_type="codex",
+        )
+
+    @staticmethod
+    def _todos_ctx(session_id, todos):
+        return EventContext(
+            session_id=session_id,
+            event="PostToolUse",
+            prompt="",
+            tool_name="write_todos",
+            tool_input={"todos": todos},
+            tool_result="todos updated",
+            cli_type="gemini",
+        )
+
+    @pytest.mark.parametrize("owned", _AUTORUN_OWNED)
+    def test_update_plan_keeps_status_autorun_set(
+        self, isolated_config, isolated_session_manager, owned
+    ):
+        session_id = f"test-codex-plan-owned-{owned}-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+        plan = [
+            {"step": "First", "status": "in_progress"},
+            {"step": "Second", "status": "pending"},
+        ]
+        manager.handle_plan_checklist(self._plan_ctx(session_id, plan))
+        _set_status(manager, "plan-2", owned)
+
+        manager.handle_plan_checklist(self._plan_ctx(session_id, plan))
+
+        assert manager.tasks["plan-2"]["status"] == owned, (
+            f"update_plan reset an autorun-set {owned!r} status to pending"
+        )
+
+        plan[1]["status"] = "completed"
+        manager.handle_plan_checklist(self._plan_ctx(session_id, plan))
+        assert manager.tasks["plan-2"]["status"] == "completed"
+
+    @pytest.mark.parametrize("owned", _AUTORUN_OWNED)
+    def test_write_todos_keeps_status_autorun_set(
+        self, isolated_config, isolated_session_manager, owned
+    ):
+        session_id = f"test-gemini-todos-owned-{owned}-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+        todos = [
+            {"description": "First", "status": "in_progress"},
+            {"description": "Second", "status": "pending"},
+        ]
+        manager.handle_bulk_todos(self._todos_ctx(session_id, todos))
+        _set_status(manager, "2", owned)
+        before = dict(manager.tasks["2"]["metadata"])
+
+        manager.handle_bulk_todos(self._todos_ctx(session_id, todos))
+
+        assert manager.tasks["2"]["status"] == owned, (
+            f"write_todos reset an autorun-set {owned!r} status to pending"
+        )
+        assert manager.tasks["2"]["metadata"] == before
+
+        # A terminal report from the harness still wins.
+        todos[1]["status"] = "cancelled"
+        manager.handle_bulk_todos(self._todos_ctx(session_id, todos))
+        assert manager.tasks["2"]["status"] == "deleted"
+
+
 # --- Fix 4: Block count resets on task completion ---
 
 
