@@ -2983,6 +2983,24 @@ class AutorunApp:
         return None
 
 
+def daemon_failure_response(event: str, cli_type: str, message: str, event_code: str = "daemon_failure") -> dict:
+    """The daemon's own failure answer, in the harness's schema.
+
+    hook_entry's fast path prints whatever the daemon sends, so a lifecycle
+    failure built from Claude's common fields reached Antigravity's Stop as
+    continue/stopReason/suppressOutput/systemMessage. Handler responses are
+    already filtered by ``respond()``; this does the same for failures. Tool
+    gates are left as built: they are already native, and re-filtering some of
+    them (Claude PermissionRequest) drops the deny.
+    """
+    from .client import build_daemon_failure_response, is_tool_gate_event
+
+    response = build_daemon_failure_response(event, cli_type, message, event_code=event_code)
+    if is_tool_gate_event(event):
+        return response
+    return validate_hook_response(event, response, cli_type)
+
+
 # === DAEMON ===
 class AutorunDaemon:
     """
@@ -3026,8 +3044,6 @@ class AutorunDaemon:
 
     async def _dispatch_with_timeout(self, ctx: EventContext, cli_type: str):
         """Run one handler with bounded per-event concurrency and timeout containment."""
-        from .client import build_daemon_failure_response
-
         event = ctx.event
         timeout = dispatch_timeout_for_event(event)
         cooldown = float(CONFIG.get("daemon_dispatch_timeout_cooldown_seconds", 5.0))
@@ -3038,7 +3054,7 @@ class AutorunDaemon:
         object.__setattr__(ctx, "_deadline_monotonic", deadline)
 
         def circuit_response():
-            return build_daemon_failure_response(
+            return daemon_failure_response(
                 event,
                 cli_type,
                 f"Daemon handler for '{event}' is temporarily contained",
@@ -3093,7 +3109,7 @@ class AutorunDaemon:
         except asyncio.TimeoutError:
             self._dispatch_circuit_open_until[event] = time.monotonic() + cooldown
             logger.error(f"Handler for '{event}' timed out after {timeout:g}s")
-            return build_daemon_failure_response(
+            return daemon_failure_response(
                 event,
                 cli_type,
                 f"Daemon handler for '{event}' timed out after {timeout:g}s",
@@ -3384,14 +3400,10 @@ class AutorunDaemon:
                 f"Current limit: {current_mb}MB (READ_BUFFER_LIMIT={READ_BUFFER_LIMIT:,} bytes)\n"
                 f"Details: {e}"
             )
-            from .client import build_daemon_failure_response
-
-            response = build_daemon_failure_response(event, cli_type, message)
+            response = daemon_failure_response(event, cli_type, message)
         except Exception as e:
             logger.error(f"Handler error: {e}", exc_info=True)
-            from .client import build_daemon_failure_response
-
-            response = build_daemon_failure_response(event, cli_type, f"Daemon error: {e}")
+            response = daemon_failure_response(event, cli_type, f"Daemon error: {e}")
 
         finally:
             if skip_response:

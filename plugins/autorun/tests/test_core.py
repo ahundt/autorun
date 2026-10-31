@@ -174,6 +174,57 @@ class TestDispatchTimeoutContainment:
         assert "daemon_dispatch_contained" in json.dumps(retry)
 
 
+class TestDaemonFailureResponsesAreNative:
+    """A daemon failure is written to the harness as-is by hook_entry's fast
+    path, so it must already be in the harness's own schema. Antigravity's Stop
+    accepts only decision/reason; Claude's common fields must never reach it."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["handler raises", "handler times out"])
+    async def test_antigravity_stop_failure_carries_only_native_fields(
+        self, monkeypatch, failure
+    ):
+        import autorun.core as core
+
+        def dispatch(_ctx):
+            if failure == "handler raises":
+                raise RuntimeError("handler exploded")
+            time.sleep(0.2)
+
+        app = Mock()
+        app.dispatch.side_effect = dispatch
+        daemon = AutorunDaemon(app)
+        monkeypatch.setattr(core, "dispatch_timeout_for_event", lambda _event: 0.01)
+        payload = {
+            "hook_event_name": "Stop",
+            "session_id": f"native-failure-{failure.replace(' ', '-')}",
+            "cli_type": "antigravity",
+        }
+        reader = Mock()
+        reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
+        written = []
+
+        class FakeWriter:
+            def write(self, data):
+                written.append(data)
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+            async def wait_closed(self):
+                pass
+
+        await daemon.handle_client(reader, FakeWriter())
+
+        response = json.loads(b"".join(written))
+        assert response, "a failure must still say something"
+        assert set(response) <= {"decision", "reason"}, response
+        assert response == core.validate_hook_response("Stop", response, "antigravity")
+
+
 class TestLazyTranscript:
     """Tests for LazyTranscript lazy string conversion."""
 
