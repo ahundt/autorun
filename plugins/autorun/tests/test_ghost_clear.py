@@ -455,11 +455,19 @@ def test_multi_session_isolation(tmp_path, monkeypatch):
 
 # ─── Section 13: single-source-of-truth CI guard ─────────────────────────────
 
-def test_marker_literal_single_source_of_truth():
-    """AUTORUN_TASKS_CLEAR_STALE_TASK must not appear in non-comment code outside config.py."""
+@pytest.mark.parametrize(
+    "template_key",
+    [
+        "ghost_clear_marker_template",
+        "delegate_marker_template",
+        "task_pause_resume_marker_template",
+    ],
+)
+def test_marker_literal_single_source_of_truth(template_key):
+    """A marker literal must not appear in non-docstring code outside config.py."""
     import ast
     src = Path(__file__).resolve().parents[1] / "src" / "autorun"
-    marker = "AUTORUN_TASKS_CLEAR_STALE_TASK"
+    marker = CONFIG[template_key].split("(", 1)[0]
     offenders = []
     for py in src.rglob("*.py"):
         if py.name == "config.py":

@@ -276,7 +276,7 @@ def task_pause_guidance(
         if ctx.session_identity_authority == "explicit-shared"
         else ""
     )
-    marker = f"AUTORUN_TASK_RECOVERY({current.generation})"
+    marker = CONFIG["task_pause_resume_marker_template"].format(id=current.generation)
     return (
         f"⏸️ Task enforcement pause: active ({scope}){reason}{shared_identity}\n"
         "AI recovery: when the requested discussion is satisfied, return this "
