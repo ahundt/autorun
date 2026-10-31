@@ -895,7 +895,7 @@ Three-tier policy system enforced via PreToolUse hooks:
 1. **Session/global allows** — `/ar:ok` and `/ar:globalok` (TIER 1, short-circuits all blocks)
 2. **Session blocks** — `/ar:no` (TIER 2, deny wins over warn)
 3. **Global blocks** — `/ar:globalno` (TIER 2)
-4. **User integration files** — `~/.claude/hookify.*.local.md` (TIER 2)
+4. **User integration files** — `.claude/autorun.*.local.md` in the session's working directory, then `~/.claude/autorun.*.local.md` (TIER 2)
 5. **Default integrations** — built-in safety guards in `config.py` (TIER 2)
 
 **Backward Compatibility:**

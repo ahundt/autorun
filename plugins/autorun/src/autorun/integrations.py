@@ -19,7 +19,8 @@ Unified command integrations system (superset of hookify).
 
 Features:
 - Non-blocking warnings (action: warn)
-- File-based user extensions (.claude/autorun.*.local.md)
+- File-based user extensions (.claude/autorun.*.local.md in the session cwd,
+  then ~/.claude/autorun.*.local.md)
 - All hookify features (conditions, event, tool_matcher)
 - Multiple patterns per file
 - Redirect with arg substitution
@@ -216,9 +217,11 @@ class Integration:
 # File Loading with Caching
 # =============================================================================
 
-# Cache compiled integrations (refreshed on file change)
-_integration_cache: list[Integration] | None = None
-_cache_mtime: dict[str, float] = {}
+# Compiled integrations per session cwd, with the file mtimes they were built
+# from (refreshed on file change).
+# ponytail: one entry per project a daemon has served, never evicted; add an
+# LRU bound if a daemon ever serves thousands of directories.
+_integration_cache: dict[str | None, tuple[dict[str, float], list[Integration]]] = {}
 
 
 def invalidate_caches() -> None:
@@ -230,9 +233,7 @@ def invalidate_caches() -> None:
     - Test setup needs clean state
     - User files have been modified
     """
-    global _integration_cache, _cache_mtime
-    _integration_cache = None
-    _cache_mtime = {}
+    _integration_cache.clear()
 
 
 _ENV_TOGGLED_GUARDS = {
@@ -258,33 +259,47 @@ def default_integrations() -> dict:
     return table
 
 
-def load_all_integrations() -> list[Integration]:
-    """
-    Load from Python defaults + user files. O(1) cached.
+def _integration_files(cwd: str | None) -> list[Path]:
+    """User rule files: the session's project first, then the home directory.
 
-    Priority: User files > Python defaults
+    Relative to the session's cwd, never the daemon's: one daemon serves every
+    session, so Path(".") applied the rules of whichever directory the daemon
+    started in to all sessions, and a project's own rules to none. With no cwd
+    only the home directory is searched.
+    """
+    roots = [Path(cwd)] if cwd else []
+    roots.append(Path.home())
+    files: list[Path] = []
+    for root in dict.fromkeys(roots):
+        for glob_pattern in CONFIG.get("integration_search_paths", [".claude/autorun.*.local.md"]):
+            try:
+                files.extend(path for path in sorted(root.glob(glob_pattern)) if path.is_file())
+            except Exception as e:
+                logger.warning(f"Error globbing pattern {glob_pattern} under {root}: {e}")
+    return files
+
+
+def load_all_integrations(cwd: str | None = None) -> list[Integration]:
+    """
+    Load from Python defaults + user files for the session in ``cwd``. O(1) cached.
+
+    Priority: User files (project, then home) > Python defaults
 
     Returns:
         List of Integration objects sorted by pattern specificity (most specific first)
     """
-    global _integration_cache, _cache_mtime
-
-    # Check if cache is stale (file mtimes changed)
+    files = _integration_files(cwd)
     current_mtimes = {}
-    search_paths = CONFIG.get("integration_search_paths", [".claude/autorun.*.local.md"])
-
-    for glob_pattern in search_paths:
+    for fpath in files:
         try:
-            for fpath in Path(".").glob(glob_pattern):
-                if fpath.is_file():
-                    current_mtimes[str(fpath)] = fpath.stat().st_mtime
-        except Exception as e:
-            logger.warning(f"Error globbing pattern {glob_pattern}: {e}")
+            current_mtimes[str(fpath)] = fpath.stat().st_mtime
+        except OSError:
             continue
 
     # O(1) cache hit if mtimes unchanged and cache exists
-    if _integration_cache is not None and current_mtimes == _cache_mtime:
-        return _integration_cache
+    cached = _integration_cache.get(cwd)
+    if cached is not None and cached[0] == current_mtimes:
+        return cached[1]
 
     # Rebuild cache
     integrations = []
@@ -303,65 +318,60 @@ def load_all_integrations() -> list[Integration]:
 
     # 2. User markdown files (override defaults by pattern)
     seen_patterns = set()
-    for glob_pattern in search_paths:
+    for md_file in files:
         try:
-            for md_file in Path(".").glob(glob_pattern):
-                if not md_file.is_file():
-                    continue
-
-                try:
-                    fm, body = _extract_frontmatter(
-                        md_file.read_text(encoding="utf-8"), source=str(md_file)
-                    )
-                except Exception as e:
-                    logger.warning(f"Error reading {md_file}: {e}")
-                    continue
-
-                # Check if enabled
-                if not fm.get("enabled", True):
-                    continue
-
-                # Normalize patterns (hookify compat: pattern or patterns)
-                patterns = fm.get("patterns") or [fm.get("pattern")]
-                if not patterns or not patterns[0]:
-                    logger.warning(f"No patterns in {md_file}, skipping")
-                    continue
-
-                # Skip if already seen (first file wins)
-                pattern_key = tuple(sorted(patterns))
-                if pattern_key in seen_patterns:
-                    logger.debug(f"Duplicate pattern {pattern_key} in {md_file}, skipping")
-                    continue
-                seen_patterns.add(pattern_key)
-
-                # Create integration from file
-                intg = Integration(
-                    patterns=tuple(patterns),
-                    action=fm.get("action", "block"),
-                    message=body.strip(),
-                    redirect=fm.get("redirect"),
-                    when=fm.get("when", "always"),
-                    event=fm.get("event", "bash"),
-                    tool_matcher=fm.get("tool_matcher", "Bash"),
-                    conditions=tuple(fm.get("conditions", [])),
-                    name=fm.get("name", md_file.stem),
-                    source="user",
-                    dedup_category=fm.get("dedup_category") or None,
-                    dedup_window_seconds=Integration._dedup_window_from_config(fm),
-                )
-                # Validate and log warnings
-                for warn in _validate_integration(intg, str(md_file)):
-                    logger.warning(warn)
-                integrations.append(intg)
+            fm, body = _extract_frontmatter(
+                md_file.read_text(encoding="utf-8"), source=str(md_file)
+            )
         except Exception as e:
-            logger.warning(f"Error loading user files from {glob_pattern}: {e}")
+            logger.warning(f"Error reading {md_file}: {e}")
             continue
+
+        # Check if enabled
+        if not fm.get("enabled", True):
+            continue
+
+        # Normalize patterns (hookify compat: pattern or patterns)
+        patterns = fm.get("patterns") or [fm.get("pattern")]
+        if not patterns or not patterns[0]:
+            logger.warning(f"No patterns in {md_file}, skipping")
+            continue
+
+        # Skip if already seen (first file wins)
+        pattern_key = tuple(sorted(patterns))
+        if pattern_key in seen_patterns:
+            logger.debug(f"Duplicate pattern {pattern_key} in {md_file}, skipping")
+            continue
+        seen_patterns.add(pattern_key)
+
+        # Create integration from file; a malformed file is skipped, never
+        # allowed to take the defaults down with it.
+        try:
+            intg = Integration(
+                patterns=tuple(patterns),
+                action=fm.get("action", "block"),
+                message=body.strip(),
+                redirect=fm.get("redirect"),
+                when=fm.get("when", "always"),
+                event=fm.get("event", "bash"),
+                tool_matcher=fm.get("tool_matcher", "Bash"),
+                conditions=tuple(fm.get("conditions", [])),
+                name=fm.get("name", md_file.stem),
+                source="user",
+                dedup_category=fm.get("dedup_category") or None,
+                dedup_window_seconds=Integration._dedup_window_from_config(fm),
+            )
+            for warn in _validate_integration(intg, str(md_file)):
+                logger.warning(warn)
+        except Exception as e:
+            logger.warning(f"Error loading user integration {md_file}: {e}")
+            continue
+        integrations.append(intg)
 
     # Sort by pattern specificity (most specific first) - FIX Bug 2
     integrations.sort(key=lambda intg: _pattern_specificity(intg.patterns), reverse=True)
 
-    _integration_cache = integrations
-    _cache_mtime = current_mtimes
+    _integration_cache[cwd] = (current_mtimes, integrations)
     return integrations
 
 

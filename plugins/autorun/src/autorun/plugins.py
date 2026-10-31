@@ -1179,7 +1179,7 @@ def detach_opencode_server(ctx: EventContext) -> None:
 def handle_reload(ctx: EventContext) -> str:
     """Force reload of integration files."""
     invalidate_caches()
-    count = len(load_all_integrations())
+    count = len(load_all_integrations(ctx.cwd))
     return f"✅ Reloaded {count} integrations from Python defaults + user files"
 
 
@@ -1414,7 +1414,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 
     # User files + Python defaults (deny or warn per action field)
     try:
-        for intg in load_all_integrations():  # O(1) cached
+        for intg in load_all_integrations(ctx.cwd):  # O(1) cached per project
             # Check event type (bash/file/stop/all)
             if intg.event not in ("all", event_type):
                 continue

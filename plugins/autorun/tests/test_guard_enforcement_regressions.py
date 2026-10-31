@@ -353,6 +353,54 @@ class TestFilePathsAreNotParsedAsShell:
         assert _decision(self._edit("/srv/app/other/prod.yaml", sid=sid, store=store, new_string="x")) != "deny"
 
 
+def _rule_file(root, name, pattern):
+    claude = root / ".claude"
+    claude.mkdir(parents=True, exist_ok=True)
+    (claude / f"autorun.{name}.local.md").write_text(
+        f"---\nname: {name}\npatterns: [{pattern}]\naction: block\n---\n{name} rule says no\n"
+    )
+
+
+class TestUserIntegrationFilesFollowTheSession:
+    """E9: user rule files were globbed relative to the daemon's cwd, so a
+    project's rule did nothing unless the daemon started there, and then it
+    applied to every session."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.chdir(tmp_path)  # the "daemon" cwd: holds no rules
+        integrations.invalidate_caches()
+        yield
+        integrations.invalidate_caches()
+
+    def _check(self, cmd, cwd):
+        ctx = EventContext(
+            session_id=_sid(), event="PreToolUse", tool_name="Bash",
+            tool_input={"command": cmd}, cwd=str(cwd), store=ThreadSafeDB(),
+        )
+        return plugins.check_blocked_commands(ctx)
+
+    def test_project_rule_applies_to_its_session_only(self, tmp_path):
+        project, other = tmp_path / "project", tmp_path / "other"
+        other.mkdir()
+        _rule_file(project, "projrule", "projtool")
+        assert _decision(self._check("projtool run", project)) == "deny"
+        assert _decision(self._check("projtool run", other)) != "deny"
+
+    def test_daemon_cwd_rules_do_not_leak_into_sessions(self, tmp_path):
+        _rule_file(tmp_path, "daemonrule", "daemontool")  # tmp_path is the process cwd
+        project = tmp_path / "project"
+        project.mkdir()
+        assert _decision(self._check("daemontool run", project)) != "deny"
+
+    def test_home_rule_applies_everywhere(self, tmp_path):
+        _rule_file(tmp_path / "home", "homerule", "hometool")
+        project = tmp_path / "project"
+        project.mkdir()
+        assert _decision(self._check("hometool run", project)) == "deny"
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""
