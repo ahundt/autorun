@@ -371,7 +371,7 @@ class TestSelectionParsing:
         sessions = [
             {'tmux_target': 'dev:0', 'actions': ['continue']},
             {'tmux_target': 'test:1', 'actions': ['status']},
-            {'tmux_target': 'docs:2', 'actions': ['review']},
+            {'tmux_target': 'docs:2', 'actions': ['continue']},
         ]
         with patch('autorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
             result = execute_selections('AC', sessions)
@@ -407,6 +407,78 @@ class TestSelectionParsing:
         with patch('autorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
             result = execute_selections('awaiting:continue', sessions)
         assert '2/2' in result
+
+
+class TestSelectionsSendOnlyWhatWasMeant:
+    """A word without a colon was read as letters ('awaiting' -> A,W,A,I,...,
+    'all' -> A,L,L), the default action typed was a human label such as
+    'let it work', and send_to_session skipped send_text_and_enter's delay
+    and ignored a failed Enter."""
+
+    def _sessions(self, n, actions=('continue',)):
+        return [{'tmux_target': f's:{i}', 'actions': list(actions)} for i in range(n)]
+
+    def _tmux(self, *send_results):
+        tmux = MagicMock()
+        tmux.send_keys.side_effect = list(send_results) if send_results else None
+        tmux.send_keys.return_value = True
+        return tmux
+
+    @pytest.mark.parametrize('selection,count', [('awaiting', 3), ('all', 12), ('AA', 3), ('AD', 3)])
+    def test_a_letter_group_that_is_not_distinct_sessions_sends_nothing(self, selection, count):
+        tmux = self._tmux()
+        with patch('time.sleep'):
+            results = execute_session_selections(selection, self._sessions(count), tmux)
+
+        tmux.send_keys.assert_not_called()
+        assert results and not any(r['success'] for r in results), results
+
+    def test_an_advice_label_is_refused_not_typed(self):
+        tmux = self._tmux()
+        with patch('time.sleep'):
+            results = execute_session_selections(
+                'A', self._sessions(1, ('let it work', 'status')), tmux)
+
+        tmux.send_keys.assert_not_called()
+        assert results[0]['success'] is False and 'let it work' in results[0]['error']
+
+    def test_interrupt_sends_escape_not_the_word(self):
+        tmux = self._tmux()
+        with patch('time.sleep'):
+            results = execute_session_selections(
+                'A', self._sessions(1, ('interrupt', 'retry')), tmux)
+
+        assert [c.args[0] for c in tmux.send_keys.call_args_list] == ['Escape']
+        assert results[0]['success'] is True
+
+    def test_continue_is_typed_then_enter_after_a_delay(self):
+        tmux = self._tmux()
+        with patch('time.sleep') as sleep:
+            execute_session_selections('A', self._sessions(1), tmux)
+
+        assert [c.args[0] for c in tmux.send_keys.call_args_list] == ['continue', 'C-m']
+        sleep.assert_called()
+
+    def test_send_to_session_reports_a_failed_enter(self):
+        tmux = self._tmux(True, False)
+        with patch('time.sleep'):
+            result = send_to_session(tmux, {'tmux_target': 's:0'}, 'continue')
+
+        assert result['success'] is False
+
+    def test_execute_mode_reads_bare_all_with_a_command_as_every_session(self, capsys):
+        import io
+        import json
+        from autorun import tmux_tab_ai_session_status as status
+
+        tmux = self._tmux()
+        stdin = io.StringIO(json.dumps({
+            'selections': 'all', 'command': 'continue', 'sessions': self._sessions(3)}))
+        with patch('sys.stdin', stdin), patch('time.sleep'), \
+                patch('autorun.tmux_utils.get_tmux_utilities', return_value=tmux):
+            status.handle_execute_mode()
+
+        assert '3/3' in capsys.readouterr().out
 
 
 if __name__ == '__main__':

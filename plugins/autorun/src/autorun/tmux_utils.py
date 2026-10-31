@@ -2381,12 +2381,24 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
     return sessions
 
 
-def send_to_session(tmux: 'TmuxUtilities', session: dict, cmd: str) -> dict:
-    """Send a command to a tmux session, appending Enter to execute it.
+def _send_result(session: dict, command: str, send: Callable[[str, str], bool]) -> dict:
+    """Run send(session_name, window_id) for session['tmux_target'] and report it."""
+    target = session['tmux_target']
+    session_name, window_id = target.split(':', 1)
+    try:
+        success = bool(send(session_name, window_id))
+    except Exception as e:
+        return {'target': target, 'command': command, 'success': False, 'error': str(e)}
+    return {
+        'target': target,
+        'command': command,
+        'success': success,
+        'error': None if success else 'send_keys failed',
+    }
 
-    Wraps TmuxUtilities.send_keys() with tmux_target string parsing and a
-    structured result dict. Two send_keys calls: the command, then 'C-m'
-    (Enter) to execute it — matching the interactive user workflow.
+
+def send_to_session(tmux: 'TmuxUtilities', session: dict, cmd: str) -> dict:
+    """Send a command to a tmux session with send_text_and_enter.
 
     Args:
         tmux:    TmuxUtilities instance
@@ -2394,38 +2406,53 @@ def send_to_session(tmux: 'TmuxUtilities', session: dict, cmd: str) -> dict:
         cmd:     Command string to send
 
     Returns:
-        {'target': str, 'command': str, 'success': bool, 'error': str|None}
+        {'target': str, 'command': str, 'success': bool, 'error': str|None};
+        success is False when either the text or the Enter was not delivered.
     """
-    target = session['tmux_target']
-    session_name, window_id = target.split(':', 1)
-    try:
-        success = tmux.send_keys(cmd, session_name, window_id)
-        if success:
-            tmux.send_keys('C-m', session_name, window_id)
-        return {
-            'target': target,
-            'command': cmd,
-            'success': success,
-            'error': None if success else 'send_keys failed',
-        }
-    except Exception as e:
-        return {'target': target, 'command': cmd, 'success': False, 'error': str(e)}
+    return _send_result(session, cmd, lambda s, w: send_text_and_enter(tmux, cmd, s, w))
+
+
+# Default-action labels (tmux_tab_ai_session_status.get_default_actions) that
+# name something to send. The others ('let it work', 'new task', 'status', ...)
+# are advice for a person; typing one would submit it to Claude as a prompt.
+_DEFAULT_ACTION_SENDERS: Dict[str, Callable[..., bool]] = {
+    'continue': lambda tmux, s, w: send_text_and_enter(tmux, 'continue', s, w),
+    'interrupt': lambda tmux, s, w: send_escape(tmux, s, w),
+}
+
+
+def _run_default_action(tmux: 'TmuxUtilities', session: dict, letter: str) -> dict:
+    label = (session.get('actions') or ['continue'])[0]
+    sender = _DEFAULT_ACTION_SENDERS.get(label.strip().lower())
+    if sender is None:
+        return {'target': session['tmux_target'], 'command': label, 'success': False,
+                'error': f"'{label}' is advice, not a command; use {letter}:<command>"}
+    return _send_result(session, label, lambda s, w: sender(tmux, s, w))
 
 
 def execute_session_selections(selection_str: str, sessions: list,
-                               tmux: 'TmuxUtilities | None' = None) -> 'list[dict]':
+                               tmux: 'TmuxUtilities | None' = None,
+                               command: Optional[str] = None) -> 'list[dict]':
     """Execute commands on selected Claude sessions using the /ar:tabs selection syntax.
 
     Selection syntax (same as /ar:tabs command interface):
-      'A,C' or 'AC'          Execute each session's default action (sessions[i]['actions'][0])
+      'A,C' or 'AC'          Execute each session's default action (sessions[i]['actions'][0]);
+                             only 'continue' and 'interrupt' (Escape) are sent, other
+                             labels are refused per session
       'A:git status, B:pwd'  Execute custom commands per session
       'all:continue'         Execute on every session in the list
       'awaiting:continue'    Execute only on sessions where awaiting=True
+
+    A group of letters must name distinct existing sessions, and a command
+    takes exactly one letter. If any group fails that ('awaiting', 'all',
+    'AA', 'AB:pwd'), nothing is sent and every bad group is reported.
 
     Args:
         selection_str: Selection string using the syntax above
         sessions:      List of session dicts from discover_claude_sessions()
         tmux:          TmuxUtilities instance; creates one if None
+        command:       Sent instead of the default action for letter groups
+                       ('B,C'); a bare 'all' or 'awaiting' becomes 'all:<command>'
 
     Returns:
         List of result dicts: [{'target', 'command', 'success', 'error'}, ...]
@@ -2433,7 +2460,9 @@ def execute_session_selections(selection_str: str, sessions: list,
     """
     if tmux is None:
         tmux = get_tmux_utilities()
-    results = []
+
+    if command and selection_str.strip().lower() in ('all', 'awaiting'):
+        selection_str = f'{selection_str.strip()}:{command}'
 
     if selection_str.lower().startswith('all:'):
         cmd = selection_str[4:].strip()
@@ -2443,24 +2472,32 @@ def execute_session_selections(selection_str: str, sessions: list,
         cmd = selection_str[9:].strip()
         return [send_to_session(tmux, s, cmd) for s in sessions if s.get('awaiting')]
 
+    plan = []  # (letter, session, command or None for the default action)
+    errors = []
     for part in selection_str.split(','):
         part = part.strip()
         if not part:
             continue
-        if ':' in part:
-            letter, cmd = part.split(':', 1)
-            letter = letter.strip().upper()
-            cmd = cmd.strip()
-            if len(letter) == 1 and letter.isalpha():
-                idx = ord(letter) - 65
-                if 0 <= idx < len(sessions):
-                    results.append(send_to_session(tmux, sessions[idx], cmd))
-        else:
-            for letter in part.replace(' ', '').upper():
-                if letter.isalpha():
-                    idx = ord(letter) - 65
-                    if 0 <= idx < len(sessions):
-                        default_cmd = sessions[idx].get('actions', ['continue'])[0]
-                        results.append(send_to_session(tmux, sessions[idx], default_cmd))
+        letters, has_cmd, cmd = part.partition(':')
+        letters = letters.replace(' ', '').upper()
+        valid = (
+            letters
+            and all(c.isalpha() and 0 <= ord(c) - 65 < len(sessions) for c in letters)
+            and len(set(letters)) == len(letters)
+            and not (has_cmd and len(letters) != 1)
+        )
+        if not valid:
+            errors.append({
+                'target': part, 'command': cmd.strip(), 'success': False,
+                'error': (f"'{part}' is not distinct session letters A-{chr(64 + len(sessions))} "
+                          "or one letter with a command (A:<command>, all:<command>)"),
+            })
+            continue
+        plan += [(c, sessions[ord(c) - 65], cmd.strip() if has_cmd else command) for c in letters]
 
-    return results
+    if errors:
+        return errors
+    return [
+        send_to_session(tmux, s, cmd) if cmd is not None else _run_default_action(tmux, s, c)
+        for c, s, cmd in plan
+    ]

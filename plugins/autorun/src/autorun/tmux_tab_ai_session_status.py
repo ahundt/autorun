@@ -256,13 +256,13 @@ def format_execution_results(results: List[Dict]) -> str:
     return '\n'.join(lines)
 
 
-def execute_selections(selection_str: str, sessions: List[Dict]) -> str:
+def execute_selections(selection_str: str, sessions: List[Dict], command: str = '') -> str:
     """Execute selections and return formatted result string.
 
     Convenience wrapper combining execute_session_selections() (tmux_utils) and
     format_execution_results() for the /ar:tabs command interface.
     """
-    results = execute_session_selections(selection_str, sessions)
+    results = execute_session_selections(selection_str, sessions, command=command or None)
     return format_execution_results(results)
 
 
@@ -295,15 +295,9 @@ def handle_execute_mode() -> None:
         print(json.dumps({'error': 'No sessions provided', 'success': False}))
         return
 
-    # If a command override is provided, broadcast it to the letter selections
-    if command and not (':' in selections and not selections.startswith(('all:', 'awaiting:'))):
-        if not selections.startswith(('all:', 'awaiting:')):
-            letters = selections.replace(' ', '').replace(',', '')
-            selections = ', '.join(
-                f'{letter}:{command}' for letter in letters if letter.isalpha()
-            )
-
-    print(execute_selections(selections, sessions))
+    # The command replaces the default action of the letter selections; the
+    # parser validates the letters and turns a bare 'all'/'awaiting' into 'all:<command>'.
+    print(execute_selections(selections, sessions, command))
 
 
 def main() -> None:
