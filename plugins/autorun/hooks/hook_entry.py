@@ -846,15 +846,19 @@ def _emit_daemon_result(
     decision = response.get("hookSpecificOutput", {}).get(
         "permissionDecision", response.get("decision", "allow")
     )
-    if decision == "deny" and cli_type == "claude":
+    if decision == "deny":
         # Import the configurable workaround only on the uncommon deny path;
         # successful hooks stay stdlib-only and avoid package startup cost.
+        # The flag alone decides, as in client.output_hook_response, so
+        # `always` and `never` mean the same on both paths.
         try:
             from autorun.config import should_use_exit2_workaround
 
             use_exit2 = should_use_exit2_workaround({"cli_type": cli_type})
         except Exception:
-            use_exit2 = True
+            # Registry unreadable: its default. Claude is the only platform
+            # with has_exit2_workaround (test_bug_4669_exit2_policy.py pins it).
+            use_exit2 = cli_type == "claude"
         if use_exit2:
             reason = response.get("hookSpecificOutput", {}).get(
                 "permissionDecisionReason", response.get("reason", "Tool blocked")

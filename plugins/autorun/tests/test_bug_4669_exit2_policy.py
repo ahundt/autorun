@@ -127,4 +127,23 @@ def test_the_workaround_block_is_bracketed_for_removal():
     assert "Removal:" in block
 
 
+@pytest.mark.parametrize("mode", ["always", "auto", "never"])
+def test_hook_entry_fast_path_and_client_agree_on_the_exit_code(clean_env, capsys, mode):
+    """The daemon fast path in hooks/hook_entry.py checked cli_type == "claude"
+    before the flag, so `always` exited 2 through the client and 0 through it."""
+    import importlib.util
+
+    hook_entry_path = Path(__file__).resolve().parents[1] / "hooks" / "hook_entry.py"
+    spec = importlib.util.spec_from_file_location("hook_entry_exit2_test", hook_entry_path)
+    hook_entry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook_entry)
+    clean_env.setenv(_LEGACY_FLAG, mode)
+    deny = {"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "no"}}
+
+    for name in PLATFORMS:
+        expected = 2 if _should_use({"cli_type": name}) else 0
+        assert hook_entry._emit_daemon_result(deny, name, "PreToolUse") == expected, (name, mode)
+    capsys.readouterr()
+
+
 # --- BUG #4669 TESTS END --- DELETE WHEN FIXED ---
