@@ -1550,8 +1550,8 @@ class TestOption2ExportFlow:
     def test_rejected_plan_lands_in_rejected_dir(self, temp_project):
         """E2E: rejected plan physically appears in notes/rejected/ after export.
 
-        recover_unexported_plans passes rejected=config.export_rejected, so
-        when abandoned plans are recovered they go to the rejected sub-dir.
+        recover_unexported_plans passes rejected=True, so when abandoned
+        plans are recovered they go to the rejected sub-dir.
         """
         store = ThreadSafeDB()
         ctx = EventContext(

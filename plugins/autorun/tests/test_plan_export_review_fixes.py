@@ -2,6 +2,9 @@
 
 - Two sessions in one project: ExitPlanMode must back up the calling session's
   plan, not whichever plan the other session happened to record first.
+- An absolute or ~ export directory is honored and reported as a success.
+- `/ar:pe rejected off` keeps every plan that was not accepted out of notes/,
+  while an Option 1 acceptance still reaches notes/.
 """
 from __future__ import annotations
 
@@ -172,3 +175,53 @@ class TestDirectoriesOutsideTheProject:
 
         assert backup is not None
         assert Path(backup).parent == rejected
+
+
+class TestRejectedOffWritesNoUnacceptedPlan:
+    """`/ar:pe rejected off`: no plan that was not accepted reaches any directory."""
+
+    @pytest.fixture(autouse=True)
+    def rejected_off(self, project):
+        pe.plan_export_command("rejected off", project, "claude")
+
+    def _write(self, project, plans_dir, session_id="S1"):
+        plan = _plan(plans_dir, "draft", "never accepted")
+        pe.track_and_export_plans_early(
+            _event(session_id, project, "PreToolUse", "Write", plan)
+        )
+        return plan
+
+    def _recover(self, project, source):
+        return pe.recover_unexported_plans(
+            _event("S2", project, "SessionStart", source=source)
+        )
+
+    def test_abandoned_plan_is_not_written_to_the_accepted_dir(self, project, plans_dir):
+        self._write(project, plans_dir)
+
+        response = self._recover(project, "startup")
+
+        assert not list(project.rglob("*.md")), list(project.rglob("*.md"))
+        assert response is None, response
+
+    def test_dismissed_plan_is_not_written_or_reported(self, project, plans_dir):
+        self._write(project, plans_dir)
+        pe.track_and_export_plans_early(
+            _event("S1", project, "PreToolUse", "ExitPlanMode", permission_mode="plan")
+        )
+
+        response = self._recover(project, "startup")
+
+        assert not list(project.rglob("*.md")), list(project.rglob("*.md"))
+        assert response is None, response
+
+    def test_option1_accept_still_exports_to_the_accepted_dir(self, project, plans_dir):
+        self._write(project, plans_dir)
+        pe.track_and_export_plans_early(
+            _event("S1", project, "PreToolUse", "ExitPlanMode", permission_mode="plan")
+        )
+
+        response = self._recover(project, "clear")
+
+        assert "never accepted" in _bodies(project / "notes")
+        assert "Accepted:" in response["systemMessage"], response

@@ -1364,24 +1364,25 @@ class PlanExport:
           - permission_mode changed to accepted mode → promote backup to notes/
           - permission_mode unchanged/unaccepted → finalize_backup() records in tracking
 
-        Skips when the rejected component is not active, either because the
-        user switched it off or because plan export is off for this project.
-        Reading component_active rather than the raw flag is what makes the
-        master switch reach this path too.
+        Does nothing when plan export is off for this project. With only the
+        rejected component off, no file is written but the attempt is still
+        recorded: without exit_attempted, Option 1 recovery would treat an
+        accepted plan as abandoned and, with rejected off, export nothing.
         Returns the backup file path string, or None on failure/skip.
         """
-        if not self.config.component_active("rejected"):
+        if not self.config.enabled:
             return None
         try:
-            # Reserved and written before any state is touched, for the same
-            # reason as export(): the global lock must not span a file copy.
-            dest_path = self._reserve_destination(plan_path, rejected=True)
-            try:
-                self._write_reserved_destination(plan_path, dest_path)
-            except BaseException:
-                self._release_reservation(dest_path)
-                raise
-            backup_path_str = str(dest_path)
+            dest_path = None
+            if self.config.component_active("rejected"):
+                # Reserved and written before any state is touched, for the same
+                # reason as export(): the global lock must not span a file copy.
+                dest_path = self._reserve_destination(plan_path, rejected=True)
+                try:
+                    self._write_reserved_destination(plan_path, dest_path)
+                except BaseException:
+                    self._release_reservation(dest_path)
+                    raise
 
             with session_state(GLOBAL_SESSION_ID) as state:
                 # Update active_plans only. Do NOT touch tracking — preserves get_unexported().
@@ -1396,16 +1397,19 @@ class PlanExport:
                 entry.setdefault("session_id", self.ctx.session_id)
                 entry["exit_attempted"] = True
                 entry["mode_at_exit_attempt"] = permission_mode
-                entry["backup_path"] = backup_path_str
+                if dest_path is not None:
+                    entry["backup_path"] = str(dest_path)
                 plans[plan_key] = entry
                 state["active_plans"] = plans
 
+            if dest_path is None:
+                return None
             log_warning(
                 f"Backed up plan to {self._display_path(dest_path)} "
                 "(pending acceptance decision)",
                 self.config,
             )
-            return backup_path_str
+            return str(dest_path)
 
         except Exception as e:
             log_warning(f"backup_to_rejected error: {e}", self.config)
@@ -1443,10 +1447,15 @@ class PlanExport:
                 new_plans.pop(plan_key, None)
                 state["active_plans"] = new_plans
 
-            if backup_path:
-                msg = f"Plan retained in {self._display_path(Path(backup_path))} (not accepted)"
-            else:
-                msg = "Plan retained in notes/rejected/ (not accepted)"
+            if not backup_path:
+                # backup_to_rejected() wrote nothing (rejected component off):
+                # the decision is recorded above, but nothing was retained.
+                return {
+                    "success": False,
+                    "skipped": True,
+                    "error": "rejected plan export is switched off",
+                }
+            msg = f"Plan retained in {self._display_path(Path(backup_path))} (not accepted)"
 
             log_warning(f"Finalized rejected plan (already in notes/rejected/): {plan_key}", self.config)
             return {
@@ -1914,8 +1923,9 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
 
             else:
                 # Abandoned: ExitPlanMode was never called before this recovery.
-                # Standard export to notes/rejected/ (or notes/ if export_rejected=False).
-                result = exporter.export(plan, rejected=config.export_rejected)
+                # Never accepted, so the rejected component only; export()
+                # skips it when that component is off.
+                result = exporter.export(plan, rejected=True)
                 if result["success"]:
                     recovered_count += 1
                     if result.get("message"):
