@@ -9,7 +9,10 @@ disable-model-invocation: true
 
 Add a command pattern to the global block list. Persists across all Claude Code sessions.
 
-**Usage**: `/ar:globalno <pattern>`
+**Usage**: `/ar:globalno <pattern>` or `/ar:globalno '<pattern>' [description]`
+
+Unquoted words are all one pattern; a custom description needs a quoted,
+`regex:` or `glob:` pattern.
 
 **Pattern types**:
 - Literal: `/ar:globalno rm` (blocks commands containing "rm")

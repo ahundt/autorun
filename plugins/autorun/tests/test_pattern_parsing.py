@@ -40,9 +40,16 @@ class TestParsePatternAndDescription:
         assert description == "unsafe function"
         assert pattern_type == "literal"
 
-    def test_unquoted_pattern_with_description(self):
-        """Test unquoted pattern with description."""
-        pattern, description, pattern_type = parse_pattern_and_description("rm dangerous command")
+    def test_unquoted_words_are_all_pattern(self):
+        """Unquoted words are one pattern, as in /ar:ok: /ar:no git push blocks
+        git push, not git. A description needs a quoted pattern."""
+        pattern, description, pattern_type = parse_pattern_and_description("git push --force")
+        assert pattern == "git push --force"
+        assert description is None
+        assert pattern_type == "literal"
+
+    def test_quoted_single_word_pattern_with_description(self):
+        pattern, description, pattern_type = parse_pattern_and_description("'rm' dangerous command")
         assert pattern == "rm"
         assert description == "dangerous command"
         assert pattern_type == "literal"
@@ -139,7 +146,7 @@ class TestParsePatternAndDescription:
 
     def test_multiple_word_description(self):
         """Test pattern with multi-word description."""
-        pattern, description, pattern_type = parse_pattern_and_description('rm permanently destructive use trash instead')
+        pattern, description, pattern_type = parse_pattern_and_description('"rm" permanently destructive use trash instead')
         assert pattern == "rm"
         assert description == "permanently destructive use trash instead"
         assert pattern_type == "literal"
@@ -242,7 +249,7 @@ class TestEdgeCases:
 
     def test_pattern_with_quotes_in_description(self):
         """Test pattern with quoted string in description."""
-        pattern, description, pattern_type = parse_pattern_and_description('rm "permanently destructive" command')
+        pattern, description, pattern_type = parse_pattern_and_description('\'rm\' "permanently destructive" command')
         assert pattern == "rm"
         assert description == "permanently destructive command"
         assert pattern_type == "literal"

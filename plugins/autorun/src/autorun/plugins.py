@@ -531,86 +531,73 @@ def _is_scope_token(token: str) -> bool:
     return token.isdigit() or token in _PERMANENT_KEYWORDS or looks_like_duration(token)
 
 
-def _parse_args(args: str) -> tuple:
-    """
-    Parse pattern with shlex quoted string support and type detection.
+def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
+    """The one /ar:no and /ar:ok pattern grammar: (pattern, rest, pattern_type).
 
-    Args:
-        args: Raw argument string
-
-    Returns:
-        tuple: (pattern, description, pattern_type)
-
-    Raises:
-        ValueError: If pattern is empty or too long
+    A quoted, regex:, glob: or /re/ first unit is the whole pattern and the
+    words after it are the rest. Otherwise every word is the pattern, so
+    `/ar:no git push` blocks, and revokes, exactly what `/ar:ok git push`
+    allows. With ``scope`` (/ar:ok) the rest is the count/duration/perm words
+    before or after the pattern, and any other word is an error rather than a
+    guess. Quote a literal that ends in a scope-looking word (/ar:ok "sleep 5").
     """
     args = args.strip()
     if not args:
         raise ValueError("No pattern provided")
-
     if len(args) > _MAX_PATTERN_LENGTH:
         raise ValueError(f"Pattern too long (max {_MAX_PATTERN_LENGTH})")
 
-    typed = _typed_pattern_unit(args)
-    if typed:
-        pattern, ptype, rest = typed
-        return pattern, " ".join(_split_command_args(rest)) or None, ptype
-
-    parts = _split_command_args(args)
-    if not parts:
-        raise ValueError("No pattern provided")
-
-    desc = " ".join(parts[1:]) if len(parts) > 1 else None
-    return parts[0], desc, "literal"
-
-
-def _parse_allow_args(args: str) -> tuple:
-    """Parse /ar:ok arguments, allowing unquoted multiword command patterns.
-
-    Scope modifiers may appear before or after the pattern:
-      /ar:ok git push
-      /ar:ok git push 5m
-      /ar:ok 5m git push
-
-    If a literal pattern itself ends with a scope-looking token, quote it
-    (for example: /ar:ok "sleep 5").
-    """
-    args = args.strip()
-    if not args:
-        raise ValueError("No pattern provided")
-
-    if len(args) > _MAX_PATTERN_LENGTH:
-        raise ValueError(f"Pattern too long (max {_MAX_PATTERN_LENGTH})")
-
-    leading_scope: list[str] = []
-    while (head := args.split(None, 1)) and _is_scope_token(head[0]):
-        leading_scope.append(head[0])
+    leading: list[str] = []
+    while scope and (head := args.split(None, 1)) and _is_scope_token(head[0]):
+        leading.append(head[0])
         args = head[1] if len(head) > 1 else ""
 
     typed = _typed_pattern_unit(args) if args else None
     if typed:
-        pattern, ptype, rest = typed
-        trailing_scope = rest.split()
-        stray = [token for token in trailing_scope if not _is_scope_token(token)]
+        pattern, ptype, rest_text = typed
+        rest = _split_command_args(rest_text)
+    else:
+        parts = _split_command_args(args)
+        if not parts:
+            raise ValueError("No pattern provided")
+        ptype = "literal"
+        if args[:1] in _QUOTES:
+            pattern, rest = parts[0], parts[1:]
+        else:
+            rest = []
+            while scope and len(parts) > 1 and _is_scope_token(parts[-1]):
+                rest.insert(0, parts.pop())
+            pattern = " ".join(parts)
+    if not pattern:
+        raise ValueError("No pattern provided")
+    if scope:
+        stray = [token for token in rest if not _is_scope_token(token)]
         if stray:
             raise ValueError(
-                f"unexpected {' '.join(stray)!r} after the {ptype} pattern; quote a pattern that "
-                "contains spaces, and put only a count, duration or perm after it"
+                f"unexpected {' '.join(stray)!r} after the pattern {pattern!r}; quote the whole "
+                "pattern, and put only a count, duration or perm after it"
             )
-        return pattern, " ".join(leading_scope + trailing_scope) or None, ptype
+        rest = leading + rest
+    return pattern, rest, ptype
 
-    parts = _split_command_args(args)
-    trailing_scope: list[str] = []
-    while parts and _is_scope_token(parts[-1]):
-        trailing_scope.insert(0, parts.pop())
 
-    if not parts:
-        raise ValueError("No pattern provided")
+def _parse_args(args: str) -> tuple:
+    """/ar:no arguments: (pattern, description or None, pattern_type).
 
-    pattern, ptype = " ".join(parts), "literal"
-    scope_args = leading_scope + trailing_scope
-    desc = " ".join(scope_args) if scope_args else None
-    return pattern, desc, ptype
+    A description needs a quoted or typed pattern: /ar:no "rm" use trash.
+    """
+    pattern, rest, ptype = _parse_pattern(args, scope=False)
+    return pattern, " ".join(rest) or None, ptype
+
+
+def _parse_allow_args(args: str) -> tuple:
+    """/ar:ok arguments: (pattern, scope words or None, pattern_type).
+
+    Scope may come before or after the pattern: /ar:ok git push 5m,
+    /ar:ok 5m git push.
+    """
+    pattern, rest, ptype = _parse_pattern(args, scope=True)
+    return pattern, " ".join(rest) or None, ptype
 
 
 def _get_suggestion(pattern: str) -> str:
@@ -792,7 +779,7 @@ def _make_block_op(scope: str, op: str):
         if op == "block":
             if not args:
                 prefix = "global" if scope == "global" else ""
-                return f"❌ Usage: /ar:{prefix}no <pattern> [description]"
+                return f"❌ Usage: /ar:{prefix}no <pattern>, or /ar:{prefix}no '<pattern>' [description]"
             try:
                 pattern, desc, ptype = _parse_args(args)
             except ValueError as e:

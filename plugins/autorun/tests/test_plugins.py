@@ -227,7 +227,7 @@ class TestCommandBlockingPlugin:
 
     def test_parse_args_with_description(self):
         """_parse_args should extract description."""
-        pattern, desc, ptype = plugins._parse_args("rm dangerous delete command")
+        pattern, desc, ptype = plugins._parse_args("'rm' dangerous delete command")
         assert pattern == "rm"
         assert desc == "dangerous delete command"
         assert ptype == "literal"

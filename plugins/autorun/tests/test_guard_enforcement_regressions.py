@@ -300,6 +300,29 @@ class TestRegexPatternsAreTakenVerbatim:
             assert self._stored(sid, store) == [] and self._stored(sid, store, "session_allowed_patterns") == []
 
 
+class TestNoAndOkShareOnePatternGrammar:
+    """E8: /ar:no took only the first word while /ar:ok took them all, so
+    `/ar:no git push` blocked plain `git` and left the `git push` allow."""
+
+    def test_no_revokes_the_allow_ok_created_and_blocks_only_that_command(self):
+        sid, store = _sid(), ThreadSafeDB()
+        _prompt("/ar:ok git push 30m", sid=sid, store=store)
+        _prompt("/ar:no git push", sid=sid, store=store)
+        state = EventContext(session_id=sid, event="PreToolUse", store=store)
+        assert state.state_get("session_allowed_patterns", []) == []
+        assert [b["pattern"] for b in state.state_get("session_blocked_patterns", [])] == ["git push"]
+        assert _decision(plugins.check_blocked_commands(_bash("git status", sid=sid, store=store))) != "deny"
+        assert _decision(plugins.check_blocked_commands(_bash("git push origin main", sid=sid, store=store))) == "deny"
+
+    def test_both_parsers_return_the_same_pattern(self):
+        for args in ("git push", "'git push'", "rm", r"regex:git\s+push", "glob:*.tmp"):
+            assert plugins._parse_args(args)[::2] == plugins._parse_allow_args(args)[::2], args
+
+    def test_ok_refuses_words_after_a_quoted_pattern_as_ambiguous(self):
+        message = _prompt("/ar:ok 'git push' origin", sid=_sid(), store=ThreadSafeDB()).get("systemMessage", "")
+        assert message.startswith("❌"), message
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""
