@@ -73,7 +73,10 @@ required).
 Codex plugin packaging: `~/.agents/plugins/marketplace.json` lists an `ar`
 plugin whose local source is derived from CONFIG `codex_plugin_source_dir`
 (default `~/plugins`, Codex's own personal-plugin default), so the default
-entry is `./plugins/ar`, resolving to `~/plugins/ar`. Codex resolves the path
+entry is `./plugins/ar`, resolving to `~/plugins/ar`
+(`codex-rs/core-plugins/src/remote/share/checkout.rs` uses the same default).
+Codex's plugin documentation suggests `~/.codex/plugins/<name>` instead; set
+`codex_plugin_source_dir` to `~/.codex/plugins` for that. Codex resolves the path
 against the home directory and refuses one outside it, so autorun refuses such
 a setting before writing anything. Releases through 1.0.0rc3 always wrote
 `./plugins/<name>`; that entry is replaced when the setting moves. A

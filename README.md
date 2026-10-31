@@ -247,7 +247,7 @@ claude plugin marketplace list
 
 #### Codex CLI Support
 
-Autorun installs Codex hooks at `~/.codex/hooks.json` by default and exposes its skill bundle as a local Codex plugin through `~/.agents/plugins/marketplace.json` with source `~/plugins/autorun`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, search/file-discovery guidance uses shell `rg -n` and `rg --files`, and file edits use `apply_patch`.
+Autorun installs Codex hooks at `~/.codex/hooks.json` by default and exposes its skill bundle as a local Codex plugin through `~/.agents/plugins/marketplace.json` with source `~/plugins/ar`, the default Codex itself uses for personal plugins (set `codex_plugin_source_dir` to `~/.codex/plugins` to follow Codex's documentation instead). After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, search/file-discovery guidance uses shell `rg -n` and `rg --files`, and file edits use `apply_patch`.
 
 Codex loads matching hooks from every active source, including user config and plugin bundles. Autorun therefore makes the hook source explicit during installation:
 
