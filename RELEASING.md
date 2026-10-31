@@ -254,11 +254,14 @@ uv run --project plugins/autorun --locked python -m autorun --install --force
 # Hook configuration is read once at session start, so a hook change takes
 # effect in the NEXT session, not this one.
 
-# Opt-in, and only meaningful after that reinstall: confirms the Claude plugin
-# cache and the installed Gemini extension actually carry the hook files in
-# this tree. Skipped by default so an ordinary source edit does not fail the
-# suite before the reinstall.
-(cd plugins/autorun && AUTORUN_ENABLE_LIVE_INSTALL_CHECKS=1 uv run --project . --locked pytest tests/test_hook_entry.py -k "cache_matches_source or gemini_extension_hooks_match" -v)
+# Opt-in, and only meaningful after that reinstall: the e2e tests read this
+# machine's installed copies (the Claude plugin cache carries this tree's hook
+# files and no other harness's, the installed Gemini extension's hooks match,
+# the extension is registered). No CI runner has those copies, so apart from
+# the paid real_money tests this is the only place these run. Skipped by
+# default so an ordinary source edit does not fail the suite before the
+# reinstall.
+(cd plugins/autorun && AUTORUN_ENABLE_LIVE_INSTALL_CHECKS=1 uv run --project . --locked pytest tests/ -m "e2e and not real_money" -v)
 
 # No existing tag for this version (both print nothing)
 release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
