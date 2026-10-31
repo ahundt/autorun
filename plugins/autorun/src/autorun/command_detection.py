@@ -34,7 +34,8 @@ import importlib.util
 import logging
 import re
 import shlex
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Final
 
@@ -55,14 +56,6 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-# v8: Kept for backward-compatible imports and generic best-effort fallback.
-COMMAND_PREFIXES: Final[frozenset[str]] = frozenset({
-    "sudo", "su", "doas", "pkexec", "gksudo", "kdesudo",
-    "env", "nice", "nohup", "time", "timeout", "ionice",
-    "strace", "ltrace", "watch",
-    "chroot", "fakeroot", "firejail", "bubblewrap",
-})
-
 GIT_SUBCOMMANDS: Final[frozenset[str]] = frozenset({
     "add", "commit", "reset", "checkout", "stash", "clean",
     "push", "pull", "fetch", "merge", "rebase",
@@ -75,9 +68,17 @@ GIT_GLOBAL_OPTIONS_WITH_ARG: Final[frozenset[str]] = frozenset({
     "--attr-source", "--list-cmds", "--config-env",
 })
 
+# Commands that run a script given with -c, or read from stdin without it.
+# su is here, not among the wrappers: it hands -c to the target user's shell.
 SHELL_EXEC_COMMANDS: Final[frozenset[str]] = frozenset({
-    "sh", "bash", "zsh", "dash", "ksh", "fish",
+    "sh", "bash", "zsh", "dash", "ksh", "fish", "su",
 })
+
+# -c alone or bundled with other single-letter options: -lc, -ec, -xec.
+_SHELL_C_OPTION: Final[re.Pattern[str]] = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+
+# find actions whose following words, up to `;` or `{} +`, are a command.
+_FIND_EXEC_ACTIONS: Final[frozenset[str]] = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 
 # What Windows will run when the name is typed without one. `.ps1` is absent:
 # PowerShell will not run it as a bare command name.
@@ -86,6 +87,8 @@ _WINDOWS_EXECUTABLE_SUFFIXES: Final[frozenset[str]] = frozenset({
 })
 
 _SHELL_OPERATORS: Final[re.Pattern[str]] = re.compile(r"\s*(?:&&|\|\||[|;&\n])\s*")
+# The same split, keeping each operator, so the fallback can see a pipe.
+_SHELL_OPERATORS_KEPT: Final[re.Pattern[str]] = re.compile(f"({_SHELL_OPERATORS.pattern})")
 _CMD_CACHE_SIZE: Final[int] = 512   # v8: Increased for hot path
 _PATTERN_CACHE_SIZE: Final[int] = 64
 _MAX_RECURSION_DEPTH: Final[int] = 3
@@ -189,6 +192,11 @@ class CommandWrapperSpec:
     leading_positional_count: int = 0
     skip_env_assignments: bool = False
     optional_subcommands: frozenset[str] = frozenset()
+    # Options that consume more than one word: `bwrap --bind SRC DEST`.
+    flag_arity: Mapping[str, int] = field(default_factory=dict)
+    # The child argv is joined and run as shell script text (eval, watch), so
+    # it is read as `sh -c "<joined>"`.
+    args_are_script: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +348,64 @@ _CHROOT_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
     leading_positional_count=1,
 )
 
+# Option lists below are the options each tool's usage documents with a
+# required argument (GNU and BSD spellings). An option whose argument is
+# optional (`xargs -i[R]`, `watch -d[=x]`) is left out: getopt only accepts
+# that argument attached, so the next word is the command.
+_HELP_VERSION: Final[frozenset[str]] = frozenset({"--help", "--version"})
+
+_XARGS_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-L",
+        "-n", "--max-args", "-P", "--max-procs", "-s", "--max-chars",
+        "--process-slot-var",
+        "-J", "-R", "-S",  # BSD xargs
+    }),
+    stop_flags=_HELP_VERSION,
+)
+
+_STRACE_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "-a", "-b", "-e", "-E", "-I", "-o", "-O", "-p", "-P", "-s", "-S", "-u", "-U", "-X",
+        "--columns", "--detach-on", "--env", "--attach", "--user", "--argv0",
+        "--interruptible", "--trace", "--signal", "--status", "--trace-path",
+        "--abbrev", "--verbose", "--raw", "--read", "--write", "--kvm",
+        "--output", "--string-limit", "--const-print-style", "--inject", "--fault",
+        "--summary-syscall-overhead", "--summary-sort-by", "--summary-columns",
+    }),
+    stop_flags=frozenset({"-h", "-V"}) | _HELP_VERSION,
+)
+
+_LTRACE_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "-a", "--align", "-A", "-D", "--debug", "-e", "-F", "--config",
+        "-l", "--library", "-n", "--indent", "-o", "--output", "-p", "-s",
+        "-u", "-w", "--where", "-x",
+    }),
+    stop_flags=frozenset({"-h", "-V"}) | _HELP_VERSION,
+)
+
+_BWRAP_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "--args", "--argv0", "--userns", "--userns2", "--pidns", "--uid", "--gid",
+        "--hostname", "--chdir", "--unsetenv", "--lock-file", "--sync-fd",
+        "--remount-ro", "--exec-label", "--file-label", "--proc", "--dev",
+        "--tmpfs", "--mqueue", "--dir", "--seccomp", "--add-seccomp-fd",
+        "--block-fd", "--userns-block-fd", "--info-fd", "--json-status-fd",
+        "--cap-add", "--cap-drop", "--perms", "--size", "--overlay-src",
+        "--tmp-overlay", "--ro-overlay",
+    }),
+    flag_arity={
+        **dict.fromkeys((
+            "--setenv", "--bind", "--bind-try", "--dev-bind", "--dev-bind-try",
+            "--ro-bind", "--ro-bind-try", "--bind-fd", "--ro-bind-fd", "--file",
+            "--bind-data", "--ro-bind-data", "--symlink", "--chmod",
+        ), 2),
+        "--overlay": 3,
+    },
+    stop_flags=_HELP_VERSION,
+)
+
 _TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
     # RTK wraps command output for token savings while preserving child command
     # semantics from autorun's safety perspective.
@@ -353,9 +419,53 @@ _TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
     "nice": _NICE_WRAPPER_SPEC,
     "ionice": _IONICE_WRAPPER_SPEC,
     "chroot": _CHROOT_WRAPPER_SPEC,
+    # Privilege, process and sandbox wrappers. Each still runs its child.
+    "doas": CommandWrapperSpec(flags_with_arg=frozenset({"-a", "-C", "-u"})),
+    "pkexec": CommandWrapperSpec(flags_with_arg=frozenset({"--user"}), stop_flags=_HELP_VERSION),
+    "gksudo": CommandWrapperSpec(
+        flags_with_arg=frozenset({"-u", "--user", "-D", "--description"}), stop_flags=_HELP_VERSION,
+    ),
+    "kdesudo": CommandWrapperSpec(flags_with_arg=frozenset({"-u"}), stop_flags=_HELP_VERSION),
+    "nohup": CommandWrapperSpec(stop_flags=_HELP_VERSION),
+    "time": CommandWrapperSpec(
+        flags_with_arg=frozenset({"-f", "--format", "-o", "--output"}),
+        stop_flags=frozenset({"-V"}) | _HELP_VERSION,
+    ),
+    "stdbuf": CommandWrapperSpec(
+        flags_with_arg=frozenset({"-i", "-o", "-e", "--input", "--output", "--error"}),
+        stop_flags=_HELP_VERSION,
+    ),
+    "strace": _STRACE_WRAPPER_SPEC,
+    "ltrace": _LTRACE_WRAPPER_SPEC,
+    "fakeroot": CommandWrapperSpec(
+        flags_with_arg=frozenset({"-l", "--lib", "--faked", "-i", "-s", "-b", "--fd-base"}),
+        stop_flags=frozenset({"-h", "-v"}) | _HELP_VERSION,
+    ),
+    "firejail": CommandWrapperSpec(stop_flags=_HELP_VERSION),
+    "bwrap": _BWRAP_WRAPPER_SPEC,
+    "bubblewrap": _BWRAP_WRAPPER_SPEC,
+    # Shell builtins that run their operand as a command: `exec` replaces the
+    # shell with it, `command -v`/`-V` only look it up.
+    "exec": CommandWrapperSpec(flags_with_arg=frozenset({"-a"})),
+    "command": CommandWrapperSpec(stop_flags=frozenset({"-v", "-V"})),
+    "builtin": CommandWrapperSpec(),
+    # xargs runs its operand with stdin appended as arguments.
+    "xargs": _XARGS_WRAPPER_SPEC,
+    # These join their operands and hand them to a shell.
+    "eval": CommandWrapperSpec(args_are_script=True),
+    "watch": CommandWrapperSpec(
+        flags_with_arg=frozenset({"-n", "--interval", "-q", "--equexit"}),
+        stop_flags=frozenset({"-h", "-v"}) | _HELP_VERSION,
+        args_are_script=True,
+    ),
 }
 
 TRANSPARENT_COMMAND_WRAPPERS: Final[frozenset[str]] = frozenset(_TRANSPARENT_WRAPPER_SPECS)
+
+# Derived, not listed: integrations.py reads these as prefixes, and a name it
+# knew that the pattern layer did not (nohup, time, doas, ...) let
+# `nohup rm -rf x` through the `rm -rf` block.
+COMMAND_PREFIXES: Final[frozenset[str]] = TRANSPARENT_COMMAND_WRAPPERS
 
 
 def git_subcommand_index(tokens: list[str]) -> int:
@@ -431,7 +541,9 @@ def _strip_wrapper_once(tokens: list[str], spec: CommandWrapperSpec) -> list[str
             continue
 
         if token.startswith("-"):
-            if token in spec.flags_with_arg or option_head in spec.flags_with_arg:
+            if token in spec.flag_arity:
+                i += 1 + spec.flag_arity[token]
+            elif token in spec.flags_with_arg or option_head in spec.flags_with_arg:
                 i += 1
                 if "=" not in token and i < len(rest):
                     i += 1
@@ -458,6 +570,8 @@ def strip_transparent_command_wrappers(tokens: list[str]) -> list[str]:
 
     Wrappers are stripped by explicit argv grammar. This keeps `rtk echo rm`
     and `tsb echo rm` safe while still recognizing wrapped `git push`.
+    `eval rm -rf x` and `watch 'rm -rf x'` come back as `sh -c 'rm -rf x'`,
+    which is what they run.
     """
     stripped = list(tokens)
     while stripped:
@@ -465,6 +579,8 @@ def strip_transparent_command_wrappers(tokens: list[str]) -> list[str]:
         if spec is None:
             break
         next_tokens = _strip_wrapper_once(stripped, spec)
+        if spec.args_are_script and next_tokens:
+            next_tokens = ["sh", "-c", " ".join(next_tokens)]
         if next_tokens == stripped:
             break
         stripped = next_tokens
@@ -482,15 +598,82 @@ def shell_command_from_tool_input(tool_input: object) -> str:
     return ""
 
 
-def _find_shell_exec_arg(cmd_name: str, tokens: list[str]) -> str | None:
-    """Extract command string from 'sh -c "cmd"' patterns."""
-    if cmd_name not in SHELL_EXEC_COMMANDS:
+def _find_shell_exec_arg(tokens: list[str]) -> str | None:
+    """Return the script a shell runs from `-c`, `-lc`, `-c --`, `--command`.
+
+    `tokens` must already be wrapper-stripped: `ionice -c 3 bash -c x` gave
+    ionice's `-c` to bash when the raw argv was searched.
+    """
+    if not tokens or _get_basename(tokens[0]) not in SHELL_EXEC_COMMANDS:
         return None
-    try:
-        c_idx = tokens.index("-c")
-        return tokens[c_idx + 1] if c_idx + 1 < len(tokens) else None
-    except (ValueError, IndexError):
+    for i, token in enumerate(tokens[1:], start=1):
+        if token.startswith("--command="):
+            return token.partition("=")[2]
+        if token == "--command" or _SHELL_C_OPTION.fullmatch(token):
+            rest = tokens[i + 1:]
+            if rest[:1] == ["--"]:
+                rest = rest[1:]
+            return rest[0] if rest else None
+    return None
+
+
+def _reads_stdin_script(tokens: list[str]) -> bool:
+    """Whether wrapper-stripped `tokens` is a shell reading its script from stdin.
+
+    ponytail: a shell with a script-file operand (`bash x.sh <<EOF`) is read as
+    one too, so its stdin data is scanned as commands; fails closed.
+    """
+    return (
+        bool(tokens)
+        and _get_basename(tokens[0]) in SHELL_EXEC_COMMANDS
+        and _find_shell_exec_arg(tokens) is None
+    )
+
+
+def _herestring(tokens: list[str]) -> str | None:
+    """`<<< text` as shlex leaves it in argv (bashlex makes it a redirect)."""
+    for i, token in enumerate(tokens):
+        if token == "<<<":
+            return tokens[i + 1] if i + 1 < len(tokens) else None
+        if token.startswith("<<<"):
+            return token[3:]
+    return None
+
+
+def _printed_text(tokens: list[str]) -> str | None:
+    """What wrapper-stripped `echo`/`printf` writes, as script text, or None.
+
+    ponytail: the arguments joined, plus each on its own line so a printf
+    format cannot glue itself onto the command; a real formatter if it
+    over-matches.
+    """
+    if not tokens or _get_basename(tokens[0]) not in ("echo", "printf"):
         return None
+    args = tokens[1:]
+    return "\n".join([" ".join(args), *args])
+
+
+def _child_scripts(tokens: list[str]) -> list[str]:
+    """Script text that wrapper-stripped `tokens` runs as further commands."""
+    script = _find_shell_exec_arg(tokens)
+    if script is not None:
+        return [script]
+    if not tokens or _get_basename(tokens[0]) != "find":
+        return []
+    children: list[list[str]] = []
+    child: list[str] | None = None
+    for token in tokens[1:]:
+        if child is None:
+            if token in _FIND_EXEC_ACTIONS:
+                child = []
+        elif token == ";" or (token == "+" and child[-1:] == ["{}"]):
+            children.append(child)
+            child = None
+        else:
+            child.append(token)
+    if child:
+        children.append(child)
+    return [shlex.join(c) for c in children if c]
 
 
 def _shlex_split_safe(segment: str) -> list[str]:
@@ -548,8 +731,11 @@ def _extract_recursive(cmd: str, depth: int) -> tuple[set[str], set[str], set[st
 
     names, strings, potential = set(), set(), set()
 
-    for segment in _SHELL_OPERATORS.split(cmd):
-        if not (segment := segment.strip()):
+    pieces = _SHELL_OPERATORS_KEPT.split(cmd)
+    previous: list[str] = []
+    for i in range(0, len(pieces), 2):
+        piped = i > 0 and pieces[i - 1].strip() == "|"
+        if not (segment := pieces[i].strip()):
             continue
 
         tokens = _shlex_split_safe(segment)
@@ -560,17 +746,20 @@ def _extract_recursive(cmd: str, depth: int) -> tuple[set[str], set[str], set[st
         if name:
             names.add(name)
             potential.update(pot)
-
-            # Recursively parse shell -c arguments
-            shell_arg = _find_shell_exec_arg(name, tokens)
-            if shell_arg:
-                n, s, p = _extract_recursive(shell_arg, depth + 1)
-                names.update(n)
-                strings.update(s)
-                potential.update(p)
-
         if string:
             strings.add(string)
+
+        # Scripts this command runs: shell -c, find -exec, here-string, pipe.
+        stripped = strip_transparent_command_wrappers(tokens)
+        scripts = _child_scripts(stripped)
+        if _reads_stdin_script(stripped):
+            scripts += [_herestring(stripped), _printed_text(previous) if piped else None]
+        for script in filter(None, scripts):
+            n, s, p = _extract_recursive(script, depth + 1)
+            names.update(n)
+            strings.update(s)
+            potential.update(p)
+        previous = stripped
 
     return names, strings, potential
 
@@ -640,29 +829,70 @@ def _bashlex():
             self.depth = depth
 
         def visitcommand(self, node, parts) -> bool:
+            all_words = [p.word for p in parts if p.kind == "word"]
             # Filter out words containing newlines — these are heredoc bodies
             # or command substitutions with embedded content, not real arguments.
             # Prevents false positives like "git restore" matching inside a
             # commit message heredoc: git commit -m "$(cat <<EOF\n...restore...\nEOF)"
-            words = [p.word for p in parts if p.kind == "word" and "\n" not in p.word]
+            words = [w for w in all_words if "\n" not in w]
             name, string, pot = _extract_from_tokens(words)
 
             if name:
                 self.names.add(name)
                 self.potential.update(pot)
 
-                if self.depth < _MAX_RECURSION_DEPTH:
-                    shell_arg = _find_shell_exec_arg(name, words)
-                    if shell_arg:
-                        inner = _extract_impl(shell_arg, self.depth + 1)
-                        self.names.update(inner.names)
-                        self.strings.update(inner.strings)
-                        self.potential.update(inner.all_potential)
-
             if string:
                 self.strings.add(string)
 
+            # Scripts this command runs. These use every word: a multi-line
+            # `bash -c` body is a script, not a commit message.
+            stripped = strip_transparent_command_wrappers(all_words)
+            for script in _child_scripts(stripped):
+                self._scan(script)
+            if _reads_stdin_script(stripped):
+                self._scan(_stdin_text(parts))
+
             return True
+
+        def visitpipeline(self, node, parts) -> bool:
+            # `echo 'rm -rf x' | sh` and `cat <<EOF | sh`: the shell's script
+            # is what the command before it writes.
+            commands = [p for p in parts if p.kind != "pipe"]
+            for producer, consumer in zip(commands, commands[1:]):
+                if producer.kind != "command" or consumer.kind != "command":
+                    continue
+                if not _reads_stdin_script(strip_transparent_command_wrappers(_words(consumer))):
+                    continue
+                source = strip_transparent_command_wrappers(_words(producer))
+                if source and _get_basename(source[0]) == "cat":
+                    self._scan(_stdin_text(producer.parts))
+                else:
+                    self._scan(_printed_text(source))
+            return True
+
+        def _scan(self, script: str | None) -> None:
+            if not script or self.depth >= _MAX_RECURSION_DEPTH:
+                return
+            inner = _extract_impl(script, self.depth + 1)
+            self.names.update(inner.names)
+            self.strings.update(inner.strings)
+            self.potential.update(inner.all_potential)
+
+    def _words(node) -> list[str]:
+        return [p.word for p in node.parts if p.kind == "word"]
+
+    def _stdin_text(parts) -> str | None:
+        """The here-string or heredoc body a command reads as stdin, or None."""
+        for p in parts:
+            if p.kind != "redirect":
+                continue
+            if p.type == "<<<":
+                return getattr(p.output, "word", None)
+            heredoc = getattr(p, "heredoc", None)
+            if heredoc is not None:
+                # bashlex keeps the closing delimiter as the body's last line.
+                return heredoc.value.rpartition("\n")[0]
+        return None
 
     return bashlex, CommandVisitor
 

@@ -1090,5 +1090,28 @@ class TestGrepFalsePositiveProtection:
                 assert "grep" not in msg.lower() or "bash grep" in msg.lower(), f"pytest -k 'grep' must not trigger grep block, got: {msg[:100]!r}"
 
 
+# DATA ONLY: parsed by the hook in process, never run.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "nohup rm -rf build",
+        "echo build | xargs rm -rf",
+        "bash -lc 'rm -rf build'",
+        "ionice -c 3 bash -c 'rm -rf build'",
+        "bash -c 'cd /tmp\nrm -rf build'",
+        "bash <<< 'rm -rf build'",
+        "echo 'rm -rf build' | sh",
+        "eval rm -rf build",
+        "find . -exec rm -rf {} \\; | cat",
+    ],
+)
+def test_the_hook_denies_rm_rf_hidden_by_a_wrapper_or_shell_form(command: str) -> None:
+    """The entry point, not only the parser: each of these was allowed."""
+    result = plugins.check_blocked_commands(_make_ctx(command))
+    assert result is not None
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "trash" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

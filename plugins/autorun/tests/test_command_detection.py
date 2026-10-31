@@ -488,12 +488,16 @@ class TestV8EdgeCases:
         assert p2.base == "git clean"
         assert "clean" not in p2.positional
 
-    def test_exec_not_a_prefix(self):
-        """v8: exec is not in COMMAND_PREFIXES (replaces shell)."""
+    def test_exec_and_xargs_are_prefixes(self):
+        """`exec rm -rf x` replaces the shell with rm, and `xargs rm -rf` runs
+        rm with stdin appended: both still run rm. This test used to pin them
+        as non-prefixes, which let either one hide any blocked command."""
         from autorun.command_detection import COMMAND_PREFIXES
 
-        assert "exec" not in COMMAND_PREFIXES
-        assert "xargs" not in COMMAND_PREFIXES
+        assert "exec" in COMMAND_PREFIXES
+        assert "xargs" in COMMAND_PREFIXES
+        assert command_matches_pattern("exec rm -rf x", "rm -rf") is True
+        assert command_matches_pattern("echo x | xargs rm -rf", "rm -rf") is True
 
     def test_sandboxing_prefixes(self):
         """v8: Sandboxing tools are prefixes."""
@@ -667,3 +671,135 @@ def test_the_parser_check_reports_a_bashlex_that_will_not_import(monkeypatch):
         command_detection._bashlex.cache_clear()
         command_detection._extract_cached.cache_clear()
     assert command_detection.warm_parser() is True
+
+
+# ─── Wrappers and shell forms that hide a command ────────────────────────────
+#
+# DATA ONLY: every string below is parsed in process and never handed to a
+# shell. Each one runs `rm -rf x` when a shell does run it, so a parser that
+# returns no match for it lets the `rm -rf` guard be bypassed.
+
+HIDDEN_RM_RF = [
+    # argv wrappers: the child is the rest of argv after the wrapper's options
+    "nohup rm -rf x",
+    "time rm -rf x",
+    "time -p rm -rf x",
+    "command rm -rf x",
+    "command -p rm -rf x",
+    "exec rm -rf x",
+    "exec -a name rm -rf x",
+    "builtin command rm -rf x",
+    "doas rm -rf x",
+    "doas -u root rm -rf x",
+    "pkexec --user root rm -rf x",
+    "echo x | xargs rm -rf",
+    "xargs -I {} rm -rf {}",
+    "xargs -0 -n 1 -P 4 rm -rf",
+    "stdbuf -o0 rm -rf x",
+    "stdbuf -o L rm -rf x",
+    "strace -f -o trace.txt rm -rf x",
+    "ltrace -o trace.txt rm -rf x",
+    "watch rm -rf x",
+    "watch -x rm -rf x",
+    "fakeroot rm -rf x",
+    "fakeroot -- rm -rf x",
+    "firejail --private rm -rf x",
+    "bwrap --bind / / rm -rf x",
+    "bwrap --ro-bind /usr /usr --dev /dev --chdir /tmp rm -rf x",
+    # a shell given its script with -c, in any spelling getopt accepts
+    "bash -lc 'rm -rf x'",
+    "sh -ec 'rm -rf x'",
+    "bash -xec 'rm -rf x'",
+    "bash -c -- 'rm -rf x'",
+    "ionice -c 3 bash -c 'rm -rf x'",
+    "sudo -u root bash -lc 'rm -rf x'",
+    "fish --command 'rm -rf x'",
+    "su -c 'rm -rf x'",
+    "su - root -c 'rm -rf x'",
+    "bash -c 'cd /tmp\nrm -rf build'",
+    # a script read from a here-string, a heredoc, a pipe, or eval/watch
+    "bash <<< 'rm -rf x'",
+    "bash <<EOF\nrm -rf x\nEOF",
+    "sh <<'EOF'\nrm -rf x\nEOF",
+    "sh <<-EOF\n\trm -rf x\n\tEOF",
+    "echo 'rm -rf x' | sh",
+    "echo rm -rf x | bash",
+    "printf '%s\\n' 'rm -rf x' | bash",
+    "cat <<EOF | sh\nrm -rf x\nEOF",
+    "eval rm -rf x",
+    "eval 'rm -rf x'",
+    "watch -n 1 'rm -rf x'",
+    # find runs each -exec/-execdir/-ok command itself
+    "find . -exec rm -rf {} \\; | cat",
+    "find . -execdir rm -rf {} +",
+    "find . -exec sh -c 'rm -rf \"$1\"' _ {} \\;",
+    # `time` is outside bashlex's grammar, so these take the shlex fallback
+    "time true; echo 'rm -rf x' | sh",
+    "time true; bash <<< 'rm -rf x'",
+    "time true; bash -lc 'rm -rf x'",
+    "time true; eval rm -rf x",
+    "time true; find . -exec rm -rf {} \\;",
+]
+
+STILL_DENIED_RM_RF = [
+    "sh -c 'rm -rf x'",
+    "sudo -u root rm -rf x",
+    "env -i rm -rf x",
+    "FOO=1 rm -rf x",
+    "( rm -rf x )",
+    "$(rm -rf x)",
+    "\\rm -rf x",
+    "r''m -rf x",
+    "'rm' -rf x",
+    "/bin/rm -rf x",
+    "rm.exe -rf x",
+    "timeout 5 rm -rf x",
+    "nice -n 5 rm -rf x",
+    "bash --norc -c 'rm -rf x'",
+    "sudo bash -c 'rm -rf x'",
+    "rm -fr x",
+]
+
+NOT_RM = [
+    "command -v rm",
+    "command -V rm",
+    "echo rm -rf x",
+    "nohup echo rm -rf x",
+    "time echo rm -rf x",
+    "xargs echo rm -rf x",
+    "watch -n 1 ls",
+    "bash -c 'echo rm -rf x'",
+    "echo 'rm -rf x' | cat",
+    "cat <<EOF\nrm -rf x\nEOF",
+    "python3 <<EOF\nrm -rf x\nEOF",
+    "git commit -F - <<EOF\nrm -rf x\nEOF",
+    "find . -name '*.py' -exec ls {} \\;",
+    'eval "$(ssh-agent -s)"',
+    "stdbuf --help",
+]
+
+
+class TestCommandsHiddenBehindWrappersAndShellForms:
+    @pytest.mark.parametrize("cmd", HIDDEN_RM_RF + STILL_DENIED_RM_RF)
+    def test_rm_rf_is_seen(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "rm -rf") is True
+
+    @pytest.mark.parametrize("cmd", NOT_RM)
+    def test_an_argument_or_data_is_not_a_command(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "rm") is False
+
+    def test_every_command_prefix_is_seen_through_by_the_pattern_layer(self) -> None:
+        """integrations.py treats COMMAND_PREFIXES as wrappers; the pattern
+        layer must agree, or `<prefix> rm -rf x` passes the guard while
+        integrations reads it as rm. A violation is a prefix name for which
+        that command does not match."""
+        from autorun.command_detection import COMMAND_PREFIXES, _TRANSPARENT_WRAPPER_SPECS
+
+        missed = []
+        for name in sorted(COMMAND_PREFIXES):
+            spec = _TRANSPARENT_WRAPPER_SPECS.get(name)
+            operands = " ".join(["0"] * spec.leading_positional_count) if spec else ""
+            cmd = " ".join(filter(None, [name, operands, "rm -rf x"]))
+            if not command_matches_pattern(cmd, "rm -rf"):
+                missed.append(cmd)
+        assert missed == []
