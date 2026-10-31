@@ -49,8 +49,8 @@ from ..platforms import ExtensionSkills, PluginPackageSkills
 from . import codex, discovery, extension, memory, settings, skills
 from .discovery import redirected_home
 from .fs import (
-    INSTALL_LOCK_NAME, Verdict, autorun_state_dir, decide, edit_target, json_document, owns,
-    read_marker, read_settings, settings_document,
+    INSTALL_LOCK_NAME, PLUGIN_ALIASES, Verdict, autorun_state_dir, decide, edit_target,
+    json_document, owns, read_marker, read_settings, settings_document,
 )
 from .traversal import Context, Intent, Kind, Mode, Step
 
@@ -695,15 +695,18 @@ def marketplaces_for(
         if not removing and plugin not in staged:
             continue
         relative = discovery.codex_marketplace_path(plugin, home=ctx.home)
-        historical = f"./plugins/{plugin}"
-        retired = (
-            () if relative == historical else (codex.marketplace_entry(plugin, historical),)
+        # This plugin's own earlier names only: ar was once listed as
+        # "autorun", and another plugin's uninstall must not withdraw that.
+        retired = tuple(
+            codex.marketplace_entry(name, f"./plugins/{name}")
+            for name in (plugin, *PLUGIN_ALIASES.get(plugin, ()))
+            if (name, f"./plugins/{name}") != (plugin, relative)
         )
         entries.append(Marketplace(
             discovery.personal_marketplace(home=ctx.home),
             codex.PERSONAL_MARKETPLACE_NAME,
             codex.marketplace_entry(plugin, relative),
-            (*retired, codex.marketplace_entry("autorun", "./plugins/autorun")),
+            retired,
             publish=plugin not in withheld,
         ))
     return tuple(entries)

@@ -101,6 +101,29 @@ def test_moving_the_location_replaces_the_entry_every_earlier_release_wrote(
     assert _entries(sandbox)["ar"]["source"]["path"] == "./.codex/plugins/ar"
 
 
+def test_uninstalling_one_plugin_leaves_another_plugins_legacy_entry(sandbox):
+    """Every plugin's entry retired ar's old "autorun" identity, so
+    `--uninstall pdf-extractor` withdrew an entry belonging to ar."""
+    from autorun.installer import codex, orchestrate
+
+    legacy = codex.marketplace_entry("autorun", "./plugins/autorun")
+    market = sandbox / ".agents" / "plugins" / "marketplace.json"
+    market.parent.mkdir(parents=True)
+    market.write_text(json.dumps({"name": "personal", "plugins": [legacy]}), encoding="utf-8")
+
+    common = dict(
+        marketplace_root=REPO, home=sandbox, harnesses=(PLATFORMS["codex"],),
+        available=(), teardown_enabled=False,
+    )
+    orchestrate.uninstall(plugins=("pdf-extractor",), **common)
+
+    assert "autorun" in _entries(sandbox)
+
+    orchestrate.uninstall(plugins=("ar",), **common)
+
+    assert "autorun" not in _entries(sandbox), "ar still retires its own old name"
+
+
 def test_a_location_outside_home_is_refused_before_anything_is_written(
     sandbox, tmp_path, monkeypatch
 ):
