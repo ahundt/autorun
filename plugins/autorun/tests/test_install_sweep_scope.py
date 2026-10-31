@@ -99,6 +99,22 @@ def test_an_install_without_the_custom_harness_flag_keeps_its_extension_source(
     assert not custom.exists(), "uninstall retires every staging subtree"
 
 
+def test_extension_sources_follow_autorun_home_like_the_rest_of_its_state(
+    sandbox, tmp_path
+):
+    """extension.registration_source_dir and _config_roots each fell back to
+    <home>/.autorun, ignoring AUTORUN_HOME, which fs.autorun_state_dir (the
+    installer's one answer, used for backups and switch records) honours."""
+    from autorun.installer.fs import autorun_state_dir
+
+    _install(sandbox, "gemini")
+
+    expected = autorun_state_dir(sandbox) / "installer" / "extension-sources" / "gemini" / "ar"
+    assert expected.is_relative_to(tmp_path / "ar-home")
+    assert (expected / "gemini-extension.json").is_file()
+    assert not (sandbox / ".autorun" / "installer" / "extension-sources").exists()
+
+
 def test_a_codex_flavor_custom_harness_keeps_the_codex_plugin_and_its_entry(sandbox):
     """`--install --claude` with a Codex-flavor custom harness selected.
 

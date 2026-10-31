@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
 from . import discovery
-from .fs import compare, owned_trees, owns, read_marker, scan_tree
+from .fs import autorun_state_dir, compare, owned_trees, owns, read_marker, scan_tree
 from .traversal import Context, Intent
 
 __all__ = [
@@ -50,6 +50,7 @@ __all__ = [
     "antigravity_receipt_names_plugin",
     "bundle_hooks_are_ours",
     "extension_dir",
+    "registration_source_root",
     "registration_source_dir",
     "extension_intents",
     "refreshable",
@@ -124,6 +125,19 @@ def extension_dir(ctx: Context, platform: object, name: str) -> Path | None:
     return base / name if base is not None else None
 
 
+def registration_source_root(ctx: Context) -> Path:
+    """Where every harness's persistent generated extension source lives.
+
+    ``_extension_source_root`` when the entry point set it, else under
+    :func:`fs.autorun_state_dir`, which honours ``AUTORUN_HOME`` as backups
+    and switch records do.
+    """
+    configured = ctx.settings.get("_extension_source_root")
+    if configured:
+        return Path(str(configured))
+    return autorun_state_dir(ctx.home) / "installer" / "extension-sources"
+
+
 def registration_source_dir(ctx: Context, harness: str, name: str) -> Path:
     """Persistent generated source handed to one native extension installer.
 
@@ -132,13 +146,7 @@ def registration_source_dir(ctx: Context, harness: str, name: str) -> Path:
     broken installed extension as soon as the installer returns. Keep each
     harness's translated bundle separate under AUTORUN_HOME instead.
     """
-    configured = ctx.settings.get("_extension_source_root")
-    root = (
-        Path(str(configured))
-        if configured
-        else ctx.home / ".autorun" / "installer" / "extension-sources"
-    )
-    return root / harness / name
+    return registration_source_root(ctx) / harness / name
 
 
 def receipt_names_source(installed: Path, source: Path) -> bool:

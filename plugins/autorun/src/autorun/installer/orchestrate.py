@@ -963,12 +963,7 @@ def _config_roots(
     # selection, so a Claude-only run cannot retire the trees Codex, Qwen, Pi,
     # Prime, ForgeCode, or OpenCode still load.
     found.append(discovery.shared_root(home=ctx.home).parent)
-    source_root = ctx.settings.get("_extension_source_root")
-    staging = (
-        Path(str(source_root))
-        if source_root
-        else ctx.home / ".autorun" / "installer" / "extension-sources"
-    )
+    staging = extension.registration_source_root(ctx)
     # The staging root holds one subtree per harness. Sweeping the whole root
     # retired Gemini's staged source during a --claude-only install: no
     # gemini step ran, nothing claimed extension-sources/gemini/ar, and the

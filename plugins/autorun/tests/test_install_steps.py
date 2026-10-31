@@ -152,13 +152,20 @@ def test_a_user_edit_inside_an_installed_skill_is_kept(walk, sandbox):
 
 
 def test_nothing_lands_outside_the_sandboxed_home(walk, sandbox):
-    """HOME is the seam. A route resolving through anything else would write to
-    the developer's own configuration from a test that redirected it."""
+    """HOME is the seam, and AUTORUN_HOME for autorun's own state (generated
+    extension sources, backups). A route resolving through anything else would
+    write to the developer's own configuration from a test that redirected
+    them."""
     paired, ctx = walk
+    state = autorun_state_dir(sandbox)
+    assert state.is_relative_to(sandbox.parent), "the fixture must redirect AUTORUN_HOME"
 
     decisions = run(paired, ctx, Mode.INSTALL)
 
-    outside = [d.target for d in decisions if not str(d.target).startswith(str(sandbox))]
+    outside = [
+        d.target for d in decisions
+        if not (d.target.is_relative_to(sandbox) or d.target.is_relative_to(state))
+    ]
     assert outside == [], outside
 
 
@@ -343,7 +350,7 @@ def test_custom_extension_harness_registers_through_its_own_binary(sandbox):
     assert calls and calls[0][:3] == ("mine-cli", "extensions", "install")
     source = Path(calls[0][-2])
     assert source == (
-        sandbox / ".autorun" / "installer" / "extension-sources" / "mine" / "ar"
+        autorun_state_dir(sandbox) / "installer" / "extension-sources" / "mine" / "ar"
     )
     hooks = (source / "hooks" / "hooks.json").read_text(encoding="utf-8")
     assert "autorun --cli qwen" in hooks
@@ -357,7 +364,7 @@ def test_gemini_extension_uses_the_installed_cli_without_a_fake_project(walk, sa
     run(gemini, ctx, Mode.INSTALL)
 
     extension = (
-        sandbox / ".autorun" / "installer" / "extension-sources" / "gemini" / "ar"
+        autorun_state_dir(sandbox) / "installer" / "extension-sources" / "gemini" / "ar"
     )
     hooks = (extension / "hooks" / "hooks.json").read_text(encoding="utf-8")
     assert "autorun --cli gemini" in hooks
@@ -429,8 +436,7 @@ def test_antigravity_native_skills_are_inside_the_staged_plugin(walk, sandbox):
     run(antigravity, ctx, Mode.INSTALL)
 
     plugin = (
-        sandbox
-        / ".autorun"
+        autorun_state_dir(sandbox)
         / "installer"
         / "extension-sources"
         / "antigravity"
@@ -449,8 +455,7 @@ def test_antigravity_staging_uses_its_native_manifest_and_hook_events(walk, sand
     run(antigravity, ctx, Mode.INSTALL)
 
     plugin = (
-        sandbox
-        / ".autorun"
+        autorun_state_dir(sandbox)
         / "installer"
         / "extension-sources"
         / "antigravity"
@@ -523,7 +528,7 @@ def test_qwen_staging_rewrites_hook_identity_without_deprecated_toml(walk, sandb
     run(qwen, ctx, Mode.INSTALL)
 
     extension = (
-        sandbox / ".autorun" / "installer" / "extension-sources" / "qwen" / "ar"
+        autorun_state_dir(sandbox) / "installer" / "extension-sources" / "qwen" / "ar"
     )
     hooks = (extension / "hooks" / "hooks.json").read_text(encoding="utf-8")
     assert "autorun --cli qwen" in hooks
@@ -729,7 +734,7 @@ def test_targeted_install_preserves_other_harnesses_staged_sources(sandbox):
     )
     first = install(harnesses=(PLATFORMS["qwen"],), **common)
     staged = (
-        sandbox / ".autorun" / "installer" / "extension-sources" / "qwen" / "ar"
+        autorun_state_dir(sandbox) / "installer" / "extension-sources" / "qwen" / "ar"
     )
     assert first.ok is True
     assert staged.is_dir(), "the qwen install must stage its extension source"
@@ -968,7 +973,7 @@ def test_install_with_no_harness_selected_retires_nothing(sandbox):
     )
     assert install(harnesses=(PLATFORMS["qwen"],), **common).ok is True
     shared_commit = discovery.shared_root(home=sandbox) / "commit"
-    staged = sandbox / ".autorun" / "installer" / "extension-sources" / "qwen" / "ar"
+    staged = autorun_state_dir(sandbox) / "installer" / "extension-sources" / "qwen" / "ar"
     assert (shared_commit / "SKILL.md").is_file() and staged.is_dir()
 
     install(harnesses=(), **common)
@@ -994,7 +999,7 @@ def test_staging_for_an_unregistered_harness_retires_on_uninstall(sandbox):
         available=(),
     )
     assert install(harnesses=(PLATFORMS["qwen"],), state_dir=sandbox / ".state", **common).ok
-    sources = sandbox / ".autorun" / "installer" / "extension-sources"
+    sources = autorun_state_dir(sandbox) / "installer" / "extension-sources"
     legacy = sources / "legacyharness" / "ar"
     shutil.copytree(sources / "qwen" / "ar", legacy)
 
