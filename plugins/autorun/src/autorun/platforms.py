@@ -676,12 +676,15 @@ class AntigravityHookProtocol(HookProtocol):
         if event == "PostToolUse":
             return {}
         if event in {"BeforeModel", "UserPromptSubmit", "AfterModel"}:
+            # Already native when the client filters what the daemon filtered.
+            steps = response.get("injectSteps")
             message = self._message(response)
-            native = (
-                {"injectSteps": [{"ephemeralMessage": message}]}
-                if message
-                else {}
-            )
+            if isinstance(steps, list) and steps:
+                native = {"injectSteps": steps}
+            elif message:
+                native = {"injectSteps": [{"ephemeralMessage": message}]}
+            else:
+                native = {}
             if event == "AfterModel" and response.get("terminationBehavior") in {
                 "force_continue",
                 "terminate",

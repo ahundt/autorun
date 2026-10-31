@@ -514,3 +514,25 @@ def test_event_context_exposes_structured_stop_fields_without_mutation():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.parametrize(
+    "event", ["PreToolUse", "PostToolUse", "UserPromptSubmit", "BeforeModel", "AfterModel", "Stop", "SubagentStop"]
+)
+def test_antigravity_filtering_an_already_native_response_changes_nothing(event):
+    """The daemon filters a response to Antigravity's schema and the `autorun`
+    client filters it again on the way out. The second pass found no Claude
+    message field in {"injectSteps": [...]} and returned {}, so a wheel
+    install's `/ar` command output never reached Antigravity."""
+    from autorun.core import validate_hook_response
+
+    claude_shaped = {
+        "continue": True,
+        "stopReason": "",
+        "suppressOutput": False,
+        "systemMessage": "autorun says hello",
+        "decision": "block",
+        "reason": "autorun says hello",
+    }
+    once = validate_hook_response(event, claude_shaped, "antigravity")
+    assert validate_hook_response(event, once, "antigravity") == once
