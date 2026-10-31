@@ -102,6 +102,56 @@ def _latest_assistant_model(path: str, _size: int, _mtime_ns: int, max_bytes: in
     return None
 
 
+def current_turn_assistant_text(
+    path: str | None, *, max_bytes: int = DEFAULT_TRANSCRIPT_COMMAND_SCAN_BYTES
+) -> str:
+    """Assistant text written since the newest user prompt in the JSONL tail.
+
+    Reads Claude Code (`type`/`message.role`), Pi (`message.role`) and Codex
+    (`payload.role`) entries. Tool results and tool calls are not text, so a
+    deny message echoed back as a tool result never counts as something the
+    assistant wrote. Empty when the path is missing or not JSONL.
+    """
+    if not path:
+        return ""
+    texts: list[str] = []
+    for _offset, line in reversed(_read_tail_lines(path, max_bytes=max_bytes)):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if isinstance(obj.get("payload"), dict) and obj["payload"].get("role"):
+            obj = obj["payload"]
+        message = obj["message"] if isinstance(obj.get("message"), dict) else obj
+        role = str(message.get("role") or obj.get("type") or "").lower()
+        text = _plain_text(message.get("content"))
+        if role == "user" and text.strip():
+            break
+        if role == "assistant" and text:
+            texts.append(text)
+    return "\n".join(reversed(texts))
+
+
+def _plain_text(content: Any) -> str:
+    """Only text blocks: tool_use / tool_result payloads are skipped."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        block if isinstance(block, str) else block["text"]
+        for block in content
+        if isinstance(block, str)
+        or (
+            isinstance(block, dict)
+            and block.get("type", "text") in {"text", "output_text", "input_text"}
+            and isinstance(block.get("text"), str)
+        )
+    )
+
+
 def _first_non_empty_line(text: str) -> str:
     for line in text.splitlines():
         stripped = line.strip()

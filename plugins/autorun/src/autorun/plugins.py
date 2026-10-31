@@ -97,7 +97,7 @@ from .task_pause import (
     task_pause_guidance,
     task_pause_status,
 )
-from .transcript_commands import latest_transcript_command
+from .transcript_commands import current_turn_assistant_text, latest_transcript_command
 
 # Import plan_export to register its @app.on() handlers with daemon
 from . import plan_export  # noqa: F401
@@ -277,11 +277,42 @@ def enforce_file_policy(ctx: EventContext) -> Optional[Dict]:
         return ctx.deny(format_suggestion(CONFIG["policy_blocked"]["SEARCH"], ctx.cli_type))
 
     if policy == "JUSTIFY":
-        if ctx.file_exists or ctx.has_justification:
+        if ctx.file_exists or _context_has_justification(ctx):
             return None
         return ctx.deny(format_suggestion(CONFIG["policy_blocked"]["JUSTIFY"], ctx.cli_type))
 
     return None
+
+
+_JUSTIFICATION_TAG = re.compile(r"<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>", re.DOTALL | re.IGNORECASE)
+
+
+def has_valid_justification(*texts: str) -> bool:
+    """Whether any <AUTOFILE_JUSTIFICATION> tag in ``texts`` gives a real reason.
+
+    Every tag is checked, not just the first. Empty tags and autorun's own
+    example text (the policy description and the JUSTIFY deny message, which
+    come back in transcripts as tool results) are not reasons.
+    """
+    guidance = (CONFIG["policies"]["JUSTIFY"][1], CONFIG["policy_blocked"]["JUSTIFY"])
+    placeholders = {"", "reason"} | {m.strip().lower() for g in guidance for m in _JUSTIFICATION_TAG.findall(g)}
+    return any(
+        m.strip().lower() not in placeholders for text in texts if text for m in _JUSTIFICATION_TAG.findall(text)
+    )
+
+
+def _context_has_justification(ctx: EventContext) -> bool:
+    """Read the justification from what this harness actually sends.
+
+    Pi sends the recent transcript inline; Claude, Codex and the Gemini family
+    send transcript_path, where only the current turn's assistant text counts;
+    a Stop-style payload may carry last_assistant_message.
+    """
+    return has_valid_justification(
+        ctx.transcript.text,
+        ctx.last_assistant_message,
+        current_turn_assistant_text(ctx.transcript_path),
+    )
 
 
 @app.on("PreToolUse")

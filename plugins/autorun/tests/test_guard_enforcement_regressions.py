@@ -5,6 +5,7 @@ handler through ``plugins.app.dispatch``, with an in-memory ``ThreadSafeDB`` so
 nothing reaches the live daemon. None of these commands is ever executed.
 """
 
+import json
 import uuid
 
 from autorun import plugins
@@ -117,3 +118,91 @@ class TestUseInsteadIsBuiltFromTheMatchedCommand:
     def test_fixed_redirect_is_shown_unchanged(self):
         reason = _reason(plugins.check_blocked_commands(_bash("cd repo && git clean -fd")))
         assert "Use instead: `git clean -n`" in reason, reason
+
+
+def _claude_transcript(path, *entries) -> str:
+    """Write Claude Code-shaped JSONL: ("user"|"assistant"|"tool_result", text)."""
+    lines = []
+    for kind, text in entries:
+        if kind == "user":
+            lines.append({"type": "user", "message": {"role": "user", "content": text}})
+        elif kind == "tool_result":
+            content = [{"type": "tool_result", "tool_use_id": "t1", "content": text}]
+            lines.append({"type": "user", "message": {"role": "user", "content": content}})
+        else:
+            content = [{"type": "text", "text": text}]
+            lines.append({"type": "assistant", "message": {"role": "assistant", "content": content}})
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    return str(path)
+
+
+class TestJustifyReadsTheHarnessTranscript:
+    """F4: /ar:j JUSTIFY only saw Pi's inline transcript, so it denied every
+    new-file Write on Claude, Codex and the Gemini family."""
+
+    def _write(self, tmp_path, transcript_path=None, last_assistant_message=""):
+        ctx = EventContext(
+            session_id=_sid(),
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(tmp_path / "brand_new_module.py"), "content": "x"},
+            transcript_path=transcript_path,
+            last_assistant_message=last_assistant_message,
+            store=ThreadSafeDB(),
+        )
+        ctx.file_policy = "JUSTIFY"
+        return plugins.enforce_file_policy(ctx)
+
+    def test_justification_in_the_current_turn_of_transcript_path_allows(self, tmp_path):
+        path = _claude_transcript(
+            tmp_path / "t.jsonl",
+            ("user", "add a parser"),
+            ("assistant", "<AUTOFILE_JUSTIFICATION>no module parses this format yet</AUTOFILE_JUSTIFICATION>"),
+            ("tool_result", "ok"),
+            ("assistant", "Creating it now."),
+        )
+        assert self._write(tmp_path, transcript_path=path) is None
+
+    def test_last_assistant_message_justification_allows(self, tmp_path):
+        text = "<AUTOFILE_JUSTIFICATION>no module parses this format yet</AUTOFILE_JUSTIFICATION>"
+        assert self._write(tmp_path, last_assistant_message=text) is None
+
+    def test_autorun_guidance_echoed_back_is_not_a_justification(self, tmp_path):
+        guidance = plugins.CONFIG["policy_blocked"]["JUSTIFY"]
+        path = _claude_transcript(
+            tmp_path / "t.jsonl",
+            ("user", "add a parser"),
+            ("tool_result", guidance),
+            ("assistant", f"The hook said: {guidance}"),
+        )
+        assert _decision(self._write(tmp_path, transcript_path=path)) == "deny"
+
+    def test_pi_inline_transcript_holding_only_the_deny_message_still_denies(self, tmp_path):
+        guidance = plugins.CONFIG["policy_blocked"]["JUSTIFY"]
+        ctx = EventContext(
+            session_id=_sid(),
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(tmp_path / "brand_new_module.py"), "content": "x"},
+            session_transcript=[{"role": "toolResult", "content": guidance}],
+            store=ThreadSafeDB(),
+        )
+        ctx.file_policy = "JUSTIFY"
+        assert _decision(plugins.enforce_file_policy(ctx)) == "deny"
+
+    def test_justification_from_an_earlier_turn_does_not_carry_over(self, tmp_path):
+        path = _claude_transcript(
+            tmp_path / "t.jsonl",
+            ("user", "first task"),
+            ("assistant", "<AUTOFILE_JUSTIFICATION>needed for the first task</AUTOFILE_JUSTIFICATION>"),
+            ("user", "now something else"),
+            ("assistant", "Writing a file."),
+        )
+        assert _decision(self._write(tmp_path, transcript_path=path)) == "deny"
+
+    def test_a_real_justification_after_a_placeholder_still_counts(self, tmp_path):
+        text = (
+            "<AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> then "
+            "<AUTOFILE_JUSTIFICATION>no module parses this format yet</AUTOFILE_JUSTIFICATION>"
+        )
+        assert self._write(tmp_path, last_assistant_message=text) is None
