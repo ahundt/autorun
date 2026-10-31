@@ -49,7 +49,8 @@ from ..platforms import ExtensionSkills, PluginPackageSkills
 from . import codex, discovery, extension, memory, settings, skills
 from .discovery import redirected_home
 from .fs import (
-    INSTALL_LOCK_NAME, autorun_state_dir, edit_target, json_document, read_settings, settings_document,
+    INSTALL_LOCK_NAME, Verdict, autorun_state_dir, decide, edit_target, json_document, owns,
+    read_marker, read_settings, settings_document,
 )
 from .traversal import Context, Intent, Kind, Mode, Step
 
@@ -350,12 +351,17 @@ class Hooks:
 
 @dataclass(frozen=True, slots=True)
 class Marketplace:
-    """One exact Codex marketplace entry and the identities it replaced."""
+    """One exact Codex marketplace entry and the identities it replaced.
+
+    ``publish`` is False when the directory the entry names is not autorun's:
+    an install then withdraws the entry rather than point Codex at it.
+    """
 
     path: Path
     name: str
     entry: Mapping[str, object]
     retired: tuple[Mapping[str, object], ...] = ()
+    publish: bool = True
 
     def describe(self) -> str:
         return f"{self.path} [{self.entry.get('name', '?')}]"
@@ -656,7 +662,13 @@ def hooks_for(
 def marketplaces_for(
     harness: object, ctx: Context, *, removing: bool = False
 ) -> tuple[Marketplace, ...]:
-    """The personal Codex marketplace entry, when that mode is selected."""
+    """The personal Codex marketplace entry, when that mode is selected.
+
+    The entry names :func:`discovery.codex_marketplace_path`, which raises
+    ``ValueError`` for a configured location outside home. Every release
+    through 1.0.0rc3 wrote ``./plugins/<name>`` whatever the setting, so that
+    identity is retired when the configured path differs.
+    """
     platform = getattr(harness, "platform", harness)
     if (
         getattr(platform, "name", "") != "codex"
@@ -667,18 +679,23 @@ def marketplaces_for(
         )
     ):
         return ()
+    staged = ctx.settings.get("_staged_codex") or {}
+    withheld = ctx.settings.get("_codex_withheld") or {}
     entries = []
-    for plugin, plugin_dir in _plugins(ctx).items():
-        if (
-            not removing
-            and not (plugin_dir / ".codex-plugin" / "plugin.json").is_file()
-        ):
+    for plugin in _plugins(ctx):
+        if not removing and plugin not in staged:
             continue
+        relative = discovery.codex_marketplace_path(plugin, home=ctx.home)
+        historical = f"./plugins/{plugin}"
+        retired = (
+            () if relative == historical else (codex.marketplace_entry(plugin, historical),)
+        )
         entries.append(Marketplace(
             discovery.personal_marketplace(home=ctx.home),
             codex.PERSONAL_MARKETPLACE_NAME,
-            codex.marketplace_entry(plugin, f"./plugins/{plugin}"),
-            (codex.marketplace_entry("autorun", "./plugins/autorun"),),
+            codex.marketplace_entry(plugin, relative),
+            (*retired, codex.marketplace_entry("autorun", "./plugins/autorun")),
+            publish=plugin not in withheld,
         ))
     return tuple(entries)
 
@@ -764,7 +781,7 @@ def apply_marketplaces(entries: Iterable[Marketplace], mode: Mode) -> list[str]:
         changed = False
         for retired in marketplace.retired:
             changed |= codex.withdraw_from_marketplace(marketplace.path, retired)
-        if mode is Mode.INSTALL:
+        if mode is Mode.INSTALL and marketplace.publish:
             changed |= codex.publish_marketplace(
                 marketplace.path,
                 marketplace.name,
@@ -834,6 +851,7 @@ def prepared(
     with tempfile.TemporaryDirectory(prefix="autorun-stage-") as tmp:
         staged: dict[str, dict[str, Path]] = {}
         staged_codex: dict[str, Path] = {}
+        withheld_codex: dict[str, Path] = {}
         failures: list[str] = []
         for harness in harnesses:
             name = getattr(harness, "name", "")
@@ -921,6 +939,15 @@ def prepared(
                     )
                 except (OSError, ValueError) as error:
                     failures.append(f"codex/{plugin}: {error}")
+                    continue
+                # A target the walk will keep as someone else's must not be
+                # named by the marketplace or registered: Codex would load it
+                # as autorun's plugin.
+                target = discovery.codex_plugin_source(plugin, home=ctx.home)
+                if not owns(read_marker(target), plugin) and decide(
+                    target, staged_codex[plugin], plugin=plugin
+                ).verdict is Verdict.KEEP:
+                    withheld_codex[plugin] = target
         shims = stage_opencode_shim(
             Path(tmp) / "_opencode", plugins,
             socket=str(ctx.settings.get("_daemon_socket", "") or ""),
@@ -946,6 +973,7 @@ def prepared(
             ctx,
             _staged_extensions=staged,
             _staged_codex=staged_codex,
+            _codex_withheld=withheld_codex,
             _staged_opencode=shims,
             _staged_pi=pi_extensions,
             _staging_failures=tuple(failures),

@@ -323,16 +323,21 @@ def _validate_marketplace_document(
     path: Path,
     document: Mapping[str, object],
     entry: Mapping[str, object] | None = None,
+    retired: Iterable[Mapping[str, object]] = (),
 ) -> None:
+    """``retired`` are identities autorun published before and withdraws
+    first, so a same-name entry matching one is not a conflict."""
     plugins = document.get("plugins", [])
     if not isinstance(plugins, list):
         raise ValueError(
             f"{path}: 'plugins' must be a list, found {type(plugins).__name__}"
         )
+    retired = tuple(retired)
     if entry is not None and any(
         isinstance(plugin, Mapping)
         and plugin.get("name") == entry.get("name")
         and not _same_marketplace_source(plugin, entry)
+        and not any(_same_marketplace_source(plugin, old) for old in retired)
         for plugin in plugins
     ):
         raise ValueError(
@@ -343,12 +348,13 @@ def _validate_marketplace_document(
 def validate_marketplace(
     path: Path,
     entry: Mapping[str, object] | None = None,
+    retired: Iterable[Mapping[str, object]] = (),
 ) -> None:
     """Read and validate a user-owned marketplace without writing it."""
     if not path.is_file():
         return
     with json_document(path) as document:
-        _validate_marketplace_document(path, document, entry)
+        _validate_marketplace_document(path, document, entry, retired)
 
 
 def withdraw_from_marketplace(path: Path, entry: Mapping[str, object]) -> bool:

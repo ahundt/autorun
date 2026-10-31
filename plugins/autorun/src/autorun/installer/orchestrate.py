@@ -139,12 +139,14 @@ def _preflight_user_files(
                 removing or edit_target(hooks.path), codex.validate_hooks(hooks.path)
             ))
     for marketplace in marketplaces:
-        expected = None if removing else marketplace.entry
+        expected = None if removing or not marketplace.publish else marketplace.entry
         check(
             marketplace.describe(),
             lambda marketplace=marketplace, expected=expected: (
                 removing or edit_target(marketplace.path),
-                codex.validate_marketplace(marketplace.path, expected),
+                codex.validate_marketplace(
+                    marketplace.path, expected, marketplace.retired
+                ),
             ),
         )
     return tuple(failures)
@@ -264,13 +266,36 @@ def perform(
         )
         if any(finding.level is status.Level.BROKEN for finding in findings):
             return Result(mode, findings=tuple(findings), missing=missing)
-        marketplaces = tuple(
-            marketplace
-            for harness in selected
-            for marketplace in steps.marketplaces_for(
-                harness, staged, removing=mode is Mode.UNINSTALL
+        try:
+            marketplaces = tuple(
+                marketplace
+                for harness in selected
+                for marketplace in steps.marketplaces_for(
+                    harness, staged, removing=mode is Mode.UNINSTALL
+                )
             )
-        )
+        except ValueError as error:  # a Codex plugin location outside home
+            findings.append(status.Finding(
+                "Codex plugin location", status.Level.BROKEN, str(error),
+                "set codex_plugin_source_dir to a directory inside your home "
+                "directory, then retry",
+            ))
+            return Result(mode, findings=tuple(findings), missing=missing)
+        if mode is not Mode.UNINSTALL:
+            withheld = staged.settings.get("_codex_withheld") or {}
+            findings.extend(
+                status.Finding(
+                    "Codex plugin location",
+                    status.Level.WARN,
+                    f"{target} is not autorun's, so it was kept, Codex's "
+                    f"marketplace does not name it, and {plugin} was not "
+                    "registered with Codex",
+                    f"move {target} aside and rerun `autorun --install`, or "
+                    "set codex_plugin_source_dir to another directory inside "
+                    "your home",
+                )
+                for plugin, target in withheld.items()
+            )
         findings.extend(
             _preflight_user_files(
                 selected,
@@ -503,14 +528,16 @@ def _registrations(
         registration_plugins = plugins
         if not removing and flavor == "codex":
             staged_codex = ctx.settings.get("_staged_codex", {})
+            # A plugin directory that is not autorun's is never registered.
+            withheld = ctx.settings.get("_codex_withheld") or {}
             registration_plugins = {
                 plugin: directory
                 for plugin, directory in plugins.items()
-                if (
-                    isinstance(staged_codex, Mapping)
-                    and plugin in staged_codex
+                if plugin not in withheld
+                and (
+                    (isinstance(staged_codex, Mapping) and plugin in staged_codex)
+                    or (directory / ".codex-plugin" / "plugin.json").is_file()
                 )
-                or (directory / ".codex-plugin" / "plugin.json").is_file()
             }
         elif not removing and getattr(platform, "extensions_subdir", ""):
             registration_plugins = {

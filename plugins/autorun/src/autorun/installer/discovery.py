@@ -37,7 +37,7 @@ __all__ = [
     "is_marketplace_root",
     "config_dir", "extensions_dir", "expand_home", "build_timestamp",
     "skill_destinations", "shared_root", "codex_plugin_source",
-    "personal_marketplace", "plugin_name", "PLUGIN_MANIFEST",
+    "codex_marketplace_path", "personal_marketplace", "plugin_name", "PLUGIN_MANIFEST",
     "plugin_runtime_root",
     "redirected_home", "process_home",
     "python_too_old", "MINIMUM_PYTHON",
@@ -459,6 +459,30 @@ def codex_plugin_source(name: str = "ar", *, home: Path | None = None) -> Path:
 
     base = expand_home(str(CONFIG.get("codex_plugin_source_dir", "~/plugins")), home=home)
     return base / name
+
+
+def codex_marketplace_path(name: str = "ar", *, home: Path | None = None) -> str:
+    """The ``./relative`` path the personal marketplace names for one plugin.
+
+    Codex resolves a local ``source.path`` against the personal marketplace
+    root, the home directory, and refuses a path that leaves it
+    (codex-rs/core-plugins/src/remote/share/checkout.rs:409-437). Derived from
+    :func:`codex_plugin_source` so the entry and the tree cannot disagree; a
+    literal ``./plugins/<name>`` pointed Codex at a missing directory whenever
+    ``codex_plugin_source_dir`` said anything else. Raises ``ValueError``
+    naming the path when it is outside home.
+    """
+    root = home if home is not None else process_home()
+    source = codex_plugin_source(name, home=root)
+    try:
+        relative = Path(os.path.normpath(source)).relative_to(os.path.normpath(root))
+    except ValueError:
+        raise ValueError(
+            f"codex_plugin_source_dir puts the Codex plugin at {source}, outside "
+            f"the home directory {root}; Codex loads a personal plugin only from "
+            "inside it"
+        ) from None
+    return f"./{relative.as_posix()}"
 
 
 def personal_marketplace(*, home: Path | None = None) -> Path:
