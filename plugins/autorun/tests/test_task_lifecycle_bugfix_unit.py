@@ -150,6 +150,29 @@ class TestFix2GhostTaskSentinel:
         result = manager.update_task("999", {"status": "completed"}, "Complete ghost")
         assert result is None, "Ghost task terminal update should return None (success)"
 
+    @pytest.mark.parametrize(
+        "status", ["completed", "deleted", "ignored", "delegated", "paused"]
+    )
+    def test_ghost_task_accepts_every_non_blocking_status(
+        self, isolated_config, isolated_session_manager, status
+    ):
+        """Ghost protection exists so an unknown task never blocks Stop."""
+        session_id = f"test-ghost-nonblocking-{status}-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+        manager.update_task("999", {"status": "in_progress"}, "Ghost create")
+        assert manager.update_task("999", {"status": status}, "move") is None
+        assert manager.tasks["999"]["status"] == status
+
+    @pytest.mark.parametrize("status", ["pending", "in_progress", "delegation-returned"])
+    def test_ghost_task_refuses_every_blocking_status(
+        self, isolated_config, isolated_session_manager, status
+    ):
+        session_id = f"test-ghost-blocking-{status}-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+        manager.update_task("999", {"status": "in_progress"}, "Ghost create")
+        assert manager.update_task("999", {"status": status}, "move") == "ghost_skip"
+        assert manager.tasks["999"]["status"] == "ignored"
+
     def test_normal_task_returns_none(self, isolated_config, isolated_session_manager):
         session_id = f"test-normal-{time.time()}"
         manager = TaskLifecycle(session_id=session_id, config=isolated_config)

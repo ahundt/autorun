@@ -1663,9 +1663,11 @@ class TaskLifecycle:
                 # transition to in_progress/pending, then if the session ended before
                 # TaskUpdate(id=X, status=completed), they'd block Stop hooks forever.
                 #
-                # V2 FIX: Ghost tasks can ONLY accept terminal statuses (completed,
-                # deleted, ignored). Requests for in_progress/pending are logged as
-                # GHOST_SKIP but status stays "ignored". This prevents permanent blocking.
+                # V2 FIX: Ghost tasks can ONLY accept statuses that do not block
+                # Stop (STATUS_POLICY blocks_stop=False: completed, deleted,
+                # ignored, delegated, paused). Requests for a blocking status are
+                # logged as GHOST_SKIP but status stays "ignored". This prevents
+                # permanent blocking.
                 #
                 # WHY THIS WORKS:
                 # - get_incomplete_tasks() filters by NON_BLOCKING_STATUSES (includes "ignored")
@@ -1673,15 +1675,14 @@ class TaskLifecycle:
                 # - Stop hook only blocks if incomplete tasks exist
                 # - Migration (v1→v2) automatically fixes old ghost tasks on first access
                 is_ghost = task.get("metadata", {}).get("ghost_task", False)
-                terminal_statuses = {"completed", "deleted", "ignored", "delegated"}
 
-                if is_ghost and new_status not in terminal_statuses:
+                if is_ghost and task_status_policy(new_status).blocks_stop:
                     # Ghost task protection triggered - log for debugging
                     logger.warning(
-                        "GHOST_SKIP: task_id=%s requested status=%s but ghost tasks can only transition to terminal statuses (%s). Keeping 'ignored'.",
+                        "GHOST_SKIP: task_id=%s requested status=%s but ghost tasks can only transition to non-blocking statuses (%s). Keeping 'ignored'.",
                         task_id,
                         new_status,
-                        ", ".join(sorted(terminal_statuses)),
+                        ", ".join(sorted(NON_BLOCKING_TASK_STATUSES)),
                     )
                     self.log_event(
                         "GHOST_SKIP",
