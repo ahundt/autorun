@@ -646,6 +646,22 @@ class ScopeAccessor:
         session_id = None if self.scope == "session" else "__global__"
         self.ctx.state_set(self._allowed_key, allows, session_id=session_id)
 
+    def update(self, edit: Callable[[list], list]) -> list:
+        """Rewrite the blocked list under the state lock (never from a stale read)."""
+        return self._update(self._blocked_key, edit)
+
+    def update_allowed(self, edit: Callable[[list], list]) -> list:
+        """Rewrite the allowed list under the state lock.
+
+        A list read earlier and written back with set_allowed() erases any
+        claim made in between, handing a spent one-use grant its use back.
+        """
+        return self._update(self._allowed_key, edit)
+
+    def _update(self, key: str, edit: Callable[[list], list]) -> list:
+        session_id = None if self.scope == "session" else "__global__"
+        return self.ctx.state_update(key, lambda current: edit(list(current or [])), [], session_id=session_id)
+
     def claim_allowed(self, allow: ScopedAllow, call_id: str) -> "ScopedAllow | None":
         """Spend one use of ``allow``, deciding inside the state lock.
 
@@ -750,13 +766,9 @@ def _make_block_op(scope: str, op: str):
                 return f"❌ Error: {e}"
 
             # Remove from allows first (so /ar:no is the true inverse of /ar:ok)
-            allows = accessor.get_allowed()
-            new_allows = [a for a in allows if a["pattern"] != pattern]
-            if len(new_allows) != len(allows):
-                accessor.set_allowed(new_allows)
-
-            blocks.append({"pattern": pattern, "suggestion": desc or _get_suggestion(pattern), "pattern_type": ptype})
-            accessor.set(blocks)
+            accessor.update_allowed(lambda allows: [a for a in allows if a["pattern"] != pattern])
+            block = {"pattern": pattern, "suggestion": desc or _get_suggestion(pattern), "pattern_type": ptype}
+            accessor.update(lambda current: current + [block])
             return f"✅ Blocked ({scope}): {pattern}"
 
         if op == "allow":
@@ -794,11 +806,8 @@ def _make_block_op(scope: str, op: str):
                 remaining_uses=uses,
                 grace_seconds=grace_seconds,
             )
-            allows = accessor.get_allowed()
             # Replace existing entry for same pattern (update scope)
-            allows = [a for a in allows if a["pattern"] != pattern]
-            allows.append(sa.to_dict())
-            accessor.set_allowed(allows)
+            accessor.update_allowed(lambda allows: [a for a in allows if a["pattern"] != pattern] + [sa.to_dict()])
             return f"✅ Allowed: '{pattern}' ({sa.status_label()})"
 
         if op == "clear":
@@ -1180,11 +1189,15 @@ def _segment_grants(ctx: EventContext, cmd: str, segments: tuple[str, ...], call
                 continue
             for segment in _hit_segments(cmd, segments, sa.pattern, sa.pattern_type):
                 grants.setdefault(segment, (accessor, sa))
-        # Lazy cleanup: remove expired entries on pass-through
-        cleaned = [a for a in allows if ScopedAllow.from_dict(a).is_valid()]
-        if len(cleaned) != len(allows):
-            accessor.set_allowed(cleaned)
+        _drop_expired_allows(accessor, allows)
     return grants
+
+
+def _drop_expired_allows(accessor: "ScopeAccessor", allows: list) -> None:
+    """Lazy GC. ``allows`` only decides whether to write; the write re-reads."""
+    if all(ScopedAllow.from_dict(a).is_valid() for a in allows):
+        return
+    accessor.update_allowed(lambda current: [a for a in current if ScopedAllow.from_dict(a).is_valid()])
 
 
 def _claim_grants(grants, call_id: str) -> list[ScopedAllow] | None:
@@ -3154,10 +3167,7 @@ def cleanup_expired_allows(ctx: EventContext) -> None:
     """Purge expired scoped allows on session start (lazy GC)."""
     for scope_name in ("session", "global"):
         accessor = ScopeAccessor(ctx, scope_name)
-        allows = accessor.get_allowed()
-        cleaned = [a for a in allows if ScopedAllow.from_dict(a).is_valid()]
-        if len(cleaned) != len(allows):
-            accessor.set_allowed(cleaned)
+        _drop_expired_allows(accessor, accessor.get_allowed())
     # Also purge expired cache_guard overrides — same lifecycle, same GC point.
     try:
         from .cache_guard import purge_stale_overrides

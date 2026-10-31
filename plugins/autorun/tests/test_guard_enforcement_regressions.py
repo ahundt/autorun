@@ -6,6 +6,7 @@ nothing reaches the live daemon. None of these commands is ever executed.
 """
 
 import json
+import time
 import uuid
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from autorun import config as config_module
 from autorun import integrations, plugins
 from autorun.core import EventContext, ThreadSafeDB
+from autorun.scoped_allow import ScopedAllow
 
 
 def _sid() -> str:
@@ -248,3 +250,64 @@ class TestUserDefaultIntegrationsAreEnforced:
         user_config({"default_integrations": {"publish-command": {"patterns": ["cargo publish"], "suggestion": "x"}}})
         names = {intg.name for intg in integrations.load_all_integrations()}
         assert "publish-command" not in names
+
+
+class TestAllowListWritesDoNotUndoConcurrentClaims:
+    """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
+    one-use grant claimed meanwhile got its use back."""
+
+    def _seed(self, sid, store):
+        now = time.time()
+        live = ScopedAllow(pattern="rm", granted_at=now, remaining_uses=1).to_dict()
+        expired = ScopedAllow(pattern="sed", granted_at=now - 100, ttl_seconds=1.0).to_dict()
+        EventContext(session_id=sid, event="PreToolUse", store=store).state_set(
+            "session_allowed_patterns", [live, expired]
+        )
+
+    def _claim_rm_concurrently_with(self, monkeypatch, sid, store, action):
+        """Run ``action``; a concurrent hook spends the rm grant right after
+        ``action`` first reads the allow list (or after it, if it never does)."""
+        original = plugins.ScopeAccessor.get_allowed
+        fired: list[bool] = []
+
+        def claim():
+            fired.append(True)
+            assert _decision(plugins.check_blocked_commands(_bash("rm -rf a", sid=sid, store=store))) != "deny"
+
+        def racing(self):
+            value = original(self)
+            if self.scope == "session" and not fired:
+                claim()
+            return value
+
+        monkeypatch.setattr(plugins.ScopeAccessor, "get_allowed", racing)
+        action()
+        monkeypatch.setattr(plugins.ScopeAccessor, "get_allowed", original)
+        if not fired:
+            claim()
+        return plugins.check_blocked_commands(_bash("rm -rf b", sid=sid, store=store))
+
+    def test_pretooluse_lazy_cleanup(self, monkeypatch):
+        sid, store = _sid(), ThreadSafeDB()
+        self._seed(sid, store)
+        second = self._claim_rm_concurrently_with(
+            monkeypatch, sid, store, lambda: plugins.check_blocked_commands(_bash("ls", sid=sid, store=store))
+        )
+        assert _decision(second) == "deny", second
+
+    def test_allow_of_another_pattern(self, monkeypatch):
+        sid, store = _sid(), ThreadSafeDB()
+        self._seed(sid, store)
+        second = self._claim_rm_concurrently_with(
+            monkeypatch, sid, store, lambda: _prompt("/ar:ok awk", sid=sid, store=store)
+        )
+        assert _decision(second) == "deny", second
+
+    def test_session_start_cleanup(self, monkeypatch):
+        sid, store = _sid(), ThreadSafeDB()
+        self._seed(sid, store)
+        start = EventContext(session_id=sid, event="SessionStart", store=store)
+        second = self._claim_rm_concurrently_with(
+            monkeypatch, sid, store, lambda: plugins.cleanup_expired_allows(start)
+        )
+        assert _decision(second) == "deny", second
