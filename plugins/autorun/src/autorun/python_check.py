@@ -135,6 +135,7 @@ def check_python_version():
         print("  GitHub / docs:  https://github.com/ahundt/autorun")
         print("  Local docs:     plugins/autorun/AGENTS.md")
         print("=" * 70)
+        return False
 
     return True
 
