@@ -253,7 +253,20 @@ def test_stamping_the_same_content_twice_writes_nothing(tmp_path):
 
 def test_a_plugin_with_no_metadata_yet_is_stamped_without_the_opt_in(tmp_path):
     plugin = tmp_path / "plugins" / "fresh"
+    (plugin / status.METADATA_SUBPATH.parent).mkdir(parents=True)
 
     written = status.write_metadata(plugin, {"version": "1.0.0"})
 
     assert written == plugin / status.METADATA_SUBPATH
+
+
+def test_a_wheel_is_stamped_in_its_package_directory(tmp_path):
+    """A wheel's plugin directory is the ``autorun`` package, which reads
+    ``metadata.json`` beside its modules, not under ``src/autorun``."""
+    package = tmp_path / "site-packages" / "autorun"
+    package.mkdir(parents=True)
+
+    written = status.write_metadata(package, {"version": "1.0.0"})
+
+    assert written == package / "metadata.json"
+    assert not (package / "src").exists()

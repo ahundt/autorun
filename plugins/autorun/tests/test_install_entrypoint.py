@@ -1320,6 +1320,29 @@ def test_tool_install_from_a_wheel_in_a_uv_tool_env_reaches_the_walk(monkeypatch
     assert "supplied by the package installer" in capsys.readouterr().out
 
 
+def test_source_metadata_is_stamped_once_where_the_package_reads_it(monkeypatch, isolated, tmp_path):
+    """AUTORUN_WRITE_SOURCE_METADATA=1 stamped ``<plugin>/src/autorun/metadata.json``
+    for every selected plugin: pdf-extractor got an autorun metadata file, and
+    a wheel got ``site-packages/autorun/src/autorun/metadata.json``, which
+    nothing reads. Only ar has the file, at its runtime root."""
+    from autorun.installer import discovery, entrypoint
+
+    wheel = tmp_path / "site-packages" / "autorun"
+    wheel.mkdir(parents=True)
+    (wheel / "__main__.py").touch()
+    pdf = tmp_path / "plugins" / "pdf-extractor"
+    pdf.mkdir(parents=True)
+    calls: list[tuple[str, ...]] = []
+    _bootstrap_only(monkeypatch, entrypoint, wheel, tmp_path / "venv" / "bin" / "python", calls)
+    monkeypatch.setattr(discovery, "resolve_plugins", lambda _root, _names: ((wheel, pdf), ()))
+    monkeypatch.setenv("AUTORUN_WRITE_SOURCE_METADATA", "1")
+
+    assert entrypoint.install_plugins("all", tool=False, conductor=False) == 0
+    assert json.loads((wheel / "metadata.json").read_text(encoding="utf-8"))["version"]
+    assert not (wheel / "src").exists()
+    assert not (pdf / "src").exists()
+
+
 def test_a_custom_uv_tool_dir_is_recognised_as_a_uv_tool_env(monkeypatch, isolated, tmp_path):
     """One answer to "where do uv tools live": UV_TOOL_DIR counts for the
     bootstrap choice exactly as it does for ownership, so a checkout installed

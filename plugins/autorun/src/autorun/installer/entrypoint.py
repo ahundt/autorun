@@ -606,15 +606,15 @@ def install_plugins(
                 print(outcome.describe())
             if not all(outcome.ok for outcome in boot):
                 return 1
-        if bool(resolved.get("write_source_metadata")):
+        if bool(resolved.get("write_source_metadata")) and "ar" in plugins:
+            # Only the autorun package reads metadata.json; `plugin` is it.
             from .. import __commit__, __version__
 
-            for directory in discovery.resolve_plugins(root, plugins)[0]:
-                status.write_metadata(
-                    directory,
-                    status.metadata_document(__version__, commit=__commit__, env={"SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", "")}),
-                    allowed=True,
-                )
+            status.write_metadata(
+                plugin,
+                status.metadata_document(__version__, commit=__commit__, env={"SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", "")}),
+                allowed=True,
+            )
 
     call = orchestrate.preview if dry_run else orchestrate.install
     result = call(

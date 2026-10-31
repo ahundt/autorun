@@ -46,7 +46,10 @@ __all__ = [
     "metadata_document", "write_metadata", "METADATA_SUBPATH",
 ]
 
-#: Where the package records what it was built from, relative to a plugin.
+#: Where the package records what it was built from, relative to a checkout's
+#: plugin directory. In general the file sits at
+#: ``discovery.plugin_runtime_root(plugin) / "metadata.json"``, which is the
+#: package directory itself in an installed wheel.
 METADATA_SUBPATH = Path("src") / "autorun" / "metadata.json"
 
 
@@ -296,7 +299,7 @@ def write_metadata(
     Returns the path written, or None when skipped or unchanged. Unchanged is
     also None, so a repeated install does not churn an mtime.
     """
-    target = plugin_dir / METADATA_SUBPATH
+    target = discovery.plugin_runtime_root(plugin_dir) / METADATA_SUBPATH.name
     if target.exists() and not allowed:
         return None
     text = json.dumps(dict(document), indent=2) + "\n"
@@ -384,9 +387,13 @@ def demo() -> None:
         assert json.loads(tracked.read_text())["commit"] == "abc"
         assert write_metadata(plugin, first, allowed=True) is None, "no mtime churn"
 
-        # A plugin with no metadata file yet is stamped without the opt-in.
+        # A plugin with no metadata file yet is stamped without the opt-in,
+        # at its runtime root: src/autorun in a checkout, the package in a wheel.
         fresh = root / "plugins" / "other"
+        (fresh / METADATA_SUBPATH.parent).mkdir(parents=True)
         assert write_metadata(fresh, first) == fresh / METADATA_SUBPATH
+        wheel = root / "site-packages" / "autorun"
+        assert write_metadata(wheel, first) == wheel / METADATA_SUBPATH.name
 
     print("installer.status: all self-checks passed")
 
