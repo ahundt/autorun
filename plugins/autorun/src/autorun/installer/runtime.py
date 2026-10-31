@@ -424,6 +424,7 @@ _REREGISTER = (sys.executable, "-m", "autorun", "--install", "--force")
 def update_argv(
     method: str, *, extension: str = EXTENSION_NAMES[0],
     available: Callable[[str], bool] = shutil.which,
+    source: str = REPOSITORY,
 ) -> tuple[tuple[str, ...], ...]:
     """The commands that upgrade an installation made the given way, in order.
 
@@ -436,6 +437,9 @@ def update_argv(
     from before the two were told apart. It still resolves, because a user with
     it in a script or a config file would otherwise get an error naming methods
     they never chose.
+
+    ``source`` is the requirement the language-package routes install; the
+    caller pins it to the release the version check selected.
     """
     if method == "plugin":
         method = next(
@@ -447,12 +451,21 @@ def update_argv(
         "uv": (
             (
                 "uv", "pip", "install", "--python", sys.executable,
-                "--upgrade", REPOSITORY,
+                "--upgrade", source,
             ),
             _REREGISTER,
         ),
-        "pip": ((sys.executable, "-m", "pip", "install", "--upgrade", REPOSITORY), _REREGISTER),
+        "pip": ((sys.executable, "-m", "pip", "install", "--upgrade", source), _REREGISTER),
     }[method]
+
+
+def release_source(latest: str, *, distribution: str, from_git: bool) -> str:
+    """The requirement that installs release ``latest``: its git tag for a git
+    install, else the index pin. Tags are ``v<version>`` (RELEASING.md Stage 4)."""
+    if from_git:
+        repository, _, subdirectory = REPOSITORY.partition("#")
+        return f"{repository}@v{latest}#{subdirectory}"
+    return f"{distribution}=={latest}"
 
 
 def installed_extension_name(extensions_dir: Path) -> str:
@@ -576,6 +589,7 @@ def self_update(
     extension: str = EXTENSION_NAMES[0],
     run: Runner = _spawn,
     available: Callable[[str], bool] = shutil.which,
+    source: str = REPOSITORY,
 ) -> Outcome:
     """Upgrade this installation, or say why it did not.
 
@@ -589,7 +603,7 @@ def self_update(
         return Outcome("self-update", True, version.describe())
     resolved = detect_update_method(available=available) if method == "auto" else method
     try:
-        steps = update_argv(resolved, extension=extension, available=available)
+        steps = update_argv(resolved, extension=extension, available=available, source=source)
     except KeyError:
         return Outcome("self-update", False, f"unknown update method {resolved!r}")
     for argv in steps:

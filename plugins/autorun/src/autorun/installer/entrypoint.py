@@ -9,7 +9,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable, Mapping, Sequence
@@ -854,19 +854,24 @@ def _latest_version(current: str) -> str:
 
 def perform_self_update(method: str = "auto") -> runtime.Outcome:
     """Update through the detected installation route."""
+    name = _PLUGIN_DISTRIBUTIONS["ar"][0]
     try:
         # The *distribution* name, not the import package: `version("autorun")`
         # raises PackageNotFoundError after the rename and degrades silently to
         # "unknown", which compares as older than every release tag.
-        current = version(_PLUGIN_DISTRIBUTIONS["ar"][0])
-    except PackageNotFoundError:
-        current = "unknown"
+        current = version(name)
+        # PEP 610: a VCS install records vcs_info; an index install records nothing.
+        from_git = "vcs_info" in json.loads(distribution(name).read_text("direct_url.json") or "{}")
+    except (PackageNotFoundError, ValueError):
+        current, from_git = "unknown", False
+    latest = _latest_version(current)
     extension_name = runtime.installed_extension_name(discovery.extensions_dir(PLATFORMS["gemini"]) or Path())
     return runtime.self_update(
-        runtime.Version(current, _latest_version(current)),
+        runtime.Version(current, latest),
         method=method,
         extension=extension_name,
         run=_run,
+        source=runtime.release_source(latest, distribution=name, from_git=from_git),
     )
 
 

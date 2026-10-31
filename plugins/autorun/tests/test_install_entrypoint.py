@@ -424,6 +424,47 @@ def test_release_lookup_includes_rcs_only_for_an_installed_prerelease(monkeypatc
     assert entrypoint._latest_version("1.0.0") == "1.0.0"
 
 
+@pytest.mark.parametrize(
+    "direct_url, expected",
+    [
+        (None, "autorun-ai==1.0.1"),
+        (
+            {"url": "https://github.com/ahundt/autorun.git", "vcs_info": {"vcs": "git", "commit_id": "abc"}},
+            "git+https://github.com/ahundt/autorun.git@v1.0.1#subdirectory=plugins/autorun",
+        ),
+    ],
+    ids=["index", "git"],
+)
+def test_update_installs_the_release_it_reported(monkeypatch, isolated, capsys, direct_url, expected):
+    """``autorun --update`` compares against the newest GitHub release, so it
+    must install that release: pinned on the index for an index install, the
+    release tag for a git install (PEP 610 direct_url.json says which). It used
+    to install the git repository with no ref, i.e. main's HEAD, and moved
+    PyPI installs onto git."""
+    from autorun import __main__ as entry
+    from autorun.installer import entrypoint
+
+    class Distribution:
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return None if direct_url is None else json.dumps(direct_url)
+
+    calls: list[tuple[str, ...]] = []
+
+    def record(argv, **_kwargs):
+        calls.append(tuple(str(part) for part in argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(entrypoint, "version", lambda _name: "1.0.0")
+    monkeypatch.setattr(entrypoint, "distribution", lambda _name: Distribution(), raising=False)
+    monkeypatch.setattr(entrypoint, "_latest_version", lambda _current: "1.0.1")
+    monkeypatch.setattr(entrypoint, "_run", record)
+
+    assert entry.main(["--update", "--update-method", "pip"]) == 0
+    assert calls[0][-1] == expected, calls
+    assert "update available: 1.0.0 -> 1.0.1" in capsys.readouterr().out
+
+
 def test_custom_claude_flavor_uses_the_portable_commands_and_agents_layout(monkeypatch, isolated):
     from autorun.installer import entrypoint
 
