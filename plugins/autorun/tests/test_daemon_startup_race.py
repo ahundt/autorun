@@ -475,6 +475,83 @@ class TestNoRegressions:
         assert exited.value.code == 0
         assert writer.closed and writer.waited
 
+    def test_a_response_timeout_is_not_resent_or_called_a_failed_start(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """The daemon already holds the request once the payload is written.
+
+        On Python 3.11+ asyncio.TimeoutError is an OSError, so a slow answer
+        fell into the connect-error branch: the client slept, spawned, and
+        sent the same hook again until its budget ran out, then said the
+        daemon "failed to start".
+        """
+        import io
+        import json
+        import sys
+        import time
+
+        from autorun import client, ipc
+
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "slow-answer",
+            "tool_name": "Bash",
+            "tool_input": {"command": "true"},
+            "cli_type": "claude",
+        }
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+        monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", tmp_path / "daemon.pid")
+        monkeypatch.setenv(client.DEADLINE_ENV_VAR, repr(time.monotonic() + 3.0))
+        monkeypatch.setattr(client, "daemon_response_timeout_for_cli", lambda _cli: 0.05)
+
+        class Reader:
+            async def readuntil(self, _separator):
+                await client.asyncio.Event().wait()
+
+        class Writer:
+            def write(self, data):
+                sent.append(data)
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+            async def wait_closed(self):
+                pass
+
+        sent = []
+
+        async def connect(**_kwargs):
+            return Reader(), Writer()
+
+        async def no_sleep(_delay):
+            pass
+
+        class Child:
+            def poll(self):
+                return None
+
+        spawned = []
+        monkeypatch.setattr(ipc, "connect", connect)
+        monkeypatch.setattr(client.asyncio, "sleep", no_sleep)
+        monkeypatch.setattr(
+            client.subprocess, "Popen", lambda *_a, **_k: spawned.append(Child()) or spawned[-1]
+        )
+
+        try:
+            client.run_client()
+        except SystemExit:
+            pass
+
+        assert len(sent) == 1, f"one hook was sent {len(sent)} times"
+        assert not spawned, "a daemon that answered the connect was replaced"
+        output = capsys.readouterr().out
+        assert '"deny"' in output, output
+        assert "failed to start" not in output, output
+
     def test_poll_timeout_is_5s(self):
         """restart_daemon socket poll timeout is 5 seconds (not 3)."""
         import inspect

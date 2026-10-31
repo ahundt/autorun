@@ -580,11 +580,13 @@ def run_client() -> int:
                 f"{cause}. {_spawn_outcome()}. Daemon startup output, if any, "
                 f"is in {ipc.AUTORUN_LOG_FILE}"
             )
+        sent = False
         try:
             from .core import READ_BUFFER_LIMIT
 
             reader, writer = await ipc.connect(limit=READ_BUFFER_LIMIT)
             try:
+                sent = True
                 writer.write(json.dumps(payload).encode() + b"\n")
                 await writer.drain()
 
@@ -645,6 +647,14 @@ def run_client() -> int:
         except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
+            if sent:
+                # A daemon accepted the connection and may already be running
+                # this hook, so sending it again could run it twice. On 3.11+
+                # this is also where a response timeout lands, because
+                # asyncio.TimeoutError is an OSError there.
+                raise RuntimeError(
+                    f"Daemon accepted the request but did not answer: {e!r}"
+                ) from e
 
             last_connect_error[:] = [e]
             should_spawn = False

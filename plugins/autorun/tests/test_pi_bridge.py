@@ -11,6 +11,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -1493,6 +1494,74 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
         "an allow taken through the hook-entry fallback was reported as a denial: "
         f"{payload['denial']!r}"
     )
+
+
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
+def test_a_daemon_that_took_the_request_but_timed_out_is_not_asked_again(tmp_path):
+    """A daemon timeout is not a daemon outage.
+
+    askToolGate treated every null from askDaemon as "daemon down" and ran the
+    hook entry, which sent the same tool call to the same daemon a second time
+    and could make the tool wait two full timeouts. Only a connection that
+    never opened may fall back, and both share one deadline.
+    """
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("synthetic server uses AF_UNIX")
+
+    socket_path = Path("/tmp") / f"arpi-{os.getpid()}-{tmp_path.name[-5:]}.sock"
+    socket_path.unlink(missing_ok=True)
+    marker = tmp_path / "hook-entry-ran"
+    release = threading.Event()
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(1)
+
+    def serve():
+        try:
+            conn, _ = server.accept()
+            with conn:
+                release.wait(timeout=10)  # holds the request and never answers
+        finally:
+            server.close()
+            socket_path.unlink(missing_ok=True)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    hook_entry = [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('ran')"]
+    driver = tmp_path / "timed_out.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: "pi",
+  socketPath: {json.dumps(str(socket_path))},
+  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  hookEntryCommand: {json.dumps(hook_entry)},
+  timeoutMs: 500,
+}});
+const started = Date.now();
+const response = await bridge.askToolGate({{
+  hook_event_name: "PreToolUse",
+  session_id: "pi-session",
+  tool_name: "bash",
+  tool_input: {{ command: "echo hello" }},
+}});
+console.log(JSON.stringify({{ denial: denialReason(response), elapsed: Date.now() - started }}));
+''',
+        encoding="utf-8",
+    )
+    try:
+        result = subprocess.run(
+            _javascript_command(driver), capture_output=True, text=True, timeout=30, check=False
+        )
+    finally:
+        release.set()
+        thread.join(timeout=10)
+
+    assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[-400:]!r}"
+    payload = json.loads(result.stdout)
+    assert not marker.exists(), "the hook entry re-sent a request the daemon already held"
+    assert payload["denial"] is not None, "a gate the daemon never answered must not allow"
+    assert payload["elapsed"] < 1000, f"one tool call waited {payload['elapsed']} ms for a 500 ms budget"
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")

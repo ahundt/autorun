@@ -63,9 +63,12 @@ export function createDaemonBridge({
   timeoutMs = 5000,
   inprocessCapabilities = [],
 }) {
-  async function askDaemon(payload) {
+  // { response, connected }: connected is true once the frame was handed to a
+  // daemon, after which asking again (here or through the hook entry) would
+  // send the same request twice.
+  async function exchange(payload, deadline) {
     const target = daemonTarget(socketPath, portFile);
-    if (target === null) return null;
+    if (target === null) return { response: null, connected: false };
     const frame =
       JSON.stringify({
         ...payload,
@@ -79,18 +82,22 @@ export function createDaemonBridge({
 
     return new Promise((resolve) => {
       let settled = false;
+      let connected = false;
       let text = "";
-      const finish = (value) => {
+      const finish = (response) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         socket.destroy();
-        resolve(value);
+        resolve({ response, connected });
       };
       const socket = createConnection(target);
-      const timer = setTimeout(() => finish(null), timeoutMs);
+      const timer = setTimeout(() => finish(null), Math.max(deadline - Date.now(), 0));
       socket.setEncoding("utf8");
-      socket.on("connect", () => socket.write(frame));
+      socket.on("connect", () => {
+        connected = true;
+        socket.write(frame);
+      });
       socket.on("data", (chunk) => {
         text += chunk;
         const newline = text.indexOf("\n");
@@ -106,7 +113,11 @@ export function createDaemonBridge({
     });
   }
 
-  async function askHookEntry(payload) {
+  async function askDaemon(payload) {
+    return (await exchange(payload, Date.now() + timeoutMs)).response;
+  }
+
+  async function askHookEntry(payload, deadline) {
     if (!Array.isArray(hookEntryCommand) || hookEntryCommand.length === 0) {
       return blockedBecause("autorun daemon unreachable");
     }
@@ -131,7 +142,7 @@ export function createDaemonBridge({
       }
       const timer = setTimeout(
         () => finish(blockedBecause("hook entry timed out")),
-        timeoutMs,
+        Math.max(deadline - Date.now(), 0),
       );
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
@@ -182,7 +193,12 @@ export function createDaemonBridge({
   }
 
   async function askToolGate(payload) {
-    return (await askDaemon(payload)) ?? askHookEntry(payload);
+    // One deadline for both routes, so a tool call waits at most timeoutMs.
+    const deadline = Date.now() + timeoutMs;
+    const { response, connected } = await exchange(payload, deadline);
+    if (response) return response;
+    if (connected) return blockedBecause("autorun daemon did not answer in time");
+    return askHookEntry(payload, deadline);
   }
 
   async function runCommandResponse(command, cwd, sessionId, metadata = {}) {
