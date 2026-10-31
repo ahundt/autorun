@@ -852,7 +852,15 @@ def _bashlex():
                 self.potential.update(pot)
 
             if string:
-                self.strings.add(string)
+                # Redirect operators ride along so a pattern naming one
+                # (`echo >`) can match; bashlex keeps them out of the words.
+                # `1>` is `>`; `2>` stays distinct.
+                redirects = []
+                for p in parts:
+                    if p.kind == "redirect":
+                        fd = getattr(p, "input", None)
+                        redirects.append(f"{'' if fd in (None, 0, 1) else fd}{p.type}")
+                self.strings.add(" ".join([string, *redirects]))
 
             # Scripts this command runs. These use every word: a multi-line
             # `bash -c` body is a script, not a commit message.

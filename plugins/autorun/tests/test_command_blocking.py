@@ -1136,5 +1136,13 @@ def test_the_hook_denies_rm_rf_hidden_by_a_wrapper_or_shell_form(command: str) -
     assert "trash" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def test_the_default_echo_redirect_guard_fires() -> None:
+    """`echo >` was a default block that could never match a parsable command."""
+    result = plugins.check_blocked_commands(_make_ctx("echo 'content' > notes.txt"))
+    assert result is not None
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "echo >" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

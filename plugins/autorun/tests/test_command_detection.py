@@ -855,3 +855,29 @@ def test_heredoc_normalization_leaves_here_strings_alone() -> None:
     assert _normalize_heredoc_delimiters("bash <<< 'x y'") == "bash <<< 'x y'"
     assert _normalize_heredoc_delimiters("cat <<-'EOF'") == "cat <<- EOF"
     assert _normalize_heredoc_delimiters('cat <<"END-MSG"') == "cat << END-MSG"
+
+
+# ─── Redirect operators in patterns ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "cmd,expected",
+    [
+        ("echo hi > f.txt", True),
+        ("echo 'content' > file.txt", True),
+        ("echo hi 1> f.txt", True),
+        ("> f.txt echo hi", True),
+        ("sudo echo hi > f.txt", True),
+        ("cd x && echo hi > f.txt", True),
+        ("echo hi >> f.txt", False),
+        ("echo hi 2>/dev/null", False),
+        ("echo hi >&2", False),
+        ("echo hi | tee f.txt", False),
+        ("echo hi", False),
+        ("printf hi > f.txt", False),
+    ],
+)
+def test_a_redirect_operator_in_a_pattern_matches_the_redirect(cmd: str, expected: bool) -> None:
+    """bashlex puts redirects in redirect nodes, not words, so the default
+    `echo >` guard never matched anything bashlex could parse."""
+    assert command_matches_pattern(cmd, "echo >") is expected
