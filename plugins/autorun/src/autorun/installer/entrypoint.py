@@ -679,39 +679,14 @@ def uninstall_plugins(
     )
     _print_result(result)
     ok = result.ok
-    for plugin, package in (
-        (name, distribution)
-        for name, distributions in _PLUGIN_DISTRIBUTIONS.items()
-        for distribution in distributions
-    ):
-        if plugin not in plugins:
+    for name, distributions in _PLUGIN_DISTRIBUTIONS.items():
+        if name not in plugins:
             continue
-        uv_owned = bool(shutil.which("uv")) and _uv_tool_installed(package)
-        pip_owned = _pip_package_owned(package)
-        if not uv_owned and not pip_owned:
-            continue
-        argv = (
-            ("uv", "tool", "uninstall", package)
-            if uv_owned
-            else (sys.executable, "-m", "pip", "uninstall", "-y", package)
-        )
-        try:
-            removed = _run(argv)
-        except (OSError, subprocess.SubprocessError) as error:
-            print(runtime.Outcome(f"{package} CLI", False, str(error)).describe())
-            ok = False
-            continue
-        text = removed.stderr or removed.stdout
-        absent = "not installed" in text.lower() or "not found" in text.lower()
-        outcome = runtime.Outcome(
-            f"{package} CLI",
-            removed.returncode == 0 or absent,
-            "" if removed.returncode == 0 or absent else runtime._first_line(text),
-        )
-        print(outcome.describe())
-        ok = ok and outcome.ok
-        if outcome.ok and pip_owned:
-            _package_receipt(package).unlink(missing_ok=True)
+        for package in distributions:
+            outcome = _remove_distribution(package)
+            if outcome is not None:
+                print(outcome.describe())
+                ok = ok and outcome.ok
     return 0 if ok else 1
 
 

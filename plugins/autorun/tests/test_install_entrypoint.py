@@ -357,6 +357,34 @@ def test_removing_the_pdf_plugin_never_reaches_a_python_distribution(isolated):
         )
 
 
+def test_uninstall_removes_each_owned_distribution_by_its_own_route(monkeypatch, isolated):
+    """Uninstall removes what this home installed: the uv tool with uv, a
+    pip-receipted one with pip (and its receipt), and nothing it does not own."""
+    from autorun.installer import entrypoint
+
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        entrypoint, "_run", lambda argv, **_k: calls.append(tuple(argv)) or subprocess.CompletedProcess(argv, 0, "", "")
+    )
+    monkeypatch.setattr(entrypoint, "_runtime_settings", lambda *args, **kwargs: None)
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
+    monkeypatch.setattr(entrypoint, "_uv_tool_installed", lambda package: package == "autorun-ai")
+    receipt = entrypoint._package_receipt("pdf-extractor")
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(
+        json.dumps({"distribution": "pdf-extractor", "installer": "pip", "python": str(Path(entrypoint.sys.executable).resolve())}),
+        encoding="utf-8",
+    )
+
+    assert entrypoint.uninstall_plugins("ar") == 0
+
+    assert [call for call in calls if "uninstall" in call] == [
+        ("uv", "tool", "uninstall", "autorun-ai"),
+        (entrypoint.sys.executable, "-m", "pip", "uninstall", "-y", "pdf-extractor"),
+    ]
+    assert not receipt.exists()
+
+
 def test_uninstall_keeps_stable_publication_lock_files(tmp_path):
     from autorun.installer import teardown
     from autorun.installer.fs import INSTALL_LOCK_NAME
