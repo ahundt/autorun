@@ -730,7 +730,12 @@ def _resume_interrupted(target: Path) -> None:
     except OSError:
         return
     for stage in stages:
-        if not stage.name.startswith(prefixes) or stage.is_symlink() or not stage.is_dir():
+        # tempfile's random suffix has no "-", so a remainder holding one
+        # belongs to a longer name: "tmux" must not take "tmux-automation"'s.
+        mine = next((p for p in prefixes if stage.name.startswith(p)), None)
+        if mine is None or "-" in stage.name[len(mine):]:
+            continue
+        if stage.is_symlink() or not stage.is_dir():
             continue
         shared = stage / "shared"
         if shared.is_dir() and not shared.is_symlink():

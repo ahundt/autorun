@@ -924,6 +924,23 @@ def test_registry_transactions_serialize_the_complete_read_modify_write(tmp_path
     }
 
 
+def test_resuming_one_target_never_restores_a_longer_named_neighbours_stage(
+    tmp_path, source
+):
+    """``tmux`` matched ``.autorun-publish-tmux-automation-<rand>`` by prefix,
+    so publishing the ``tmux`` skill restored tmux-automation's interrupted
+    tree under the name ``tmux``."""
+    skills = tmp_path / "skills"
+    stage = skills / f"{installer_fs._STAGE_PUBLISH}tmux-automation-k3x9q_1z"
+    (stage / "previous").mkdir(parents=True)
+    (stage / "previous" / "SKILL.md").write_text("tmux-automation\n", encoding="utf-8")
+
+    publish_tree(source, skills / "tmux", plugin="ar")
+
+    assert (stage / "previous" / "SKILL.md").read_text(encoding="utf-8") == "tmux-automation\n"
+    assert (skills / "tmux" / "SKILL.md").read_text(encoding="utf-8") == "version one\n"
+
+
 OS_METADATA = (".DS_Store", "._SKILL.md", "Thumbs.db", "desktop.ini")
 
 
