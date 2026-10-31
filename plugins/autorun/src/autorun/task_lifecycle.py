@@ -2979,9 +2979,9 @@ class TaskLifecycle:
         self,
         task_ids: Iterable[str],
         *,
+        marker_identity: str,
         allowed_task_ids: Iterable[str] | None = None,
         session: "str | None" = None,
-        marker_identity: "str | None" = None,
     ) -> list[str]:
         """Mark task ids delegated from AI-printed delegation markers.
 
@@ -2995,6 +2995,11 @@ class TaskLifecycle:
 
         Args:
             task_ids: Task ids extracted from the delegation marker template.
+            marker_identity: Stable identity of the marker occurrence. Required:
+                it is what keeps a replayed marker from delegating twice, and
+                the one path through _consume_delegation_marker also checks
+                that each task is blocking, records delegated_at, and claims
+                the spawn ledger.
             allowed_task_ids: Optional current blocking task-id set. When
                 provided, markers naming unrelated or already non-blocking
                 tasks are ignored, matching clear_stale_task_markers().
@@ -3003,38 +3008,12 @@ class TaskLifecycle:
                 is otherwise untraceable — the task says only that it went
                 somewhere.
         """
-        if marker_identity:
-            return self._consume_delegation_marker(
-                marker_identity,
-                task_ids,
-                allowed_task_ids=allowed_task_ids,
-                session=session,
-            )
-
-        reason = CONFIG["delegate_reason"]
-        delegated: list[str] = []
-        allowed = {str(task_id) for task_id in allowed_task_ids} if allowed_task_ids is not None else None
-        updates: Dict[str, object] = {"status": "delegated"}
-        if session:
-            updates["metadata"] = {"delegated_to_session": str(session)}
-        for tid in list(dict.fromkeys(str(task_id) for task_id in task_ids)):
-            if allowed is not None and tid not in allowed:
-                continue
-            try:
-                # update_task returns None on success and "ghost_skip" when
-                # ghost-task protection refused the write.
-                if self.update_task(tid, dict(updates), reason) != "ghost_skip":
-                    delegated.append(tid)
-                    self.log_event(
-                        "DELEGATE",
-                        f"task#{tid}",
-                        reason,
-                        "delegated",
-                        {"session": session} if session else None,
-                    )
-            except Exception:
-                continue
-        return delegated
+        return self._consume_delegation_marker(
+            marker_identity,
+            task_ids,
+            allowed_task_ids=allowed_task_ids,
+            session=session,
+        )
 
     def _consume_delegation_marker(
         self,

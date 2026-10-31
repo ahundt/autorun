@@ -168,15 +168,18 @@ class TestDelegateGuidanceIsPerformable:
         mgr = TaskLifecycle(config=cfg, session_id="deleg-marker")
         task_id = _seed(mgr, "7", "Handed to a subagent")
 
-        ids = tl.extract_delegate_task_ids(f"AUTORUN_TASK_DELEGATED({task_id})")
+        marker = tl.CONFIG["delegate_marker_template"].format(id=task_id)
+        ids = tl.extract_delegate_task_ids(marker)
         assert ids == [str(task_id)], f"marker must parse the task id, got {ids}"
 
-        delegated = mgr.delegate_tasks_from_markers(ids)
-        assert delegated == [str(task_id)]
-        assert mgr.tasks[str(task_id)]["status"] == "delegated"
-
-        # Delegated is in NON_BLOCKING_STATUSES, so Stop is now free.
-        assert mgr.handle_stop(_ctx("deleg-marker", "Stop", "claude")) is None
+        # Claude's Stop carries the reply in last_assistant_message. The gate
+        # applies the marker, and delegated is non-blocking, so Stop is free.
+        ctx = _ctx("deleg-marker", "Stop", "claude")
+        object.__setattr__(ctx, "_last_assistant_message", f"Handing it off.\n{marker}")
+        assert mgr.handle_stop(ctx) is None
+        task = mgr.tasks[str(task_id)]
+        assert task["status"] == "delegated"
+        assert "delegated_at" in task["metadata"]
 
     def test_harness_with_native_delegated_status_uses_its_own_tool(self, isolated_session, cfg, monkeypatch):
         """WOLOG: a harness whose task tool accepts the status keeps using it.

@@ -330,6 +330,25 @@ class TestMarkerClaimsSpawn:
         assert task["metadata"]["delegated_to_session"] == SPAWN_ID
         assert _ledger(session_id)[0]["claimed"] is True
 
+    def test_a_marker_without_an_identity_cannot_skip_the_ledger(self, isolated_state, cfg):
+        """There is one marker path: identity, blocking check, ledger claim.
+
+        A second path without an identity skipped all three: it invented
+        delegated records for unknown ids and set no delegated_at.
+        """
+        store = ThreadSafeDB()
+        session_id = "dl-no-identity"
+        manager = TaskLifecycle(config=cfg, session_id=session_id)
+        manager.create_task("7", {"subject": "Real work"}, "created")
+        _spawn(session_id, store, cfg)
+
+        with pytest.raises(TypeError):
+            manager.delegate_tasks_from_markers(["7", "999"])
+
+        assert "999" not in manager.tasks
+        assert manager.tasks["7"]["status"] == "pending"
+        assert _ledger(session_id)[0].get("claimed") is not True
+
 
 class TestReturnedGate:
     def _delegate(self, session_id, store, cfg, task_id="7"):
