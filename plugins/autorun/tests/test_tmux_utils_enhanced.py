@@ -854,3 +854,50 @@ class TestSafeToSendAgreesWithThePromptDetector:
 
         assert result["success_count"] == 1, result
         assert [c.args[0] for c in tmux.send_keys.call_args_list] == ["continue", "C-m"]
+
+
+class TestWindowListingSurvivesAPipeInAField:
+    """tmux_list_windows split list-windows output on '|', so a pane title or
+    path containing '|' gave the wrong field count and the window vanished."""
+
+    def test_a_pipe_in_the_title_and_path_keeps_the_window(self):
+        import re
+
+        values = {
+            "session_name": "main", "window_index": "3", "pane_title": "build | test",
+            "pane_current_command": "node", "pane_current_path": "/srv/a|b",
+            "pane_pid": "42", "window_active": "0", "window_activity": "1700000000",
+            "window_flags": "",  # a background window: the line ends in the separator
+        }
+
+        def fake_tmux(cmd, session=None, window=None, pane=None):
+            fmt = cmd[cmd.index("-F") + 1]  # expand the format as tmux would
+            return {"returncode": 0,
+                    "stdout": re.sub(r"#\{(\w+)\}", lambda m: values[m.group(1)], fmt) + "\n"}
+
+        tmux = Mock()
+        tmux.execute_tmux_command.side_effect = fake_tmux
+        with patch.object(tmux_module, "get_tmux_utilities", return_value=tmux):
+            windows = tmux_module.tmux_list_windows(session="main", exclude_current=False)
+
+        assert [(w["w"], w["title"], w["path"]) for w in windows] == [(3, "build | test", "/srv/a|b")]
+
+    @pytest.mark.tmux
+    def test_a_pipe_in_a_real_pane_title_keeps_the_window(self):
+        import shutil
+        import subprocess
+
+        from conftest import tmux_argv
+
+        if not shutil.which("tmux"):
+            pytest.skip("tmux not installed")
+        session = "autorun-test-pipe-title"
+        subprocess.run(tmux_argv("new-session", "-d", "-s", session, "-x", "80", "-y", "24"),
+                       capture_output=True)
+        try:
+            subprocess.run(tmux_argv("select-pane", "-t", f"{session}:0", "-T", "build | test"),
+                           capture_output=True, check=True)
+            windows = tmux_module.tmux_list_windows(session=session, exclude_current=False)
+            assert [w["title"] for w in windows] == ["build | test"]
+        finally:
+            subprocess.run(tmux_argv("kill-session", "-t", session), capture_output=True)

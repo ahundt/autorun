@@ -1000,7 +1000,10 @@ SHELL_COMMANDS = frozenset({
 })
 
 
-TMUX_WINDOW_FORMAT = '|'.join([
+# ASCII unit separator: titles, paths and session names may contain '|', and a
+# '|' separator then gave the wrong field count and dropped the window.
+TMUX_FORMAT_SEPARATOR = '\x1f'
+TMUX_WINDOW_FORMAT = TMUX_FORMAT_SEPARATOR.join([
     '#{session_name}',
     '#{window_index}',
     '#{pane_title}',
@@ -1011,7 +1014,6 @@ TMUX_WINDOW_FORMAT = '|'.join([
     '#{window_activity}',
     '#{window_flags}'
 ])
-TMUX_FORMAT_SEPARATOR = '|'
 TMUX_FORMAT_FIELDS = ('session', 'w', 'raw_title', 'cmd', 'path', 'pid', 'active', 'activity', 'flags')
 
 
@@ -1260,8 +1262,10 @@ def tmux_list_windows(
         if not result or result.get('returncode') != 0:
             continue
 
-        for line in result['stdout'].strip().split('\n'):
-            if not line.strip():
+        # No strip(): Python counts '\x1f' as whitespace and would drop the
+        # empty last field (window_flags of a background window).
+        for line in result['stdout'].split('\n'):
+            if not line:
                 continue
 
             parts = line.split(TMUX_FORMAT_SEPARATOR)
