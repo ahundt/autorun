@@ -1285,7 +1285,7 @@ class TestTryCliRobustness:
         module = load_hook_entry_module()
         fake_main_module = types.ModuleType("autorun.__main__")
 
-        def fake_main():
+        def fake_main(argv=None):
             assert os.environ["AUTORUN_USE_DAEMON"] == "0"
             return 0
 
@@ -1298,6 +1298,29 @@ class TestTryCliRobustness:
             module.run_fallback()
 
         assert exc.value.code == 0
+
+    def test_fallback_never_hands_main_the_no_bootstrap_flag(self, monkeypatch):
+        """`--no-bootstrap` on hook_entry.py means "do not install
+        dependencies"; on `autorun` it means "edit hooks.json to add that flag".
+        A hook that reached the fallback with it rewrote hooks.json and printed
+        "Bootstrap disabled" instead of answering the hook."""
+        module = load_hook_entry_module()
+        fake_main_module = types.ModuleType("autorun.__main__")
+        received = []
+
+        def fake_main(argv=None):
+            received.append(argv)
+            return 0
+
+        fake_main_module.main = fake_main
+        monkeypatch.setitem(sys.modules, "autorun.__main__", fake_main_module)
+        monkeypatch.setattr(module, "get_plugin_root", lambda: str(PLUGIN_ROOT))
+        monkeypatch.setattr(sys, "argv", ["hook_entry.py", "--cli", "gemini", "--no-bootstrap"])
+
+        with pytest.raises(SystemExit):
+            module.run_fallback()
+
+        assert received == [["--cli", "gemini"]]
 
     def test_main_does_not_run_fallback_after_cli_timeout_for_prompt(self, tmp_path, monkeypatch, capsys):
         """Prompt hooks must fail open promptly after CLI timeout without fallback."""

@@ -1480,7 +1480,9 @@ def run_fallback() -> None:
 
         from autorun.__main__ import main as autorun_main
 
-        exit_code = autorun_main()
+        # This file's --no-bootstrap means "install nothing"; autorun's means
+        # "write --no-bootstrap into hooks.json", which would replace the hook.
+        exit_code = autorun_main([arg for arg in sys.argv[1:] if arg != "--no-bootstrap"])
         sys.exit(exit_code if exit_code is not None else 0)
     except ImportError as e:
         # Deps missing - try background bootstrap
