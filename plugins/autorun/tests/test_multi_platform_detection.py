@@ -454,19 +454,18 @@ _UNTAGGED_PAYLOADS = [
       "transcript_path": "/home/u/.gemini/tmp/h/chats/s.json"}, "gemini"),
 ]
 
-# Cases where hooks/hook_entry.py:detect_cli_type still disagrees with
-# config.detect_cli_type. hook_entry.py has its own owner; strict xfail makes
-# the fix there flip these to XPASS and fail until the entry is removed.
-_HOOK_ENTRY_KNOWN_DISAGREEMENTS = [
+# Payloads hooks/hook_entry.py:detect_cli_type once answered differently from
+# config.detect_cli_type, when it kept its own event and path lists.
+_HOOK_ENTRY_FORMER_DISAGREEMENTS = [
+    # It mapped every SessionEnd to gemini; Claude has SessionEnd too.
     ({"session_id": "s", "hook_event_name": "SessionEnd",
-      "transcript_path": "/home/u/.claude/projects/p/s.jsonl"}, "claude",
-     "hook_entry maps every SessionEnd to gemini; Claude has SessionEnd too"),
+      "transcript_path": "/home/u/.claude/projects/p/s.jsonl"}, "claude"),
+    # It mapped every PermissionRequest to forgecode, which has no hooks;
+    # Claude, Codex and Qwen have PermissionRequest.
     ({"session_id": "s", "hook_event_name": "PermissionRequest",
-      "transcript_path": "/home/u/.claude/projects/p/s.jsonl"}, "claude",
-     "hook_entry maps every PermissionRequest to forgecode; Claude, Codex "
-     "and Qwen have PermissionRequest too"),
-    ({"sessionId": "s"}, "gemini",
-     "hook_entry does not read GEMINI's sessionId session key"),
+      "transcript_path": "/home/u/.claude/projects/p/s.jsonl"}, "claude"),
+    # It read no payload session keys, so GEMINI's sessionId went unseen.
+    ({"sessionId": "s"}, "gemini"),
 ]
 
 
@@ -504,11 +503,7 @@ def _hook_entry_detect():
 
 @pytest.mark.parametrize(
     ("payload", "expected"),
-    _UNTAGGED_PAYLOADS
-    + [
-        pytest.param(payload, expected, marks=pytest.mark.xfail(strict=True, reason=why))
-        for payload, expected, why in _HOOK_ENTRY_KNOWN_DISAGREEMENTS
-    ],
+    _UNTAGGED_PAYLOADS + _HOOK_ENTRY_FORMER_DISAGREEMENTS,
 )
 def test_hook_entry_detector_agrees_with_config(monkeypatch, payload, expected):
     """hook_entry.py keeps a stdlib-only copy of detection; pin it to config's."""
@@ -518,3 +513,26 @@ def test_hook_entry_detector_agrees_with_config(monkeypatch, payload, expected):
 
     assert detect_cli_type(payload) == expected
     assert _hook_entry_detect()(payload) == expected
+
+
+def test_hook_entry_payload_detectors_are_the_registrys():
+    """hook_entry.py cannot import the registry, so its table is a copy; this
+    keeps the copy equal to config._CLI_DETECTORS, order included."""
+    import importlib.util
+
+    from autorun.config import _CLI_DETECTORS
+
+    path = Path(__file__).resolve().parent.parent / "hooks" / "hook_entry.py"
+    spec = importlib.util.spec_from_file_location("autorun_hook_entry_table", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    registry = [
+        (name, tuple(keys), frozenset(events), tuple(hints))
+        for name, keys, events, hints, _env in _CLI_DETECTORS
+    ]
+    copy = [
+        (name, tuple(keys), frozenset(events), tuple(hints))
+        for name, keys, events, hints in module._PAYLOAD_DETECTORS
+    ]
+    assert copy == registry

@@ -149,6 +149,23 @@ _VALID_EXPLICIT_EVENTS = {
     "PostInvocation",
     "Stop",
 }
+#: config._CLI_DETECTORS without its environment variables, in the same
+#: (detection) order: (harness, payload session keys, event names, transcript
+#: path hints). test_multi_platform_detection.py pins it to the registry.
+_PAYLOAD_DETECTORS = (
+    ("antigravity", ("ANTIGRAVITY_SESSION_ID", "AGY_SESSION_ID"), (),
+     (".antigravity", ".gemini/antigravity", ".gemini/antigravity-cli")),
+    ("gemini", ("GEMINI_SESSION_ID", "sessionId"),
+     ("AfterAgent", "AfterModel", "AfterTool", "BeforeAgent", "BeforeModel", "BeforeTool",
+      "BeforeToolSelection"),
+     (".gemini",)),
+    ("qwen", ("QWEN_SESSION_ID",), (), (".qwen",)),
+    ("codex", ("CODEX_THREAD_ID", "CODEX_SESSION_ID"), (), (".codex",)),
+    ("pi", ("PI_SESSION_ID",), (), (".pi/agent",)),
+    ("prime", (), (), (".prime/agent",)),
+    ("forgecode", (), (), (".forge",)),
+    ("opencode", (), (), (".opencode", ".config/opencode")),
+)
 
 
 def explicit_event_name() -> str | None:
@@ -273,34 +290,19 @@ def detect_cli_type(payload: dict | None = None) -> str:
                 return explicit
 
             event_name = payload.get("hook_event_name")
-            if event_name in {"BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent", "SessionEnd"}:
-                return "gemini"
-            if event_name in {"PermissionRequest"}:
-                return "forgecode"
-
             transcript_path = str(payload.get("transcript_path", ""))
-            if ".opencode" in transcript_path or ".config/opencode" in transcript_path:
-                return "opencode"
-            if ".prime/agent" in transcript_path:
-                return "prime"
-            if ".pi/agent" in transcript_path:
-                return "pi"
-            # Antigravity roots live under ~/.gemini, so its hints must be
-            # checked before the plain .gemini hint or they can never match.
-            if (
-                ".gemini/antigravity-cli" in transcript_path
-                or ".gemini/antigravity" in transcript_path
-                or ".antigravity" in transcript_path
-            ):
-                return "antigravity"
-            if ".forge" in transcript_path:
-                return "forgecode"
-            if ".codex" in transcript_path or "/codex/" in transcript_path:
-                return "codex"
-            if ".qwen" in transcript_path or "/qwen/" in transcript_path:
-                return "qwen"
-            if ".gemini" in transcript_path or "/gemini/" in transcript_path:
-                return "gemini"
+            for name, session_keys, event_names, path_hints in _PAYLOAD_DETECTORS:
+                if any(payload.get(key) for key in session_keys):
+                    return name
+                if event_name in event_names:
+                    return name
+                if any(hint in transcript_path for hint in path_hints):
+                    return name
+            # Directory spellings the registry does not list, such as a harness
+            # home moved by its environment variable.
+            for hint, name in (("/codex/", "codex"), ("/qwen/", "qwen"), ("/gemini/", "gemini")):
+                if hint in transcript_path:
+                    return name
             if ".claude" in transcript_path or "/claude/" in transcript_path:
                 return "claude"
 
