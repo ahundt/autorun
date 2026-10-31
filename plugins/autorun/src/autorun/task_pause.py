@@ -174,31 +174,17 @@ def task_enforcement_is_paused(
     return active
 
 
-def _latest_assistant_identity(ctx: EventContext) -> tuple[str, str]:
-    transcript = getattr(ctx, "transcript", None)
-    latest = transcript.latest_assistant_message() if transcript else None
-    if isinstance(latest, tuple) and len(latest) == 2 and all(isinstance(value, str) for value in latest):
-        return latest
-    message = getattr(ctx, "last_assistant_message", "") or ""
-    if not message:
-        return "", ""
-    return fingerprint_call(
-        getattr(ctx, "session_id", ""),
-        "assistant-message",
-        message,
-    ), message
-
-
 def task_pause_allows_stop(
     ctx: EventContext,
     *,
     now: float | None = None,
 ) -> bool:
     """Atomically clear a recovery marker or claim one logical Stop."""
-    assistant_identity, assistant_text = _latest_assistant_identity(ctx)
+    from .task_lifecycle import extract_task_pause_resume_generations, latest_assistant_turn
+
+    assistant_identity, assistant_text = latest_assistant_turn(ctx)
     if not assistant_identity:
         return False
-    from .task_lifecycle import extract_task_pause_resume_generations
 
     resume_generations = set(extract_task_pause_resume_generations(assistant_text))
     call_id = fingerprint_call(

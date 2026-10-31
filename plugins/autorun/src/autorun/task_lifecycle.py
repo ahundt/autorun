@@ -76,6 +76,7 @@ from .platforms import (
     task_tool_role,
     writes_whole_task_list,
 )
+from .scoped_allow import fingerprint_call
 from .task_pause import (
     task_pause_allows_stop,
     task_pause_guidance,
@@ -780,9 +781,37 @@ def _extract_marker_task_ids(
     return list(dict.fromkeys(ids))
 
 
+def latest_assistant_turn(ctx) -> tuple[str, str]:
+    """Identity and text of the newest assistant message, or ``("", "")``.
+
+    The only text a marker reader may treat as the assistant speaking. A
+    harness that sends its transcript (Pi, Prime) includes autorun's own Stop
+    block messages, which list the stale-clear marker with real task ids, so a
+    reader scanning the whole transcript obeys autorun itself. Claude sends no
+    transcript on Stop; its final reply is only in ``last_assistant_message``.
+    """
+    transcript = getattr(ctx, "transcript", None)
+    latest = transcript.latest_assistant_message() if transcript else None
+    if isinstance(latest, tuple) and len(latest) == 2 and all(isinstance(value, str) for value in latest):
+        return latest
+    message = getattr(ctx, "last_assistant_message", "") or ""
+    if not message:
+        return "", ""
+    return fingerprint_call(
+        getattr(ctx, "session_id", ""),
+        "assistant-message",
+        message,
+    ), message
+
+
 def extract_stale_clear_task_ids(*texts: object) -> list[str]:
     """Return unique task ids from configured stale-clear markers."""
     return _extract_marker_task_ids(CONFIG["ghost_clear_marker_template"], *texts)
+
+
+def stale_clear_marker_ids(ctx) -> list[str]:
+    """Stale-clear marker ids in this event's tool result or newest assistant message."""
+    return extract_stale_clear_task_ids(ctx.tool_result_str, latest_assistant_turn(ctx)[1])
 
 
 def extract_delegate_task_ids(*texts: object) -> list[str]:
@@ -2649,13 +2678,9 @@ class TaskLifecycle:
                 digest = hashlib.sha256(tool_text.encode("utf-8")).hexdigest()
                 transcript_size = len(object.__getattribute__(ctx, "_session_transcript"))
                 sources.append((f"tool:{ctx.event}:{ctx.tool_name}:{transcript_size}:{digest}", tool_text))
-            structured = ctx.last_assistant_message
-            if structured and marker_prefix in structured:
-                digest = hashlib.sha256(structured.encode("utf-8")).hexdigest()
-                sources.append((f"assistant-structured:{digest}", structured))
-            latest = ctx.transcript.latest_assistant_message() if ctx.transcript else None
-            if latest and marker_prefix in latest[1]:
-                sources.append((f"assistant:{latest[0]}", latest[1]))
+            latest_identity, latest_text = latest_assistant_turn(ctx)
+            if marker_prefix in latest_text:
+                sources.append((f"assistant:{latest_identity}", latest_text))
             if not sources:
                 return []
 
@@ -2760,8 +2785,7 @@ class TaskLifecycle:
         consecutive = computed.get("consecutive", 1)
 
         if ghost_enabled and consecutive >= min_consecutive:
-            transcript_text = ctx.transcript.text if ctx.transcript else ""
-            marker_ids = extract_stale_clear_task_ids(ctx.tool_result_str, transcript_text)
+            marker_ids = stale_clear_marker_ids(ctx)
             if marker_ids:
                 blocking_ids = {str(task["id"]) for task in incomplete_tasks}
                 cleared = self.clear_stale_task_markers(

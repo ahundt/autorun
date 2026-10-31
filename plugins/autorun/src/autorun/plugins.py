@@ -2208,8 +2208,7 @@ def clear_ghost_tasks(ctx: EventContext) -> Optional[Dict]:
     except Exception:
         return None
 
-    transcript_text = ctx.transcript.text if ctx.transcript else ""
-    matches = task_lifecycle.extract_stale_clear_task_ids(ctx.tool_result_str, transcript_text)
+    matches = task_lifecycle.stale_clear_marker_ids(ctx)
     if not matches:
         return None
 

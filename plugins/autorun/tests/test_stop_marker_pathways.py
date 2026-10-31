@@ -430,7 +430,11 @@ class TestBothPathwaysAgree:
     def test_the_stale_clear_marker_also_works_without_a_tool_call(
         self, isolated_state, cfg
     ):
-        """The other marker had the stop pathway already; keep it that way."""
+        """Claude's Stop carries the final reply only in last_assistant_message.
+
+        It sends no session_transcript, so a marker printed in plain text is
+        visible nowhere else.
+        """
         session_id = "stop-stale-clear"
         cfg.ghost_clear_enabled = True
         seed = TaskLifecycle(config=cfg, session_id=session_id)
@@ -440,7 +444,10 @@ class TestBothPathwaysAgree:
         # The escape hatch only opens after repeated identical blocks.
         blocked = None
         for _ in range(5):
-            ctx = _stop_context(session_id, STALE_CLEAR.format(id="77"))
+            ctx = _stop_context(
+                session_id, "", last_assistant_message=STALE_CLEAR.format(id="77")
+            )
+            assert ctx.transcript.text == ""
             ctx.ghost_clear_min_consecutive_blocks_override = 1
             blocked = TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx)
             if blocked is None:
@@ -449,3 +456,111 @@ class TestBothPathwaysAgree:
         assert blocked is None, (
             f"The stale-clear marker no longer releases the gate: {blocked!r}"
         )
+        assert TaskLifecycle(config=cfg, session_id=session_id).tasks["77"]["status"] \
+            == "ignored"
+
+
+def _pi_message(role, text):
+    """One Pi session message: content is a list of typed blocks."""
+    return {"role": role, "content": [{"type": "text", "text": text}]}
+
+
+def _pi_continuation(reason):
+    """How Pi's extension feeds a Stop block back: a custom session message."""
+    return {"role": "custom", "customType": "autorun-continuation", "content": reason, "display": False}
+
+
+def _pi_context(session_id, messages, event="Stop", tool_name="", tool_result=""):
+    ctx = EventContext(
+        session_id=session_id,
+        event=event,
+        prompt="",
+        tool_name=tool_name,
+        tool_input={},
+        tool_result=tool_result,
+        session_transcript=messages,
+        store=ThreadSafeDB(),
+        cli_type="pi",
+        active_tools=task_tool_evidence("pi"),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_1
+    return ctx
+
+
+class TestStaleClearReadsOnlyTheNewestAssistantMessage:
+    """Pi sends its whole transcript, autorun's own block messages included.
+
+    After the threshold the block message lists the stale-clear marker with
+    each real task id, so a reader that scans the whole transcript finds a
+    marker the assistant never printed and releases the gate by itself.
+    """
+
+    @staticmethod
+    def _seed(cfg, session_id):
+        seed = TaskLifecycle(config=cfg, session_id=session_id)
+        seed.create_task("77", {"subject": "Real work"}, "created")
+        seed.update_task("77", {"status": "in_progress"}, "started")
+
+    def _block_twice(self, cfg, session_id, messages):
+        """Two identical Stop blocks; the second prints the marker for #77."""
+        for reply in ("Working on it.", "Still working."):
+            messages.append(_pi_message("assistant", reply))
+            ctx = _pi_context(session_id, list(messages))
+            reason = _blocked_text(TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx))
+            assert "77" in reason
+            messages.append(_pi_continuation(reason))
+        assert STALE_CLEAR.format(id="77") in messages[-1]["content"], (
+            "precondition: the second block names the stale-clear marker for #77"
+        )
+
+    def test_pi_stop_does_not_obey_its_own_block_message(self, isolated_state, cfg):
+        session_id = "pi-stale-self"
+        self._seed(cfg, session_id)
+        messages = [_pi_message("user", "do the work")]
+        self._block_twice(cfg, session_id, messages)
+
+        messages.append(_pi_message("assistant", "Continuing the work."))
+        ctx = _pi_context(session_id, messages)
+        blocked = TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx)
+
+        assert "77" in _blocked_text(blocked), (
+            f"the gate released on a marker autorun printed itself: {blocked!r}"
+        )
+        assert TaskLifecycle(config=cfg, session_id=session_id).tasks["77"]["status"] \
+            == "in_progress"
+
+    def test_pi_post_tool_use_does_not_obey_its_own_block_message(
+        self, isolated_state, cfg, monkeypatch
+    ):
+        from autorun import plugins, task_lifecycle as tl
+
+        monkeypatch.setattr(tl.TaskLifecycleConfig, "load", staticmethod(lambda *a, **k: cfg))
+        session_id = "pi-stale-self-posttool"
+        self._seed(cfg, session_id)
+        messages = [_pi_message("user", "do the work")]
+        self._block_twice(cfg, session_id, messages)
+
+        messages.append(_pi_message("assistant", "Running the tests."))
+        ctx = _pi_context(
+            session_id, messages, event="PostToolUse", tool_name="bash", tool_result="3 passed"
+        )
+        plugins.clear_ghost_tasks(ctx)
+
+        assert TaskLifecycle(config=cfg, session_id=session_id).tasks["77"]["status"] \
+            == "in_progress"
+
+    def test_pi_marker_in_the_newest_assistant_message_still_clears(
+        self, isolated_state, cfg
+    ):
+        session_id = "pi-stale-own-marker"
+        self._seed(cfg, session_id)
+        messages = [_pi_message("user", "do the work")]
+        self._block_twice(cfg, session_id, messages)
+
+        messages.append(_pi_message("assistant", f"That task is stale.\n{STALE_CLEAR.format(id='77')}"))
+        ctx = _pi_context(session_id, messages)
+
+        assert TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx) is None
+        assert TaskLifecycle(config=cfg, session_id=session_id).tasks["77"]["status"] \
+            == "ignored"
