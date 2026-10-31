@@ -852,6 +852,7 @@ Listed only because the coverage test matches the version as a substring.
 |------|---------------------|
 | `docs/releases/1.0.0rc1.md` | Released notes; only inside `1.0.0rc1` |
 | `docs/releases/1.0.0rc3.md` | Released notes; only inside `1.0.0rc3` |
+| `docs/codex-cli-hooks-api.md` | Names `1.0.0rc3`, the last release that always wrote `./plugins/<name>` |
 | `docs/hooks_api_reference.md` | Generic plugin path and manifest examples |
 | `plugins/autorun/skills/ai-skill-builder/references/ai-skill-builder-guide.md` | Example skill version in a frontmatter sample |
 | `plugins/autorun/skills/ai-skill-builder/references/best-practices.md` | Example skill version and changelog line |
@@ -862,12 +863,15 @@ Listed only because the coverage test matches the version as a substring.
 | `plugins/autorun/skills/cli-demo-recorder/SKILL.md` | The skill's own version history |
 | `plugins/autorun/skills/function-signature-and-parameter-guidance/references/sources.md` | The skill's own version history |
 | `plugins/autorun/src/autorun/installer/status.py` | Self-check fixture for build metadata |
+| `plugins/autorun/src/autorun/installer/steps.py` | Names `1.0.0rc3` in the comment on the old marketplace entry |
 | `plugins/autorun/tests/test_backend_e2e_contract.py` | A third-party tool's version in sample output |
 | `plugins/autorun/tests/test_documentation_consistency.py` | Prerelease examples in comments and data |
 | `plugins/autorun/tests/test_error_handling.py` | Mocked command output |
+| `plugins/autorun/tests/test_install_codex_location.py` | Names `1.0.0rc3` in a docstring on the old marketplace entry |
 | `plugins/autorun/tests/test_install_gotchas.py` | Fixture cache path |
 | `plugins/autorun/tests/test_install_status.py` | Build metadata fixtures |
 | `plugins/autorun/tests/test_integrations.py` | Sample `pyproject.toml` content |
+| `plugins/autorun/tests/test_plan_export_review_fixes.py` | Names the 1.0.0 review that found these regressions |
 | `plugins/autorun/tests/test_workaround_flag_grammar.py` | A harness version used as test input |
 
 ## Gotchas (learned from 0.10.0 → 0.10.1 release)
