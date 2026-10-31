@@ -323,6 +323,36 @@ class TestNoAndOkShareOnePatternGrammar:
         assert message.startswith("❌"), message
 
 
+class TestFilePathsAreNotParsedAsShell:
+    """E10: file paths went through the shell parser, so `My Project/Cargo.toml`
+    parsed as the command `My` and Windows paths lost their backslashes."""
+
+    def _edit(self, path, *, sid=None, store=None, new_string='version = "1.2.3"'):
+        ctx = EventContext(
+            session_id=sid or _sid(),
+            event="PreToolUse",
+            tool_name="Edit",
+            tool_input={"file_path": path, "old_string": 'version = "1.2.2"', "new_string": new_string},
+            store=store if store is not None else ThreadSafeDB(),
+        )
+        return plugins.check_blocked_commands(ctx)
+
+    def test_version_bump_guard_sees_manifests_in_paths_with_spaces_or_backslashes(self):
+        for path in ("/Users/me/My Project/Cargo.toml", r"C:\repo\Cargo.toml", "/repo/Cargo.toml"):
+            assert _decision(self._edit(path)) == "deny", path
+
+    def test_manifest_name_inside_a_longer_file_name_does_not_match(self):
+        assert _decision(self._edit("/repo/notes-about-Cargo.toml.md")) != "deny"
+
+    def test_session_file_block_matches_by_path_parts(self):
+        sid, store = _sid(), ThreadSafeDB()
+        _prompt("/ar:no secrets.env", sid=sid, store=store)
+        _prompt("/ar:no config/prod.yaml", sid=sid, store=store)
+        for path in ("/a b/secrets.env", r"C:\app\secrets.env", "/srv/app/config/prod.yaml"):
+            assert _decision(self._edit(path, sid=sid, store=store, new_string="x")) == "deny", path
+        assert _decision(self._edit("/srv/app/other/prod.yaml", sid=sid, store=store, new_string="x")) != "deny"
+
+
 class TestAllowListWritesDoNotUndoConcurrentClaims:
     """E5: cleanup and /ar:ok wrote back a list read before the lock, so a
     one-use grant claimed meanwhile got its use back."""

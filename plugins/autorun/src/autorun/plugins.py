@@ -427,20 +427,32 @@ def _compile_pattern(pattern: str, ptype: str):
     return pattern
 
 
-def _match(cmd: str, pattern: str, ptype: str = "literal") -> bool:
+_PATH_SEPARATORS = re.compile(r"[\\/]+")
+
+
+def _match(cmd: str, pattern: str, ptype: str = "literal", *, path: bool = False) -> bool:
     """
     Unified pattern matching with security.
 
     Args:
-        cmd: Command string to match against
+        cmd: Command string (or, with ``path``, a file path) to match against
         pattern: Pattern to match
         ptype: Pattern type - "literal", "regex", or "glob"
+        path: ``cmd`` is a file path, not shell. A literal then matches
+            trailing path components (`Cargo.toml`, `config/prod.yaml`) under
+            either separator; the shell parser read `My Project/Cargo.toml` as
+            the command `My` and dropped Windows backslashes.
 
     Returns:
         bool: True if pattern matches command
     """
     if not cmd or not pattern:
         return False
+
+    if ptype == "literal" and path:
+        wanted = [part for part in _PATH_SEPARATORS.split(pattern) if part]
+        parts = [part for part in _PATH_SEPARATORS.split(cmd) if part]
+        return bool(wanted) and parts[-len(wanted):] == wanted
 
     if ptype == "literal":
         return command_matches_pattern(cmd, pattern)
@@ -1183,7 +1195,9 @@ def _command_segments(cmd: str, event_type: str) -> tuple[str, ...]:
     return (cmd,)
 
 
-def _hit_segments(cmd: str, segments: tuple[str, ...], pattern: str, ptype: str) -> tuple[str, ...]:
+def _hit_segments(
+    cmd: str, segments: tuple[str, ...], pattern: str, ptype: str, *, path: bool = False
+) -> tuple[str, ...]:
     """Segments ``pattern`` matches.
 
     A lone segment is also matched as typed, so a regex or glob that names a
@@ -1192,12 +1206,14 @@ def _hit_segments(cmd: str, segments: tuple[str, ...], pattern: str, ptype: str)
     `&&`) is attributed to none, so no allow can waive it.
     """
     if len(segments) == 1:
-        hit = _match(segments[0], pattern, ptype) or _match(cmd, pattern, ptype)
+        hit = _match(segments[0], pattern, ptype, path=path) or _match(cmd, pattern, ptype, path=path)
         return segments if hit else ()
-    return tuple(segment for segment in segments if _match(segment, pattern, ptype))
+    return tuple(segment for segment in segments if _match(segment, pattern, ptype, path=path))
 
 
-def _segment_grants(ctx: EventContext, cmd: str, segments: tuple[str, ...], call_id: str) -> dict:
+def _segment_grants(
+    ctx: EventContext, cmd: str, segments: tuple[str, ...], call_id: str, *, path: bool = False
+) -> dict:
     """Map each segment to the first valid allow covering it (session first)."""
     grants: dict = {}
     for scope_name in ("session", "global"):
@@ -1207,7 +1223,7 @@ def _segment_grants(ctx: EventContext, cmd: str, segments: tuple[str, ...], call
             sa = ScopedAllow.from_dict(entry)
             if not sa.is_valid(call_id):
                 continue
-            for segment in _hit_segments(cmd, segments, sa.pattern, sa.pattern_type):
+            for segment in _hit_segments(cmd, segments, sa.pattern, sa.pattern_type, path=path):
                 grants.setdefault(segment, (accessor, sa))
         _drop_expired_allows(accessor, allows)
     return grants
@@ -1329,8 +1345,9 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # matches and nothing else, so `/ar:ok rm` cannot carry a force-push that
     # shares its line. When every segment is covered the line is allowed
     # outright (skipping the cache gate and every block, as before).
+    is_path = event_type == "file"
     segments = _command_segments(cmd, event_type)
-    grants = _segment_grants(ctx, cmd, segments, call_id)
+    grants = _segment_grants(ctx, cmd, segments, call_id, path=is_path)
     if all(segment in grants for segment in segments):
         claimed = _claim_grants(grants.values(), call_id)
         if claimed is not None:
@@ -1342,7 +1359,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 
     def waiving_grants(pattern: str, ptype: str) -> list | None:
         """Grants that cover every segment this block hit, or None."""
-        hits = _hit_segments(cmd, segments, pattern, ptype)
+        hits = _hit_segments(cmd, segments, pattern, ptype, path=is_path)
         if hits and all(hit in grants for hit in hits):
             return [grants[hit] for hit in hits]
         return None
@@ -1380,7 +1397,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     for scope_name, ok_command in (("session", "/ar:ok"), ("global", "/ar:globalok")):
         for b in ScopeAccessor(ctx, scope_name).get():
             ptype = b.get("pattern_type", "literal")
-            if not _match(cmd, b["pattern"], ptype):
+            if not _match(cmd, b["pattern"], ptype, path=is_path):
                 continue
             key = b["pattern"]
             if key in seen:
@@ -1430,7 +1447,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             # Check patterns (OR-ed): first match within this intg adds its message once
             for pattern in intg.patterns:
                 try:
-                    if command_matches_pattern(cmd, pattern):  # O(1) cached
+                    if _match(cmd, pattern, "literal", path=is_path):  # O(1) cached
                         # Evaluate predicates after the concrete pattern match.
                         # Pattern-aware predicates such as _not_in_pipe need to
                         # decide on the matched command occurrence, not on the
