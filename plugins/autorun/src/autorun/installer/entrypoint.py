@@ -237,10 +237,13 @@ def _harnesses(
         ]
 
     table: Mapping[str, tuple] = steps.STEPS
-    seen = {getattr(platform, "name", "") for platform in selected}
+    # Checked against every registered name, not only the selected ones: an
+    # uninstall selects them all, so a name that passed here once would make
+    # every later uninstall raise and remove nothing.
+    seen = {*PLATFORMS, *(getattr(platform, "name", "") for platform in selected)}
     for spec in custom:
         if spec.name in seen:
-            raise ValueError(f"custom harness {spec.name!r} duplicates a registered harness")
+            raise ValueError(f"custom harness {spec.name!r} duplicates a registered harness; give it another name")
         platform = settings.synthesize(spec)
         selected.append(platform)
         seen.add(spec.name)

@@ -518,6 +518,27 @@ def test_uninstall_with_a_custom_harness_removes_what_install_put_there(monkeypa
     assert "Mine" not in ((root / "AGENTS.md").read_text() if (root / "AGENTS.md").exists() else "")
 
 
+def test_a_custom_harness_named_like_any_registered_harness_is_refused(monkeypatch, isolated, capsys):
+    """``gemini=qwen:...`` used to install whenever legacy gemini was not
+    selected; every uninstall selects all registered harnesses, so each one
+    then raised and removed nothing. Refuse the name before writing."""
+    from autorun.installer import entrypoint
+
+    monkeypatch.setattr(entrypoint, "_run", lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""))
+    monkeypatch.setattr(
+        entrypoint.shutil, "which", lambda name: f"/bin/{name}" if name in {"qwen-lab", "uv"} else None
+    )
+
+    assert (
+        entrypoint.install_plugins(
+            "ar", custom_harnesses=("gemini=qwen:qwen-lab:~/.qwen-lab",), conductor=False, tool=False
+        )
+        == 1
+    )
+    assert "duplicates a registered harness" in capsys.readouterr().out
+    assert not (isolated / ".qwen-lab").exists()
+
+
 def test_custom_extension_flavor_registers_with_its_declared_binary(monkeypatch, isolated):
     from autorun.installer import entrypoint
 
