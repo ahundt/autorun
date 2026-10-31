@@ -976,14 +976,15 @@ def test_install_with_no_harness_selected_retires_nothing(sandbox):
     assert staged.is_dir(), "empty selection retired a staged extension source"
 
 
-def test_staging_for_an_unregistered_harness_still_retires(sandbox):
+def test_staging_for_an_unregistered_harness_retires_on_uninstall(sandbox):
     """The whole-root sweep existed for the upgrade path: a harness removed
-    from the registry must not leak its staged tree forever. Scoping the
-    sweep to selected harnesses keeps that promise only if unregistered
-    names remain sweepable."""
+    from the registry must not leak its staged tree forever. An install
+    cannot tell that name from a custom harness given by --custom-harness on
+    an earlier run, whose extension still links into the tree, so only
+    uninstall sweeps names no platform claims."""
     import shutil
 
-    from autorun.installer.orchestrate import install
+    from autorun.installer.orchestrate import install, uninstall
 
     common = dict(
         marketplace_root=REPO,
@@ -991,14 +992,16 @@ def test_staging_for_an_unregistered_harness_still_retires(sandbox):
         settings={"skill_placement": {"": "auto"}},
         home=sandbox,
         available=(),
-        state_dir=sandbox / ".state",
     )
-    assert install(harnesses=(PLATFORMS["qwen"],), **common).ok is True
+    assert install(harnesses=(PLATFORMS["qwen"],), state_dir=sandbox / ".state", **common).ok
     sources = sandbox / ".autorun" / "installer" / "extension-sources"
     legacy = sources / "legacyharness" / "ar"
     shutil.copytree(sources / "qwen" / "ar", legacy)
 
-    assert install(harnesses=(PLATFORMS["claude"],), **common).ok is True
+    assert install(harnesses=(PLATFORMS["claude"],), state_dir=sandbox / ".state", **common).ok
+    assert legacy.is_dir(), "an install may be sweeping a custom harness's live source"
+
+    uninstall(harnesses=(PLATFORMS["claude"],), teardown_enabled=False, **common)
     assert not legacy.exists(), (
         "a staged tree under a name no platform claims must retire"
     )

@@ -973,20 +973,23 @@ def _config_roots(
     # retired Gemini's staged source during a --claude-only install: no
     # gemini step ran, nothing claimed extension-sources/gemini/ar, and the
     # retirement sweep read that absence as "no longer shipped". Scope the
-    # sweep to the selected harnesses' subtrees, and keep the upgrade path by
-    # also sweeping any subtree whose name no registered platform claims — a
-    # harness removed from the registry must not leak its staging forever.
+    # sweep to the selected harnesses' subtrees. A subtree no registered
+    # platform claims is swept only on uninstall: it is either a harness
+    # removed from the registry or a custom harness given by --custom-harness
+    # on an earlier run, whose extension still links into it, and an install
+    # cannot tell the two apart.
     found.extend(staging / name for name in sorted(selected_names))
-    try:
-        found.extend(
-            child
-            for child in staging.iterdir()
-            if child.is_dir()
-            and child.name not in PLATFORMS
-            and child.name not in selected_names
-        )
-    except OSError:
-        pass
+    if removing:
+        try:
+            found.extend(
+                child
+                for child in staging.iterdir()
+                if child.is_dir()
+                and child.name not in PLATFORMS
+                and child.name not in selected_names
+            )
+        except OSError:
+            pass
     return found
 
 

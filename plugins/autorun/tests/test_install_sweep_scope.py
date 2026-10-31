@@ -73,6 +73,32 @@ def test_a_gemini_only_install_leaves_antigravitys_trees_inside_gemini_home(sand
     assert (antigravity / "README.md").is_file(), "--uninstall --gemini removed Antigravity's"
 
 
+def test_an_install_without_the_custom_harness_flag_keeps_its_extension_source(
+    sandbox, tmp_path
+):
+    """A custom Gemini-family harness given only via --custom-harness links its
+    extension to extension-sources/<name>/ar. The next install without the
+    flag swept that subtree (its name is neither registered nor selected),
+    leaving the harness a dangling extension link. Uninstall still sweeps it.
+    """
+    sources = tmp_path / "sources"
+    custom = _marked_tree(sources / "work" / "ar")
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}, "_extension_source_root": str(sources)},
+        home=sandbox,
+        harnesses=(PLATFORMS["gemini"],),
+        available=(),
+    )
+
+    orchestrate.install(state_dir=sandbox / ".state", **common)
+    assert (custom / "README.md").is_file(), "an unregistered harness's source was swept"
+
+    orchestrate.uninstall(teardown_enabled=False, **common)
+    assert not custom.exists(), "uninstall retires every staging subtree"
+
+
 def test_a_codex_flavor_custom_harness_keeps_the_codex_plugin_and_its_entry(sandbox):
     """`--install --claude` with a Codex-flavor custom harness selected.
 
