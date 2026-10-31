@@ -79,8 +79,8 @@ class TestArgumentHandling:
 
         calls = []
         monkeypatch.setenv("AUTORUN_UPDATE_METHOD", "gemini")
-        monkeypatch.setattr(entrypoint, "version", lambda _name: "1.0.0")
-        monkeypatch.setattr(entrypoint, "_latest_version", lambda _current: "1.0.1")
+        monkeypatch.setattr(entrypoint, "version", lambda _name: "0.9.0")
+        monkeypatch.setattr(entrypoint, "_latest_version", lambda _current: "0.9.1")
         monkeypatch.setattr(
             entrypoint, "_run", lambda argv, **_k: calls.append(tuple(argv)) or subprocess.CompletedProcess(argv, 0, "", "")
         )

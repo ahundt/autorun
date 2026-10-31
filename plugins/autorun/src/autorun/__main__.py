@@ -495,14 +495,10 @@ For more information: https://github.com/ahundt/autorun
         "Passed by hook_entry.py so every pathway receives CLI identity. "
         "When present, also sets AUTORUN_CLI_TYPE env var for downstream use.",
     )
-    hook_group.add_argument(
-        "--event",
-        default=None,
-        metavar="EVENT",
-        help="Hook event name. Antigravity hook commands append it "
-        "(platforms.Platform._native_handler); hook_entry.py reads it, and the "
-        "payload's hook_event_name wins.",
-    )
+    # Accepted, not advertised: Antigravity hook commands append it
+    # (platforms.Platform._native_handler) and hook_entry.py reads it; the
+    # payload's hook_event_name wins. Nobody types it.
+    hook_group.add_argument("--event", default=None, help=argparse.SUPPRESS)
 
     info_group = parser.add_argument_group("Information")
     info_group.add_argument(
