@@ -777,3 +777,43 @@ accept edits on
         status = tmux_get_claude_window_status(mock, 'main', '1')
 
         assert status['is_active'] is False
+
+
+class TestSetModeReachesTheRequestedWindow:
+    """The set_mode action called cycle_to_mode(tmux, mode, session, window,
+    None), so the session name was read as screen content and the window was
+    used as the session; cycle_to_mode also pressed Shift+Tab max_cycles times
+    without reading the screen again and reported success regardless."""
+
+    def _run(self, screens, mode="plan"):
+        sent = []
+        captures = iter(screens)
+
+        def shift_tab(tmux, session, window, pane):
+            sent.append((session, window))
+            return True
+
+        with patch.object(tmux_module, "send_shift_tab", side_effect=shift_tab), \
+                patch.object(tmux_module, "_tmux_capture_pane",
+                             side_effect=lambda *a, **k: next(captures)), \
+                patch("time.sleep", lambda s: None):
+            result = tmux_module.tmux_dangerous_batch_execute(
+                Mock(), "set_mode", "main:5", message=mode, force=True, delay_ms=0
+            )
+        return result, sent
+
+    def test_it_presses_until_the_target_mode_shows_then_stops(self):
+        result, sent = self._run([
+            "> \n",                       # before: default mode
+            "> \n  accept edits on\n",    # after press 1
+            "> \n  plan mode on\n",       # after press 2: reached
+        ])
+
+        assert sent == [("main", "5"), ("main", "5")]
+        assert result["success_count"] == 1, result
+
+    def test_it_reports_failure_when_the_mode_never_shows(self):
+        result, sent = self._run(["> \n"] * 10)
+
+        assert sent and all(target == ("main", "5") for target in sent)
+        assert result["success_count"] == 0, result

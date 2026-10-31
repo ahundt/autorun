@@ -351,3 +351,22 @@ class TestSelectionParsing:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_discovery_calls_tmux_list_windows_with_its_real_signature():
+    """discover_claude_sessions passed include_git=True, which tmux_list_windows
+    does not accept, so every /ar:tabs discovery raised TypeError. The
+    autospec enforces the real signature, which a bare Mock would not."""
+    from unittest.mock import create_autospec
+
+    from autorun import tmux_utils
+
+    listing = create_autospec(tmux_utils.tmux_list_windows, return_value=[
+        {"session": "main", "w": 1, "content": "> ", "title": "t", "cmd": "claude"},
+    ])
+    tmux = Mock()
+    tmux.is_claude_session.return_value = True
+    with patch.object(tmux_utils, "tmux_list_windows", listing):
+        sessions = discover_claude_sessions(tmux)
+
+    assert [s["tmux_target"] for s in sessions] == ["main:1"]

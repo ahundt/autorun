@@ -1959,10 +1959,11 @@ def cycle_to_mode(
             return False
         # Brief delay to allow mode switch
         time.sleep(0.2)
-        # Would need to re-capture content to check mode
-        # For now, return True after cycling (caller should verify)
+        content = _tmux_capture_pane(tmux, session, window, DEFAULT_CAPTURE_LINES)
+        if tmux_detect_claude_mode(content) == target_mode:
+            return True
 
-    return True  # Caller should verify mode after cycling
+    return False
 
 
 def find_windows_awaiting_input(
@@ -2301,7 +2302,10 @@ def tmux_dangerous_batch_execute(
                     success = False
                     reason = "no_mode_specified"
                 else:
-                    success = cycle_to_mode(tmux, message, session, window, None)
+                    current = _tmux_capture_pane(
+                        tmux, session, window, DEFAULT_CAPTURE_LINES
+                    )
+                    success = cycle_to_mode(tmux, message, current, session, window, None)
                     reason = "cycled" if success else "failed"
 
             else:
@@ -2344,7 +2348,7 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
     Returns list of session dicts containing all tmux_list_windows() fields
     plus: tmux_target, session_name, window_id, content_preview, branch.
     """
-    all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES, include_git=True)
+    all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES)
     sessions = []
     for win in all_windows:
         if tmux.is_claude_session(win['session'], str(win['w'])):
