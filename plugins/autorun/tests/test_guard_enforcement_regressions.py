@@ -96,3 +96,24 @@ class TestAllowWaivesOnlyTheSegmentItMatches:
         assert _decision(denied) == "deny"
         allowed = plugins.check_blocked_commands(_bash("rm -rf b", sid=sid, store=store))
         assert _decision(allowed) != "deny", allowed
+
+
+class TestUseInsteadIsBuiltFromTheMatchedCommand:
+    """E4: the redirect substituted words of the whole line, e.g. `trash ~`."""
+
+    def test_trash_suggestion_names_only_the_rm_operands(self):
+        cases = {
+            "ls ~ ; rm -r old": "trash old",
+            "cd /tmp && rm -rf build": "trash build",
+            "sudo rm -rf /var/x": "trash /var/x",
+            "rm -rf 'my dir'": "trash 'my dir'",
+        }
+        for cmd, expected in cases.items():
+            reason = _reason(plugins.check_blocked_commands(_bash(cmd)))
+            suggestions = [line for line in reason.splitlines() if line.startswith("Use instead:")]
+            assert suggestions, (cmd, reason)
+            assert all(line == f"Use instead: `{expected}`" for line in suggestions), (cmd, suggestions)
+
+    def test_fixed_redirect_is_shown_unchanged(self):
+        reason = _reason(plugins.check_blocked_commands(_bash("cd repo && git clean -fd")))
+        assert "Use instead: `git clean -n`" in reason, reason

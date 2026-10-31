@@ -1381,16 +1381,20 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                             seen.add(key)
                             msg = format_suggestion(intg.message_for_cli(ctx.cli_type), ctx.cli_type)
                             redirect = intg.redirect_for_cli(ctx.cli_type)
-                            if redirect:
-                                # Substitute {args} with actual args, {file} with target file,
-                                # {file_args} with non-flag args only (strips -f, -r, etc.)
-                                args = cmd.split(maxsplit=1)[1] if " " in cmd else ""
-                                parts = cmd.split()
-                                non_flag_parts = [p for p in parts[1:] if p != "--" and not p.startswith("-")]
-                                redirect_cmd = redirect.replace("{args}", args)
-                                redirect_cmd = redirect_cmd.replace("{file_args}", " ".join(non_flag_parts))
+                            # Substitute from the matched command's own argv, never
+                            # the whole line: `cd /tmp && rm -rf build` must suggest
+                            # `trash build`, not `trash /tmp && rm build`. No argv
+                            # found -> no templated suggestion rather than a wrong one.
+                            tokens = command_tokens_for(cmd, pattern.split()[0]) if event_type == "bash" else ()
+                            if redirect and (tokens or "{" not in redirect):
+                                # {args}: all operands; {file_args}: non-flag ones;
+                                # {file}: the last non-flag one. Re-quoted for the shell.
+                                operands = list(tokens[1:])
+                                non_flag_parts = [p for p in operands if p != "--" and not p.startswith("-")]
+                                redirect_cmd = redirect.replace("{args}", shlex.join(operands))
+                                redirect_cmd = redirect_cmd.replace("{file_args}", shlex.join(non_flag_parts))
                                 if "{file}" in redirect_cmd:
-                                    file_val = non_flag_parts[-1] if non_flag_parts else args
+                                    file_val = shlex.join(non_flag_parts[-1:]) or shlex.join(operands)
                                     redirect_cmd = redirect_cmd.replace("{file}", file_val)
                                 msg += f"\n\nUse instead: `{redirect_cmd}`"
                             used = waiving_grants(pattern, "literal")
