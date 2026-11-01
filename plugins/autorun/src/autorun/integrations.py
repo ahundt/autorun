@@ -46,6 +46,7 @@ from .command_detection import (
     extract_commands,
     git_subcommand_index,
     shell_command_from_tool_input,
+    shells_running_downloads,
     strip_transparent_command_wrappers,
 )
 
@@ -1288,6 +1289,17 @@ def _tmutil_mutates_backup_safety(ctx: any) -> bool:
         return True
 
 
+def _shell_runs_downloaded_script(ctx: any) -> bool:
+    """Whether the matched shell runs a script straight from curl/wget.
+
+    Judged per shell: in `sh build.sh && curl ... | bash` only `bash` is, so an
+    allow for `sh` cannot carry the download.
+    """
+    shells = shells_running_downloads(shell_command_from_tool_input(getattr(ctx, "tool_input", {})))
+    pattern = getattr(ctx, "_autorun_current_pattern", None)
+    return pattern in shells if isinstance(pattern, str) and pattern else bool(shells)
+
+
 # Predicate functions (O(1) lookups)
 # v4: new primary names `_repo_differs_from_head` and `_file_differs_from_ref`
 # are ref-aware and cover staged-only changes that the legacy narrow-diff
@@ -1310,6 +1322,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_sed_modifies_files": _sed_modifies_files,
     "_restore_is_destructive": _restore_is_destructive,
     "_tmutil_mutates_backup_safety": _tmutil_mutates_backup_safety,
+    "_shell_runs_downloaded_script": _shell_runs_downloaded_script,
 }
 
 

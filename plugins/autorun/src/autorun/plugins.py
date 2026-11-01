@@ -1443,13 +1443,16 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                         # Evaluate predicates after the concrete pattern match.
                         # Pattern-aware predicates such as _not_in_pipe need to
                         # decide on the matched command occurrence, not on the
-                        # entire shell script.
+                        # entire shell script. A "no" for this pattern leaves
+                        # the integration's other patterns to be tried: in
+                        # `bash x.sh && curl ... | sh` the `bash` pattern is
+                        # not the shell fed by the download, `sh` is.
                         try:
                             if not check_when_predicate(intg.when, ctx, pattern):
-                                break
+                                continue
                         except Exception as e:
                             logger.warning(f"When predicate '{intg.when}' failed: {e}")
-                            break
+                            continue
                         if _default_integration_allows_native_shell_read(ctx, pattern, cmd, intg.source):
                             break
                         action = intg.action_for_cli(ctx.cli_type)

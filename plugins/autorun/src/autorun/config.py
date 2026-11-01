@@ -307,6 +307,28 @@ DEFAULT_INTEGRATIONS = {
             "Scope: [N|5m|permanent] (default 1 use)"
         ),
     },
+    # `curl ... | sh`, `bash <(curl ...)`, `bash -c "$(curl ...)"`: the script
+    # never passes through the command parser, so no guard sees what it runs.
+    # Scripts autorun can read (`bash <<EOF`, `echo ls | sh`) are parsed instead.
+    # Patterns: command_detection.SHELL_EXEC_COMMANDS, spelled out because
+    # config.py imports only the stdlib (a test pins the two equal).
+    "shell-runs-downloaded-script": {
+        "patterns": ["bash", "dash", "fish", "ksh", "sh", "su", "zsh"],
+        "action": "block",
+        "when": "_shell_runs_downloaded_script",
+        "suggestion": (
+            "Blocked: this shell would run a script straight from a network download "
+            "(curl or wget). autorun checks each command before it runs, but it cannot "
+            "read the commands inside a script it never sees, so none of its guards can "
+            "check what this script does.\n\n"
+            "**Instead:** download the file, read it, then run it:\n"
+            "  curl -fsSL -o /tmp/install.sh <url>\n"
+            "  # read /tmp/install.sh with the {read} tool\n"
+            "  sh /tmp/install.sh\n\n"
+            "To allow (default 1 use): /ar:ok <shell>, the shell the download is fed to, e.g. /ar:ok sh or /ar:ok bash\n"
+            "Scope: [N|5m|permanent] (default 1 use)"
+        ),
+    },
     # Command-line tools that should use platform-native AI tools or shell
     # affordances instead (v0.8.0)
     # These block the BASH COMMAND (e.g. "grep") and suggest the platform-native

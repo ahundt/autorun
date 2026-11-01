@@ -862,7 +862,7 @@ Three-tier policy system enforced via PreToolUse hooks:
 | Glob | `glob:` | Glob pattern matching | `glob:*.tmp` | `file.tmp` |
 | Auto | `/.../` | Auto-detects regex | `/eval\(./` | `eval(...` |
 
-**Default integrations (49 entries):**
+**Default integrations (50 entries):**
 - `rm` → Suggests 'trash' CLI (safe file deletion with recovery)
 - `rm -rf` → Dangerous, suggests trash CLI alternatives
 - `git reset --hard` → CRITICAL: Permanently discards uncommitted changes, suggests safer git alternatives
@@ -876,6 +876,7 @@ Three-tier policy system enforced via PreToolUse hooks:
 - `dd if=` → Disk write warning, suggests backup tools
 - `mkfs` → Filesystem warning, suggests backup first
 - `fdisk` → Partition warning, suggests GUI alternatives
+- `curl ... | sh`, `bash <(curl ...)`, `bash -c "$(curl ...)"` (and `wget`) → Blocked: autorun cannot check a script it never reads; download the file, read it, then run it. `/ar:ok <shell>` (e.g. `/ar:ok bash`) allows one run
 - `sed` → Suggests {edit} AI tool instead of bash sed for file modifications
 - `awk` → Suggests Python or {read} AI tool instead of awk for text processing
 - `grep` → Suggests platform-native search instead (Claude `Grep`, Gemini `grep_search`, Codex `rg -n`; blocked when not in a pipe)

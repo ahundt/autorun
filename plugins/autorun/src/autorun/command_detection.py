@@ -48,6 +48,7 @@ __all__ = [
     "ExtractedCommands",
     "BASHLEX_AVAILABLE",
     "shell_command_from_tool_input",
+    "shells_running_downloads",
     "strip_transparent_command_wrappers",
 ]
 
@@ -84,6 +85,16 @@ SHELL_EXEC_COMMANDS: Final[frozenset[str]] = frozenset({
 
 # -c alone or bundled with other single-letter options: -lc, -ec, -xec.
 _SHELL_C_OPTION: Final[re.Pattern[str]] = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+
+# Commands whose output is a network download. A shell that runs that output
+# runs commands no guard here ever reads.
+# ponytail: curl and wget only; add fetch/aria2c/httpie if they show up.
+NETWORK_DOWNLOADERS: Final[frozenset[str]] = frozenset({"curl", "wget"})
+
+# `<(curl` / `$(wget`, for the shlex fallback, which has no substitution nodes.
+_SUBSTITUTED_DOWNLOAD: Final[re.Pattern[str]] = re.compile(
+    r"[<$]\(\s*(?:\S*/)?(?:" + "|".join(sorted(NETWORK_DOWNLOADERS)) + r")\b"
+)
 
 # find actions whose following words, up to `;` or `{} +`, are a command.
 _FIND_EXEC_ACTIONS: Final[frozenset[str]] = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
@@ -215,6 +226,9 @@ class ExtractedCommands:
     names: frozenset[str]
     strings: frozenset[str]
     all_potential: frozenset[str]
+    # Shells (by name) whose script is a curl/wget download: piped in,
+    # `<(...)`, or `-c "$(...)"`.
+    fetched_shells: frozenset[str] = frozenset()
 
     def matches_single_word(self, pattern: str) -> bool:
         """O(1) lookup in all potential commands."""
@@ -640,6 +654,11 @@ def _reads_stdin_script(tokens: list[str]) -> bool:
     )
 
 
+def _is_download(tokens: list[str]) -> bool:
+    """Whether wrapper-stripped `tokens` is a curl/wget command."""
+    return bool(tokens) and _get_basename(tokens[0]) in NETWORK_DOWNLOADERS
+
+
 def _herestring(tokens: list[str]) -> str | None:
     """`<<< text` as shlex leaves it in argv (bashlex makes it a redirect)."""
     for i, token in enumerate(tokens):
@@ -734,17 +753,22 @@ def _extract_from_tokens(tokens: list[str]) -> tuple[str | None, str | None, set
 
 # ─── Recursive Extraction ─────────────────────────────────────────────────────
 
-def _extract_recursive(cmd: str, depth: int) -> tuple[set[str], set[str], set[str]]:
-    """Recursively extract commands, including from 'sh -c' patterns."""
-    if depth >= _MAX_RECURSION_DEPTH:
-        return set(), set(), set()
+def _extract_recursive(cmd: str, depth: int) -> tuple[set[str], set[str], set[str], set[str]]:
+    """Recursively extract commands, including from 'sh -c' patterns.
 
-    names, strings, potential = set(), set(), set()
+    Returns (names, strings, potential, fetched_shells).
+    """
+    if depth >= _MAX_RECURSION_DEPTH:
+        return set(), set(), set(), set()
+
+    names, strings, potential, fetched = set(), set(), set(), set()
 
     pieces = _SHELL_OPERATORS_KEPT.split(cmd)
     previous: list[str] = []
+    downloading = False  # an earlier stage of this pipeline is curl/wget
     for i in range(0, len(pieces), 2):
         piped = i > 0 and pieces[i - 1].strip() == "|"
+        downloading = downloading and piped
         if not (segment := pieces[i].strip()):
             continue
 
@@ -764,14 +788,20 @@ def _extract_recursive(cmd: str, depth: int) -> tuple[set[str], set[str], set[st
         scripts = _child_scripts(stripped)
         if _reads_stdin_script(stripped):
             scripts += [_herestring(stripped), _printed_text(previous) if piped else None]
+        if stripped and _get_basename(stripped[0]) in SHELL_EXEC_COMMANDS and (
+            (downloading and _reads_stdin_script(stripped)) or _SUBSTITUTED_DOWNLOAD.search(segment)
+        ):
+            fetched.add(_get_basename(stripped[0]))
         for script in filter(None, scripts):
-            n, s, p = _extract_recursive(script, depth + 1)
+            n, s, p, f = _extract_recursive(script, depth + 1)
             names.update(n)
             strings.update(s)
             potential.update(p)
+            fetched.update(f)
         previous = stripped
+        downloading = downloading or _is_download(stripped)
 
-    return names, strings, potential
+    return names, strings, potential, fetched
 
 
 def command_tokens_for(
@@ -830,12 +860,13 @@ def _bashlex():
 
     class CommandVisitor(base):
         """AST visitor with wrapper-aware and recursive shell -c parsing."""
-        __slots__ = ("names", "strings", "potential", "depth")
+        __slots__ = ("names", "strings", "potential", "fetched", "depth")
 
         def __init__(self, depth: int = 0) -> None:
             self.names: set[str] = set()
             self.strings: set[str] = set()
             self.potential: set[str] = set()
+            self.fetched: set[str] = set()
             self.depth = depth
 
         def visitcommand(self, node, parts) -> bool:
@@ -869,6 +900,15 @@ def _bashlex():
                 self._scan(script)
             if _reads_stdin_script(stripped):
                 self._scan(_stdin_text(parts))
+            # `bash <(curl ...)`, `bash -c "$(curl ...)"`, `sh <<< "$(curl ...)"`.
+            # ponytail: any download in the shell's words counts, so
+            # `bash local.sh "$(curl ...)"` is read as one too; fails closed.
+            if (
+                stripped
+                and _get_basename(stripped[0]) in SHELL_EXEC_COMMANDS
+                and any(_downloads(p) for p in parts)
+            ):
+                self.fetched.add(_get_basename(stripped[0]))
 
             return True
 
@@ -876,10 +916,17 @@ def _bashlex():
             # `echo 'rm -rf x' | sh` and `cat <<EOF | sh`: the shell's script
             # is what the command before it writes.
             commands = [p for p in parts if p.kind != "pipe"]
-            for producer, consumer in zip(commands, commands[1:]):
-                if producer.kind != "command" or consumer.kind != "command":
+            for i, (producer, consumer) in enumerate(zip(commands, commands[1:]), start=1):
+                if consumer.kind != "command":
                     continue
-                if not _reads_stdin_script(strip_transparent_command_wrappers(_words(consumer))):
+                shell = strip_transparent_command_wrappers(_words(consumer))
+                if not _reads_stdin_script(shell):
+                    continue
+                # `curl ... | sh`, `wget -qO- ... | gunzip | bash`: a script
+                # that exists only on the wire.
+                if any(_downloads(c) for c in commands[:i]):
+                    self.fetched.add(_get_basename(shell[0]))
+                if producer.kind != "command":
                     continue
                 source = strip_transparent_command_wrappers(_words(producer))
                 if source and _get_basename(source[0]) == "cat":
@@ -895,9 +942,21 @@ def _bashlex():
             self.names.update(inner.names)
             self.strings.update(inner.strings)
             self.potential.update(inner.all_potential)
+            self.fetched.update(inner.fetched_shells)
 
     def _words(node) -> list[str]:
         return [p.word for p in node.parts if p.kind == "word"]
+
+    def _downloads(node) -> bool:
+        """Whether `node` is or contains a curl/wget command."""
+        if node.kind == "command" and _is_download(strip_transparent_command_wrappers(_words(node))):
+            return True
+        for attr in ("parts", "list", "command", "output"):
+            value = getattr(node, attr, None)
+            for child in value if isinstance(value, list) else [value]:
+                if hasattr(child, "kind") and _downloads(child):
+                    return True
+        return False
 
     def _stdin_text(parts) -> str | None:
         """The here-string or heredoc body a command reads as stdin, or None."""
@@ -982,13 +1041,14 @@ def _extract_bashlex(cmd: str, depth: int) -> ExtractedCommands:
         frozenset(visitor.names),
         frozenset(visitor.strings),
         frozenset(visitor.potential),
+        frozenset(visitor.fetched),
     )
 
 
 def _extract_fallback(cmd: str, depth: int) -> ExtractedCommands:
     """Fallback extraction using shlex."""
-    n, s, p = _extract_recursive(cmd, depth)
-    return ExtractedCommands(frozenset(n), frozenset(s), frozenset(p))
+    n, s, p, f = _extract_recursive(cmd, depth)
+    return ExtractedCommands(frozenset(n), frozenset(s), frozenset(p), frozenset(f))
 
 
 def _extract_impl(cmd: str, depth: int = 0) -> ExtractedCommands:
@@ -1020,6 +1080,16 @@ def extract_commands(cmd: str) -> tuple[frozenset[str], frozenset[str]]:
         return frozenset(), frozenset()
     result = _extract_cached(cmd)
     return result.names, result.strings
+
+
+def shells_running_downloads(cmd: str) -> frozenset[str]:
+    """Names of the shells in `cmd` whose script comes straight from curl/wget.
+
+    Their commands never pass through this parser, so no guard can see them.
+    """
+    if not cmd or not cmd.strip():
+        return frozenset()
+    return _extract_cached(cmd).fetched_shells
 
 
 def command_matches_pattern(cmd: str, pattern: str) -> bool:
