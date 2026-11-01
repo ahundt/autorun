@@ -2425,7 +2425,8 @@ def execute_session_selections(selection_str: str, sessions: list,
 
     A group of letters must name distinct existing sessions, and a command
     takes exactly one letter. If any group fails that ('awaiting', 'all',
-    'AA', 'AB:pwd'), nothing is sent and every bad group is reported.
+    'AA', 'AB:pwd') or has a blank command ('all:', 'A: ', a whitespace
+    command=), nothing is sent and every bad group is reported.
 
     Args:
         selection_str: Selection string using the syntax above
@@ -2444,13 +2445,18 @@ def execute_session_selections(selection_str: str, sessions: list,
     if command and selection_str.strip().lower() in ('all', 'awaiting'):
         selection_str = f'{selection_str.strip()}:{command}'
 
-    if selection_str.lower().startswith('all:'):
-        cmd = selection_str[4:].strip()
-        return [send_to_session(tmux, s, cmd) for s in sessions]
+    # An empty command would type nothing and press Enter in every target.
+    empty = (" has an empty command; nothing was sent. Use A:<command>, all:<command>, "
+             "awaiting:<command>, or letters alone (A,C) for each session's default action")
 
-    if selection_str.lower().startswith('awaiting:'):
-        cmd = selection_str[9:].strip()
-        return [send_to_session(tmux, s, cmd) for s in sessions if s.get('awaiting')]
+    for group in ('all', 'awaiting'):
+        if selection_str.lower().startswith(f'{group}:'):
+            cmd = selection_str[len(group) + 1:].strip()
+            if not cmd:
+                return [{'target': selection_str, 'command': '', 'success': False,
+                         'error': f"'{selection_str}'{empty}"}]
+            return [send_to_session(tmux, s, cmd) for s in sessions
+                    if group == 'all' or s.get('awaiting')]
 
     plan = []  # (letter, session, command or None for the default action)
     errors = []
@@ -2460,6 +2466,7 @@ def execute_session_selections(selection_str: str, sessions: list,
             continue
         letters, has_cmd, cmd = part.partition(':')
         letters = letters.replace(' ', '').upper()
+        cmd = cmd.strip() if has_cmd else command
         valid = (
             letters
             and all(c.isalpha() and 0 <= ord(c) - 65 < len(sessions) for c in letters)
@@ -2468,12 +2475,16 @@ def execute_session_selections(selection_str: str, sessions: list,
         )
         if not valid:
             errors.append({
-                'target': part, 'command': cmd.strip(), 'success': False,
+                'target': part, 'command': cmd or '', 'success': False,
                 'error': (f"'{part}' is not distinct session letters A-{chr(64 + len(sessions))} "
                           "or one letter with a command (A:<command>, all:<command>)"),
             })
             continue
-        plan += [(c, sessions[ord(c) - 65], cmd.strip() if has_cmd else command) for c in letters]
+        if cmd is not None and not cmd.strip():
+            errors.append({'target': part, 'command': '', 'success': False,
+                           'error': f"'{part}'{empty}"})
+            continue
+        plan += [(c, sessions[ord(c) - 65], cmd) for c in letters]
 
     if errors:
         return errors

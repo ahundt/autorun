@@ -433,6 +433,22 @@ class TestSelectionsSendOnlyWhatWasMeant:
         tmux.send_keys.assert_not_called()
         assert results and not any(r['success'] for r in results), results
 
+    @pytest.mark.parametrize('selection,command', [
+        ('all:', None), ('all:   ', None), ('awaiting:', None), ('A:', None),
+        ('A: ', None), ('A:pwd, B:', None), ('all', '  '), ('A,B', '  '), ('A', ''),
+    ])
+    def test_an_empty_command_is_refused_and_nothing_is_sent(self, selection, command):
+        """'all:' sent a bare Enter to every session, 'A:' to one."""
+        tmux = self._tmux()
+        sessions = [dict(s, awaiting=True) for s in self._sessions(2)]
+        with patch('time.sleep'):
+            results = execute_session_selections(selection, sessions, tmux, command=command)
+
+        tmux.send_keys.assert_not_called()
+        assert results and not any(r['success'] for r in results), results
+        for syntax in ('A:<command>', 'all:<command>', 'awaiting:<command>'):
+            assert all(syntax in r['error'] for r in results), results
+
     def test_an_advice_label_is_refused_not_typed(self):
         tmux = self._tmux()
         with patch('time.sleep'):
@@ -479,6 +495,21 @@ class TestSelectionsSendOnlyWhatWasMeant:
             status.handle_execute_mode()
 
         assert '3/3' in capsys.readouterr().out
+
+    def test_execute_mode_refuses_all_with_an_empty_command(self, capsys):
+        import io
+        import json
+        from autorun import tmux_tab_ai_session_status as status
+
+        tmux = self._tmux()
+        stdin = io.StringIO(json.dumps({'selections': 'all: ', 'sessions': self._sessions(3)}))
+        with patch('sys.stdin', stdin), patch('time.sleep'), \
+                patch('autorun.tmux_utils.get_tmux_utilities', return_value=tmux):
+            status.handle_execute_mode()
+
+        out = capsys.readouterr().out
+        tmux.send_keys.assert_not_called()
+        assert 'empty command' in out and 'all:<command>' in out and '0/1' in out, out
 
 
 if __name__ == '__main__':
