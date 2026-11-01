@@ -19,8 +19,9 @@ Unified command integrations system (superset of hookify).
 
 Features:
 - Non-blocking warnings (action: warn)
-- File-based user extensions (.claude/autorun.*.local.md in the session cwd,
-  then ~/.claude/autorun.*.local.md)
+- File-based user extensions (.claude/autorun.*.local.md in the session cwd
+  and each parent up to the repository root, nearest first, then
+  ~/.claude/autorun.*.local.md)
 - All hookify features (conditions, event, tool_matcher)
 - Multiple patterns per file
 - Redirect with arg substitution
@@ -253,15 +254,37 @@ def default_integrations() -> dict:
     return table
 
 
+def _project_dirs(cwd: str) -> list[Path]:
+    """The session directory and its parents up to the repository root.
+
+    Nearest first. The root is the nearest directory holding `.git` (a
+    directory, or a file in a worktree); the walk never reaches home or the
+    filesystem root. Outside a repository only the session directory itself
+    counts: a parent such as /tmp is shared, and a rule file's `when:` runs
+    shell commands.
+    """
+    start = Path(cwd)
+    home = Path.home()
+    walked: list[Path] = []
+    for directory in (start, *start.parents):
+        if directory == home or directory == directory.parent:
+            break
+        walked.append(directory)
+        if (directory / ".git").exists():
+            return walked
+    return [start]
+
+
 def _integration_files(cwd: str | None) -> list[Path]:
-    """User rule files: the session's project first, then the home directory.
+    """User rule files: the session's project, nearest directory first, then
+    the home directory.
 
     Relative to the session's cwd, never the daemon's: one daemon serves every
     session, so Path(".") applied the rules of whichever directory the daemon
     started in to all sessions, and a project's own rules to none. With no cwd
     only the home directory is searched.
     """
-    roots = [Path(cwd)] if cwd else []
+    roots = _project_dirs(cwd) if cwd else []
     roots.append(Path.home())
     files: list[Path] = []
     for root in dict.fromkeys(roots):

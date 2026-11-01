@@ -527,6 +527,30 @@ class TestUserIntegrationFilesFollowTheSession:
         project.mkdir()
         assert _decision(self._check("hometool run", project)) == "deny"
 
+    def test_repository_rule_applies_in_its_subdirectories(self, tmp_path):
+        repo = tmp_path / "outer" / "repo"
+        (repo / ".git").mkdir(parents=True)
+        _rule_file(repo, "reporule", "repotool")
+        _rule_file(tmp_path / "outer", "outerrule", "outertool")  # above the root
+        deep = repo / "src" / "pkg"
+        deep.mkdir(parents=True)
+        assert _decision(self._check("repotool run", deep)) == "deny"
+        assert _decision(self._check("outertool run", deep)) != "deny"
+
+    def test_nearest_rule_file_wins(self, tmp_path):
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        _rule_file(repo, "rootrule", "sametool")
+        _rule_file(repo / "sub", "subrule", "sametool")
+        reason = _reason(self._check("sametool run", repo / "sub"))
+        assert "subrule rule says no" in reason and "rootrule" not in reason, reason
+
+    def test_outside_a_repository_only_the_session_directory_is_searched(self, tmp_path):
+        _rule_file(tmp_path / "shared", "sharedrule", "sharedtool")
+        session = tmp_path / "shared" / "work"
+        session.mkdir()
+        assert _decision(self._check("sharedtool run", session)) != "deny"
+
 
 class TestOrdinaryPromptsAreNotCommands:
     """E6: internal action ids (stop, activate, ALLOW, ...) were registered as
