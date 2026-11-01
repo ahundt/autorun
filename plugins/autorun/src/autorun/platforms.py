@@ -440,6 +440,23 @@ class HookProtocol:
         """Deny one tool when autorun cannot reach its permission daemon."""
         return self.pretool_response("deny", reason, event_name)
 
+    def fail_closed_permission_request_response(self, reason: str, event_name: str) -> dict:
+        """Deny one PermissionRequest when autorun cannot reach its daemon.
+
+        Claude Code, Codex and Qwen Code read this event's verdict only from
+        ``hookSpecificOutput.decision`` and ignore ``permissionDecision``;
+        Codex also rejects any field it does not declare for the event.
+        https://code.claude.com/docs/en/hooks#permissionrequest-decision-control
+        https://learn.chatgpt.com/docs/hooks
+        https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/
+        """
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": event_name,
+                "decision": {"behavior": "deny", "message": reason},
+            }
+        }
+
     def response_for_unhandled_hook(self, event: str | None = None) -> dict:
         """Return the native no-op output required when no handler responds."""
         return {"continue": True} if self.requires_json_for_unhandled_hook else {}
@@ -1339,6 +1356,8 @@ CLAUDE = register(
             "SessionEnd": "SessionEnd",
             "BeforeModel": "BeforeModel",
             "AfterModel": "AfterModel",
+            # https://code.claude.com/docs/en/hooks#permissionrequest-decision-control
+            "PermissionRequest": "PermissionRequest",
         },
     )
 )
@@ -1701,6 +1720,8 @@ CODEX = register(
             "Stop": "Stop",
             "SessionStart": "SessionStart",
             "SessionEnd": "SessionEnd",
+            # https://learn.chatgpt.com/docs/hooks (PermissionRequest)
+            "PermissionRequest": "PermissionRequest",
         },
     )
 )

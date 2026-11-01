@@ -1447,6 +1447,13 @@ HOOK_SCHEMAS = {
         },
         "hso": {"hookEventName", "additionalContext"},
     },
+    # The verdict is hookSpecificOutput.decision {behavior, message, ...};
+    # there is no root decision and no permissionDecision for this event.
+    # https://code.claude.com/docs/en/hooks#permissionrequest-decision-control
+    "PermissionRequest": {
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", "hookSpecificOutput"},
+        "hso": {"hookEventName", "decision"},
+    },
 }
 
 CODEX_COMMON_ROOT_FIELDS = frozenset({"continue", "stopReason", "suppressOutput", "systemMessage"})
@@ -1467,6 +1474,14 @@ def _codex_hook_fields(event: str) -> tuple[frozenset[str], frozenset[str]]:
     """Return Codex-supported root and hookSpecificOutput fields for an event."""
     if event == "PreToolUse":
         return CODEX_PRETOOLUSE_ROOT_FIELDS, CODEX_PRETOOLUSE_HSO_FIELDS
+    if event == "PermissionRequest":
+        # Codex documents only systemMessage among the common fields here and
+        # fails the hook on any stopReason (codex-rs/hooks/src/engine/
+        # output_parser.rs). https://learn.chatgpt.com/docs/hooks
+        return (
+            frozenset({"systemMessage", "hookSpecificOutput"}),
+            frozenset(HOOK_SCHEMAS["PermissionRequest"]["hso"]),
+        )
 
     return (
         CODEX_COMMON_ROOT_FIELDS | {"decision", "reason", "hookSpecificOutput"},
@@ -1660,6 +1675,9 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
                 # permissionDecision/permissionDecisionReason are the canonical portable
                 # location per ctx.respond() docstring ("ALWAYS populated — use in tests")
                 allowed_hso = {"hookEventName", "tool_input", "permissionDecision", "permissionDecisionReason"}
+            elif event == "PermissionRequest":
+                # Qwen Code reads hookSpecificOutput.decision, as Claude does.
+                allowed_hso = HOOK_SCHEMAS["PermissionRequest"]["hso"]
             else:
                 # Others (AfterTool, SessionStart, etc.): only allows additionalContext
                 allowed_hso = {"hookEventName", "additionalContext"}
@@ -2992,8 +3010,7 @@ def daemon_failure_response(event: str, cli_type: str, message: str, event_code:
     failure built from Claude's common fields reached Antigravity's Stop as
     continue/stopReason/suppressOutput/systemMessage. Handler responses are
     already filtered by ``respond()``; this does the same for failures. Tool
-    gates are left as built: they are already native, and re-filtering some of
-    them (Claude PermissionRequest) drops the deny.
+    gates are left as built: they are already native.
     """
     from .client import build_daemon_failure_response, is_tool_gate_event
 

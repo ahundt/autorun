@@ -310,7 +310,10 @@ def build_daemon_failure_response(
         from .platforms import CLAUDE_HOOKS
 
         protocol = CLAUDE_HOOKS
-    return protocol.fail_closed_pretool_response(reason, _hook_specific_harness_cli_event_name(event, cli_type))
+    harness_event = _hook_specific_harness_cli_event_name(event, cli_type)
+    if harness_event == "PermissionRequest":
+        return protocol.fail_closed_permission_request_response(reason, harness_event)
+    return protocol.fail_closed_pretool_response(reason, harness_event)
 
 
 def _log_hook_lifecycle(message: str, **kwargs) -> None:

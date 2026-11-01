@@ -5,6 +5,7 @@ Permission-gate hooks must never fail open when the daemon is slow, missing,
 or returns invalid data. Lifecycle/context events may continue permissively.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -560,6 +561,57 @@ def test_daemon_failure_tool_gates_use_exact_native_fail_closed_schema(event, cl
         assert "timed out" in hook_output["permissionDecisionReason"]
     else:
         assert "timed out" in response["reason"]
+
+
+def _harnesses_declaring_permission_request() -> list[str]:
+    from autorun.platforms import PLATFORMS
+
+    return sorted(
+        name
+        for name, platform in PLATFORMS.items()
+        if "PermissionRequest" in platform.autorun_to_harness_cli_events
+    )
+
+
+def test_every_harness_with_a_permission_request_hook_declares_it():
+    """Claude Code, Codex and Qwen Code each document a PermissionRequest hook
+    (https://code.claude.com/docs/en/hooks#permissionrequest-decision-control,
+    https://learn.chatgpt.com/docs/hooks, and
+    https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/). The
+    survival test below covers exactly the harnesses the registry declares, so
+    a harness missing here would go untested."""
+    assert _harnesses_declaring_permission_request() == ["claude", "codex", "qwen"]
+
+
+@pytest.mark.parametrize("cli", _harnesses_declaring_permission_request())
+def test_a_permission_request_daemon_failure_deny_survives_validation(cli, monkeypatch, capsys):
+    """All three harnesses read a PermissionRequest decision only from
+    hookSpecificOutput.decision {behavior, message}. Claude's strict schema had
+    no PermissionRequest entry and the Codex and Qwen filters kept only
+    additionalContext, so the fail-closed deny reached each harness as an
+    empty no-op. Claude also ignores JSON on exit 2 and does not honour exit 2
+    for this event, so the bug #4669 workaround must not apply to it."""
+    from autorun.client import output_hook_response
+    from autorun.core import validate_hook_response
+
+    built = build_daemon_failure_response("PermissionRequest", cli, "Daemon response timed out")
+    once = validate_hook_response("PermissionRequest", built, cli_type=cli)
+    twice = validate_hook_response("PermissionRequest", once, cli_type=cli)
+
+    message = once.get("hookSpecificOutput", {}).get("decision", {}).get("message", "")
+    assert "timed out" in message
+    expected = {
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "deny", "message": message},
+        }
+    }
+    assert once == expected
+    assert twice == once
+
+    monkeypatch.setenv("AUTORUN_EXIT2_WORKAROUND", "always")
+    assert output_hook_response(built, event="PermissionRequest", cli_type=cli) == 0
+    assert json.loads(capsys.readouterr().out) == expected
 
 
 def test_lifecycle_daemon_failure_stays_fail_open():
