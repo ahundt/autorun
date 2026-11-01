@@ -44,6 +44,7 @@ __all__ = [
     "command_tokens_for",
     "extract_commands",
     "git_subcommand_index",
+    "nested_scripts",
     "ParsedPattern",
     "ExtractedCommands",
     "BASHLEX_AVAILABLE",
@@ -229,6 +230,10 @@ class ExtractedCommands:
     # Shells (by name) whose script is a curl/wget download: piped in,
     # `<(...)`, or `-c "$(...)"`.
     fetched_shells: frozenset[str] = frozenset()
+    # Script text the commands run (`bash -c` bodies, eval, here-strings,
+    # heredocs and echo piped to a shell, find -exec), nested ones included,
+    # in the order found.
+    scripts: tuple[str, ...] = ()
 
     def matches_single_word(self, pattern: str) -> bool:
         """O(1) lookup in all potential commands."""
@@ -753,15 +758,13 @@ def _extract_from_tokens(tokens: list[str]) -> tuple[str | None, str | None, set
 
 # ─── Recursive Extraction ─────────────────────────────────────────────────────
 
-def _extract_recursive(cmd: str, depth: int) -> tuple[set[str], set[str], set[str], set[str]]:
-    """Recursively extract commands, including from 'sh -c' patterns.
-
-    Returns (names, strings, potential, fetched_shells).
-    """
+def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
+    """Recursively extract commands, including from 'sh -c' patterns."""
     if depth >= _MAX_RECURSION_DEPTH:
-        return set(), set(), set(), set()
+        return ExtractedCommands(frozenset(), frozenset(), frozenset())
 
     names, strings, potential, fetched = set(), set(), set(), set()
+    nested: list[str] = []
 
     pieces = _SHELL_OPERATORS_KEPT.split(cmd)
     previous: list[str] = []
@@ -793,15 +796,19 @@ def _extract_recursive(cmd: str, depth: int) -> tuple[set[str], set[str], set[st
         ):
             fetched.add(_get_basename(stripped[0]))
         for script in filter(None, scripts):
-            n, s, p, f = _extract_recursive(script, depth + 1)
-            names.update(n)
-            strings.update(s)
-            potential.update(p)
-            fetched.update(f)
+            inner = _extract_recursive(script, depth + 1)
+            names.update(inner.names)
+            strings.update(inner.strings)
+            potential.update(inner.all_potential)
+            fetched.update(inner.fetched_shells)
+            nested += [script, *inner.scripts]
         previous = stripped
         downloading = downloading or _is_download(stripped)
 
-    return names, strings, potential, fetched
+    return ExtractedCommands(
+        frozenset(names), frozenset(strings), frozenset(potential), frozenset(fetched),
+        tuple(dict.fromkeys(nested)),
+    )
 
 
 def command_tokens_for(
@@ -860,13 +867,14 @@ def _bashlex():
 
     class CommandVisitor(base):
         """AST visitor with wrapper-aware and recursive shell -c parsing."""
-        __slots__ = ("names", "strings", "potential", "fetched", "depth")
+        __slots__ = ("names", "strings", "potential", "fetched", "scripts", "depth")
 
         def __init__(self, depth: int = 0) -> None:
             self.names: set[str] = set()
             self.strings: set[str] = set()
             self.potential: set[str] = set()
             self.fetched: set[str] = set()
+            self.scripts: list[str] = []
             self.depth = depth
 
         def visitcommand(self, node, parts) -> bool:
@@ -943,6 +951,7 @@ def _bashlex():
             self.strings.update(inner.strings)
             self.potential.update(inner.all_potential)
             self.fetched.update(inner.fetched_shells)
+            self.scripts += [script, *inner.scripts]
 
     def _words(node) -> list[str]:
         return [p.word for p in node.parts if p.kind == "word"]
@@ -1042,13 +1051,13 @@ def _extract_bashlex(cmd: str, depth: int) -> ExtractedCommands:
         frozenset(visitor.strings),
         frozenset(visitor.potential),
         frozenset(visitor.fetched),
+        tuple(dict.fromkeys(visitor.scripts)),
     )
 
 
 def _extract_fallback(cmd: str, depth: int) -> ExtractedCommands:
     """Fallback extraction using shlex."""
-    n, s, p, f = _extract_recursive(cmd, depth)
-    return ExtractedCommands(frozenset(n), frozenset(s), frozenset(p), frozenset(f))
+    return _extract_recursive(cmd, depth)
 
 
 def _extract_impl(cmd: str, depth: int = 0) -> ExtractedCommands:
@@ -1090,6 +1099,14 @@ def shells_running_downloads(cmd: str) -> frozenset[str]:
     if not cmd or not cmd.strip():
         return frozenset()
     return _extract_cached(cmd).fetched_shells
+
+
+def nested_scripts(cmd: str) -> tuple[str, ...]:
+    """Every script text a command in `cmd` runs, outermost first: what
+    `bash -c '...'`, `eval`, a heredoc fed to a shell and the like execute."""
+    if not cmd or not cmd.strip():
+        return ()
+    return _extract_cached(cmd).scripts
 
 
 def command_matches_pattern(cmd: str, pattern: str) -> bool:

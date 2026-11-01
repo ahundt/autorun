@@ -180,6 +180,53 @@ class TestShellRunningADownloadIsBlocked:
         assert _decision(plugins.check_blocked_commands(_bash(cmd, sid=sid, store=store))) == "deny"
 
 
+def _bash_in(cwd, cmd: str) -> EventContext:
+    return EventContext(
+        session_id=_sid(), event="PreToolUse", tool_name="Bash",
+        tool_input={"command": cmd}, cwd=str(cwd), store=ThreadSafeDB(),
+    )
+
+
+class TestPredicatesJudgeTheCommandThatMatched:
+    """`when` predicates read the outer line, so a destructive command inside
+    `bash -c '...'` was judged by the wrapper around it and allowed."""
+
+    def test_stash_drop_inside_a_shell_is_judged_like_the_bare_command(self, tmp_path):
+        from test_integrations import _repo_with_a_stash
+
+        repo = _repo_with_a_stash(tmp_path / "repo")
+        for cmd in ("git stash drop", "bash -c 'git stash drop'", "sh -c 'git stash clear'"):
+            assert _decision(plugins.check_blocked_commands(_bash_in(repo, cmd))) == "deny", cmd
+
+    def test_discarding_a_dirty_file_inside_a_wrapper_is_denied(self, tmp_path):
+        from test_integrations import _init_git_repo
+
+        repo = _init_git_repo(tmp_path / "repo")
+        (repo / "seed.txt").write_text("uncommitted\n")
+        for cmd in (
+            "git restore seed.txt",
+            "bash -c 'git restore seed.txt'",
+            'sh -c "git checkout -- seed.txt"',
+            "eval git restore seed.txt",
+            "bash <<'EOF'\ngit restore seed.txt\nEOF",
+        ):
+            assert _decision(plugins.check_blocked_commands(_bash_in(repo, cmd))) == "deny", cmd
+
+    def test_unstaging_inside_a_wrapper_still_runs(self, tmp_path):
+        from test_integrations import _init_git_repo
+
+        repo = _init_git_repo(tmp_path / "repo")
+        (repo / "seed.txt").write_text("uncommitted\n")
+        for cmd in ("git restore --staged seed.txt", "bash -c 'git restore --staged seed.txt'"):
+            assert _decision(plugins.check_blocked_commands(_bash_in(repo, cmd))) != "deny", cmd
+
+    def test_a_direct_read_inside_a_wrapper_is_judged_like_the_bare_command(self):
+        for cmd in ("cat notes.txt", "bash -c 'cat notes.txt'"):
+            assert _decision(plugins.check_blocked_commands(_bash(cmd))) == "deny", cmd
+        for cmd in ("cat notes.txt | head -5", "bash -c 'cat notes.txt | head -5'"):
+            assert _decision(plugins.check_blocked_commands(_bash(cmd))) != "deny", cmd
+
+
 def _claude_transcript(path, *entries) -> str:
     """Write Claude Code-shaped JSONL: ("user"|"assistant"|"tool_result", text)."""
     lines = []

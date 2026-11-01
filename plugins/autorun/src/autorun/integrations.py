@@ -42,9 +42,11 @@ from typing import Final
 from .command_detection import (
     COMMAND_PREFIXES,
     _get_basename,
+    command_matches_pattern,
     command_tokens_for,
     extract_commands,
     git_subcommand_index,
+    nested_scripts,
     shell_command_from_tool_input,
     shells_running_downloads,
     strip_transparent_command_wrappers,
@@ -529,6 +531,33 @@ def _restore_current_pattern(ctx: any, state: dict | None, previous: object) -> 
         pass
 
 
+class _ScriptView:
+    """`ctx` as a predicate sees it when judging one script a command runs."""
+
+    __slots__ = ("_ctx", "tool_input")
+
+    def __init__(self, ctx: any, script: str) -> None:
+        self._ctx = ctx
+        self.tool_input = {"command": script}
+
+    def __getattr__(self, name: str):
+        return getattr(self._ctx, name)
+
+
+def _predicate_views(ctx: any, pattern: str | None):
+    """The line as typed, then each script inside it that `pattern` matches.
+
+    Predicates parse `ctx.tool_input`, and `bash -c 'git restore f'` holds no
+    git command at the top level: judged only there, the restore was allowed.
+    Each script body is judged as the line it is (its own pipes and segments).
+    """
+    yield ctx
+    cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
+    for script in nested_scripts(cmd):
+        if pattern is None or command_matches_pattern(script, pattern):
+            yield _ScriptView(ctx, script)
+
+
 def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> bool:
     """
     Check when predicate. O(1) for Python, O(cmd) for bash.
@@ -550,11 +579,13 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
         # Try Python predicate first (fastest)
         pred_func = _WHEN_PREDICATES.get(when)
         if pred_func:
-            try:
-                return pred_func(ctx)
-            except Exception as e:
-                logger.warning(f"When predicate '{when}' failed: {e}")
-                return False
+            for view in _predicate_views(ctx, pattern):
+                try:
+                    if pred_func(view):
+                        return True
+                except Exception as e:
+                    logger.warning(f"When predicate '{when}' failed: {e}")
+            return False
 
         # Fallback: run as bash command, in the session's directory. A
         # user-authored `when:` is about the project the session is working in
