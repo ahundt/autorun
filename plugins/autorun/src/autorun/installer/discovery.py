@@ -54,9 +54,9 @@ PLUGIN_MANIFEST = Path(".claude-plugin") / "plugin.json"
 #: directory named `reference` still expects their own tree to win.
 _SHADOWED = ("backup", "reference")
 
-#: Bases the UV-tool fallback scans, and how deep. Only consulted when the
-#: running file is inside a UV tool tree and cannot see a root above itself.
-_UV_MARKERS = (".local/share/uv/tools", ".local/share/uv/python")
+#: How deep the UV-tool fallback scans its bases. Only consulted when the
+#: running file is inside a uv tool or uv-managed Python tree
+#: (uv_tool_root / _uv_python_root) and cannot see a root above itself.
 _UV_MAX_DEPTH = 4
 
 
@@ -70,6 +70,33 @@ def process_home() -> Path:
     """
     configured = os.environ.get("HOME")
     return Path(configured) if configured else Path.home()
+
+
+def _uv_data_dir(override_env: str, leaf: str) -> Path:
+    """A uv data directory: its own env var, else XDG_DATA_HOME/uv/<leaf>,
+    else ~/.local/share/uv/<leaf> (uv's documented order on Linux and macOS)."""
+    if configured := os.environ.get(override_env):
+        return Path(configured)
+    data = os.environ.get("XDG_DATA_HOME")
+    return (Path(data) if data else process_home() / ".local" / "share") / "uv" / leaf
+
+
+def uv_tool_root() -> Path:
+    """Where uv keeps tool environments (UV_TOOL_DIR first)."""
+    return _uv_data_dir("UV_TOOL_DIR", "tools")
+
+
+def _uv_python_root() -> Path:
+    """Where uv keeps the Pythons it installs (UV_PYTHON_INSTALL_DIR first)."""
+    return _uv_data_dir("UV_PYTHON_INSTALL_DIR", "python")
+
+
+def _is_below(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _uv_bases() -> tuple[Path, ...]:
@@ -196,7 +223,7 @@ def _from_uv_tool_search(origin: Path) -> Iterator[Path]:
     ``AUTORUN_DEV_PATH`` is honoured first so a custom location does not have to
     win a glob race against every checkout in the home directory.
     """
-    if not any(marker in str(origin) for marker in _UV_MARKERS):
+    if not any(_is_below(origin, root) for root in (uv_tool_root(), _uv_python_root())):
         return
     if dev := os.environ.get("AUTORUN_DEV_PATH"):
         yield Path(dev)

@@ -313,3 +313,27 @@ def test_config_and_skill_routes_share_override_env_default_precedence(
     monkeypatch.setitem(CONFIG, "harness_config_dirs", {"demo": "~/configured"})
     assert config_dir(platform, env={"DEMO_CONFIG": "~/env"}) == tmp_path / "configured"
     assert skill_destinations(platform) == (tmp_path / "configured" / "skills",)
+
+
+def test_a_uv_tool_install_under_a_custom_uv_tool_dir_reaches_the_uv_fallback(tmp_path, monkeypatch):
+    """The fallback decided "am I a uv tool install" by the literal
+    ~/.local/share/uv/tools, while uv itself and entrypoint read UV_TOOL_DIR
+    first, so a custom tool directory never reached AUTORUN_DEV_PATH."""
+    from autorun.installer import discovery
+
+    tools = tmp_path / "custom-tools"
+    origin = tools / "autorun-ai" / "lib" / "python3.13" / "site-packages" / "autorun" / "installer" / "discovery.py"
+    monkeypatch.setenv("UV_TOOL_DIR", str(tools))
+    monkeypatch.setenv("AUTORUN_DEV_PATH", str(tmp_path / "checkout"))
+
+    assert next(iter(discovery._from_uv_tool_search(origin)), None) == tmp_path / "checkout"
+    assert discovery.uv_tool_root() == tools
+
+
+def test_the_uv_fallback_ignores_a_file_outside_every_uv_tree(tmp_path, monkeypatch):
+    from autorun.installer import discovery
+
+    monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path / "custom-tools"))
+    monkeypatch.setenv("AUTORUN_DEV_PATH", str(tmp_path / "checkout"))
+
+    assert list(discovery._from_uv_tool_search(tmp_path / "elsewhere" / "discovery.py")) == []
