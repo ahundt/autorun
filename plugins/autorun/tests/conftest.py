@@ -680,6 +680,25 @@ def reset_shared_sessions_between_tests():
         clear_test_session_states_batch(occupied)
 
 
+@pytest.fixture(autouse=True)
+def reset_cli_type_between_tests():
+    """`autorun --cli X` exports AUTORUN_CLI_TYPE into the process that ran it.
+
+    Production runs it once per hook process, so that export dies with the
+    process. A test that runs main() in-process (directly, or through
+    hook_entry's in-process fallback) left it set for every later test in the
+    worker, and detect_cli_type() reads it before any payload hint. On the
+    Windows CI runner one such leak (`--cli codex`) failed 237 later tests.
+    Plain os.environ, not monkeypatch: requesting monkeypatch here would set it
+    up before reset_shared_sessions_between_tests and tear it down after, so a
+    test that patches builtins.__import__ would still be patched when that
+    fixture imports autorun.session_manager.
+    """
+    os.environ.pop("AUTORUN_CLI_TYPE", None)
+    yield
+    os.environ.pop("AUTORUN_CLI_TYPE", None)
+
+
 @pytest.fixture
 def temp_session_dir():
     """Create a temporary directory for session storage"""

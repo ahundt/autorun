@@ -1031,12 +1031,17 @@ class TestTryCliRobustness:
         """main() ran its own inline copy of try_cli, which wrote the CLI's
         whole stdout and stderr to the debug log; try_cli bounds them."""
         big = "x" * 50_000
-        fake_autorun = write_fake_cli(
-            tmp_path, stdout=json.dumps({"systemMessage": big}), stderr=big
-        )
         hook_entry = load_hook_entry_module()
+
+        # A subprocess stand-in, not write_fake_cli: a 50,000-character echo
+        # exceeds cmd.exe's 8,191-character line, so the Windows stub failed
+        # and main() fell through to the in-process fallback instead.
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"systemMessage": big}), big)
+
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "home"))
-        monkeypatch.setattr(hook_entry, "get_autorun_bin", lambda: fake_autorun)
+        monkeypatch.setattr(hook_entry, "get_autorun_bin", lambda: tmp_path / "autorun")
+        monkeypatch.setattr(hook_entry.subprocess, "run", fake_run)
         monkeypatch.setattr(sys, "argv", ["hook_entry.py", "--cli", "codex"])
         monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "SessionStart"})))
 
