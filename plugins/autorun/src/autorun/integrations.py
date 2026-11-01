@@ -52,7 +52,7 @@ from .command_detection import (
     strip_transparent_command_wrappers,
 )
 
-from autorun.config import CONFIG, DEFAULT_INTEGRATIONS, _publish_guard_enabled, _version_bump_guard_enabled
+from autorun.config import CONFIG, DEFAULT_INTEGRATIONS, guards_disabled_by_env
 
 __all__ = [
     "Integration",
@@ -239,14 +239,6 @@ def invalidate_caches() -> None:
     _integration_cache.clear()
 
 
-_ENV_TOGGLED_GUARDS = {
-    "version-bump-command": _version_bump_guard_enabled,
-    "version-bump-manifest-edit": _version_bump_guard_enabled,
-    "version-bump-manifest-write": _version_bump_guard_enabled,
-    "publish-command": _publish_guard_enabled,
-}
-
-
 def default_integrations() -> dict:
     """The built-in guard table as configured: CONFIG's copy, which carries the
     user's autorun.config.json merge, minus guards an env toggle switched off.
@@ -256,9 +248,8 @@ def default_integrations() -> dict:
     """
     table = CONFIG.get("default_integrations")
     table = dict(table if isinstance(table, dict) else DEFAULT_INTEGRATIONS)
-    for name, enabled in _ENV_TOGGLED_GUARDS.items():
-        if name in table and not enabled():
-            del table[name]
+    for name in guards_disabled_by_env():
+        table.pop(name, None)
     return table
 
 

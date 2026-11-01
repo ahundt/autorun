@@ -360,6 +360,17 @@ class TestUserDefaultIntegrationsAreEnforced:
         result = plugins.check_blocked_commands(_bash("awk '{print $1}' data.txt"))
         assert _decision(result) != "deny" and "awk is fine here" in str(result)
 
+    def test_the_config_table_is_what_switches_a_guard_off(self, monkeypatch):
+        """One owner: integrations reads config.ENV_TOGGLED_GUARDS, so a row
+        added there is honored with no second list to keep in step."""
+        monkeypatch.setitem(config_module.ENV_TOGGLED_GUARDS, "AUTORUN_TEST_RM_GUARD_ENABLED", ("rm", "rm -rf"))
+        monkeypatch.setenv("AUTORUN_TEST_RM_GUARD_ENABLED", "off")
+        integrations.invalidate_caches()
+        try:
+            assert _decision(plugins.check_blocked_commands(_bash("rm -rf build"))) != "deny"
+        finally:
+            integrations.invalidate_caches()
+
     def test_env_toggle_still_removes_a_guard_the_user_file_names(self, user_config, monkeypatch):
         monkeypatch.setenv("AUTORUN_PUBLISH_GUARD_ENABLED", "false")
         user_config({"default_integrations": {"publish-command": {"patterns": ["cargo publish"], "suggestion": "x"}}})

@@ -577,47 +577,40 @@ DEFAULT_INTEGRATIONS = {
 }
 
 
-# ─── Version-bump consent guard toggle ────────────────────────────────────────
-# The three integrations above are enabled by default (like the other safety
-# guards). Disable globally with the env var, then restart the daemon
-# (`autorun --restart-daemon`); allow per-use at runtime with `/ar:ok 'version'`
-# or `/ar:globalok 'version'` (the standard integrations interface). Values:
-#   true|1|yes|on|always (default) — guard active
-#   false|0|no|off|never           — guard removed
-def _version_bump_guard_enabled() -> bool:
-    import os
-
-    val = os.environ.get("AUTORUN_VERSION_BUMP_GUARD_ENABLED")
-    if val is not None:
-        return val.strip().lower() not in {"false", "0", "no", "off", "never"}
-    return True
-
-
-if not _version_bump_guard_enabled():
-    for _key in (
+# ─── Env-toggled consent guards ───────────────────────────────────────────────
+# Each variable switches off the default guards listed with it. Guards are on
+# by default; disable one globally with its variable, then restart the daemon
+# (`autorun --restart-daemon`). Allow per use at runtime instead with `/ar:ok`
+# (`/ar:ok 'version'`, `/ar:ok 'cargo publish'`) or `/ar:globalok`. Values:
+#   unset|true|1|yes|on|always — guard active
+#   false|0|no|off|never       — guard removed
+# integrations.default_integrations() applies this table to the configured
+# guard list, user autorun.config.json entries included.
+ENV_TOGGLED_GUARDS: dict[str, tuple[str, ...]] = {
+    "AUTORUN_VERSION_BUMP_GUARD_ENABLED": (
         "version-bump-command",
         "version-bump-manifest-edit",
         "version-bump-manifest-write",
-    ):
-        DEFAULT_INTEGRATIONS.pop(_key, None)
+    ),
+    "AUTORUN_PUBLISH_GUARD_ENABLED": ("publish-command",),
+}
 
 
-# ─── Publish consent guard toggle ─────────────────────────────────────────────
-# Enabled by default. Disable globally with the env var, then restart the daemon;
-# allow per-use at runtime with `/ar:ok 'cargo publish'` / `/ar:globalok`. Values:
-#   true|1|yes|on|always (default) — guard active
-#   false|0|no|off|never           — guard removed
-def _publish_guard_enabled() -> bool:
+def env_guard_enabled(variable: str) -> bool:
+    """Whether the guard switched by environment variable ``variable`` is on."""
     import os
 
-    val = os.environ.get("AUTORUN_PUBLISH_GUARD_ENABLED")
-    if val is not None:
-        return val.strip().lower() not in {"false", "0", "no", "off", "never"}
-    return True
+    val = os.environ.get(variable)
+    return val is None or val.strip().lower() not in {"false", "0", "no", "off", "never"}
 
 
-if not _publish_guard_enabled():
-    DEFAULT_INTEGRATIONS.pop("publish-command", None)
+def guards_disabled_by_env() -> set[str]:
+    """Names of the default guards an ENV_TOGGLED_GUARDS variable switches off."""
+    return {name for variable, names in ENV_TOGGLED_GUARDS.items() if not env_guard_enabled(variable) for name in names}
+
+
+for _key in guards_disabled_by_env():
+    DEFAULT_INTEGRATIONS.pop(_key, None)
 
 
 # Configuration - Three-stage completion system with clear instruction/confirmation naming

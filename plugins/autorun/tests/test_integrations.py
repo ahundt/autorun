@@ -2792,13 +2792,16 @@ class TestVersionBumpGuard:
         ],
     )
     def test_toggle_helper(self, monkeypatch, val, expected):
-        from autorun.config import _version_bump_guard_enabled
+        from autorun.config import ENV_TOGGLED_GUARDS, env_guard_enabled, guards_disabled_by_env
 
         if val is None:
             monkeypatch.delenv("AUTORUN_VERSION_BUMP_GUARD_ENABLED", raising=False)
         else:
             monkeypatch.setenv("AUTORUN_VERSION_BUMP_GUARD_ENABLED", val)
-        assert _version_bump_guard_enabled() is expected
+        assert env_guard_enabled("AUTORUN_VERSION_BUMP_GUARD_ENABLED") is expected
+        names = set(ENV_TOGGLED_GUARDS["AUTORUN_VERSION_BUMP_GUARD_ENABLED"])
+        assert names == {"version-bump-command", "version-bump-manifest-edit", "version-bump-manifest-write"}
+        assert (names <= guards_disabled_by_env()) is not expected
 
     # ── Consent / permission grant (the /ar:ok escape) ───────────────────────
     # TIER 1 allows are matched (via plugins._match) against `cmd`, which is the
@@ -3034,13 +3037,15 @@ class TestPublishGuard:
         ],
     )
     def test_toggle_helper(self, monkeypatch, val, expected):
-        from autorun.config import _publish_guard_enabled
+        from autorun.config import ENV_TOGGLED_GUARDS, env_guard_enabled, guards_disabled_by_env
 
         if val is None:
             monkeypatch.delenv("AUTORUN_PUBLISH_GUARD_ENABLED", raising=False)
         else:
             monkeypatch.setenv("AUTORUN_PUBLISH_GUARD_ENABLED", val)
-        assert _publish_guard_enabled() is expected
+        assert env_guard_enabled("AUTORUN_PUBLISH_GUARD_ENABLED") is expected
+        assert ENV_TOGGLED_GUARDS["AUTORUN_PUBLISH_GUARD_ENABLED"] == ("publish-command",)
+        assert ("publish-command" in guards_disabled_by_env()) is not expected
 
     def test_consent_grant_round_trip(self):
         """block -> /ar:ok 'cargo publish' grant -> allow."""
