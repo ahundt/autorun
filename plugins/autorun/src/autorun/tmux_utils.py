@@ -475,6 +475,9 @@ class TmuxUtilities:
         - Custom session: Pass session parameter to target a different session
         - Full targeting: session:window.pane format for precise targeting
         - Safety: Commands will NEVER go to the current Claude Code session accidentally
+        - Never creates a session: a command aimed at a missing one fails
+          (returncode 1, "can't find session"). Create it explicitly with
+          ensure_session_exists(); a query must be able to answer "no".
 
         Examples:
             tmux.execute_tmux_command(['list-windows'])  # Targets "autorun" session
@@ -489,15 +492,6 @@ class TmuxUtilities:
         # CRITICAL FIX: For send-keys commands, target specification must come BEFORE keys
         # Format: tmux [socket] send-keys -t target [keys...] where control sequences are separate args
         if cmd and cmd[0] == 'send-keys' and len(cmd) > 1:
-            # Extract target specification first
-            # NOTE: 'new-session' is excluded because -t means "session group" not "target"
-            commands_supporting_target = {
-                'send-keys', 'capture-pane', 'new-window', 'kill-window',
-                'select-window', 'split-window', 'select-pane', 'kill-pane',
-                'select-layout', 'display-message', 'attach-session', 'detach-client',
-                'kill-session', 'list-windows', 'list-panes', 'has-session'
-            }
-
             # Start with base command
             full_cmd = base_cmd + [cmd[0]]  # ['tmux', 'send-keys']
 
@@ -552,13 +546,6 @@ class TmuxUtilities:
                 [self.tmux_binary, '-u', '-S', socket_path] if socket_path
                 else [self.tmux_binary, '-u']
             )
-
-            # Ensure target session exists for commands that support targeting
-            if cmd and cmd[0] in commands_supporting_target:
-                subprocess.run(
-                    prefix + ['new-session', '-d', '-s', target_session],
-                    capture_output=True, text=True, timeout=5, shell=False,
-                )
 
             executed = prefix + full_cmd[1:]
             result = subprocess.run(
@@ -669,8 +656,9 @@ class TmuxUtilities:
         """
         target_session = session_name or self.session_name
 
-        # Check if session exists
-        result = self.execute_tmux_command(['has-session', '-t', target_session])
+        # session=, not an inline -t: execute_tmux_command appends its own -t
+        # and tmux honours the last one, which was this instance's session.
+        result = self.execute_tmux_command(['has-session'], target_session)
         if result and result['returncode'] == 0:
             return True
 
@@ -708,18 +696,8 @@ class TmuxUtilities:
         Returns:
             True if user is typing, False otherwise
         """
-        target = session or self.session_name
-        # Check session existence WITHOUT auto-creation. execute_tmux_command
-        # auto-creates sessions for targeted commands (line 391), which would make
-        # has-session always succeed and cause spurious typing detection.
-        try:
-            result = subprocess.run(
-                [self.tmux_binary, 'has-session', '-t', target],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode != 0:
-                return False
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        result = self.execute_tmux_command(['has-session'], session)
+        if not result or result['returncode'] != 0:
             return False
 
         initial_input = self.capture_current_input(session, window, pane)

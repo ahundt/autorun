@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 # Import conftest utilities for cleanup
 from conftest import tmux_argv, should_keep_test_artifacts
 
-from autorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import TmuxUtilities, get_tmux_utilities, tmux_list_windows
 
 
 class TestSessionTargetingRegression:
@@ -263,9 +263,11 @@ class TestSessionTargetingRegression:
 
         # Create tmux utilities instance
         tmux_utils = TmuxUtilities("test-construction")
+        assert tmux_utils.ensure_session_exists()
 
         # Test command construction for send-keys
         result = tmux_utils.execute_tmux_command(['send-keys', 'test-text'])
+        tmux_utils.execute_tmux_command(['kill-session'])
 
         assert result is not None, "Command should execute"
         assert result['returncode'] == 0, "Command should succeed"
@@ -421,6 +423,56 @@ class TestSessionTargetingRegression:
             target = command[target_index + 1]
             assert self.test_session in target, "Target should include session name"
             # Window specification may or may not be present depending on session state
+
+
+class TestOnlyEnsureSessionExistsCreatesASession:
+    """execute_tmux_command ran `new-session -d -s <target>` before every
+    command in commands_supporting_target, so asking whether a session
+    existed (has-session), listing or reading it (list-windows, list-panes,
+    capture-pane, display-message), or checking it for Claude
+    (is_claude_session, tmux_list_windows) created it, and send-keys typed
+    into a fresh shell. ensure_session_exists checked `has-session -t <name>`
+    with a second `-t <instance session>` appended, and tmux honours the
+    last -t, so it reported a session it never created."""
+
+    MISSING = "autorun-test-never-created"
+    OWNER = "autorun-test-owner"
+
+    def _exists(self, name):
+        return subprocess.run(tmux_argv('has-session', '-t', name),
+                              capture_output=True, timeout=5).returncode == 0
+
+    def _kill(self):
+        for name in (self.MISSING, self.OWNER):
+            subprocess.run(tmux_argv('kill-session', '-t', name), capture_output=True, timeout=5)
+
+    def setup_method(self):
+        self._kill()
+        subprocess.run(tmux_argv('new-session', '-d', '-s', self.OWNER),
+                       capture_output=True, timeout=5, check=True)
+        self.tmux = TmuxUtilities(self.OWNER)
+
+    def teardown_method(self):
+        self._kill()
+
+    @pytest.mark.parametrize('cmd', [
+        ['has-session'], ['list-windows'], ['list-panes'],
+        ['capture-pane', '-p'], ['display-message', '-p', 'x'], ['send-keys', 'echo hi'],
+    ])
+    def test_a_command_aimed_at_a_missing_session_fails_without_creating_it(self, cmd):
+        result = self.tmux.execute_tmux_command(cmd, session=self.MISSING)
+
+        assert result['returncode'] != 0, result
+        assert not self._exists(self.MISSING)
+
+    def test_tabs_discovery_does_not_create_the_session_it_asks_about(self):
+        assert self.tmux.is_claude_session(self.MISSING, '0') is False
+        assert tmux_list_windows(session=self.MISSING, exclude_current=False) == []
+        assert not self._exists(self.MISSING)
+
+    def test_ensure_session_exists_creates_the_session_it_names(self):
+        assert self.tmux.ensure_session_exists(self.MISSING) is True
+        assert self._exists(self.MISSING)
 
 
 if __name__ == '__main__':

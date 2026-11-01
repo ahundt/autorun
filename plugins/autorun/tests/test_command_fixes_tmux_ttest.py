@@ -111,10 +111,6 @@ class TestDuplicateTargetFlagBugFix:
 
         Fix: execute_tmux_command(['has-session'], session='target')
         correctly checks the target session.
-
-        Note: execute_tmux_command auto-creates sessions for commands in
-        commands_supporting_target (including has-session), so the session will
-        exist after the call. The fix ensures the command targets the correct session.
         """
         test_name = "has-session-test"
 
@@ -126,8 +122,6 @@ class TestDuplicateTargetFlagBugFix:
             # Pre-check with correct session= param should succeed
             check = self.tmux.execute_tmux_command(['has-session'], session=test_name)
             assert check is not None, "Should return result"
-            # Note: will return 0 because execute_tmux_command auto-creates the session
-            # The fix is that it targets the CORRECT session via session= param
             assert check['returncode'] == 0, f"Should successfully check session {test_name}"
 
             # Verify the command structure is correct (has -t with correct target)

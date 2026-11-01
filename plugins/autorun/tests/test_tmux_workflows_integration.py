@@ -31,7 +31,7 @@ def clean_tmux_test_sessions():
     """Kill stale test sessions before and after each test.
 
     Root cause of inter-test failures: previous tests leave sessions that
-    conflict with auto-creation in execute_tmux_command (line 391-393).
+    the next test with the same name then finds already there.
     """
     def _cleanup():
         try:
@@ -106,10 +106,8 @@ class TestSessionAutomationWorkflows:
         # Clean up any existing session with this name first
         tmux.execute_tmux_command(['kill-session', '-t', session_name])
 
-        # Phase 1: Session is auto-created by execute_tmux_command when we run any command
-        # Run a display-message to trigger session creation
-        create_result = tmux.execute_tmux_command(['display-message', '-p', 'Session created'], session_name)
-        assert create_result is not None
+        # Phase 1: create the session; execute_tmux_command never does
+        assert tmux.ensure_session_exists(session_name)
         info = tmux.get_session_info()
         # Info returns target_session, which is what we set
         assert info['target_session'] == session_name or info['session'] == session_name
@@ -526,11 +524,9 @@ class TestInteractiveManagementWorkflows:
             session_name = f"template-{template['name']}-{uuid.uuid4().hex[:8]}"
             tmux = get_tmux_utilities(session_name)
 
-            # Clean up any existing session, then let auto-creation handle it
+            # Clean up any existing session, then create it
             tmux.execute_tmux_command(['kill-session', '-t', session_name])
-            # Session is auto-created by execute_tmux_command
-            create_result = tmux.execute_tmux_command(['display-message', '-p', 'Ready'], session_name)
-            assert create_result is not None
+            assert tmux.ensure_session_exists(session_name)
 
             # Create additional windows using execute_tmux_command directly
             for i in range(template['windows'] - 1):
@@ -565,6 +561,7 @@ class TestInteractiveManagementWorkflows:
         tmux = get_tmux_utilities(session_name)
 
         try:
+            assert tmux.ensure_session_exists(session_name)
             result = tmux.execute_tmux_command(['has-session'], session_name)
             assert result is not None
             assert result['returncode'] == 0, result
@@ -626,11 +623,9 @@ class TestCrossSystemIntegration:
         # Test byobu-compatible operations
         compatibility_results = {}
 
-        # Clean up any existing session, then let auto-creation handle it
+        # Clean up any existing session, then create it
         tmux.execute_tmux_command(['kill-session', '-t', session_name])
-        # Session is auto-created by execute_tmux_command
-        create_result = tmux.execute_tmux_command(['display-message', '-p', 'Ready'], session_name)
-        compatibility_results['Create Session'] = create_result is not None
+        compatibility_results['Create Session'] = tmux.ensure_session_exists(session_name)
 
         if compatibility_results['Create Session']:
             # List Sessions
@@ -658,11 +653,9 @@ class TestCrossSystemIntegration:
         session_name = f"env-test-{uuid.uuid4().hex[:8]}"
         tmux = get_tmux_utilities(session_name)
 
-        # Clean up any existing session, then let auto-creation handle it
+        # Clean up any existing session, then create it
         tmux.execute_tmux_command(['kill-session', '-t', session_name])
-        # Session is auto-created by execute_tmux_command
-        create_result = tmux.execute_tmux_command(['display-message', '-p', 'Ready'], session_name)
-        assert create_result is not None
+        assert tmux.ensure_session_exists(session_name)
 
         # Test various environment variable operations via send-keys
         env_operations = [
