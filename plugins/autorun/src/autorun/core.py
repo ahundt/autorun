@@ -2910,9 +2910,12 @@ class AutorunApp:
                 "",
             )
 
-        # Check direct aliases
+        # Check direct aliases. A bare-word alias (`ar`, no `/` or `:`) is a
+        # command only as the whole prompt: as a prefix it read prose the
+        # `ar <command>` spelling could not parse ("ar 2 tests fail") as help.
         for alias, handler in self.command_handlers.items():
-            if canonical_prompt == alias or canonical_prompt.startswith(f"{alias} "):
+            takes_arguments = "/" in alias or ":" in alias
+            if canonical_prompt == alias or (takes_arguments and canonical_prompt.startswith(f"{alias} ")):
                 return CommandMatch(
                     handler,
                     alias,

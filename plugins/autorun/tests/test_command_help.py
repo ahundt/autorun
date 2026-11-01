@@ -92,7 +92,9 @@ class TestHelpIsReachableTheWayUsersActuallyAsk:
     def test_bare_autorun_token_shows_the_list(self, prompt):
         assert "ar:help" in _run_help(prompt).replace("/ar:help", "ar:help")
 
-    @pytest.mark.parametrize("prompt", ["help", "help me refactor this", "ar rahman playlist"])
+    @pytest.mark.parametrize(
+        "prompt", ["help", "help me refactor this", "ar rahman playlist", "ar 2 tests fail", "ar  the tests passing?"]
+    )
     def test_ordinary_prose_never_opens_help(self, prompt):
         assert app._find_command(prompt, "claude") is None
 

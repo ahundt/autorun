@@ -571,6 +571,15 @@ class TestOrdinaryPromptsAreNotCommands:
             assert not result.get("systemMessage"), (prompt, result)
             assert not state.autorun_active, prompt
 
+    def test_prose_after_the_bare_ar_alias_reaches_the_model(self):
+        """`ar` opens help on its own, but matched as a prefix it turned any
+        prompt the `ar <command>` spelling could not parse into help."""
+        for prompt in ("ar 2 tests fail on main, why?", "ar  the tests passing?"):
+            result = _prompt(prompt, sid=_sid(), store=ThreadSafeDB())
+            assert result.get("continue") is not False, (prompt, result)
+            assert not result.get("systemMessage"), (prompt, result)
+        assert "help" in _prompt("ar", sid=_sid(), store=ThreadSafeDB()).get("systemMessage", "")
+
     def test_slash_spellings_still_dispatch(self):
         sid, store = _sid(), ThreadSafeDB()
         assert "Autorun" in _prompt("/ar:go build the parser", sid=sid, store=store).get("systemMessage", "")
