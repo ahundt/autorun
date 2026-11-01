@@ -881,7 +881,12 @@ class TestWindowListingSurvivesAPipeInAField:
     """tmux_list_windows split list-windows output on '|', so a pane title or
     path containing '|' gave the wrong field count and the window vanished."""
 
-    def test_a_pipe_in_the_title_and_path_keeps_the_window(self):
+    @pytest.mark.parametrize("vis_encoded", [False, True], ids=["tmux-3.5+", "tmux-3.4"])
+    def test_a_pipe_in_the_title_and_path_keeps_the_window(self, vis_encoded):
+        """tmux 3.4 prints list output through utf8_stravisx(VIS_OCTAL), so the
+        \\x1f separator arrives as the four characters \\037 (server-client.c
+        server_client_print, cmdq_print passes parse=0); later versions print
+        the byte. Both must parse."""
         import re
 
         values = {
@@ -893,8 +898,10 @@ class TestWindowListingSurvivesAPipeInAField:
 
         def fake_tmux(cmd, session=None, window=None, pane=None):
             fmt = cmd[cmd.index("-F") + 1]  # expand the format as tmux would
-            return {"returncode": 0,
-                    "stdout": re.sub(r"#\{(\w+)\}", lambda m: values[m.group(1)], fmt) + "\n"}
+            line = re.sub(r"#\{(\w+)\}", lambda m: values[m.group(1)], fmt)
+            if vis_encoded:
+                line = line.replace("\x1f", "\\037")
+            return {"returncode": 0, "stdout": line + "\n"}
 
         tmux = Mock()
         tmux.execute_tmux_command.side_effect = fake_tmux

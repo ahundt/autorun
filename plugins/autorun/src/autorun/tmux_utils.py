@@ -989,6 +989,7 @@ SHELL_COMMANDS = frozenset({
 # ASCII unit separator: titles, paths and session names may contain '|', and a
 # '|' separator then gave the wrong field count and dropped the window.
 TMUX_FORMAT_SEPARATOR = '\x1f'
+TMUX_FORMAT_SEPARATOR_VIS = '\\037'  # how tmux 3.4 prints it
 TMUX_WINDOW_FORMAT = TMUX_FORMAT_SEPARATOR.join([
     '#{session_name}',
     '#{window_index}',
@@ -1254,7 +1255,12 @@ def tmux_list_windows(
             if not line:
                 continue
 
+            # tmux 3.4 prints list output through utf8_stravisx(VIS_OCTAL), so
+            # the separator arrives as the four characters "\037"; tmux 3.5+
+            # prints the byte itself.
             parts = line.split(TMUX_FORMAT_SEPARATOR)
+            if len(parts) == 1:
+                parts = line.split(TMUX_FORMAT_SEPARATOR_VIS)
             if len(parts) != len(TMUX_FORMAT_FIELDS):
                 continue  # Malformed line - skip
 
