@@ -285,9 +285,9 @@ describe what changed between rc1 and rc3.
 63. `/ar:no format` stored the advice for `rm`, because "rm" is inside
     "format".
 64. With a locale that is not UTF-8 (such as `LANG=C`), `/ar:tabs` and
-    `/ar:tabw` listed no tmux windows and could not see Claude Code's `❯`
-    prompt: tmux printed the characters autorun relies on as `_`. autorun
-    now asks tmux for UTF-8 output whatever the locale.
+    `/ar:tabw` could not see Claude Code's `❯` prompt, and window titles lost
+    their non-ASCII characters: tmux printed them as `_`. autorun now asks
+    tmux for UTF-8 output whatever the locale.
 
 ### For contributors
 
