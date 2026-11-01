@@ -856,6 +856,42 @@ class TestSafeToSendAgreesWithThePromptDetector:
         assert [c.args[0] for c in tmux.send_keys.call_args_list] == ["continue", "C-m"]
 
 
+class TestOnlyACursorOnAnOptionIsAChoicePrompt:
+    """tmux_detect_prompt_type called a screen a 'question' when a '❯' and a
+    line like '1. Run' were anywhere in its last 15 lines, and a
+    'plan_approval' when a '❯' and 'Would you like to proceed?' were. Claude
+    Code's idle input prompt is itself a '❯', so an idle window whose reply
+    held a numbered list, or ended by asking "Would you like to proceed?", was
+    a choice prompt: check_safe_to_send refused it and /ar:tabw continue
+    skipped it. A real choice prompt puts the cursor on an option: '❯ 1. Yes'."""
+
+    @pytest.mark.parametrize("reply", [
+        "⏺ Next steps:\n  1. Run the tests\n  2. Fix the lint\n\n",
+        "⏺ The plan is written. Would you like to proceed?\n\n",
+    ])
+    def test_claude_idle_after_a_reply_is_at_the_input_prompt(self, reply):
+        screen = reply + CLAUDE_IDLE_SCREEN
+
+        assert tmux_module.tmux_detect_prompt_type(screen) == "input"
+        assert tmux_module.check_safe_to_send(screen) == (True, "ready")
+
+    @pytest.mark.parametrize("screen,expected", [
+        (" Bash command\n\n   rm -rf build\n\n Do you want to proceed?\n"
+         " ❯ 1. Yes\n   2. Yes, and don't ask again for rm commands\n"
+         "   3. No, and tell Claude what to do differently (esc)\n", "question"),
+        ("│ Do you want to proceed?          │\n│ ❯ 1. Yes                         │\n"
+         "│   2. No                          │\n╰──────────────────────────────────╯\n",
+         "question"),
+        ("Which approach?\n\n  1. Patch the caller\n     Smallest diff\n"
+         "❯ 2. Fix the shared helper\n     Covers every caller\n  3. Type something.\n",
+         "question"),
+        (" Would you like to proceed?\n\n ❯ 1. Yes, and auto-accept edits\n"
+         "   2. Yes, and manually approve edits\n   3. No, keep planning\n", "plan_approval"),
+    ])
+    def test_a_cursor_on_a_numbered_option_is_a_choice_prompt(self, screen, expected):
+        assert tmux_module.tmux_detect_prompt_type(screen) == expected
+
+
 class TestEnvironmentDetectionAsksTmuxForNames:
     """detect_tmux_environment parsed TMUX=socket,server_pid,session_id and
     returned the server PID as the session name and the session id as the

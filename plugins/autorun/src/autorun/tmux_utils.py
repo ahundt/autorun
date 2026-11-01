@@ -1391,14 +1391,21 @@ def _prompt_lines(content: str) -> List[str]:
     return [line.strip() for line in content[-800:].split('\n') if line.strip()][-15:]
 
 
+# Claude Code's choice prompts (tool permission "Do you want to proceed?", plan
+# approval, AskUserQuestion) put the ❯ cursor on a numbered option, "❯ 1. Yes",
+# sometimes inside a "│" border. The idle input prompt is a ❯ too, so a ❯
+# somewhere plus a numbered list in Claude's reply is not a choice prompt.
+_CHOICE_CURSOR = re.compile(r'(?:│\s*)?❯\s*\d+\.\s')
+
+
 def _input_prompt_line(last_lines: List[str]) -> Optional[str]:
     """The main input prompt line among the last 5 of last_lines, or None.
 
     A bare '>' or a line starting with '❯' (Claude Code's prompt, possibly
-    followed by typed or placeholder text) that is not a numbered menu item.
+    followed by typed or placeholder text) that is not a choice cursor.
     """
     for line in last_lines[-5:]:
-        if line == '>' or (line.startswith('❯') and not re.search(r'[1-9]\.\s', line)):
+        if line == '>' or (line.startswith('❯') and not _CHOICE_CURSOR.match(line)):
             return line
     return None
 
@@ -1417,7 +1424,8 @@ def tmux_detect_prompt_type(content: str) -> Optional[str]:
         - 'plan_approval': Plan/feature approval prompt (Would you like to proceed?)
         - 'tool_permission_yn': Yes/No tool permission prompt ([Y/n], (yes/no))
         - 'tool_permission_numbered': Numbered option permission prompt ([1] [2])
-        - 'question': AskUserQuestion multi-choice prompt (❯ with numbered options)
+        - 'question': ❯ cursor on a numbered option ("❯ 1. Yes"): AskUserQuestion
+          or the "Do you want to proceed?" tool permission dialog
         - 'input': Main input prompt (standalone > at line end)
         - 'happy_mode_switch': Happy-cli mode switch prompt (📱 Press space)
         - 'happy_remote': Happy-cli remote mode - mobile device connected.
@@ -1442,9 +1450,10 @@ def tmux_detect_prompt_type(content: str) -> Optional[str]:
 
     last_lines = _prompt_lines(content)
     last_text = '\n'.join(last_lines)
+    choice = any(_CHOICE_CURSOR.match(line) for line in last_lines)
 
     # 1. Plan/Feature approval - "Would you like to proceed?" with selector
-    if 'Would you like to proceed?' in last_text and '❯' in last_text:
+    if choice and 'Would you like to proceed?' in last_text:
         return PROMPT_TYPE_PLAN_APPROVAL
 
     # 2. Tool permission - Yes/No patterns
@@ -1456,8 +1465,8 @@ def tmux_detect_prompt_type(content: str) -> Optional[str]:
     if re.search(r'\[1\].*\[2\]', last_text):
         return PROMPT_TYPE_TOOL_PERMISSION_NUMBERED
 
-    # 4. AskUserQuestion - Selector with numbered options
-    if '❯' in last_text and re.search(r'[1-4]\.\s+\w', last_text):
+    # 4. AskUserQuestion or the tool permission dialog - "❯ 1." cursor
+    if choice:
         return PROMPT_TYPE_QUESTION
 
     # 5. Main input prompt - standalone > or ❯ (Claude Code uses Unicode ❯)
