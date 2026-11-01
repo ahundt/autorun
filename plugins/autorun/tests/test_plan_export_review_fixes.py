@@ -235,6 +235,16 @@ class TestStartupLeavesRunningSessionsPlansAlone:
         assert "mine, mid-plan" not in _bodies(project / "notes" / "rejected")
         assert str(alpha) in self._pending(project)
 
+    def test_session_start_dispatch_runs_the_recovery_handler(self):
+        """The handler is reached through app.dispatch, not only by direct call:
+        a helper once landed between @app.on("SessionStart") and this function,
+        and the decorator registered the helper instead."""
+        from autorun.plugins import app
+
+        handlers = [getattr(h, "__name__", "") for h in app.chains.get("SessionStart", [])]
+        assert "recover_unexported_plans" in handlers
+        assert "_plan_session_still_running" not in handlers
+
     def test_a_plan_whose_session_has_exited_is_still_recovered(self, project, plans_dir):
         alpha = _plan(plans_dir, "alpha", "left behind")
         self._write("S1", project, alpha, _exited_pid())

@@ -1864,7 +1864,6 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
     return None
 
 
-@app.on("SessionStart")
 def _plan_session_still_running(info: dict, ctx) -> bool:
     """Whether the session that recorded a plan entry may still be using it."""
     if ctx.source in ("resume", "compact") and info.get("session_id") == ctx.session_id:
@@ -1877,6 +1876,7 @@ def _plan_session_still_running(info: dict, ctx) -> bool:
     return psutil.pid_exists(pid)
 
 
+@app.on("SessionStart")
 def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
     """Recover plans from Option 1 (fresh context) on session start.
 
