@@ -7,6 +7,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 
@@ -42,14 +43,16 @@ def test_nested_codex_update_plan_is_progress_in_python_and_sql() -> None:
     assert not AUDIT.is_progress_tool(quoted_search)
     assert AUDIT.classify_progress(direct) == "plan_snapshot"
 
-    connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE messages (provider TEXT, tool_name TEXT, content TEXT)")
-    rows = [direct, parallel, quoted_search, direct_tool]
-    connection.executemany(
-        "INSERT INTO messages(provider, tool_name, content) VALUES (?, ?, ?)",
-        [(row["provider"], row["tool_name"], row["content"]) for row in rows],
-    )
-    detected = connection.execute(f"SELECT CASE WHEN {AUDIT.progress_tool_sql('m')} THEN 1 ELSE 0 END FROM messages AS m ORDER BY rowid").fetchall()
+    # closing(), not `with connection`: sqlite3's own context manager commits
+    # but never closes, which CI reported as an unclosed-database ResourceWarning.
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.execute("CREATE TABLE messages (provider TEXT, tool_name TEXT, content TEXT)")
+        rows = [direct, parallel, quoted_search, direct_tool]
+        connection.executemany(
+            "INSERT INTO messages(provider, tool_name, content) VALUES (?, ?, ?)",
+            [(row["provider"], row["tool_name"], row["content"]) for row in rows],
+        )
+        detected = connection.execute(f"SELECT CASE WHEN {AUDIT.progress_tool_sql('m')} THEN 1 ELSE 0 END FROM messages AS m ORDER BY rowid").fetchall()
     assert detected == [(1,), (1,), (0,), (1,)]
 
 
