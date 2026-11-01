@@ -545,9 +545,12 @@ class TmuxUtilities:
             tmux_env = os.getenv('TMUX')
             socket_path = tmux_env.split(',')[0] if tmux_env else None
 
+            # -u: without a UTF-8 locale a tmux client prints every
+            # non-printable or non-ASCII byte as "_", which turned
+            # list-windows' \x1f field separator and Claude's ❯ prompt into "_".
             prefix = (
-                [self.tmux_binary, '-S', socket_path] if socket_path
-                else [self.tmux_binary]
+                [self.tmux_binary, '-u', '-S', socket_path] if socket_path
+                else [self.tmux_binary, '-u']
             )
 
             # Ensure target session exists for commands that support targeting
@@ -930,7 +933,7 @@ def _tmux_current_location() -> Optional[Tuple[str, str, str]]:
     """
     try:
         result = subprocess.run(
-            [resolve_tmux_binary(), 'display-message', '-p',
+            [resolve_tmux_binary(), '-u', 'display-message', '-p',
              '#{session_name}:#{window_index}:#{pane_index}'],
             capture_output=True, text=True, timeout=2
         )

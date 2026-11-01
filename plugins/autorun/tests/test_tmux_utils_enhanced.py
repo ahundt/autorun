@@ -904,7 +904,11 @@ class TestWindowListingSurvivesAPipeInAField:
         assert [(w["w"], w["title"], w["path"]) for w in windows] == [(3, "build | test", "/srv/a|b")]
 
     @pytest.mark.tmux
-    def test_a_pipe_in_a_real_pane_title_keeps_the_window(self):
+    @pytest.mark.parametrize("lang", ["C.UTF-8", "C"])
+    def test_a_pipe_in_a_real_pane_title_keeps_the_window(self, lang, monkeypatch):
+        """Under a non-UTF-8 locale a tmux client prints the \x1f separator as
+        "_", so every line was malformed and no window was listed (the
+        tmux-integration CI job). autorun's tmux calls pass -u."""
         import shutil
         import subprocess
 
@@ -912,6 +916,9 @@ class TestWindowListingSurvivesAPipeInAField:
 
         if not shutil.which("tmux"):
             pytest.skip("tmux not installed")
+        for name in ("LC_ALL", "LC_CTYPE"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("LANG", lang)
         session = "autorun-test-pipe-title"
         subprocess.run(tmux_argv("new-session", "-d", "-s", session, "-x", "80", "-y", "24"),
                        capture_output=True)

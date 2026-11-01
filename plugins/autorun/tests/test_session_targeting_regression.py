@@ -167,7 +167,8 @@ class TestSessionTargetingRegression:
             send_keys_index = socket_index + 2
             assert command[send_keys_index] == 'send-keys', "Should include send-keys after socket spec"
         else:
-            assert command[1] == 'send-keys', "Should include send-keys when no socket"
+            # -u keeps tmux's output UTF-8 whatever the caller's locale.
+            assert command[1:3] == ['-u', 'send-keys'], "Should include send-keys when no socket"
 
         assert 'test-construction' in command, "Should include the text to send"
         assert '-t' in command, "Should include target flag"
