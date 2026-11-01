@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createDaemonBridge, denialReason, responseMessage } from "./daemon-client.mjs";
+import { autorunDisabled, createDaemonBridge, denialReason, responseMessage } from "./daemon-client.mjs";
 
 const TASK_STATUSES = ["pending", "in_progress", "completed", "deleted"];
 const TASK_ID_SCHEMA = {
@@ -100,6 +100,10 @@ async function mintTaskId(ctx: ExtensionContext, pi: ExtensionAPI): Promise<stri
   const minted = operation?.operation === "task_next_id_v1" ? operation.task_id : undefined;
   return typeof minted === "string" && minted.trim() ? minted : createTaskId();
 }
+
+// With AUTORUN_DISABLE set the bridge asks the daemon nothing, so a missing
+// answer means autorun is stood down, not that the daemon failed.
+const TASKS_DISABLED = "autorun is disabled (AUTORUN_DISABLE is set). Unset AUTORUN_DISABLE to track tasks.";
 
 function textResult(text: string, details: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text }], details };
@@ -286,7 +290,8 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
       throwIfAborted(signal);
       const operation = response?._autorun_bridge;
       if (operation?.operation !== "task_list_v1" || !Array.isArray(operation.tasks)) {
-        return textResult("Unable to list autorun tasks: daemon returned no task projection.", {
+        const reason = autorunDisabled() ? TASKS_DISABLED : "daemon returned no task projection.";
+        return textResult(`Unable to list autorun tasks: ${reason}`, {
           tasks: [], total: 0, truncated: false, error: "task projection unavailable",
         });
       }
@@ -312,7 +317,10 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
       throwIfAborted(signal);
       const operation = response?._autorun_bridge;
       if (operation?.operation !== "task_get_v1" || !operation.task) {
-        return textResult(`Task ${params.taskId} was not found`, {
+        const text = autorunDisabled()
+          ? `Unable to read task ${params.taskId}: ${TASKS_DISABLED}`
+          : `Task ${params.taskId} was not found`;
+        return textResult(text, {
           taskId: params.taskId, task: null, error: "task not found",
         });
       }
@@ -401,9 +409,10 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
           ...event.content,
           {
             type: "text",
-            text:
-              `autorun did not confirm ${event.toolName}; task state may be unchanged. ` +
-              "Run `autorun --restart-daemon`, then retry the task operation.",
+            text: autorunDisabled()
+              ? `${event.toolName} was not recorded: ${TASKS_DISABLED}`
+              : `autorun did not confirm ${event.toolName}; task state may be unchanged. ` +
+                "Run `autorun --restart-daemon`, then retry the task operation.",
           },
         ],
         details: event.details,

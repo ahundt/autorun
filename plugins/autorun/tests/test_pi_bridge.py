@@ -1048,6 +1048,57 @@ console.log(JSON.stringify({ receipt }));
     assert result["receipt"]["details"] == {"taskId": "pi-1"}
 
 
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
+def test_pi_task_results_say_autorun_is_disabled_when_it_is(tmp_path, monkeypatch, cli_type):
+    """With AUTORUN_DISABLE set the bridge asks the daemon nothing, so every
+    task result lacked a daemon answer and blamed the daemon: TaskCreate and
+    TaskUpdate said autorun "did not confirm" and to run `autorun
+    --restart-daemon`, which cannot help, and TaskGet said the task was not
+    found."""
+    monkeypatch.setenv("AUTORUN_DISABLE", "1")
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map();
+const tools = new Map();
+const pi = {
+  registerCommand() {}, registerTool(tool) { tools.set(tool.name, tool); },
+  on(name, handler) { handlers.set(name, handler); },
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "rpc",
+  sessionManager: {
+    getSessionId: () => "pi-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }),
+  },
+};
+const texts = [];
+for (const toolName of ["TaskCreate", "TaskUpdate"]) {
+  const receipt = await handlers.get("tool_result")({
+    toolName, input: { taskId: "pi-1" },
+    content: [{ type: "text", text: "Updated task pi-1" }],
+    details: { taskId: "pi-1" }, isError: false,
+  }, ctx);
+  texts.push(receipt.content.at(-1).text);
+}
+texts.push((await tools.get("TaskList").execute("c1", {}, undefined, undefined, ctx)).content[0].text);
+texts.push((await tools.get("TaskGet").execute("c2", { taskId: "pi-1" }, undefined, undefined, ctx)).content[0].text);
+console.log(JSON.stringify({ texts }));
+''',
+        cli_type=cli_type,
+    )
+
+    assert frames == []
+    assert len(result["texts"]) == 4
+    for text in result["texts"]:
+        assert "autorun is disabled (AUTORUN_DISABLE is set)" in text, text
+        assert "restart-daemon" not in text, text
+        assert "not found" not in text, text
+
+
 def test_pi_session_tree_replays_task_receipts_to_python_projection(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,

@@ -29,8 +29,9 @@ function daemonTarget(socketPath, portFile) {
 // AUTORUN_DISABLE stands autorun down, with the same truthy set as
 // hooks/hook_entry.py. Read here because these bridges ask the daemon first and
 // never reach hook_entry while it is up, so a denying daemon could not be
-// escaped through the exit every fail-closed reason names.
-function autorunDisabled() {
+// escaped through the exit every fail-closed reason names. Exported so a
+// harness adapter can tell a stood-down bridge from an unreachable daemon.
+export function autorunDisabled() {
   const value = String(process.env.AUTORUN_DISABLE ?? "").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
 }
