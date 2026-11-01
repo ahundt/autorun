@@ -120,6 +120,19 @@ class TestUseInsteadIsBuiltFromTheMatchedCommand:
             assert suggestions, (cmd, reason)
             assert all(line == f"Use instead: `{expected}`" for line in suggestions), (cmd, suggestions)
 
+    def test_each_suggestion_comes_from_the_segment_its_pattern_matched(self):
+        """command_tokens_for took the first segment with the command's name,
+        so `rm -rf`'s suggestion named the operands of a plain `rm` before it."""
+        cases = {
+            "rm a && rm -rf b": ["Use instead: `trash a`", "Use instead: `trash b`"],
+            "git status && git reset --hard": ["Use instead: `git stash push -m 'WIP: reset --hard'`"],
+            "bash -c 'rm -rf build'": ["Use instead: `trash build`"],
+        }
+        for cmd, expected in cases.items():
+            reason = _reason(plugins.check_blocked_commands(_bash(cmd)))
+            for line in expected:
+                assert line in reason.splitlines(), (cmd, line, reason)
+
     def test_fixed_redirect_is_shown_unchanged(self):
         reason = _reason(plugins.check_blocked_commands(_bash("cd repo && git clean -fd")))
         assert "Use instead: `git clean -n`" in reason, reason

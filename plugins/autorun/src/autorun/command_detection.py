@@ -241,10 +241,11 @@ class ExtractedCommands:
 
     def matches_pattern(self, p: ParsedPattern) -> bool:
         """Check if any command string matches parsed pattern."""
-        return any(self._cmd_matches(cs, p) for cs in self.strings)
+        return any(self.string_matches(cs, p) for cs in self.strings)
 
-    def _cmd_matches(self, cmd_str: str, p: ParsedPattern) -> bool:
-        """Match command string against parsed pattern."""
+    @staticmethod
+    def string_matches(cmd_str: str, p: ParsedPattern) -> bool:
+        """Match one extracted command string against a parsed pattern."""
         cmd = ParsedPattern.from_string(cmd_str)
         # Base: exact or prefix with space
         if cmd.base != p.base and not cmd.base.startswith(p.base + " "):
@@ -813,36 +814,43 @@ def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
 
 def command_tokens_for(
     cmd: str,
-    command_name: str,
+    pattern: str,
     *,
     allow_prefixes: bool = True,
 ) -> tuple[str, ...]:
-    """Return argv-like tokens for a command invocation inside a shell string.
+    """Argv of the first command in a shell string that `pattern` matches.
 
-    The extractor reuses autorun's normal prefix-aware command parser, so
-    `sudo sed -i ...` can still be recognized as sed when desired. Callers that
-    need only a direct shell command can set allow_prefixes=False.
+    `pattern` is a command name (`sed`) or a full pattern (`rm -rf`); the
+    segment returned is one the whole pattern matches, so on `rm a && rm -rf b`
+    `rm -rf` answers with `rm -rf b`. Scripts the line runs (`bash -c '...'`)
+    are searched after the line itself. The extractor reuses autorun's normal
+    prefix-aware command parser, so `sudo sed -i ...` can still be recognized
+    as sed when desired. Callers that need only a direct shell command can set
+    allow_prefixes=False.
     """
-    if not cmd or not command_name:
+    if not cmd or not pattern or not pattern.split():
         return ()
+    wanted = ParsedPattern.from_string(pattern)
+    command_name = pattern.split()[0]
 
-    for segment in _SHELL_OPERATORS.split(cmd):
-        if not (segment := segment.strip()):
-            continue
+    for script in (cmd, *nested_scripts(cmd)):
+        for segment in _SHELL_OPERATORS.split(script):
+            if not (segment := segment.strip()):
+                continue
 
-        tokens = _shlex_split_safe(segment)
-        if not tokens:
-            continue
+            tokens = _shlex_split_safe(segment)
+            if not tokens:
+                continue
 
-        name, _string, _potential = _extract_from_tokens(tokens)
-        if name != command_name:
-            continue
-        if not allow_prefixes and _get_basename(tokens[0]) != command_name:
-            continue
+            name, string, _potential = _extract_from_tokens(tokens)
+            if name != command_name or not ExtractedCommands.string_matches(string, wanted):
+                continue
+            if not allow_prefixes and _get_basename(tokens[0]) != command_name:
+                continue
 
-        for i, token in enumerate(tokens):
-            if _get_basename(token) == command_name:
-                return tuple(tokens[i:])
+            for i, token in enumerate(tokens):
+                if _get_basename(token) == command_name:
+                    return tuple(tokens[i:])
 
     return ()
 

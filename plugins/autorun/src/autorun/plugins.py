@@ -1464,9 +1464,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                             redirect = intg.redirect_for_cli(ctx.cli_type)
                             # Substitute from the matched command's own argv, never
                             # the whole line: `cd /tmp && rm -rf build` must suggest
-                            # `trash build`, not `trash /tmp && rm build`. No argv
+                            # `trash build`, not `trash /tmp && rm build`, and
+                            # `rm a && rm -rf b` names `b` for `rm -rf`. No argv
                             # found -> no templated suggestion rather than a wrong one.
-                            tokens = command_tokens_for(cmd, pattern.split()[0]) if event_type == "bash" else ()
+                            tokens = command_tokens_for(cmd, pattern) if event_type == "bash" else ()
                             if redirect and (tokens or "{" not in redirect):
                                 # {args}: all operands; {file_args}: non-flag ones;
                                 # {file}: the last non-flag one. Re-quoted for the shell.
