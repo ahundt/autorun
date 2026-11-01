@@ -99,7 +99,7 @@ def extract_single_pdf(input_file: str, output_file: str, backends: list = None)
     return metadata
 
 
-def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empty: bool = False,
+def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, *,
                backends: list = None, return_metadata: bool = False, output_format: str = 'md'):
     """
     Convert all PDF files in input_dir to text files and save them in output_dir.
@@ -111,7 +111,7 @@ def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empt
         input_dir: Path to the directory containing PDF files.
         output_dir: Path to the directory where text files will be saved.
         resume: Whether to skip conversion for PDFs that already have corresponding text files.
-        remove_empty: Whether to remove empty text files at the end of conversion.
+            An existing empty output is re-extracted either way.
         backends: The tools to use for PDF to text conversion.
             If None, auto-detects based on GPU availability.
         return_metadata: If True, returns (txt_files, metadata_dict).

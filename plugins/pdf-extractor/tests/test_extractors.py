@@ -153,6 +153,17 @@ class TestPdfToTxt:
             assert isinstance(files, list)
             assert isinstance(metadata, dict)
 
+    def test_rejects_options_it_would_ignore(self, tmp_path):
+        """remove_empty was accepted and never acted on; asking for it is now an error.
+
+        Arguments after resume are keyword-only, so an old positional
+        remove_empty value cannot land in backends instead.
+        """
+        with pytest.raises(TypeError):
+            pdf_to_txt(str(tmp_path), str(tmp_path), remove_empty=True)
+        with pytest.raises(TypeError):
+            pdf_to_txt(str(tmp_path), str(tmp_path), True, False)
+
     def test_resume_skips_existing_files(self):
         """Should skip files that already have output when resume=True."""
         with tempfile.TemporaryDirectory() as tmpdir:
