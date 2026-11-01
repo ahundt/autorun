@@ -1789,6 +1789,7 @@ class EventContext:
         "_background_tasks",
         "_session_crons",
         "_server_url",
+        "_harness_pid",
     )
 
     # Stage constants for type consistency
@@ -1860,6 +1861,7 @@ class EventContext:
         session_crons: List = None,
         session_identity_authority: SessionIdentityAuthority = "unresolved",
         server_url: str = "",
+        harness_pid: Optional[int] = None,
     ):
         object.__setattr__(self, "_session_id", session_id)
         object.__setattr__(
@@ -1898,6 +1900,13 @@ class EventContext:
         # Always present on hook-originated contexts; may be None for test / CLI contexts.
         object.__setattr__(self, "_transcript_path", transcript_path)
         object.__setattr__(self, "_server_url", server_url or "")
+        # The process that launched this hook (hook payload "_pid": the harness,
+        # or its launcher). None when the caller did not say.
+        try:
+            pid = int(harness_pid) if harness_pid is not None else None
+        except (TypeError, ValueError):
+            pid = None
+        object.__setattr__(self, "_harness_pid", pid if pid and pid > 0 else None)
         # Session start source from hook payload (startup/resume/clear/compact)
         object.__setattr__(self, "_source", source)
         object.__setattr__(self, "_agent_id", agent_id or None)
@@ -1961,6 +1970,16 @@ class EventContext:
         getattr keeps a broken plumbing path visible instead of silently None.
         """
         return self._server_url
+
+    @property
+    def harness_pid(self) -> Optional[int]:
+        """The process that launched this hook (payload ``_pid``), or None.
+
+        hook_entry.py sends its parent, the JS bridges their own pid; plan
+        export uses it to tell a plan of a still-running session from one
+        left behind.
+        """
+        return self._harness_pid
 
     @property
     def stop_hook_active(self) -> bool:
@@ -3262,6 +3281,7 @@ class AutorunDaemon:
                 background_tasks=normalized["background_tasks"],
                 session_crons=normalized["session_crons"],
                 server_url=payload.get("server_url", ""),
+                harness_pid=payload.get("_pid"),
             )
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.

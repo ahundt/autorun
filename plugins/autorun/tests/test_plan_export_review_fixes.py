@@ -188,6 +188,62 @@ class TestClearRecoversOnlyThePredecessorsPlans:
         assert str(alpha) in self._pending(project)
 
 
+def _exited_pid() -> int:
+    """The pid of a process that has already exited."""
+    import subprocess
+    import sys
+
+    done = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
+                          capture_output=True, text=True, check=True)
+    return int(done.stdout)
+
+
+class TestStartupLeavesRunningSessionsPlansAlone:
+    """SessionStart(startup/resume/compact) archived every unfinished plan in
+    the project as abandoned: one another running session was still writing,
+    and on resume or compact the continuing session's own plan."""
+
+    def _write(self, session_id, project, plan, pid):
+        pe.track_and_export_plans_early(
+            _event(session_id, project, "PreToolUse", "Write", plan, harness_pid=pid)
+        )
+
+    def _pending(self, project):
+        return pe.PlanExport(_event("probe", project, "PreToolUse")).active_plans
+
+    @pytest.mark.parametrize("source", ["startup", "resume", "compact"])
+    def test_a_plan_whose_session_is_still_running_is_left_pending(self, project, plans_dir, source):
+        import os
+
+        alpha = _plan(plans_dir, "alpha", "still being written")
+        self._write("S1", project, alpha, os.getpid())  # this test process: alive
+
+        pe.recover_unexported_plans(
+            _event("S2", project, "SessionStart", source=source, harness_pid=_exited_pid())
+        )
+
+        assert "still being written" not in _bodies(project / "notes" / "rejected")
+        assert str(alpha) in self._pending(project)
+
+    @pytest.mark.parametrize("source", ["resume", "compact"])
+    def test_the_continuing_sessions_own_plan_is_left_pending(self, project, plans_dir, source):
+        alpha = _plan(plans_dir, "alpha", "mine, mid-plan")
+        self._write("S1", project, alpha, _exited_pid())
+
+        pe.recover_unexported_plans(_event("S1", project, "SessionStart", source=source))
+
+        assert "mine, mid-plan" not in _bodies(project / "notes" / "rejected")
+        assert str(alpha) in self._pending(project)
+
+    def test_a_plan_whose_session_has_exited_is_still_recovered(self, project, plans_dir):
+        alpha = _plan(plans_dir, "alpha", "left behind")
+        self._write("S1", project, alpha, _exited_pid())
+
+        pe.recover_unexported_plans(_event("S2", project, "SessionStart", source="startup"))
+
+        assert "left behind" in _bodies(project / "notes" / "rejected")
+
+
 def _exit_plan_mode(project, tool_result):
     """Run the PostToolUse(ExitPlanMode) export and return its notifications."""
     ctx = _event("S1", project, "PostToolUse", "ExitPlanMode", tool_result=tool_result)

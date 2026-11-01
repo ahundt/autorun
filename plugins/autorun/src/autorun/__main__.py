@@ -990,6 +990,7 @@ def run_direct(payload: dict | None = None) -> int:
         background_tasks=normalized["background_tasks"],
         session_crons=normalized["session_crons"],
         server_url=payload.get("server_url", ""),
+        harness_pid=payload.get("_pid"),
     )
 
     response = app.dispatch(ctx)

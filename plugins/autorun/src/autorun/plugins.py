@@ -926,6 +926,7 @@ def _transcript_policy_context(ctx: EventContext, prompt: str) -> EventContext:
         session_crons=list(ctx.session_crons),
         session_identity_authority=ctx.session_identity_authority,
         server_url=ctx.server_url,
+        harness_pid=ctx.harness_pid,
         store=getattr(ctx, "_store", None),
     )
 

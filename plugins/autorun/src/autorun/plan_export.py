@@ -903,6 +903,7 @@ class PlanExport:
             plans[file_path] = {
                 "cwd": project_dir,
                 "session_id": self.ctx.session_id,
+                "harness_pid": self.ctx.harness_pid,
                 "recorded_at": datetime.now().isoformat(),
             }
         self.atomic_update_active_plans(updater)
@@ -1864,6 +1865,18 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
 
 
 @app.on("SessionStart")
+def _plan_session_still_running(info: dict, ctx) -> bool:
+    """Whether the session that recorded a plan entry may still be using it."""
+    if ctx.source in ("resume", "compact") and info.get("session_id") == ctx.session_id:
+        return True
+    pid = info.get("harness_pid")
+    if not isinstance(pid, int) or pid <= 0 or pid == ctx.harness_pid:
+        return False
+    import psutil
+
+    return psutil.pid_exists(pid)
+
+
 def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
     """Recover plans from Option 1 (fresh context) on session start.
 
@@ -1910,6 +1923,15 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
         active_plans_snapshot = exporter.active_plans
 
         plans = exporter.get_unexported()
+        if ctx.source != "clear":
+            # A plan is left behind only when its session has gone. One whose
+            # recording process still runs belongs to a live session, and on
+            # resume or compact the session in hand is still working on its
+            # own. A reused pid only delays recovery until that process ends.
+            plans = [
+                plan for plan in plans
+                if not _plan_session_still_running(active_plans_snapshot.get(str(plan), {}), ctx)
+            ]
         if ctx.source == "clear":
             # Only the replaced session's plans (clearing_session_id() says how
             # it is found). Every other session in this project may still be
