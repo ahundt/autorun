@@ -865,23 +865,33 @@ def _ps_field(pid: str, field: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else ''
 
 
-def _is_claude_process(pid: str) -> bool:
-    """True when the process IS claude/happy, not when its arguments mention it.
+def is_named_process(comm: str, argv, names) -> bool:
+    """True when a process IS one of ``names``, not when its arguments mention one.
 
-    Matches the executable basename (ps comm, or argv[0]) and, for a script
+    Matches the executable basename (``comm``, or argv[0]) and, for a script
     interpreter such as node, the script basename in argv[1]. A substring
     match on the whole command line made `vim ~/.claude/settings.json` count.
+    ``names`` are lowercase; a Windows ``.exe`` suffix is ignored.
     """
-    comm = os.path.basename(_ps_field(pid, 'comm')).lower()
-    if comm in CLAUDE_EXECUTABLES:
+    def base(path: str) -> str:
+        return os.path.basename(path).lower().removesuffix('.exe')
+
+    comm = base(comm)
+    argv = [base(a) for a in list(argv)[:2]]
+    if comm in names or (argv and argv[0] in names):
+        return True
+    interpreted = comm in SCRIPT_INTERPRETERS or (argv and argv[0] in SCRIPT_INTERPRETERS)
+    return bool(interpreted and len(argv) > 1 and argv[1] in names)
+
+
+def _is_claude_process(pid: str) -> bool:
+    """True when the process IS claude/happy (see is_named_process)."""
+    comm = _ps_field(pid, 'comm')
+    if is_named_process(comm, (), CLAUDE_EXECUTABLES):
         return True
     # Known limit: args is split on whitespace, so an argv[1] script path
     # containing a space is not matched (comm still covers argv[0]).
-    argv = [os.path.basename(a).lower() for a in _ps_field(pid, 'args').split()[:2]]
-    if argv and argv[0] in CLAUDE_EXECUTABLES:
-        return True
-    interpreted = comm in SCRIPT_INTERPRETERS or (argv and argv[0] in SCRIPT_INTERPRETERS)
-    return bool(interpreted and len(argv) > 1 and argv[1] in CLAUDE_EXECUTABLES)
+    return is_named_process(comm, _ps_field(pid, 'args').split(), CLAUDE_EXECUTABLES)
 
 
 # Global instance for consistent usage

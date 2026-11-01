@@ -502,6 +502,47 @@ def test_get_stable_pid_recognizes_codex_parent_after_wrappers(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    ("name", "argv"),
+    [
+        ("claude", ["claude", "--resume"]),
+        ("node", ["node", "/usr/local/bin/claude", "--resume"]),
+        ("claude.exe", ["claude.exe"]),
+    ],
+)
+def test_get_stable_pid_skips_wrappers_whose_arguments_mention_a_harness(monkeypatch, name, argv):
+    """The hook's own python and uv carry ~/.claude/plugins/... paths in their
+    arguments, so a substring match on the command line stopped at the
+    short-lived uv instead of the claude process that owns the session."""
+    from unittest import mock
+
+    class FakeProcess:
+        def __init__(self, pid, name, argv, parent=None):
+            self.pid = pid
+            self._name = name
+            self._argv = argv
+            self._parent = parent
+
+        def name(self):
+            return self._name
+
+        def cmdline(self):
+            return self._argv
+
+        def parent(self):
+            return self._parent
+
+    plugin = "/home/u/.claude/plugins/cache/autorun/ar"
+    claude = FakeProcess(42000, name, argv)
+    shell = FakeProcess(42001, "zsh", ["/bin/zsh", "-c", f"{plugin}/hooks/run.sh"], claude)
+    uv = FakeProcess(42002, "uv", ["uv", "run", "--project", plugin, "python"], shell)
+    python = FakeProcess(42003, "python3.12", ["python3", f"{plugin}/hooks/hook_entry.py"], uv)
+
+    monkeypatch.setattr("os.getppid", lambda: 99999)
+    with mock.patch("psutil.Process", return_value=python):
+        assert get_stable_pid() == 42000
+
+
+@pytest.mark.parametrize(
     ("event", "cli", "decision", "root_fields"),
     [
         (

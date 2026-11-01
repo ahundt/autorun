@@ -83,8 +83,8 @@ DAEMON_START_RETRY_SECONDS = 0.1
 DAEMON_START_ATTEMPTS = 64
 
 
-def _hook_platform_process_markers() -> tuple[str, ...]:
-    """Return process-name markers for hook-capable CLI parents."""
+def _hook_platform_process_markers() -> frozenset[str]:
+    """Return executable names of hook-capable CLI parents."""
     try:
         from .platforms import hook_platforms
 
@@ -92,9 +92,9 @@ def _hook_platform_process_markers() -> tuple[str, ...]:
         # Common installed process name for Claude Code; kept as compatibility data
         # beside the registry-derived names instead of a separate branch.
         markers.add("claude-code")
-        return tuple(sorted(markers, key=len, reverse=True))
+        return frozenset(markers)
     except Exception:
-        return ("claude-code", "forgecode", "claude", "gemini", "qwen", "codex", "forge")
+        return frozenset({"claude-code", "forgecode", "claude", "gemini", "qwen", "codex", "forge"})
 
 
 def is_tool_gate_event(event: str) -> bool:
@@ -456,6 +456,8 @@ def get_stable_process_identity() -> StableProcessIdentity:
     except ImportError:
         return StableProcessIdentity(fallback_pid, None)
 
+    from .tmux_utils import is_named_process
+
     try:
         markers = _hook_platform_process_markers()
         current = psutil.Process()
@@ -464,12 +466,13 @@ def get_stable_process_identity() -> StableProcessIdentity:
             parent = current.parent()
             if not parent:
                 break
-            name = parent.name().lower()
             try:
-                cmdline = " ".join(parent.cmdline()).lower()
+                argv = parent.cmdline()
             except Exception:
-                cmdline = ""
-            if any(marker in name or marker in cmdline for marker in markers):
+                argv = []
+            # Match the executable, not its arguments: the hook's own python
+            # and uv carry ~/.claude/... paths and would otherwise match.
+            if is_named_process(parent.name(), argv, markers):
                 stable = parent
                 break
             current = parent
