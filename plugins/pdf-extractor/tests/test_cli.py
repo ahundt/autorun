@@ -148,7 +148,7 @@ class TestCliMain:
             'extract-pdfs', '/fake/directory/', '--no-resume'
         ]):
             with patch('pdf_extraction.cli.pdf_to_txt') as mock_pdf_to_txt:
-                mock_pdf_to_txt.return_value = []
+                mock_pdf_to_txt.return_value = ([], {})
 
                 with patch('os.path.isfile', return_value=False):
                     with patch('os.path.isdir', return_value=True):
@@ -161,7 +161,10 @@ class TestCliMain:
         """Directory input should use pdf_to_txt function."""
         with patch.object(sys, 'argv', ['extract-pdfs', '/fake/directory/']):
             with patch('pdf_extraction.cli.pdf_to_txt') as mock_pdf_to_txt:
-                mock_pdf_to_txt.return_value = ['/output/file1.md', '/output/file2.md']
+                mock_pdf_to_txt.return_value = (
+                    ['/output/file1.md', '/output/file2.md'],
+                    {'file1.pdf': {'success': True}, 'file2.pdf': {'success': True}},
+                )
 
                 with patch('os.path.isfile', return_value=False):
                     with patch('os.path.isdir', return_value=True):
@@ -170,7 +173,7 @@ class TestCliMain:
                 mock_pdf_to_txt.assert_called_once()
 
         captured = capsys.readouterr()
-        assert 'Extracted 2 PDFs' in captured.out
+        assert 'Extracted 2 of 2 PDFs' in captured.out
 
     def test_directory_extraction_honors_format_and_input_tree(self, tmp_path, echo_backend):
         """Batch --format txt writes .txt, mirroring each PDF's folder under the output dir."""
@@ -188,6 +191,42 @@ class TestCliMain:
         assert sorted(p.relative_to(output_dir).as_posix() for p in output_dir.rglob('*.*')) == [
             'a/report.txt'
         ]
+
+    @pytest.mark.parametrize('names', [('bad1.pdf', 'bad2.pdf'), ('bad1.pdf', 'good.pdf')])
+    def test_batch_exits_1_when_any_pdf_fails(self, tmp_path, picky_backend, capsys, names):
+        """A batch with a failed PDF exits 1 like a failed single file, and names each failure."""
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        for name in names:
+            (input_dir / name).write_bytes(b'%PDF-1.4 fake pdf')
+
+        argv = ['extract-pdfs', str(input_dir), str(tmp_path / 'output'), '--backends', picky_backend]
+        with patch.object(sys, 'argv', argv), pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        failed = [name for name in names if name.startswith('bad')]
+        assert f'Extracted {len(names) - len(failed)} of {len(names)} PDFs' in out, out
+        for name in failed:
+            assert f'Failed: {name}: cannot parse' in out, out
+
+    def test_batch_of_extracted_and_already_extracted_pdfs_exits_0(self, tmp_path, picky_backend, capsys):
+        """Skipped-as-already-extracted counts as success: the batch returns normally."""
+        input_dir = tmp_path / 'input'
+        output_dir = tmp_path / 'output'
+        input_dir.mkdir()
+        output_dir.mkdir()
+        for name in ('good.pdf', 'bad-but-done.pdf'):
+            (input_dir / name).write_bytes(b'%PDF-1.4 fake pdf')
+        (output_dir / 'bad-but-done.md').write_text('extracted earlier')
+
+        with patch.object(sys, 'argv', [
+            'extract-pdfs', str(input_dir), str(output_dir), '--backends', picky_backend
+        ]):
+            main()
+
+        assert 'Extracted 2 of 2 PDFs' in capsys.readouterr().out
 
 
 class TestCliArguments:

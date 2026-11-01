@@ -1,6 +1,7 @@
 """Shared fixtures for the pdf_extraction tests."""
 
 import importlib.util
+import os
 import shutil
 import sys
 from types import SimpleNamespace
@@ -21,11 +22,27 @@ class EchoExtractor(BackendExtractor):
         return pdf_file
 
 
+class PickyExtractor(EchoExtractor):
+    """Fake backend: fails on any PDF whose file name starts with 'bad', echoes the rest."""
+
+    def _extract_impl(self, pdf_file: str) -> str:
+        if os.path.basename(pdf_file).startswith('bad'):
+            raise RuntimeError('cannot parse')
+        return pdf_file
+
+
 @pytest.fixture
 def echo_backend(monkeypatch):
     """Register EchoExtractor as backend 'echo' for one test and return that name."""
     monkeypatch.setitem(BACKEND_REGISTRY, 'echo', EchoExtractor)
     return 'echo'
+
+
+@pytest.fixture
+def picky_backend(monkeypatch):
+    """Register PickyExtractor as backend 'picky' for one test and return that name."""
+    monkeypatch.setitem(BACKEND_REGISTRY, 'picky', PickyExtractor)
+    return 'picky'
 
 
 @pytest.fixture

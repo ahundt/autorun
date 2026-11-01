@@ -156,9 +156,16 @@ Examples:
         print(f"Output directory: {output_dir}")
         print(f"Backends: {', '.join(backends)}")
 
-        results = pdf_to_txt(input_path, output_dir, resume=not args.no_resume,
-                             backends=backends, output_format=args.format)
-        print(f"\nExtracted {len(results)} PDFs to {output_dir}")
+        _, metadata = pdf_to_txt(input_path, output_dir, resume=not args.no_resume,
+                                 backends=backends, output_format=args.format,
+                                 return_metadata=True)
+        failed = {pdf: meta for pdf, meta in metadata.items() if not meta['success']}
+        print(f"\nExtracted {len(metadata) - len(failed)} of {len(metadata)} PDFs to {output_dir}")
+        for pdf, meta in failed.items():
+            print(f"Failed: {pdf}: {meta['error'] or 'no backend succeeded'}")
+        # Same contract as a single file: any PDF left unextracted exits 1.
+        if failed:
+            sys.exit(1)
 
 
 if __name__ == '__main__':
