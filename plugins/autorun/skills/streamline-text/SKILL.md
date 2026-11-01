@@ -1,6 +1,6 @@
 ---
 name: streamline-text
-description: Edit prose for brevity and scanability without losing facts. Use for requests to "revise", "rewrite", "edit", "polish", "clean up", "clarify", "simplify", "condense", "tighten", "shorten", "streamline", "de-fluff", remove bloat/repetition or unnecessary newlines, fix spelling/typos without changing meaning, make text concise/compact/skimmable, or finalize drafts, messages, notes, docs, reports, issues, or reviews. Activate for "too verbose", "very verbose", or "remove unnecessary newlines", and proactively when text is verbose, wordy, meandering, dense, hard to scan, or has duplicates, vague claims, undefined terms, or cold-reader problems. Preserve evidence, qualifiers, requirements, commands, numbers, and scope with a fact index and restore/cold-reader audit. For public Reddit, Hacker News, social posts, or release notes use social-media-writing; for PRs use write-maintainer-ready-prs; pair with avoid-ai-isms when text sounds generated.
+description: Edit prose for brevity and scanability without losing facts. Use for requests to "revise", "rewrite", "edit", "polish", "clean up", "clarify", "simplify", "condense", "tighten", "shorten", "streamline", "de-fluff", remove bloat/repetition or unnecessary newlines, fix spelling/typos without changing meaning, make text concise/compact/skimmable, or finalize drafts, messages, notes, docs, reports, issues, or reviews. Activate for "too verbose", "very verbose", or "remove unnecessary newlines", and proactively when text is verbose, wordy, meandering, dense, hard to scan, or has duplicates, vague claims, undefined terms, or cold-reader problems. Preserve evidence, qualifiers, requirements, commands, numbers, and scope with a fact index and restore/cold-reader audit. For public Reddit, Hacker News, social posts, or release notes use public-facing-writing; for PRs use write-maintainer-ready-prs; pair with avoid-ai-isms when text sounds generated.
 metadata:
   version: 0.17.0
 ---
@@ -18,7 +18,7 @@ Make a document shorter and clearer while provably losing no required fact. Corr
 | Shorten prose while provably keeping every fact | this skill |
 | Remove the writing tells that mark prose as machine-drafted | `avoid-ai-isms` |
 | PR titles, descriptions, and replies to a maintainer's review | `write-maintainer-ready-prs` |
-| Reddit, Show HN, release notes, platform norms | `social-media-writing` |
+| Reddit, Show HN, release notes, platform norms | `public-facing-writing` |
 
 Shortening and de-slopping are separate jobs. A draft can be tight and still read as generated,
 and a draft with every flagged word removed can still carry three paragraphs of nothing.
