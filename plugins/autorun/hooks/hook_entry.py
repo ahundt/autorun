@@ -571,6 +571,17 @@ def fail_closed_tool_gate(
         f"[autorun] {message}. Blocking tool use to avoid fail-open. "
         + (_RETRY_GUIDANCE if recoverable else _INTERVENTION_GUIDANCE)
     )
+    if event_name == "PermissionRequest":
+        # Claude Code, Codex and Qwen read this event's verdict only from
+        # hookSpecificOutput.decision; a PreToolUse-shaped deny (or Claude's
+        # exit 2) is dropped. Stdlib copy of
+        # platforms.HookProtocol.fail_closed_permission_request_response,
+        # pinned by test_hook_entry.py.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": event_name,
+            "decision": {"behavior": "deny", "message": reason},
+        }}))
+        sys.exit(0)
     hook_specific = {
         "hookEventName": event_name,
         "permissionDecision": "deny",

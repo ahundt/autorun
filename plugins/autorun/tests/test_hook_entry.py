@@ -2154,3 +2154,26 @@ class TestCleanup:
         """autorun-hook.sh should not exist."""
         old_script = PLUGIN_ROOT / "hooks" / "autorun-hook.sh"
         assert not old_script.exists()
+
+
+@pytest.mark.parametrize("cli_type", ["claude", "codex", "qwen"])
+def test_the_stdlib_fail_closed_permission_request_deny_is_the_registrys(cli_type, capsys):
+    """hook_entry.fail_closed_tool_gate sent PermissionRequest the PreToolUse
+    deny (and exit 2 on Claude). These harnesses read this event's verdict
+    only from hookSpecificOutput.decision, so the deny was dropped whenever
+    autorun could not be imported or its CLI timed out."""
+    from autorun.platforms import platform_for
+
+    hook_entry = load_hook_entry_module()
+    with pytest.raises(SystemExit) as exc:
+        hook_entry.fail_closed_tool_gate("daemon unavailable", cli_type, "PermissionRequest")
+
+    captured = capsys.readouterr()
+    sent = json.loads(captured.out)
+    reason = sent["hookSpecificOutput"]["decision"]["message"]
+    assert exc.value.code == 0
+    assert captured.err == ""
+    assert sent == platform_for(cli_type).hook_protocol.fail_closed_permission_request_response(
+        reason, "PermissionRequest"
+    )
+    assert "daemon unavailable" in reason
