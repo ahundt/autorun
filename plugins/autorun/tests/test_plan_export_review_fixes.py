@@ -2,6 +2,9 @@
 
 - Two sessions in one project: ExitPlanMode must back up the calling session's
   plan, not whichever plan the other session happened to record first.
+- Option 1 in one session (SessionStart source=clear) must not export the
+  other session's plan, whether it is still being written or awaiting its own
+  dialog.
 - An absolute or ~ export directory is honored and reported as a success.
 - `/ar:pe rejected off` keeps every plan that was not accepted out of notes/,
   while an Option 1 acceptance still reaches notes/.
@@ -123,6 +126,66 @@ class TestExitPlanModeUsesTheCallingSessionsPlan:
         )
         exporter = pe.PlanExport(_event("S2", project, "PreToolUse", "ExitPlanMode"))
         assert exporter.get_current_plan() is None
+
+
+class TestClearRecoversOnlyThePredecessorsPlans:
+    """SessionStart(source=clear) must leave plans of other live sessions alone."""
+
+    def _write(self, session_id, project, plan):
+        pe.track_and_export_plans_early(
+            _event(session_id, project, "PreToolUse", "Write", plan)
+        )
+
+    def _exit(self, session_id, project):
+        pe.track_and_export_plans_early(
+            _event(session_id, project, "PreToolUse", "ExitPlanMode", permission_mode="plan")
+        )
+
+    def _pending(self, project):
+        return pe.PlanExport(_event("probe", project, "PreToolUse")).active_plans
+
+    @pytest.mark.parametrize("s1_dialog_open", [False, True],
+                             ids=["s1-still-writing", "s1-dialog-open"])
+    def test_option1_in_s2_leaves_s1s_plan_pending(self, project, plans_dir, s1_dialog_open):
+        # Session ids sort opposite to their order in time, so only the
+        # exit_attempted_at stamp can pick S2 when both dialogs are open.
+        s1, s2 = "S9-first", "S0-second"
+        alpha = _plan(plans_dir, "alpha", "written by session one")
+        beta = _plan(plans_dir, "beta", "written by session two")
+        self._write(s1, project, alpha)
+        if s1_dialog_open:
+            self._exit(s1, project)
+        self._write(s2, project, beta)
+        self._exit(s2, project)
+
+        # S2's user picks Option 1: S2 is replaced by S3 with source=clear.
+        pe.recover_unexported_plans(_event("S3", project, "SessionStart", source="clear"))
+
+        assert "written by session two" in _bodies(project / "notes")
+        assert "written by session one" not in _bodies(project / "notes"), (
+            "S1's plan was exported as accepted by S2's acceptance"
+        )
+        if not s1_dialog_open:
+            # With the dialog open, S1's own ExitPlanMode already put a backup
+            # in notes/rejected/; what must not happen is S3 deciding for it.
+            assert "written by session one" not in _bodies(project / "notes" / "rejected"), (
+                "S1's unfinished plan was archived as abandoned"
+            )
+        pending = self._pending(project)
+        assert str(alpha) in pending, "S1's plan was dropped from active_plans"
+        assert bool(pending[str(alpha)].get("exit_attempted")) is s1_dialog_open
+
+    def test_plain_clear_with_no_dialog_open_recovers_nothing(self, project, plans_dir):
+        alpha = _plan(plans_dir, "alpha", "written by session one")
+        self._write("S1", project, alpha)
+
+        response = pe.recover_unexported_plans(
+            _event("S3", project, "SessionStart", source="clear")
+        )
+
+        assert response is None, response
+        assert not list(project.rglob("*.md")), list(project.rglob("*.md"))
+        assert str(alpha) in self._pending(project)
 
 
 def _exit_plan_mode(project, tool_result):

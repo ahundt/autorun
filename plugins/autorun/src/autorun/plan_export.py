@@ -169,6 +169,8 @@ HOOK FLOW:
            ↓
       SessionStart → get_unexported() reads from GLOBAL backend state
            ↓
+      Keeps only the replaced session's plans (PlanExport.clearing_session_id)
+           ↓
       Finds foo.md, exports, clears from active_plans
 
     OPTION 2 (regular accept - NORMAL):
@@ -944,6 +946,37 @@ class PlanExport:
         ]
         return Path(max(own)[1]) if own else None
 
+    def clearing_session_id(self) -> Optional[str]:
+        """Session that a SessionStart(source="clear") replaced, or None.
+
+        A clear payload names only the NEW session: its session_id,
+        transcript_path, cwd, source and permission_mode say nothing about the
+        session it replaced, and active_plans entries record their writer's
+        session_id but nothing the new session shares. What does link them is
+        the ExitPlanMode attempt: Option 1 is answered in the dialog that
+        attempt opened, and backup_to_rejected() stamps it exit_attempted_at.
+        So the predecessor is the session with the newest exit attempt in this
+        project. With no attempt here the clear was a plain /clear, and the
+        predecessor is unknown.
+
+        Known limit: two sessions in one project with dialogs open at once,
+        the OLDER one accepted with Option 1, picks the newer one. Telling them
+        apart needs the harness process, which survives a clear, and
+        EventContext does not carry it.
+        """
+        try:
+            project_dir = str(self.project_dir)
+        except ValueError:
+            return None
+        attempts = [
+            (info.get("exit_attempted_at", ""), info["session_id"])
+            for info in self.active_plans.values()
+            if info.get("exit_attempted")
+            and info.get("cwd") == project_dir
+            and info.get("session_id")
+        ]
+        return max(attempts)[1] if attempts else None
+
     def get_plan_from_exit_message(self) -> Optional[Path]:
         """Extract plan file path from ExitPlanMode response message.
 
@@ -1395,6 +1428,7 @@ class PlanExport:
                     entry["cwd"] = str(self.ctx.cwd) if self.ctx.cwd else str(self.project_dir)
                 entry.setdefault("session_id", self.ctx.session_id)
                 entry["exit_attempted"] = True
+                entry["exit_attempted_at"] = datetime.now().isoformat()
                 entry["mode_at_exit_attempt"] = permission_mode
                 if dest_path is not None:
                     entry["backup_path"] = str(dest_path)
@@ -1853,6 +1887,10 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
 
     mode_at_exit_attempt guard: if ctx.permission_mode == mode_at_exit_attempt, the mode
     did NOT change between backup and recovery → not an Option 1 acceptance.
+
+    source="clear" recovers only plans recorded by the session the clear replaced
+    (PlanExport.clearing_session_id); other sources still consider every plan in
+    the project.
     """
     # Note: ctx.payload doesn't exist - EventContext uses individual properties (core.py:397-419)
     logger.info(f"SessionStart handler called (event: {ctx.event})")
@@ -1871,7 +1909,20 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
         # Plans cleaned (file no longer exists) won't appear in the loop anyway.
         active_plans_snapshot = exporter.active_plans
 
-        for plan in exporter.get_unexported():
+        plans = exporter.get_unexported()
+        if ctx.source == "clear":
+            # Only the replaced session's plans (clearing_session_id() says how
+            # it is found). Every other session in this project may still be
+            # writing its plan or have its own dialog open: exporting those as
+            # abandoned or accepted would take them from a live session.
+            predecessor = exporter.clearing_session_id()
+            plans = [
+                plan for plan in plans
+                if predecessor is not None
+                and active_plans_snapshot.get(str(plan), {}).get("session_id") == predecessor
+            ]
+
+        for plan in plans:
             info = active_plans_snapshot.get(str(plan), {})
             exit_was_attempted = info.get("exit_attempted", False)
             mode_at_exit = info.get("mode_at_exit_attempt", "")
