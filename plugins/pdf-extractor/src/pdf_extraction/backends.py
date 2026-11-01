@@ -18,6 +18,35 @@ import tempfile
 import time
 
 
+def _keep_existing_output(output_file: str, content: str):
+    """Copy a non-empty output_file holding other text to output_file.~N~; return that path.
+
+    The output path may hold a file extract-pdfs did not write - notes.md beside
+    notes.pdf in an in-place run, or an output path the user named - and
+    neither single-file mode nor --no-resume asks before replacing it. N is the
+    first unused number (GNU `cp --backup=numbered` naming), claimed with an
+    exclusive create so no earlier backup is replaced. Identical text needs no
+    backup, so re-running an extraction does not pile up copies.
+    """
+    try:
+        with open(output_file, 'rb') as f:
+            existing = f.read()
+    except FileNotFoundError:
+        return None
+    # The text-mode write below turns '\n' into os.linesep; compare those bytes.
+    if not existing or existing == content.replace('\n', os.linesep).encode('utf-8'):
+        return None
+    n = 1
+    while True:
+        backup = f'{output_file}.~{n}~'
+        try:
+            with open(backup, 'xb') as f:
+                f.write(existing)
+            return backup
+        except FileExistsError:
+            n += 1
+
+
 class BackendExtractor:
     """
     Base class for PDF extraction backends implementing Template Method pattern.
@@ -63,6 +92,8 @@ class BackendExtractor:
             - content: str or None (extracted text)
             - time: float (extraction time in seconds)
             - error: str or None (error message if failed)
+            - backup: str or None (where a different, non-empty file that
+              was at output_file was kept; success only)
         """
         start_time = time.time()
 
@@ -77,6 +108,8 @@ class BackendExtractor:
             # Ensure output directory exists
             os.makedirs(os.path.dirname(output_file) or '.', exist_ok=True)
 
+            backup = _keep_existing_output(output_file, content)
+
             # Write output
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(content)
@@ -87,7 +120,8 @@ class BackendExtractor:
                 'success': True,
                 'content': content,
                 'time': extraction_time,
-                'error': None
+                'error': None,
+                'backup': backup,
             }
 
         except Exception as e:

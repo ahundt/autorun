@@ -228,6 +228,34 @@ class TestCliMain:
 
         assert 'Extracted 2 of 2 PDFs' in capsys.readouterr().out
 
+    @pytest.mark.parametrize('batch', [False, True], ids=['single-file', 'batch-no-resume'])
+    def test_existing_output_with_other_text_is_kept_as_a_numbered_backup(
+        self, tmp_path, echo_backend, batch
+    ):
+        """notes.md beside notes.pdf is the user's own file: extraction must not destroy it."""
+        pdf = tmp_path / 'notes.pdf'
+        pdf.write_bytes(b'%PDF-1.4 fake pdf')
+        output = tmp_path / 'notes.md'
+        output.write_text('my own notes')
+        (tmp_path / 'notes.md.~1~').write_text('an older backup')
+
+        target = [str(tmp_path), '--no-resume'] if batch else [str(pdf)]
+        with patch.object(sys, 'argv', ['extract-pdfs', *target, '--backends', echo_backend]):
+            main()
+
+        assert output.read_text() == str(pdf)
+        assert (tmp_path / 'notes.md.~1~').read_text() == 'an older backup'
+        assert (tmp_path / 'notes.md.~2~').read_text() == 'my own notes'
+
+    def test_reextracting_identical_text_makes_no_backup(self, tmp_path, echo_backend):
+        pdf = tmp_path / 'doc.pdf'
+        pdf.write_bytes(b'%PDF-1.4 fake pdf')
+        for _ in range(2):
+            with patch.object(sys, 'argv', ['extract-pdfs', str(pdf), '--backends', echo_backend]):
+                main()
+
+        assert sorted(p.name for p in tmp_path.iterdir()) == ['doc.md', 'doc.pdf']
+
 
 class TestCliArguments:
     """Tests for CLI argument parsing."""

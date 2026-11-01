@@ -91,6 +91,8 @@ def extract_single_pdf(input_file: str, output_file: str, backends: list = None)
             metadata['quality_metrics'] = calculate_extraction_quality_metrics(result['content'])
             chars = len(result['content'])
             print(f"OK {backend}: {input_file} -> {output_file} ({chars} chars, {result['time']:.2f}s)")
+            if result.get('backup'):
+                print(f"Kept the previous {output_file} as {result['backup']}")
             break
         else:
             print(f"X {backend} failed: {result['error']}")
