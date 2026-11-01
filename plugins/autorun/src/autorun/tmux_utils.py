@@ -489,9 +489,17 @@ class TmuxUtilities:
         # Build command list
         base_cmd = [self.tmux_binary]
 
+        # tmux obeys the last -t, so a target the caller wrote must be the only
+        # one; appending ours after it sent ai_monitor's `list-windows -t <s>`
+        # to the "autorun" session. For send-keys only a leading -t is a flag;
+        # later arguments are keys to type.
+        caller_target = len(cmd) > 2 and (
+            cmd[1] == '-t' if cmd[0] == 'send-keys' else '-t' in cmd[1:]
+        )
+
         # CRITICAL FIX: For send-keys commands, target specification must come BEFORE keys
         # Format: tmux [socket] send-keys -t target [keys...] where control sequences are separate args
-        if cmd and cmd[0] == 'send-keys' and len(cmd) > 1:
+        if cmd and cmd[0] == 'send-keys' and len(cmd) > 1 and not caller_target:
             # Start with base command
             full_cmd = base_cmd + [cmd[0]]  # ['tmux', 'send-keys']
 
@@ -520,7 +528,7 @@ class TmuxUtilities:
                 'kill-session', 'list-windows', 'list-panes', 'has-session'
             }
 
-            if cmd and cmd[0] in commands_supporting_target:
+            if cmd and cmd[0] in commands_supporting_target and not caller_target:
                 target = target_session
                 if window:
                     target += f":{window}"

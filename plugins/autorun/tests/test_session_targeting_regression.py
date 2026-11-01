@@ -477,3 +477,33 @@ class TestOnlyEnsureSessionExistsCreatesASession:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+class TestACallersTargetIsTheOnlyTarget:
+    """tmux obeys the last -t. execute_tmux_command appended its own
+    `-t <instance session>` after a caller's, so ai_monitor's
+    `list-windows -t <session>` listed the "autorun" session instead."""
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            ["list-windows", "-t", "work", "-F", "#{window_index}"],
+            ["capture-pane", "-p", "-t", "work:2"],
+            ["has-session", "-t", "work"],
+            ["send-keys", "-t", "work:1", "echo hi", "Enter"],
+        ],
+    )
+    def test_a_target_in_the_command_is_kept_and_no_second_one_added(self, cmd, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import autorun.tmux_utils as tmux_utils
+
+        run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
+        monkeypatch.setattr(tmux_utils.subprocess, "run", run)
+        monkeypatch.delenv("TMUX", raising=False)
+
+        tmux_utils.TmuxUtilities("autorun").execute_tmux_command(cmd)
+
+        executed = run.call_args.args[0]
+        targets = [executed[i + 1] for i, arg in enumerate(executed) if arg == "-t"]
+        assert targets == [cmd[cmd.index("-t") + 1]], executed
