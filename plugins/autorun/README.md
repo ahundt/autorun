@@ -1,71 +1,53 @@
 # autorun
 
-`autorun` supplies task-lifecycle checks, command safety guards, skills, and
-native integration assets for AI coding harnesses. It is the only Python
-distribution here, and it contains the complete `ar` plugin plus the `autorun`
-and `autorun-install` entry points. `pdf-extractor` remains a separate harness
-plugin, but not a separate package: its extraction code ships inside this
-distribution, so install it with `uv tool install 'autorun-ai[pdf]'`.
+autorun adds hooks to AI coding agents (Claude Code, Codex, Qwen Code, Pi and
+others) that keep them working until a task is verified, stop destructive shell
+commands such as `rm -rf` and `git reset --hard` before they run, and limit file
+creation to the policy you set.
 
 ## Install
 
-Install the published Python tool, then publish native assets for the harnesses
-detected on the machine:
-
 ```bash
-uv tool install autorun-ai
-autorun --install
-autorun --status
+uv tool install autorun-ai   # installs the `autorun` command
+autorun --install            # adds hooks, commands and skills to every agent it finds
+autorun --status             # checks each install and runs the hook command once
 ```
 
-Source checkout installation:
+Then start a new agent session and type `/ar:help` (`ar:help` in Codex) for
+every command.
+`autorun --install-dry-run` previews the writes. `autorun --uninstall` removes
+what autorun installed, including the `autorun-ai` tool, and stops its
+background daemon; it keeps `~/.autorun` (session state, task history and logs).
+
+Other routes:
 
 ```bash
-uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'
-```
-
-Claude Code can instead install the plugin through its marketplace flow:
-
-```bash
-claude plugin marketplace add https://github.com/ahundt/autorun.git
+uv tool install 'git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'   # from GitHub
+claude plugin marketplace add https://github.com/ahundt/autorun.git                     # Claude Code only
 claude plugin install ar@autorun
+uv tool install 'autorun-ai[pdf]'    # adds the PDF backends for `extract-pdfs`
 ```
 
-Use `autorun --install --install-dry-run` to preview filesystem and
-registration work. Use `autorun --uninstall` to remove only autorun-owned
-assets; session state, task history, and logs are retained intentionally.
+The `pdf-extractor` agent plugin is not a separate package: its extraction code
+ships in this one behind the `pdf` extra.
 
-## Harness capabilities
+## What each agent gets
 
-| Harness | Safety hook | Task stop hooks | Commands and skills |
+| Agent | Safety hook | Keeps working past Stop | Commands and skills |
 |---|---|---|---|
-| Claude Code | Native hooks | Yes | Native |
-| Codex | Native hooks | Yes | Codex-native plugin and skills |
-| Qwen Code | Native hooks | Yes | Native extension |
-| Antigravity | Native hooks | Installed native event subset | Native extension |
-| OpenCode | In-process tool veto | No stop event; native `todo.updated` state is mirrored into task status | Command files and skills |
-| Pi | In-process tool veto | `agent_settled` continuation plus daemon-backed task tools | Native extension and shared skills |
-| Prime Agent | In-process tool veto (same Pi extension, `cliType: "prime"`) | `agent_settled` continuation plus daemon-backed task tools | Native extension and shared skills |
-| ForgeCode | Advisory guidance only | No | Command files and skills |
-| Legacy Gemini CLI | Native hooks | Yes | Native extension |
+| Claude Code | native hooks | yes | native |
+| Codex | native hooks | yes | Codex plugin and skills |
+| Qwen Code | native hooks | yes | native extension |
+| Antigravity | native hooks | the events Antigravity offers | native extension |
+| OpenCode | in-process tool veto | no Stop event; its todo list is mirrored into task status | command files and skills |
+| Pi | in-process tool veto | `agent_settled` continuation and task tools | native extension and shared skills |
+| Prime Agent | the Pi extension | as Pi | as Pi |
+| ForgeCode | advice only | no | command files and skills |
+| Legacy Gemini CLI | native hooks | yes | native extension |
 
-The CLI accepts the shared command grammar internally and renders the spelling
-native to each harness: `ar:` for Codex, `/ar-` for ForgeCode and OpenCode,
-`/ar ` for Pi, and `/ar:` for Claude and the Gemini-family harnesses.
+autorun's messages use each agent's spelling: `/ar:` in Claude, Gemini CLI,
+Qwen Code and Antigravity, `/ar ` in Pi, `ar:` in Codex, and `/ar-` in ForgeCode and OpenCode.
 
-## Development
-
-From the repository root:
-
-```bash
-uv sync --project plugins/autorun
-uv run --project plugins/autorun pytest plugins/autorun/tests
-```
-
-Tests must redirect `HOME`, `AUTORUN_HOME`, `AUTORUN_TEST_STATE_DIR`, and
-`AUTORUN_TEST_RUNTIME_DIR` before importing `autorun`. Pi integration tests
-must also set `PI_CODING_AGENT_DIR` beneath the redirected `HOME`.
-
-The project is licensed under the Apache License 2.0. See `LICENSE` in this
-distribution. Full project documentation is available at
-<https://github.com/ahundt/autorun>.
+Documentation: <https://github.com/ahundt/autorun>. Development setup and
+tests: [AGENTS.md](https://github.com/ahundt/autorun/blob/main/AGENTS.md).
+Licensed under Apache 2.0; see `LICENSE`.

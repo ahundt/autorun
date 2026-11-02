@@ -206,8 +206,10 @@ def test_readme_skill_placement_matches_shared_skill_registry():
     from autorun.platforms import PLATFORMS
 
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    placement = readme.split("#### Choosing where skills are installed", 1)[1].split(
-        "#### Bundled Skills", 1
+    # End at the next heading of any level: the old end marker named a heading
+    # the README never had, so the check silently read the rest of the file.
+    placement = re.split(
+        r"\n#{1,4} ", readme.split("#### Choosing where skills are installed", 1)[1], maxsplit=1
     )[0]
     shared = {
         platform.display_name

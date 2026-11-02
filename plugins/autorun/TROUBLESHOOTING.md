@@ -1,28 +1,16 @@
-# Troubleshooting Autorun Hooks
+# Troubleshooting autorun
 
-This guide helps resolve common issues with autorun hooks in both Claude Code and Gemini CLI.
-
----
-
-## Table of Contents
-
-- [Every Tool Call Is Blocked](#every-tool-call-is-blocked)
-- [Hooks Not Firing](#hooks-not-firing)
-- [Hook Execution Errors](#hook-execution-errors)
-- [Wrong Hook Version Installed](#wrong-hook-version-installed)
-- [Command Blocking Not Working](#command-blocking-not-working)
-- [Gemini CLI Specific Issues](#gemini-cli-specific-issues)
-- [Claude Code Specific Issues](#claude-code-specific-issues)
-- [Claude Task Tools Are Missing or Vanished](#claude-task-tools-are-missing-or-vanished)
+- [Every tool call is blocked](#every-tool-call-is-blocked)
+- [Commands or guards do nothing](#commands-or-guards-do-nothing)
+- [A dangerous command was not blocked](#a-dangerous-command-was-not-blocked)
+- [Claude task tools are missing or vanished](#claude-task-tools-are-missing-or-vanished)
 - [Task tools on other harnesses](#task-tools-on-other-harnesses)
-- [Debug Logging](#debug-logging)
-- [Known Issues](#known-issues)
+- [Errors from the hook itself](#errors-from-the-hook-itself)
+- [Reporting a bug](#reporting-a-bug)
 
----
+## Every tool call is blocked
 
-## Every Tool Call Is Blocked
-
-**Symptoms**: every tool call in the session is denied with a message like
+Every tool call is denied with a message like:
 
 ```
 [autorun] Import error: No module named 'autorun'. Cannot bootstrap:
@@ -30,179 +18,125 @@ previous bootstrap failed: .../.venv/bin/python: No module named autorun.
 Blocking tool use to avoid fail-open.
 ```
 
-Autorun could not import its own runtime, so it cannot evaluate a permission
-gate. It denies rather than allowing, because a gate that fails open silently
-stops blocking `rm -rf` and everything else it exists to block.
+autorun cannot import its own code, so it cannot judge any command, and it
+denies rather than allows: a gate that fails open stops blocking `rm -rf` and
+everything else without telling anyone.
 
-**This state does not clear on its own, and the AI cannot fix it for you.** The
-gate denies every command, including the repair, on purpose: a permission gate
-a caller can talk its way through is not a permission gate. `/ar:sos` cannot
-help either — the failure happens at `import autorun`, before any session state
-is read.
+This does not clear on its own, and the agent cannot fix it: the gate denies
+the repair command too, so no crafted command can talk its way past it.
+`/ar:sos` cannot help either; the failure happens before any session state is
+read.
 
-**Fix it from a terminal, outside the AI session.** Run the exact
-`uv pip install --python ...` command in the denial. For a Claude plugin-cache
-venv it has this shape:
+**Fix it in a terminal, outside the agent.** Run the `uv pip install --python
+...` command the denial names. For Claude's plugin cache it looks like:
 
 ```bash
-uv pip install --python ~/.claude/plugins/cache/autorun/ar/<version>/.venv/bin/python -e <repo>/plugins/autorun
+uv pip install --python ~/.claude/plugins/cache/autorun/ar/<version>/.venv/bin/python \
+  --reinstall ~/.claude/plugins/cache/autorun/ar/<version>
 ```
 
-This matters: `autorun --install --force` republishes native assets but does not
-populate Claude's cached venv. Run it only afterward if status reports stale
-hooks, commands, or skills.
+`autorun --install --force` republishes hooks, commands and skills but does not
+fill Claude's cached environment, so run it afterwards only if `autorun --status`
+still reports stale files.
 
-**To keep working before repairing it**, stand autorun down for the session:
+**To keep working before you repair it**, turn autorun off and start the agent
+from the same shell, since hooks inherit the agent's environment:
 
 ```bash
 export AUTORUN_DISABLE=1
+claude          # or codex, qwen, pi, ...
 ```
 
-`AUTORUN_DISABLE=1` is read before autorun is imported, so it works in exactly
-the state where nothing else does. It disables every autorun protection —
-command blocking, file policies, task enforcement — until it is unset. It is
-not a fix; repair the install.
+autorun reads this before importing anything, so it works in exactly this
+state. It turns off every protection (command guards, file policies, task
+enforcement) until you unset it; it is not a fix. `AUTORUN_NO_BOOTSTRAP=1` is
+different: it stops autorun reinstalling itself in the background, and the gate
+still denies. Use it when the repeated reinstall attempts are the problem.
 
-`AUTORUN_NO_BOOTSTRAP=1` is a different switch: it stops autorun from trying to
-reinstall itself in the background, but the gate still denies. Use it when
-repeated bootstrap attempts are the problem, not the blocking.
+## Commands or guards do nothing
 
----
+1. `autorun --status` checks every detected agent and runs the hook command
+   once; a working hook reports `ok hook command`.
+2. Restart the agent session. Each agent reads its hooks when the session
+   starts, so an install or upgrade reaches only new sessions.
+3. Read the logs: every hook call goes to `~/.autorun/hook_entry_debug.log`,
+   and the daemon's view to `~/.autorun/daemon.log`.
+4. If hooks still run old code after an upgrade, restart the daemon:
+   `autorun --restart-daemon`, or `/ar:restart-daemon` in a session.
+5. Reinstall one agent: `autorun --install --claude --force` (or `--codex`,
+   `--qwen`, `--antigravity`, `--pi`, `--prime`, `--gemini`).
 
-## Hooks Not Firing
+**Claude Code.** `claude plugin list` should show `ar@autorun`. The installed
+copy is `~/.claude/plugins/cache/autorun/ar/<version>/`; its `hooks/hooks.json`
+commands start with `${CLAUDE_PLUGIN_ROOT}`. `claude --debug` shows plugin
+loading.
 
-**Symptoms**: No hook execution in output, hooks appear to be ignored
+### Gemini CLI checklist
 
-### Gemini CLI Checklist
+Standalone Gemini CLI (legacy, installed only with `--gemini`):
 
-1. **Check Gemini CLI Version**
-   ```bash
-   gemini --version
-   ```
-   **Required**: v0.28.0 or later
+1. `gemini --version` must be 0.28.0 or later. Update with `npm install -g
+   @google/gemini-cli@latest` (or `bun install -g`).
+2. `~/.gemini/settings.json` must enable hooks:
 
-   **Fix**: Update Gemini CLI
-   ```bash
-   # Using Bun (recommended, 2x faster)
-   bun install -g @google/gemini-cli@latest
-
-   # Or using npm
-   npm install -g @google/gemini-cli@latest
-   ```
-
-2. **Check Settings Enabled**
-   ```bash
-   cat ~/.gemini/settings.json | grep -A3 "tools"
-   ```
-
-   **Expected Output**:
    ```json
-   "tools": {
-     "enableHooks": true,
-     "enableMessageBusIntegration": true
+   {
+     "tools": {
+       "enableHooks": true,
+       "enableMessageBusIntegration": true
+     }
    }
    ```
 
-   **Fix**: Edit `~/.gemini/settings.json` and add the tools section shown above
+3. `~/.gemini/extensions/ar/hooks/hooks.json` must exist, using
+   `${extensionPath}` and Gemini's events (`SessionStart`, `BeforeAgent`,
+   `BeforeTool`, `AfterAgent`, `AfterTool`, `PreCompress`). If not:
+   `autorun --install --gemini --force`.
+4. At startup Gemini prints `Hook registry initialized with N hook entries`;
+   `N` must be above 0, and each hook run prints `Created execution plan for
+   BeforeTool: ...`. If neither appears, recheck steps 2 and 3.
+5. Gemini's trust prompt for a new folder restarts the session; trust the
+   folder first when testing.
 
-3. **Check Extension Installed**
-   ```bash
-   ls ~/.gemini/extensions/ar/
-   ```
+## A dangerous command was not blocked
 
-   **Expected**: Directory exists with `hooks/hooks.json` and other files
+1. Check for an allow you gave earlier: `/ar:blocks` and `/ar:globalstatus`
+   list blocks and allows, and `/ar:clear` / `/ar:globalclear` remove them.
+   `/ar:ok` with a count or duration stays active until it runs out.
+2. Check that the agent's harness can block at all: ForgeCode receives advice
+   only, and Pi's guard sees model tool calls but not a `!` line you type (see
+   the [README](../../README.md#pi-and-prime-agent)).
+3. Test: ask the agent to run `rm /tmp/autorun-test` and expect a block that
+   suggests `trash`. If nothing happens, work through
+   [Commands or guards do nothing](#commands-or-guards-do-nothing).
 
-   **Fix**: Reinstall extension
-   ```bash
-   cd /path/to/autorun
-   uv run --project plugins/autorun python -m autorun --install --gemini-only --force
-   ```
+## Claude task tools are missing or vanished
 
-4. **Check hooks.json Exists**
-   ```bash
-   cat ~/.gemini/extensions/ar/hooks/hooks.json | head -10
-   ```
-
-   **Expected**: Valid JSON with Gemini-format hooks
-
-   **Fix**: If missing or corrupted, reinstall extension (step 3)
-
-5. **Check Hook Registry**
-
-   Start Gemini and look for this line in output:
-   ```
-   Hook registry initialized with N hook entries
-   ```
-
-   **Expected**: N should be > 0 (typically 6 for cr extension)
-
-   **Fix**: If 0, reinstall extension
-
-### Claude Code Checklist
-
-1. **Check Plugin Installed**
-   ```bash
-   claude plugin list | grep autorun
-   ```
-
-   **Expected**: Shows autorun plugin
-
-   **Fix**: Reinstall plugin
-   ```bash
-   cd /path/to/autorun
-   uv run --project plugins/autorun python -m autorun --install --claude-only --force
-   ```
-
-2. **Check Hook File Format**
-   ```bash
-   cat ~/.claude/plugins/cache/autorun/autorun/*/hooks/hooks.json | grep CLAUDE_PLUGIN_ROOT
-   ```
-
-   **Expected**: Should find `${CLAUDE_PLUGIN_ROOT}` in commands
-
-   **Fix**: If not found, source hooks.json is wrong format (see [Wrong Hook Version](#wrong-hook-version-installed))
-
-3. **Check Daemon Running**
-   ```bash
-   ps aux | grep "autorun.*daemon"
-   ```
-
-   **Expected**: Daemon process running
-
-   **Fix**: Restart daemon
-   ```bash
-   uv run --project plugins/autorun python -m autorun --restart-daemon
-   ```
-
----
-
-## Claude Task Tools Are Missing or Vanished
-
-**Symptoms:** `TaskCreate`, `TaskUpdate`, `TaskList`, or `TaskGet` is absent;
-`ToolSearch` returns no match; the task panel freezes; or autorun blocks Stop
-but the named task tool cannot be called.
+**Symptoms:** `TaskCreate`, `TaskUpdate`, `TaskList` or `TaskGet` is absent;
+`ToolSearch` finds no match; the task panel freezes; or autorun blocks Stop
+naming a task tool the agent cannot call.
 
 Claude Code 2.1.233 took these tools away from Opus 4.8, Sonnet 5, Fable 5 and
 newer models, and 2.1.268 offers them only to Claude 3.x, Opus 4.0-4.7, Sonnet
 4.0-4.6 and Haiku 4.5 unless `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` is set
 ([tool availability](https://code.claude.com/docs/en/tools-reference)). The
-same deferred-tool bundle can also disappear during a session
+same tools can also vanish mid-session
 ([#80401](https://github.com/anthropics/claude-code/issues/80401)).
 
-`autorun --install` sets the variable for you, in the `env` object of
-`~/.claude/settings.json`, unless you already set it to something. Start a new
-Claude Code session afterwards: settings are read at startup. Without the
-variable, autorun enforces task tracking only after the session has made a task
-call (an older model has the tools anyway); until then its SessionStart notice
-says tracking is not enforced yet.
+`autorun --install` sets the variable in the `env` object of
+`~/.claude/settings.json` unless you already set it. Start a new session
+afterwards: settings are read at startup, and a hook cannot change its parent's
+environment. Without the variable, autorun enforces task tracking only after the
+session has made a task call (older models have the tools anyway), and its
+session-start notice says tracking is not enforced yet.
 
-If the tools are still missing, try one in-session load, not a retry loop:
+If the tools are still missing, try one load in the session, not a retry loop:
 
 ```text
 ToolSearch query: select:TaskCreate,TaskUpdate,TaskList,TaskGet
 ```
 
-If there is no match, check the `env` object in `~/.claude/settings.json` or
+If that finds nothing, check the `env` object in `~/.claude/settings.json` and
 the project's `.claude/settings.json`, then start a new session:
 
 ```json
@@ -213,17 +147,15 @@ the project's `.claude/settings.json`, then start a new session:
 }
 ```
 
-`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` restores the tool family. If you also set
-`CLAUDE_CODE_ENABLE_TASKS` to `0`, Claude Code uses the legacy `TodoWrite`
-engine instead, which autorun does not track; remove that setting. A hook cannot change its parent process's
-environment, so neither setting repairs the current session. Use `/ar:task
-pause <reason>` to end discussion without discarding autorun's retained tasks.
-To keep the tools off, set `CLAUDE_CODE_ENABLE_TODO_TOOLS` to `"0"` yourself;
-`autorun --install` leaves a value you set alone, and `--uninstall` removes only
-the value it added. Deleting the line does not opt out: the next install adds it
-back. `autorun --status` shows each setting as `current`, `would set`, or kept.
+Remove any `CLAUDE_CODE_ENABLE_TASKS` set to `0`: it switches Claude Code to the
+older `TodoWrite`, which autorun does not track. To discuss without enforcement
+while keeping the tasks, run `/ar:task pause <reason>`.
 
-Disable autorun's #80305/#80401 recovery text independently with:
+To keep the tools off, set `CLAUDE_CODE_ENABLE_TODO_TOOLS` to `"0"` yourself:
+`autorun --install` leaves a value you set alone, and `--uninstall` removes only
+the value it added. Deleting the line does not opt out, because the next install
+adds it back. `autorun --status` shows each setting as `current`, `would set`, or
+kept. To turn off autorun's recovery text for #80305 and #80401:
 
 ```bash
 export AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED=false
@@ -233,7 +165,7 @@ export AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUN
 ## Task tools on other harnesses
 
 autorun enforces task tracking only where the harness's own task tool exists.
-Where autorun cannot tell, it does not block; it tracks what the agent records.
+Where it cannot tell, it does not block, and tracks what the agent records.
 
 | Harness | Tool | Off by default since | What turns it on |
 |---|---|---|---|
@@ -244,399 +176,36 @@ Where autorun cannot tell, it does not block; it tracks what the agent records.
 Pi and Prime Agent report their tools to autorun directly; OpenCode's primary
 agent always has `todowrite`.
 
-## Hook Execution Errors
+## Errors from the hook itself
 
-**Symptoms**: Hook fires but Python script fails with error
+Run the hook by hand and read what it prints. It should print one JSON object,
+such as `{"continue": true}`:
 
-### Debug Steps
-
-1. **Check Gemini/Claude Output for Error Messages**
-
-   Look for Python tracebacks or error messages in the CLI output
-
-2. **Test Hook Script Manually**
-
-   For Gemini CLI:
-   ```bash
-   cd /tmp/test-directory
-   echo '{"hook_event_name":"SessionStart"}' | python3 ~/.gemini/extensions/ar/hooks/hook_entry.py
-   ```
-
-   For Claude Code:
-   ```bash
-   cd /tmp/test-directory
-   CLAUDE_PLUGIN_ROOT=~/.claude/plugins/cache/autorun/autorun/0.8.0 \
-   echo '{"hook_event_name":"PreToolUse"}' | python3 ~/.claude/plugins/cache/autorun/autorun/0.8.0/hooks/hook_entry.py
-   ```
-
-   **Expected**: JSON output like `{"continue":true}`
-
-3. **Test get_plugin_root() Function**
-
-   ```python
-   import sys
-   sys.path.insert(0, '/path/to/hooks/')
-   from hook_entry import get_plugin_root
-   print(get_plugin_root())
-   ```
-
-   **Expected**: Returns plugin root directory path
-
-4. **Check Python Version**
-   ```bash
-   python3 --version
-   ```
-
-   **Required**: Python 3.8 or later
-
-### Common Errors
-
-**Error**: `ModuleNotFoundError: No module named 'autorun'`
-
-**Cause**: Hook script can't find autorun module
-
-**Fix**: Ensure get_plugin_root() returns correct path, then check sys.path setup in hook_entry.py
-
----
-
-**Error**: `PermissionError: [Errno 13] Permission denied`
-
-**Cause**: Hook script not executable or file permissions wrong
-
-**Fix**:
 ```bash
-chmod +x ~/.gemini/extensions/ar/hooks/hook_entry.py
-# Or for Claude Code:
-chmod +x ~/.claude/plugins/cache/autorun/autorun/*/hooks/hook_entry.py
+echo '{"hook_event_name":"SessionStart"}' | \
+  ~/.claude/plugins/cache/autorun/ar/<version>/.venv/bin/python \
+  ~/.claude/plugins/cache/autorun/ar/<version>/hooks/hook_entry.py
 ```
 
----
-
-**Error**: `SyntaxError` or `IndentationError`
-
-**Cause**: Corrupted hook script
-
-**Fix**: Reinstall extension/plugin
-
----
-
-## Wrong Hook Version Installed
-
-**Symptoms**: Gemini extension has Claude-format hooks or vice versa
-
-### Check Hook Format
-
-**Gemini CLI hooks** should use:
-- `${extensionPath}` variable
-- Tool names: `write_file`, `run_shell_command`, `replace`
-- Events: `SessionStart`, `BeforeAgent`, `BeforeTool`, `AfterAgent`, `AfterTool`, `PreCompress`
-
-**Claude Code hooks** should use:
-- `${CLAUDE_PLUGIN_ROOT}` variable
-- Tool names: `Write`, `Bash`, `Edit`, `TaskCreate`
-- Events: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`
-
-### Fix Wrong Format
-
-1. **Uninstall Extension/Plugin**
-
-   Gemini:
-   ```bash
-   gemini extensions uninstall cr
-   ```
-
-   Claude Code:
-   ```bash
-   claude plugin uninstall autorun
-   ```
-
-2. **Verify Source hooks.json**
-
-   Check that source files have correct format (post-split-layout):
-   ```bash
-   head -5 ~/.claude/autorun/plugins/autorun/hooks/hooks.json                                # Claude Code
-   head -5 ~/.claude/autorun/plugins/autorun/src/autorun/gemini_template/hooks/hooks.json    # Gemini CLI
-   ```
-
-   The Claude file (`plugins/autorun/hooks/hooks.json`) uses `${CLAUDE_PLUGIN_ROOT}` and Claude event names.
-   The Gemini template (`plugins/autorun/src/autorun/gemini_template/hooks/hooks.json`) uses `${extensionPath}` and Gemini event names.
-   See the `# --- BUG #24115 & #14449 WORKAROUND START ---` block in
-   `plugins/autorun/src/autorun/install.py` for why they live apart.
-
-3. **Reinstall**
-
-   Gemini:
-   ```bash
-   cd ~/.claude/autorun
-   uv run --project plugins/autorun python -m autorun --install --gemini-only --force
-   ```
-
-   Claude Code:
-   ```bash
-   cd ~/.claude/autorun
-   uv run --project plugins/autorun python -m autorun --install --claude-only --force
-   ```
-
----
-
-## Command Blocking Not Working
-
-**Symptoms**: Dangerous commands (cat, rm, etc.) not being blocked
-
-### Verify BeforeTool Hooks Fire
-
-For Gemini CLI, start session and check output:
-```
-Created execution plan for BeforeTool: 1 hook(s) to execute
-```
-
-If not appearing, hooks aren't firing → See [Hooks Not Firing](#hooks-not-firing)
-
-### Check Hook Logic
-
-The blocking logic is in `plugins/autorun/src/autorun/main.py` in the `handle_hook()` function.
-
-To verify it's loaded correctly:
-```bash
-grep -n "def handle_hook" ~/.claude/autorun/plugins/autorun/src/autorun/main.py
-```
-
-### Test with Known Dangerous Command
-
-Try a command that should definitely be blocked:
-```bash
-# In Gemini or Claude session
-rm -rf /tmp/test
-```
-
-Expected: Should be blocked or redirected to `trash`
-
-If not blocked, check:
-1. Hook fires (see above)
-2. Logic in main.py correct
-3. Daemon up to date (Claude Code only)
-
----
-
-## Gemini CLI Specific Issues
-
-### Issue: Extensions Load But Hooks Don't Fire
-
-**Check Hook Execution Logs**
-
-Gemini CLI v0.28.0+ shows detailed hook logs. Start Gemini and look for:
-```
-Loading extension: cr
-Hook registry initialized with 6 hook entries
-```
-
-Then when hooks fire:
-```
-Created execution plan for SessionStart: 1 hook(s) to execute in parallel
-Expanding hook command: python3 /Users/.../.gemini/extensions/ar/hooks/hook_entry.py
-Hook execution for SessionStart: 1 hooks executed successfully, total duration: 395ms
-```
-
-**If "Created execution plan" never appears**: Hooks not firing despite being registered
-
-**Possible Causes**:
-1. Settings not enabled (see checklist above)
-2. Hook matcher pattern doesn't match tool name
-3. Gemini CLI bug (check [Known Issues](#known-issues))
-
-### Issue: Trust Folder Prompt Blocks Hook Testing
-
-When testing in new directory, Gemini shows trust prompt. This restarts session.
-
-**Workaround**: Test in already-trusted directory or trust folder first:
-```bash
-# Start Gemini, select "Trust folder" when prompted
-# Then test hooks in that directory
-```
-
----
-
-## Claude Code Specific Issues
-
-### Issue: Daemon Not Reloading After Code Changes
-
-**Symptom**: Made changes to hook code but behavior unchanged
-
-**Fix**: Restart daemon
-```bash
-uv run --project plugins/autorun python -m autorun --restart-daemon
-```
-
-Or use the `/ar:restart-daemon` command in Claude Code session
-
-### Issue: CLAUDE_PLUGIN_ROOT Not Set
-
-**Symptom**: Hook script fails with "plugin root not found"
-
-**Check**:
-```bash
-# In Claude Code session, check environment
-echo $CLAUDE_PLUGIN_ROOT
-```
-
-Should show plugin path
-
-**Fix**: Claude Code should set this automatically. If not:
-1. Reinstall plugin
-2. Restart Claude Code application
-
----
-
-## Debug Logging
-
-### Enable Verbose Gemini Logging
-
-Create debug version of hooks.json:
-
-```json
-{
-  "hooks": {
-    "BeforeTool": [{
-      "matcher": ".*",
-      "hooks": [{
-        "name": "debug-hook",
-        "type": "command",
-        "command": "python3 ${extensionPath}/hooks/debug_hook.py",
-        "timeout": 10000
-      }]
-    }]
-  }
-}
-```
-
-Debug hook script (`debug_hook.py`):
-```python
-#!/usr/bin/env python3
-import sys, json, os
-from datetime import datetime
-
-stdin_data = sys.stdin.read()
-timestamp = datetime.now().isoformat()
-
-with open("/tmp/gemini-hook-debug.log", "a") as f:
-    f.write(f"\n{'='*60}\n")
-    f.write(f"DEBUG HOOK: {timestamp}\n")
-    f.write(f"CWD: {os.getcwd()}\n")
-    f.write(f"Input: {stdin_data}\n")
-    f.write(f"{'='*60}\n")
-
-print(json.dumps({"continue": True}))
-```
-
-Then check `/tmp/gemini-hook-debug.log` after running commands
-
-### Check Hook Input/Output
-
-Hooks receive JSON via stdin and must output JSON to stdout.
-
-**Input Format** (example):
-```json
-{
-  "hook_event_name": "BeforeTool",
-  "tool_name": "write_file",
-  "arguments": {"file_path": "/path/to/file.txt", "content": "..."},
-  "session_id": "...",
-  "cwd": "/current/directory"
-}
-```
-
-**Output Format** (example):
-```json
-{
-  "continue": true,
-  "systemMessage": "Optional message to user"
-}
-```
-
-Or to block:
-```json
-{
-  "continue": false,
-  "reason": "Why blocked",
-  "systemMessage": "⚠️ Command blocked by autorun"
-}
-```
-
----
-
-## Known Issues
-
-### Gemini CLI Issues
-
-1. **BeforeTool Hooks May Not Fire for Some Commands** (v0.27.x)
-   - Issue: [#14932](https://github.com/google-gemini/gemini-cli/issues/14932)
-   - Status: Open
-   - Workaround: Update to v0.28.0+
-
-2. **Hooks Require Explicit Settings** (v0.26.0+)
-   - Issue: [#13155](https://github.com/google-gemini/gemini-cli/issues/13155)
-   - Status: Fixed, settings must be enabled
-   - Fix: Add `enableHooks` and `enableMessageBusIntegration` to settings.json
-
-3. **Extension Hooks Lower Priority Than Project Hooks**
-   - Behavior: If both `.gemini/settings.json` and extension hooks exist, project settings take precedence
-   - Impact: Extension hooks may be overridden
-   - Workaround: Remove project hooks if you want extension hooks to work
-
-### Claude Code Issues
-
-1. **Daemon Caching Old Code**
-   - Symptom: Changes to hook code not taking effect
-   - Fix: Always restart daemon after code changes
-
-2. **Hook Timeouts**
-   - Default: 10 seconds
-   - If hook takes too long, it will be killed
-   - Fix: Optimize hook code or increase timeout in hooks.json
-
----
-
-## Getting Help
-
-If none of these solutions work:
-
-1. **Check GitHub Issues**
-   - Autorun: https://github.com/ahundt/autorun/issues
-   - Gemini CLI: https://github.com/google-gemini/gemini-cli/issues
-
-2. **File a Bug Report**
-
-   Include:
-   - CLI version (`gemini --version` or `claude --version`)
-   - Python version (`python3 --version`)
-   - Hook configuration (hooks.json content)
-   - Full error message and logs
-   - Steps to reproduce
-
-3. **Useful Information for Bug Reports**
-   ```bash
-   # Gemini CLI
-   gemini --version
-   cat ~/.gemini/settings.json
-   ls -la ~/.gemini/extensions/ar/hooks/
-   cat ~/.gemini/extensions/ar/hooks/hooks.json
-
-   # Claude Code
-   claude --version
-   ls -la ~/.claude/plugins/cache/autorun/autorun/*/hooks/
-   ps aux | grep autorun
-   ```
-
----
-
-## Related Documentation
-
-- [AGENTS.md](AGENTS.md) - plugin development guidance, shared by every harness
-  (`CLAUDE.md` and `GEMINI.md` are symlinks to it)
-- [README.md](../../README.md) - Full autorun documentation
-- [GitHub Issues](https://github.com/ahundt/autorun/issues)
-
----
-
-**Last Updated**: 2026-02-10
-**Version**: 1.0
+For the legacy Gemini CLI the hook is
+`~/.gemini/extensions/ar/hooks/hook_entry.py`. autorun needs Python 3.10 or
+later. `ModuleNotFoundError: No module named 'autorun'` is the
+[blocked state above](#every-tool-call-is-blocked); a `PermissionError`,
+`SyntaxError` or `IndentationError` means a damaged install, so reinstall with
+`autorun --install --force`. Claude Code discards a hook's response when the
+hook writes anything to stderr, so `uv` warnings printed by
+`uv run --project ~/.claude/plugins/cache/autorun/ar/<version> python -c pass`
+are enough to switch every guard off; report them as a bug.
+
+Hook payload formats: [docs/hooks_api_reference.md](../../docs/hooks_api_reference.md).
+
+## Reporting a bug
+
+Open an issue at <https://github.com/ahundt/autorun/issues> with `autorun
+--version`, the output of `autorun --status`, your agent and its version
+(`claude --version`, `codex --version`, ...), the relevant lines of
+`~/.autorun/hook_entry_debug.log` and `~/.autorun/daemon.log`, and the steps
+that reproduce it.
+
+Related: [README.md](../../README.md) for usage, [AGENTS.md](AGENTS.md) for
+plugin development.

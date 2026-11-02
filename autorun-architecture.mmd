@@ -17,7 +17,7 @@ flowchart TD
     %%  STEP 1: INSTALL
     %% ========================================
     INSTALL["💿 STEP 1<br/><br/>INSTALL AUTORUN"]:::stepBox
-    INSTALL_CMD["uv pip install git+https://github.com/ahundt/autorun.git"]:::choiceBox
+    INSTALL_CMD["uv tool install autorun-ai<br/>autorun --install"]:::choiceBox
 
     %% ========================================
     %%  SETTINGS PANEL (Always available)
@@ -33,7 +33,7 @@ flowchart TD
 
         subgraph BLOCK_SET["Command Redirecting"]
             direction LR
-            B1["<b>Redirect dangerous commands to safer alternatives</b><br/>──────────<br/><b>Block in this session</b><br/>/ar:no &lt;pattern&gt; 'reason'<br/>──────────<br/><b>Allow in this session</b><br/>/ar:ok &lt;pattern&gt;<br/>──────────<br/><b>Clear session blocks</b><br/>/ar:clear [pattern]<br/>──────────<br/><b>Block in ALL sessions</b><br/>/ar:globalno &lt;pattern&gt; 'reason'<br/>──────────<br/><b>Allow in ALL sessions</b><br/>/ar:globalok &lt;pattern&gt;<br/>──────────<br/><b>Show global blocks</b><br/>/ar:globalstatus"]:::settingBox
+            B1["<b>Redirect dangerous commands to safer alternatives</b><br/>──────────<br/><b>Block in this session</b><br/>/ar:no #quot;&lt;pattern&gt;#quot; reason<br/>──────────<br/><b>Allow in this session</b><br/>/ar:ok &lt;pattern&gt;<br/>──────────<br/><b>Clear session blocks and allows</b><br/>/ar:clear<br/>──────────<br/><b>Block in ALL sessions</b><br/>/ar:globalno #quot;&lt;pattern&gt;#quot; reason<br/>──────────<br/><b>Allow in ALL sessions</b><br/>/ar:globalok &lt;pattern&gt;<br/>──────────<br/><b>Show global blocks</b><br/>/ar:globalstatus"]:::settingBox
         end
     end
 
