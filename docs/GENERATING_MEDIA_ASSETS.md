@@ -1,8 +1,8 @@
 # Regenerating Media Assets
 
-This repo keeps generated media files (demo recordings, diagrams) out of git history
-to minimize repository size. The latest versions exist as untracked/gitignored files
-in the working tree. Here's how to regenerate them.
+Diagram SVGs are committed next to their `.mmd` sources: edit the source, then
+regenerate the SVG with one of the commands below and commit both. Demo
+recordings (`autorun_demo.*`) are gitignored to keep the repository small.
 
 ## SVG Diagrams (from Mermaid `.mmd` source files)
 

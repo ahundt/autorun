@@ -27,7 +27,7 @@ sessions looping and burned ~12% of a week's tokens (2026-08-15).
    path is too long.
 
 ```bash
-SB=/tmp/arsb; mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"
+SB=$(mktemp -d /tmp/arsb.XXXXXX); mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"   # short and unique per run
 env HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" \
     AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" \
     UV_CACHE_DIR="$(uv cache dir)" \
@@ -40,7 +40,9 @@ installer-specific traps: [`plugins/autorun/src/autorun/installer/AGENTS.md`](pl
 
 ### Operational one-liners
 
-- **Configure an isolated run:** `SB=$(mktemp -d /tmp/arsb.XXXXXX) && mkdir -p "$SB/home" "$SB/ar-home" "$SB/state" "$SB/uv-cache" && env HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" UV_CACHE_DIR="$SB/uv-cache"`
+Each one-liner below acts on the live machine unless it follows this prefix.
+
+- **Isolated-run prefix** (append the command): `SB=$(mktemp -d /tmp/arsb.XXXXXX) && mkdir -p "$SB/home" "$SB/ar-home" "$SB/state" "$SB/uv-cache" && env HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" UV_CACHE_DIR="$SB/uv-cache"`
 - **Launch the checkout CLI:** `uv run --project plugins/autorun python -m autorun --status`; restart only its daemon with `uv run --project plugins/autorun python -m autorun --restart-daemon`.
 - **Install a local development CLI:** `uv tool install --force --editable plugins/autorun && autorun --install`; the editable install is for the developer CLI/daemon, not the live hook venv.
 - **Install a published release:** `uv tool install --force autorun-ai && autorun --install` (use the git or marketplace commands below when the release is not on PyPI). The distribution is `autorun-ai`; the command, the import package and the marketplace plugin are all still `autorun`.
@@ -80,11 +82,13 @@ nothing declares it, PEP 427 just normalises `-` to `_`. Derive it
 pins all of the above, including that no module spells the stem out and that the
 plugin id stays `ar`.
 
-UV workspace with two harness plugins: **autorun** (`/ar:` — autonomous
-execution with three-stage verification, file policies, safety guards, task
-tracking, plan export) and **pdf-extractor** (`/pdf-extractor:extract`,
-`extract-pdfs`). `gemini` in code and docs means the Qwen Code / Antigravity
-family; standalone Gemini CLI is retired but installable with `--gemini`.
+Two harness plugins, one uv workspace member (`plugins/autorun`): **autorun**
+(`/ar:` — autonomous execution with three-stage verification, file policies,
+safety guards, task tracking, plan export) and **pdf-extractor**
+(`/pdf-extractor:extract`, `extract-pdfs`), whose code ships inside
+`autorun-ai`. In the registry `gemini` is the standalone Gemini CLI, retired
+but installable with `--gemini`; `qwen` and `antigravity` are separate entries
+built from the same extension template.
 
 | Path | What |
 |------|------|
@@ -101,9 +105,12 @@ markers: `AUTORUN_INITIAL_TASKS_COMPLETED` →
 
 ## 4. Testing
 
+Needs uv and Python 3.10 or later.
+
 ```bash
 uv run --project plugins/autorun pytest plugins/autorun/tests/test_unit_simple.py -q   # quick
 uv run --project plugins/autorun pytest plugins/autorun/tests/ -q                       # full
+uvx ruff check --select E9,F63,F7,F82 .                                                 # the lint CI runs
 ```
 
 Paid model calls are off unless you export

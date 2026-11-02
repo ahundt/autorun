@@ -51,7 +51,9 @@ or they reach the live daemon; spec:
 2. **Daemon paths use `state_get`/`state_set`/`state_update`**, never
    `session_state()`; wrap legacy helpers in `state_synchronize`.
 3. **A new Claude event needs its Gemini analog in the same change:**
-   `plugins.py:@app.on(...)`, `core.py:GEMINI_EVENT_MAP`, and both
+   `plugins.py:@app.on(...)`, the `harness_cli_to_autorun_events` maps of the
+   `gemini`, `antigravity` and `qwen` entries in `platforms.py` (`core.GEMINI_EVENT_MAP`
+   is derived from them), `tests/harness_hook_events.py`, and both
    `hooks/hooks.json` and `src/autorun/gemini_template/hooks/hooks.json`.
    `PreCompact` maps to `PreCompress`, which is advisory; there is no `PostCompress`.
 4. **New hook-stdin data needs a slot, a property, an `__init__` kwarg, and
@@ -62,15 +64,17 @@ or they reach the live daemon; spec:
    `CacheGuard.from_ctx(ctx).check(ctx)` — or an explicit allow cannot bypass them.
 6. **Keep full persistent-state reads off warm hooks.** Hydrate through
    `ThreadSafeDB` once per session; coalescing file locks still reparses everything.
-7. **Fail open when data is unknown.** CacheGuard returns `HookDecision.allow()`
-   whenever its axis data is None.
-8. **Default off.** A new gate defaults `False` in its `FeatureToggle`; users
-   opt in with `/ar:<feature> on`.
+7. **Fail open when data is unknown.** `CacheGuard.check` returns `None` (allow)
+   whenever the data a threshold needs is missing.
+8. **Default off.** A new gate stays off until the user runs `/ar:<feature> on`;
+   the cache gate reads its `cache/toggle` state through
+   `cache_guard._toggle_enabled`.
 9. **Anchor `.gitignore` directory patterns with `/`** when you mean the repo
    root: unanchored `cache/` hid `plugins/autorun/skills/cache/` from git.
 10. **Harness hook-event allowlists have one owner, `tests/harness_hook_events.py`.**
-    An unknown event name in a Claude-scanned manifest is what bug #24115 turns
-    into a silent disable of every hook.
+    An unknown event name in a Claude-scanned manifest is what
+    [anthropics/claude-code#24115](https://github.com/anthropics/claude-code/issues/24115)
+    turns into a silent disable of every hook.
 11. **Capture tool-result fixtures from a transcript's `toolUseResult` field,
     not its rendered `tool_result` block.** Only `toolUseResult` matches what
     the hook receives as `tool_response`; the delegation spawn ledger was built
@@ -93,12 +97,8 @@ or they reach the live daemon; spec:
     makes the negative provable — a module *name* is not evidence, since paid
     tests also live in `test_claude_e2e.py`, `test_demo.py`,
     `test_gemini_before_tool_hooks.py` and `test_gemini_e2e_improved.py`, none
-    of which say "real money":
-
-    ```bash
-    uv run --project plugins/autorun pytest plugins/autorun/tests/ -m real_money --collect-only -q   # what would cost money
-    uv run --project plugins/autorun pytest plugins/autorun/tests/ -m "not real_money" -q            # provably none of it
-    ```
+    of which say "real money". The two marker queries are in the root
+    `AGENTS.md` section 4.
 
 ## Bug workaround policy
 
@@ -126,6 +126,8 @@ Every SDK bug workaround (Claude Code, Gemini-family, future CLIs):
 |-----|-----|--------|
 | [#4669](https://github.com/anthropics/claude-code/issues/4669) deny ignored at exit 0 | `AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED` (`AUTORUN_EXIT2_WORKAROUND`, `--exit2-mode` are higher-precedence aliases) | stderr + exit 2 |
 | [#18534](https://github.com/anthropics/claude-code/issues/18534) additionalContext dropped | `AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED` | channel `ai` → `both` |
+| [#80305](https://github.com/anthropics/claude-code/issues/80305) mutable task tools gated off | `AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED` | one ToolSearch load attempt, then the exact next-session env fix |
+| [#80401](https://github.com/anthropics/claude-code/issues/80401) mutable task tools vanish mid-session | `AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUND_ENABLED` | the same no-loop recovery in Stop and staleness guidance |
 
 `config.py:should_use_exit2_workaround()` is the worked example. Upstream
 status (checked 2026-08-05): #4669 and #24115 closed `NOT_PLANNED`, #18534
@@ -134,9 +136,10 @@ already targets — a closed issue is not permission to delete a workaround.
 
 ## Harness families
 
-- **Gemini family**: `gemini` covers Qwen Code and Antigravity (agy); one
-  `GEMINI_EVENT_MAP`, one `gemini_template/`. Standalone Gemini CLI is retired
-  but supported (`--gemini`); see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
+- **Gemini family**: `gemini` (the standalone Gemini CLI, retired but
+  installable with `--gemini`), `qwen` and `antigravity` (alias `agy`) are
+  separate registry entries with their own event maps, built from one extension
+  template, `gemini_template/`; see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
 - **Pi family**: `prime` is Prime Agent, PrimeIntellect's Pi build
   (`~/.prime/agent/`). `platforms.PRIME` is `dataclasses.replace(PI, ...)`;
   `pi_template/` and `steps.pi_extension_step` serve both by substituting
@@ -147,17 +150,10 @@ already targets — a closed issue is not permission to delete a workaround.
 
 Default: the sandboxed install from the root `AGENTS.md`, then inspect the
 sandbox's trees and hooks (`--install-dry-run` previews without writing). On
-the live machine — only when the user has written the instruction — from the
-repository root:
-
-```bash
-uv run --project plugins/autorun python -m autorun --install --force && \
-  (cd plugins/autorun && uv tool install --force --editable .) && autorun --restart-daemon
-```
-
-That publishes to every detected harness, installs the `autorun`,
-`autorun-install`, and `extract-pdfs` commands, and restarts the daemon every
-running session shares (allow ~3 minutes).
+the live machine, only when the user has written the instruction, use the root
+`AGENTS.md` one-liners: "Install a local development CLI", then "Repair the
+live Claude cache" when Claude's hooks must run the new code. Both restart the
+daemon every running session shares.
 
 ## Entry points
 

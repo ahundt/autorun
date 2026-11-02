@@ -10,7 +10,7 @@ flowchart TD
     %% --- LAYER 1: CONFIGURATION (MD FILES) ---
     subgraph Config [🛠️ CONFIGURATION LAYER]
         direction TB
-        Note_MD[User Customization:<br/>Create/Remove .md files in commands/<br/>to add capabilities or adjust policies]:::file
+        Note_MD[Command docs:<br/>commands/*.md describe each /ar: command;<br/>the hooks enforce them]:::file
         
         Files_Pol[commands/f.md<br/>commands/a.md]:::file
         Files_Cmd[commands/no.md<br/>commands/go.md]:::file
@@ -30,7 +30,7 @@ flowchart TD
 
         subgraph Cmd_Block [Command Guard - Block & Redirect]
             Block_Cmd("/ar:no <pattern> [desc]<br/>Stops execution"):::block
-            Redirect("Auto-Redirects:<br/>rm -> trash<br/>git reset -> git stash"):::block
+            Redirect("Blocks with a safer suggestion:<br/>rm -> trash<br/>git reset --hard -> git stash"):::block
             Allow_Cmd("/ar:ok <pattern><br/>Override a block"):::state
             
             Block_Cmd ~~~ Redirect
@@ -42,8 +42,8 @@ flowchart TD
         direction TB
         
         subgraph Plan_Phase [1. Planning]
-            W_PN(/ar:pn 'task'<br/>-> plannew.md):::cmd
-            W_PR(/ar:pr 'feedback'<br/>-> planrefine.md):::cmd
+            W_PN(/ar:pn 'task'<br/>-> plannew skill):::cmd
+            W_PR(/ar:pr 'feedback'<br/>-> planrefine skill):::cmd
             W_Export[[Auto-Export to notes/]]:::file
             
             W_PN --> W_PR
@@ -51,7 +51,7 @@ flowchart TD
         end
         
         subgraph Exec_Phase [2. Execution]
-            W_PP(/ar:pp / /ar:go<br/>-> planprocess.md):::cmd
+            W_PP(/ar:pp / /ar:go<br/>-> planprocess skill):::cmd
             AI_Loop(AI Implementation Loop):::state
             
             W_PP --> AI_Loop

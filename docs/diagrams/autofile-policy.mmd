@@ -1,18 +1,12 @@
 %% Regenerate SVG: npx @mermaid-js/mermaid-cli mmdc -i docs/diagrams/autofile-policy.mmd -o docs/diagrams/autofile-policy.svg
 graph TD
-    A[User sets AutoFile policy] --> B{Policy Level}
-    B -->|Level 3<br/>allow-all| C[All file creation allowed]
-    B -->|Level 2<br/>justify-create| D[Require justification check]
-    B -->|Level 1<br/>strict-search| E[Block all new files]
-    C --> F[PreToolUse Hook]
-    D --> G{Justification found?}
-    E --> H{File exists?}
-    G -->|Yes| F
-    G -->|No| I[Block file creation]
-    H -->|Yes| F
-    H -->|No| I
-    F --> J{Tool is Write?}
-    J -->|No| K[Allow tool execution]
-    J -->|Yes| L{File already exists?}
-    L -->|Yes| K
-    L -->|No| M[Allow new file creation]
+    A[Agent calls a file-writing tool] --> B{Session policy}
+    B -->|allow-all| OK[Allowed]
+    B -->|strict-search /ar:f| E1{Target file exists?}
+    B -->|justify-create /ar:j| E2{Target file exists?}
+    E1 -->|Yes| OK
+    E1 -->|No| X1[Blocked: search for an existing file to edit]
+    E2 -->|Yes| OK
+    E2 -->|No| J{AUTOFILE_JUSTIFICATION tag with a reason?}
+    J -->|Yes| OK
+    J -->|No| X2[Blocked: state why the file is needed]

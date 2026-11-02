@@ -1558,8 +1558,8 @@ def main() -> None:
 
     # Read before anything else, and before any autorun import: the state this
     # exists for is "autorun cannot be imported", so a check placed after the
-    # import that fails would never run. This is the last resort when even the
-    # repair-command allowance in fail_closed_tool_gate is not enough.
+    # import that fails would never run. fail_closed_tool_gate lets no command
+    # through, the repair included, so this is the human's only way out.
     if os.environ.get("AUTORUN_DISABLE", "").strip().lower() in ("1", "true", "yes"):
         fail_open_for_cli("", detect_cli_type(), _peek_event_name())
 

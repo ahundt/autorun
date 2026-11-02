@@ -55,7 +55,9 @@ Per `crates/forge_config/src/reader.rs:58-84`:
 2. `~/forge/` (legacy, only if it already exists)
 3. `~/.forge/` (default)
 
-The autorun installer (`_install_for_forgecode`) honors this precedence.
+autorun's installer (`installer.discovery.config_dir`) uses
+`CONFIG["harness_config_dirs"]["forgecode"]`, then `FORGE_CONFIG`, then
+`~/.forge/`; it does not fall back to the legacy `~/forge/`.
 
 ## What autorun cannot do for ForgeCode
 

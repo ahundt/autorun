@@ -165,9 +165,12 @@ binds progressively longer paths first fails at exactly 104.
 
 That is zero bytes of headroom. Renaming the runtime prefix, adding one
 directory level, or running under a longer `TMPDIR` breaks every
-daemon-backed test at once.
+daemon-backed test at once, so `plugins/autorun/conftest.py` measures the path
+before any import and stops with `test daemon socket path is N bytes, limit L`;
+set a shorter `TMPDIR`.
 
-The failure does not announce itself as a path problem. With a 124-byte
+Outside pytest (a sandboxed install, a hook run by hand) the failure does not
+announce itself as a path problem. With a 124-byte
 socket path a real `PostToolUse` hook returns
 
 ```json
@@ -202,7 +205,7 @@ skills, commands and hook configuration. Redirect `HOME` along with the two
 runtime variables:
 
 ```bash
-SB=/tmp/arsb                      # short: see the socket headroom section
+SB=$(mktemp -d /tmp/arsb.XXXXXX)  # short (socket headroom above) and unique per run
 mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"
 env HOME="$SB/home" \
     USERPROFILE="$SB/home" \
@@ -220,17 +223,18 @@ exceeds the budget. Sharing `UV_CACHE_DIR` with the real cache avoids
 re-downloading the dependency set into the sandbox; it is a read-mostly cache,
 not install state.
 
-Harnesses whose config directory does not exist in the sandbox fail loudly and
-are skipped, which is correct — `Qwen Code install failed: <sandbox>/.qwen/ not
-found`. Create the directory first if that harness is the one under test.
+The install output names each harness's outcome. A harness the sandbox lacks
+can be skipped, so create its config directory in the sandbox first when it is
+the one under test.
 
 Prove the isolation rather than assuming it. Record the full listing, not just
 a digest, so a difference can be *diffed* rather than merely detected:
 
 ```bash
 snapshot() {
-  for p in ~/.agents/skills ~/.claude/plugins ~/.qwen/extensions \
-           ~/.codex ~/.pi/agent ~/forge ~/.config/opencode; do
+  for p in ~/.agents ~/.claude/skills ~/.claude/plugins ~/.claude/settings.json \
+           ~/.codex ~/.gemini ~/.qwen ~/.pi/agent ~/.prime/agent \
+           ~/.config/opencode ~/plugins ~/forge ~/.forge; do
     [ -e "$p" ] && find "$p" -print0 | sort -z | xargs -0 stat -f "%N %m %z"
   done > "$1"
 }

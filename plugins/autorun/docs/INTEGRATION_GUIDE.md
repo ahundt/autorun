@@ -1,118 +1,82 @@
-# Claude Code Integration Guide
+# Extending autorun
 
-This guide describes how to integrate with autorun (v0.7+). The v0.6.1-era Agent SDK
-and MCP Server integration modes have been superseded by the daemon-based v0.7 architecture.
+How a hook event reaches autorun's code, and the three places to add behavior.
 
-## Current Integration Architecture (v0.7+)
-
-autorun normally uses a local daemon to process Claude Code hook events.
-The integration path is:
+## The path of a hook event
 
 ```
-Claude Code hook event
-  → hooks/hook_entry.py       (bootstrap; detects Claude vs Gemini CLI)
-  → src/autorun/client.py   (Unix socket client; auto-starts daemon)
-  → src/autorun/core.py     (AutorunDaemon; async dispatch)
-  → src/autorun/plugins.py  (hook handlers: file policy, blocking, plan export)
+agent hook event
+  → hooks/hook_entry.py      stdlib only; finds the agent, starts or reaches the daemon
+  → src/autorun/client.py    socket client; starts the daemon if it is not running
+  → src/autorun/core.py      AutorunDaemon; dispatches the event
+  → src/autorun/plugins.py   handlers: file policy, command guards, tasks, plan export
 ```
 
-## Integration Options
+Claude Code reads `hooks/hooks.json`; the installer generates each Gemini-family
+extension's own `hooks/hooks.json`. Details: [HOOK_ARCHITECTURE.md](../HOOK_ARCHITECTURE.md).
 
-### 1. Daemon Mode (Default — Recommended)
+The daemon starts on the first hook event and keeps running Python code from
+when it started, so changed code takes effect only after
+`uv run --project plugins/autorun python -m autorun --restart-daemon`, which
+restarts the daemon of whichever `AUTORUN_HOME` it runs under. Run it, like
+everything here, under the root [AGENTS.md](../../../AGENTS.md) sandbox, never
+against your live state.
 
-The daemon starts automatically on first hook event. No manual setup required.
+## Run a hook without the daemon
+
+`AUTORUN_USE_DAEMON=0` runs the handlers in-process, which isolates a daemon
+problem from a handler problem:
 
 ```bash
-# Verify daemon is running:
-autorun --status
-
-# Restart if needed:
-autorun --restart-daemon
+SB=$(mktemp -d /tmp/arsb.XXXXXX)
+echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/ar:st", "session_id": "test", "cwd": "/tmp"}' \
+  | env HOME="$SB" AUTORUN_HOME="$SB/ar" AUTORUN_TEST_STATE_DIR="$SB/state" AUTORUN_USE_DAEMON=0 \
+    uv run --project plugins/autorun python -m autorun
 ```
 
-The daemon handles Claude events declared in `hooks/hooks.json`. Gemini-family
-extensions receive their own generated hook manifests during installation.
+It prints the hook response, here with a `systemMessage` containing
+`AutoFile policy: allow-all`.
 
-**When to use**: Normal production usage.
+## Add behavior
 
-### 2. Direct Mode (No Daemon — Debugging)
+**A slash command with no Python:** add `commands/<name>.md` with a
+`description:` in its frontmatter (`test_command_help.py` requires one). Its
+body tells the agent what to do; after a (sandboxed) `autorun --install --force`
+it is `/ar:<name>` in the next session.
 
-Run the hook handler in-process without the daemon. Useful when debugging hook logic or
-when Unix sockets are not available.
-
-```bash
-# Set environment variable to bypass daemon:
-export AUTORUN_USE_DAEMON=0
-
-# Then run autorun normally — it goes through main.py directly:
-echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/ar:st", "session_id": "test"}' \
-  | autorun
-
-# Or inline:
-AUTORUN_USE_DAEMON=0 autorun
-```
-
-**When to use**: Debugging hook logic or isolating daemon problems.
-
-### 3. Hook Integration (Slash Commands via .md Files)
-
-Add new slash commands by placing markdown files in `commands/`:
-
-```bash
-# commands/<command>.md — automatically available as /ar:<command>
-# Contents describe what Claude should do when the command is invoked
-```
-
-See `commands/` for the installed command examples. Commands are loaded by Claude Code at
-session start and do not require hook handler changes.
-
-**When to use**: Adding new slash commands without Python code.
-
-### 4. Python Hook Handler Extension
-
-Add new hook handlers in `src/autorun/plugins.py` using the factory patterns:
+**A handler:** register it in `src/autorun/plugins.py` and return `None` to let
+the event pass:
 
 ```python
-# In plugins.py — add a new PreToolUse handler:
-@app.on("PreToolUse")
-def my_handler(ctx: EventContext) -> None:
-    if ctx.tool_name == "Bash":
-        # ctx.deny("reason") to block, return None to allow
-        pass
+@app.on("PostToolUse")
+def note_large_writes(ctx: EventContext):
+    if ctx.tool_name == "Write" and len(ctx.tool_input.get("content", "")) > 100_000:
+        ctx.add_chain_notification("Wrote a file over 100 KB", channel="human")
+    return None
 ```
 
-See `src/autorun/plugins.py` for existing handler examples using `_make_policy_handler()`
-and `_make_block_op()` factory patterns.
+A rule that blocks tools does not get its own `PreToolUse` handler: it belongs
+in the guard chain (`plugins.check_blocked_commands`), after `/ar:ok` allows and
+before pattern blocks, or an allow can never override it. Most such rules are a
+guard entry (below).
 
-**When to use**: Adding new enforcement logic that requires Python.
+Related commands share a factory rather than copies: `_make_policy_handler()`
+for file policies, `_make_block_op()` for block and allow commands. A new event
+needs its Gemini analog in the same change; the rules are in
+[AGENTS.md](../AGENTS.md).
 
-## Hook File Naming (Important)
+**A guard:** add an entry to `DEFAULT_INTEGRATIONS` in `src/autorun/config.py`
+with a `suggestion` naming the safer command.
 
-| Filename | CLI | Notes |
-|----------|-----|-------|
-| `hooks/hooks.json` | Claude Code | Referenced by `plugin.json` |
-| generated extension `hooks/hooks.json` | Gemini-family CLIs | Published by the installer |
-
-## Testing
+## Test
 
 ```bash
-# Run full test suite:
-uv run --project plugins/autorun pytest plugins/autorun/tests/ -v --tb=short
-
-# Test specific hook behavior:
-uv run --project plugins/autorun pytest plugins/autorun/tests/test_core.py -v
-uv run --project plugins/autorun pytest plugins/autorun/tests/test_integrations.py -v
+uv run --project plugins/autorun pytest plugins/autorun/tests/ -q
+uv run --project plugins/autorun pytest plugins/autorun/tests/test_core.py plugins/autorun/tests/test_integrations.py -q
 ```
 
-## Bug #4669 Workaround (Claude Code v1.0.62+)
-
-Claude Code ignores `permissionDecision:"deny"` at exit 0. The workaround:
-
-```python
-# client.py handles this automatically:
-# Claude Code: exit 2 + stderr reason (only way blocking works)
-# Gemini CLI: exit 0 + JSON decision field (works correctly per spec)
-```
-
-See `src/autorun/client.py:output_hook_response()` for implementation.
-See `src/autorun/config.py:should_use_exit2_workaround()` for CLI detection.
+A deny reaches Claude Code as exit code 2 with the reason on stderr, because it
+ignored a JSON deny at exit 0
+([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669));
+`client.py:output_hook_response()` handles that, and the workaround policy is in
+[AGENTS.md](../AGENTS.md).
