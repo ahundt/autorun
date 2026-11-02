@@ -224,6 +224,15 @@ class TestSessionBlockManagement:
         msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
         assert "trash" in msg.lower(), f"rm block must mention trash, got: {msg[:100]!r}"
 
+    def test_rm_suggestions_name_an_installable_trash_package(self):
+        """The Linux hint once named github.com/andraschume/trash-cli, which does
+        not exist, so following the advice failed. PyPI's trash-cli (the
+        andreafrancia project) installs the `trash` command the redirect runs."""
+        for pattern in ("rm", "rm -rf"):
+            suggestion = DEFAULT_INTEGRATIONS[pattern]["suggestion"]
+            assert "uv tool install trash-cli" in suggestion, suggestion
+            assert "go install" not in suggestion, suggestion
+
     def test_custom_suggestion_in_block_message(self):
         """Custom suggestion in session_blocked_patterns appears in block message."""
         ctx = self._ctx("rm foo.txt")

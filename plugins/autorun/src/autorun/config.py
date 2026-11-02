@@ -210,12 +210,12 @@ TASK_PAUSE_GENERATION_TOKEN_BYTES = 16
 DEFAULT_INTEGRATIONS = {
     "rm": {
         "action": "block",
-        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow (default 1 use): /ar:ok rm\nScope: [N|5m|permanent] (default 1 use)",
+        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or uv tool install trash-cli (Linux)\n\nTo allow (default 1 use): /ar:ok rm\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "trash {file_args}",
     },
     "rm -rf": {
         "action": "block",
-        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow (default 1 use): /ar:ok 'rm -rf'\nScope: [N|5m|permanent] (default 1 use)",
+        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or uv tool install trash-cli (Linux)\n\nTo allow (default 1 use): /ar:ok 'rm -rf'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "trash {file_args}",
     },
     "git reset --hard": {
