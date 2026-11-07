@@ -385,16 +385,22 @@ describe what changed between rc1 and rc3.
     `cat`, `head`, `tail`, `awk`, `sed` and `echo >` names what Codex can use
     (`apply_patch`, `rg -n`, `sed -n`). A line that runs anything through
     `sudo`, `doas`, `su`, `run0`, `runuser` or `setpriv`, however it is
-    quoted, a read that writes a file,
-    and `tail -f` are still blocked.
+    quoted or wherever a `#` sits before it, a read that writes a file
+    (`<>` included), and a `tail -f` in any part of the line are still
+    blocked.
 79. `awk` filtering a pipe, such as `ls -l | awk '{print $5}'`, was blocked;
-    like `cat`, `grep` and `find`, it is now allowed. An `awk` that edits in
-    place, writes a file, runs a command, reads a named file or runs as root
-    is still blocked, in a pipe or not.
+    like `cat`, `grep` and `find`, a plain filter on a pipe is now allowed:
+    printing fields and strings, an `NR`/field condition, a column sum, or
+    `!seen[$0]++`. Any other `awk` program is still blocked, since awk can
+    run commands, write and read files and load code in ways a reading of
+    the program text misses.
 80. The `rm` guard suggested `trash '$tmp'` for `rm -rf "$tmp"`, naming a
     file literally called `$tmp`; it now suggests `trash "$tmp"`. A `~/`
-    path stays expandable, an operand after `--` is kept, and a literal
-    `'$(...)'` stays quoted so the suggestion never runs it.
+    path and a bare `~` stay expandable, an operand after `--` is kept, and
+    a literal `'$(...)'` stays quoted so the suggestion never runs it. The
+    `git stash` suggestions for `git reset --hard`, `git checkout` and
+    `git restore` no longer copy the blocked command's arguments into the
+    stash message, where a `$(...)` in them would have run.
 81. A subagent's tool call could receive its parent session's "CANNOT STOP"
     task list, which it could not act on and which the parent then never
     saw. The list now waits for the parent's next tool call.
@@ -405,6 +411,9 @@ describe what changed between rc1 and rc3.
     pause failed the tool call with a raw `OSError`; it is now reported as a
     state error and tasks are enforced normally. Loading a session's stored
     state no longer replaces a newer in-memory value of the same field.
+84. The `sed` guard missed in-place edits whose `-i` was not the first
+    option, such as `sed -E -i 's/a/b/' f` and `sed 's/a/b/' -i f`; it now
+    reads every option.
 
 ### For contributors
 

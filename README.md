@@ -335,8 +335,14 @@ command. 50 guards ship enabled:
 | unrequested releases | version bumps by command or manifest edit, publishing to a registry | your consent |
 | disks and backups | `dd if=`, `mkfs`, `fdisk`, Time Machine changes through `tmutil` | backing up first |
 | scripts nobody read | `curl` or `wget` piped into a shell, including `bash <(curl …)` | download, read, then run; `/ar:ok bash` allows one run |
-| shell text tools | `sed` that edits files, `awk`, `echo >`, and `grep`, `find`, `cat`, `head`, `tail` outside a pipe | the agent's own edit, read and search tools |
+| shell text tools | `sed` that edits files, `awk` except a plain field filter on a pipe (`ls -l \| awk '{print $5}'`), `echo >`, and `grep`, `find`, `cat`, `head`, `tail` outside a pipe | the agent's own edit, read and search tools |
 | commit quality | `git` (warning only) | the commit-message rules |
+
+The guards catch the commands an agent writes in ordinary shell; they are not
+a sandbox. A command spelled to hide what it runs can get past them: the name
+in a variable (`R=rm; $R -rf x`), ANSI-C quoting (`$'rm' -rf x`), `env -S`,
+`trap`, `alias`, or syntax the shell parser cannot read. Run an agent you do
+not trust in a container or a virtual machine.
 
 Add, allow and list guards per session or for every session:
 

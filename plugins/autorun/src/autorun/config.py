@@ -265,30 +265,30 @@ DEFAULT_INTEGRATIONS = {
     "git reset --hard": {
         "action": "block",
         "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective stash** (to save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow (default 1 use): /ar:ok 'git reset --hard'\nScope: [N|5m|permanent] (default 1 use)",
-        "redirect": "git stash push -m 'WIP: {args}'",
+        "redirect": "git stash push -m 'WIP: saved instead of discarding'",
     },
     "git checkout .": {
         "action": "block",
         "suggestion": "DANGEROUS: 'git checkout .' discards ALL uncommitted changes in working directory.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push -m \"WIP: saving changes before checkout\"\n\n2. **Create backup branch**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint\"\n   git checkout -\n\n3. **Selective stash** (save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff\n\nTo allow (default 1 use): /ar:ok 'git checkout .'\nScope: [N|5m|permanent] (default 1 use)",
-        "redirect": "git stash push -m 'WIP: {args}'",
+        "redirect": "git stash push -m 'WIP: saved instead of discarding'",
         "when": "_repo_differs_from_head",
     },
     "git checkout --": {
         "action": "block",
         "suggestion": "CAUTION: 'git checkout -- <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVE:**\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow (default 1 use): /ar:ok 'git checkout --'\nScope: [N|5m|permanent] (default 1 use)",
-        "redirect": "git stash push -m 'WIP: {file}' -- {file}",
+        "redirect": "git stash push -m 'WIP: saved instead of discarding' -- {file}",
         "when": "_file_differs_from_ref",
     },
     "git checkout": {  # Catch modern syntax: git checkout path/to/file (without --)
         "action": "block",
         "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Switch branches** (if not targeting a file):\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <name>' cannot be told apart from a path without guessing, so it is blocked while the repo has uncommitted changes. Creating a branch ('git checkout -b <new-branch>') and 'git switch <branch>' are always allowed.\n\nTo allow (default 1 use): /ar:ok 'git checkout'\nScope: [N|5m|permanent] (default 1 use)",
-        "redirect": "git stash push -m 'WIP: {file}' -- {file}",
+        "redirect": "git stash push -m 'WIP: saved instead of discarding' -- {file}",
         "when": "_file_differs_from_ref",
     },
     "git restore": {
         "action": "block",
         "suggestion": "CAUTION: 'git restore <file>' permanently discards unstaged changes with no recovery.\n\n**SAFER ALTERNATIVE (RECOMMENDED):**\n   git stash push <file> -m 'WIP: <file>'\n\nNote: 'git restore --staged <file>' (unstage only) is safe and allowed.\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow (default 1 use): /ar:ok 'git restore'\nScope: [N|5m|permanent] (default 1 use)",
-        "redirect": "git stash push -m 'WIP: {file}' -- {file}",
+        "redirect": "git stash push -m 'WIP: saved instead of discarding' -- {file}",
         "when": "_restore_is_destructive",
     },
     "git stash drop": {

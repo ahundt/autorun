@@ -129,7 +129,7 @@ class TestUseInsteadIsBuiltFromTheMatchedCommand:
         so `rm -rf`'s suggestion named the operands of a plain `rm` before it."""
         cases = {
             "rm a && rm -rf b": ["Use instead: `trash a`", "Use instead: `trash b`"],
-            "git status && git reset --hard": ["Use instead: `git stash push -m 'WIP: reset --hard'`"],
+            "git status && git reset --hard": ["Use instead: `git stash push -m 'WIP: saved instead of discarding'`"],
             "bash -c 'rm -rf build'": ["Use instead: `trash build`"],
         }
         for cmd, expected in cases.items():
@@ -920,15 +920,23 @@ class TestAwkIsJudgedOnTheWholeQuotedLine:
         "ls | awk '{print $1 \"|\" $2}'",
         "ls | awk '{printf \"%s|%s\\n\", $1, $2}'",
         "ls | awk '{print \"| \" $1 \" |\"}'",
-        "ps aux | awk '{print ($3 > 1 ? \"hi\" : \"lo\")}'",
         "ls | awk '{print $1}' 2>/dev/null",
         "ps aux | awk '$11 == \"sudo\" {print $2}'",
         "ps aux | awk '$3 > 10'",
         "df -h | awk 'NR>1 {print $5 \" used\"}'",
-        "ls | awk '{print $(NF-1)}'",
     ])
     def test_a_plain_filter_on_a_pipe_is_allowed(self, cmd):
         assert plugins.check_blocked_commands(_bash(cmd)) is None, cmd
+
+
+    @pytest.mark.parametrize("cmd", [
+        "ps aux | awk '{print ($3 > 1 ? \"hi\" : \"lo\")}'",
+        "ls | awk '{print $(NF-1)}'",
+    ])
+    def test_a_filter_outside_the_allowlist_is_still_blocked(self, cmd):
+        """Expressions beyond fields, strings and simple conditions are not
+        proven harmless, so they stay blocked as every awk was before rc4."""
+        assert _decision(plugins.check_blocked_commands(_bash(cmd))) == "deny", cmd
 
 
 class TestCodexPrivilegeCheckReadsShellWords:
@@ -958,4 +966,4 @@ class TestRedirectQuotingEdgeCases:
         subprocess.run(["git", "commit", "-qm", "seed"], cwd=repo, check=True, capture_output=True)
         (repo / "-x").write_text("v2\n")
         reason = _reason(plugins.check_blocked_commands(_bash_in(repo, "git checkout -- -x")))
-        assert "git stash push -m 'WIP: -x' -- -x" in reason
+        assert "git stash push -m 'WIP: saved instead of discarding' -- -x" in reason

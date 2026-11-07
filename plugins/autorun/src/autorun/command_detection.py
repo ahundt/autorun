@@ -534,6 +534,10 @@ def shell_words(cmd: str) -> list[str] | None:
     """
     lexer = shlex.shlex(cmd or "", posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
+    # shlex ends a line at any `#`; bash only at one that starts a word, so
+    # `echo $#; sudo x` hid the sudo. Keeping `#` text costs nothing a guard
+    # needs and sees every command bash would run.
+    lexer.commenters = ""
     try:
         return list(lexer)
     except ValueError:

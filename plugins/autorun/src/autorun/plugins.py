@@ -81,6 +81,10 @@ from .scoped_allow import (
 from .command_detection import (
     PRIVILEGE_ESCALATING_WRAPPERS,
     mentions_privilege_escalation,
+    shell_segments,
+    shell_words,
+    strip_transparent_command_wrappers,
+    _get_basename,
     command_matches_pattern,
     command_tokens_for,
     extract_commands,
@@ -126,14 +130,13 @@ def _task_cli_hint(ctx: EventContext) -> str | None:
 
 def _has_shell_output_redirection(command: str) -> bool:
     """Return True when a shell command redirects output to a file/descriptor."""
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        tokens = list(lexer)
-    except Exception:
-        tokens = command.split()
+    tokens = shell_words(command)
+    if tokens is None:
+        return True  # cannot read the line: do not exempt it
 
     for token in tokens:
+        if "<>" in token:
+            return True  # opens the file for writing too
         if token in {">", ">>", ">|", "&>", "&>>", ">&"}:
             return True
         if re.fullmatch(r"\d*(?:>|>>|>\|)", token):
@@ -183,6 +186,8 @@ def _shell_join(words: list[str]) -> str:
     """
 
     def quote(word: str) -> str:
+        if word == "~":
+            return "~"
         if word.startswith("~/"):
             return "~/" + quote(word[2:]) if word[2:] else "~/"
         if "$(" in word or "`" in word:
@@ -221,7 +226,12 @@ def _default_integration_allows_native_shell_read(ctx: EventContext, pattern: st
         return False
     if _has_shell_output_redirection(command):
         return False
-    if pattern == "tail" and _tail_follow_requested(tokens):
+    # Every tail on the line: `tail -n 5 log; tail -f log` follows in its second.
+    if pattern == "tail" and any(
+        _tail_follow_requested(tuple(argv))
+        for argv in (strip_transparent_command_wrappers(tokens) for _segment, tokens in shell_segments(command))
+        if argv and _get_basename(argv[0]) == "tail"
+    ):
         return False
     return True
 
