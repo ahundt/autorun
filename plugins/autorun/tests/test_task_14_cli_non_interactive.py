@@ -210,27 +210,27 @@ class TestOutputEncoding:
             self.encoding = kwargs.get("encoding", self.encoding)
 
     def test_a_cp1252_stream_keeps_its_declared_encoding(self, monkeypatch):
-        from autorun.logging_utils import use_utf8_output
+        from autorun.logging_utils import use_utf8_stdio
 
         out = self._Stream("cp1252")
         err = self._Stream("cp1252")
         monkeypatch.setattr("sys.stdout", out)
         monkeypatch.setattr("sys.stderr", err)
 
-        use_utf8_output()
+        use_utf8_stdio()
 
         for stream in (out, err):
             assert stream.calls == [{"errors": "replace"}]
 
     def test_a_utf8_stream_is_left_alone(self, monkeypatch):
         """Reconfiguring an already-correct stream would discard its state."""
-        from autorun.logging_utils import use_utf8_output
+        from autorun.logging_utils import use_utf8_stdio
 
         out = self._Stream("UTF-8")
         monkeypatch.setattr("sys.stdout", out)
         monkeypatch.setattr("sys.stderr", self._Stream("utf8"))
 
-        use_utf8_output()
+        use_utf8_stdio()
 
         assert out.calls == [{"errors": "replace"}]
 
@@ -240,8 +240,8 @@ class TestOutputEncoding:
             [
                 sys.executable,
                 "-c",
-                "from autorun.logging_utils import use_utf8_output; "
-                "use_utf8_output(); print('client ₁ daemon')",
+                "from autorun.logging_utils import use_utf8_stdio; "
+                "use_utf8_stdio(); print('client ₁ daemon')",
             ],
             capture_output=True,
             text=True,
@@ -252,15 +252,34 @@ class TestOutputEncoding:
         assert result.returncode == 0, result.stdout + result.stderr
         assert "client" in result.stdout
 
+    def test_utf8_stdin_is_read_whatever_the_locale_decoder(self, tmp_path):
+        """Harness payloads are UTF-8. A cp1252 decoder has no mapping for the
+        byte 0x81 in `ā`, so the CLI died reading its own hook input."""
+        env = dict(os.environ, PYTHONIOENCODING="cp1252")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from autorun.logging_utils import use_utf8_stdio; import sys; "
+                "use_utf8_stdio(); print(ascii(sys.stdin.read()))",
+            ],
+            input="rm /tmp/ā-の".encode("utf-8"),
+            capture_output=True,
+            timeout=5,
+            **{**spawn_kwargs(tmp_path), "env": env},
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.decode("ascii").strip() == ascii("rm /tmp/ā-の")
+
     def test_a_stream_that_cannot_reconfigure_is_not_fatal(self, monkeypatch):
         """A replaced stdout (pytest capture, a StringIO) has no reconfigure."""
         import io
-        from autorun.logging_utils import use_utf8_output
+        from autorun.logging_utils import use_utf8_stdio
 
         monkeypatch.setattr("sys.stdout", io.StringIO())
         monkeypatch.setattr("sys.stderr", io.StringIO())
 
-        use_utf8_output()
+        use_utf8_stdio()
 
 class TestCanPrompt:
     """Prompting is only possible when a read would actually block for input.

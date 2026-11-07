@@ -104,8 +104,14 @@ def build_rotating_handler(
     return handler
 
 
-def use_utf8_output() -> None:
-    """Make stdout and stderr tolerate text their declared encoding cannot carry.
+def use_utf8_stdio() -> None:
+    """Read stdin as UTF-8, and let stdout and stderr tolerate what they cannot carry.
+
+    stdin: every harness writes its hook payload as UTF-8, but CPython decodes
+    piped stdin with the locale code page (cp1252 on Windows), which garbles
+    `é` and has no mapping for bytes such as 0x81 (in `ā`, `の`, `с`), so a
+    payload naming such a path raised UnicodeDecodeError before any guard ran.
+    The producer's encoding is known, so stdin is set to it outright.
 
     Windows gives a non-UTF-8 console and pipe encoding (cp1252 on the CI
     runners), and autorun's own status text contains characters it cannot
@@ -115,6 +121,12 @@ def use_utf8_output() -> None:
     to UTF-8 caused its reader to fail with ``UnicodeDecodeError``. Replacing
     only unrepresentable characters keeps the protocol internally consistent.
     """
+    reconfigure = getattr(sys.stdin, "reconfigure", None)
+    if reconfigure is not None:
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):  # pragma: no cover - detached stream
+            pass
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:

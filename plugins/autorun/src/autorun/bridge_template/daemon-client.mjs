@@ -8,6 +8,10 @@ import { createConnection } from "node:net";
 import { spawn } from "node:child_process";
 
 const PROTOCOL_VERSION = 1;
+// = autorun.config.HOOK_DEADLINE_PAYLOAD_KEY; test_client_fail_closed.py pins
+// it. Epoch seconds: the daemon converts to its own monotonic clock, because
+// Node's hrtime is not Python's monotonic clock on macOS after a sleep.
+const HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_epoch";
 
 function daemonTarget(socketPath, portFile) {
   try {
@@ -114,6 +118,7 @@ export function createDaemonBridge({
           ? { inprocess_capabilities: [...inprocessCapabilities] }
           : {}),
         _pid: process.pid,
+        [HOOK_DEADLINE_PAYLOAD_KEY]: deadline / 1000,
       }) + "\n";
 
     return new Promise((resolve) => {

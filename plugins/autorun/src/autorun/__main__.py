@@ -66,7 +66,7 @@ import argparse  # noqa: E402
 import contextlib  # noqa: E402
 import os  # noqa: E402
 import sys  # noqa: E402
-from autorun.logging_utils import use_utf8_output  # noqa: E402
+from autorun.logging_utils import use_utf8_stdio  # noqa: E402
 from typing import Sequence  # noqa: E402
 
 
@@ -935,7 +935,7 @@ def run_direct(payload: dict | None = None) -> int:
         resolve_session_identity,
     )
     from .client import output_hook_response, prepare_payload_for_daemon
-    from .config import HOOK_DEADLINE_PAYLOAD_KEY
+    from .config import HOOK_DEADLINE_PAYLOAD_KEY, monotonic_deadline
 
     # Import plugins to register all handlers on the shared `app` object
     from . import plugins as _plugins  # noqa: F401 (side-effect: registers handlers)
@@ -977,7 +977,7 @@ def run_direct(payload: dict | None = None) -> int:
         # process's cwd, which can point at a different project entirely and
         # would send plan_export.py's archive to the wrong notes/ directory.
         cwd=normalized.get("cwd") or os.getcwd(),
-        deadline_monotonic=payload.get(HOOK_DEADLINE_PAYLOAD_KEY),
+        deadline_monotonic=monotonic_deadline(payload.get(HOOK_DEADLINE_PAYLOAD_KEY)),
         permission_mode=normalized["permission_mode"],
         source=normalized["source"],
         agent_id=normalized["agent_id"],
@@ -1064,7 +1064,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     Returns:
         Exit code: 0 = success, 1 = failure
     """
-    use_utf8_output()
+    use_utf8_stdio()
 
     parser = create_parser()
     # parse_args, not parse_known_args: a misspelled flag such as

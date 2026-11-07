@@ -230,21 +230,57 @@ _PUBLISH_ALLOW_HINT = (
 MESSAGE_DEDUP_DEFAULT_WINDOW_SECONDS = 3.0
 MESSAGE_DEDUP_DEFAULT_ENTRY_CAP = 128
 
-#: Absolute ``time.monotonic()`` instant the hook wrapper will stop waiting.
-#: The wrapper starts counting before spawning the CLI, so a process cannot
-#: derive this locally without overrunning by its own startup cost.
+#: The instant the hook wrapper will stop waiting, as epoch seconds. The
+#: wrapper starts counting before spawning the CLI, so a process cannot derive
+#: this locally without overrunning by its own startup cost.
 #: ``hooks/hook_entry.py`` declares the same name separately and deliberately:
 #: it is stdlib-only so that a missing dependency surfaces as an ImportError it
 #: can bootstrap from, which means it cannot import this module.
-HOOK_DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
+HOOK_DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_EPOCH"
 
-#: JSON field carrying the client's effective deadline into the long-lived
-#: daemon, whose process environment cannot change per hook request.
-HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_monotonic"
+#: JSON field carrying the sender's deadline into the long-lived daemon, as
+#: epoch seconds. Senders are Python (hook_entry.py, client.py) and Node (the
+#: JS bridge); see monotonic_deadline for why the wire is not monotonic.
+HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_epoch"
 
 #: Beyond this, a deadline is a stale value inherited from an unrelated process
 #: rather than ours. The largest configured wrapper timeout is 5s.
 MAX_PLAUSIBLE_WRAPPER_SECONDS = 60.0
+
+
+def monotonic_deadline(epoch_seconds) -> float | None:
+    """A deadline received from another process, on this process's monotonic clock.
+
+    Deadlines cross processes as epoch seconds and are converted on arrival,
+    the way gRPC converts at each hop (https://grpc.io/docs/guides/deadlines/).
+    A monotonic instant is not portable: Node's ``process.hrtime`` reads
+    ``mach_continuous_time`` on macOS and Python's ``time.monotonic`` reads
+    ``mach_absolute_time``, which drift apart by every sleep since boot. Every
+    process on one host reads the same wall clock, so only a clock step during
+    the milliseconds in transit can skew the result, and every reader also
+    bounds its wait by its own budget.
+
+    None for anything unusable, and for a value more than
+    MAX_PLAUSIBLE_WRAPPER_SECONDS from now either way: a stale variable
+    inherited from an unrelated process, or a monotonic instant from an older
+    sender, must not set the budget. A recent past value is returned as is,
+    already expired.
+    """
+    import math
+    import time
+
+    if isinstance(epoch_seconds, bool):
+        return None
+    try:
+        epoch = float(epoch_seconds)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(epoch):
+        return None
+    remaining = epoch - time.time()
+    if abs(remaining) > MAX_PLAUSIBLE_WRAPPER_SECONDS:
+        return None
+    return time.monotonic() + remaining
 SCOPED_ALLOW_DEFAULT_GRACE_SECONDS = 1.0
 CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS = 5.0
 TASK_PAUSE_DEFAULT_TTL_SECONDS = 5 * 60

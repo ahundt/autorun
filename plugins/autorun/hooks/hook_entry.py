@@ -249,13 +249,15 @@ def hook_timeout_for_cli(cli_type: str) -> float:
     return float(timeouts.get(cli_type, timeouts["claude"]))
 
 
-#: Absolute monotonic instant the wrapper stops waiting, handed to the CLI.
-DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
+#: The instant the wrapper stops waiting, as epoch seconds, handed to the CLI.
+#: Stdlib copy of ``autorun.config.HOOK_DEADLINE_ENV_VAR``; the receiver
+#: converts it with ``autorun.config.monotonic_deadline``.
+DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_EPOCH"
 #: The same instant in a payload sent straight to the daemon, which skips a
 #: request whose hook stopped waiting. Stdlib copy of
 #: ``autorun.config.HOOK_DEADLINE_PAYLOAD_KEY``, pinned by
 #: test_client_fail_closed.py.
-HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_monotonic"
+HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_epoch"
 
 
 def cli_env_with_deadline(cli_type: str) -> dict:
@@ -271,12 +273,13 @@ def cli_env_with_deadline(cli_type: str) -> dict:
     then irrelevant: the observed failure went straight back to "autorun CLI
     timed out after 5s", which is the wrapper speaking, not the client.
 
-    ``time.monotonic()`` is a system-wide clock on every supported platform --
-    CLOCK_MONOTONIC on Linux, mach_absolute_time on macOS, GetTickCount64 on
-    Windows -- so an instant recorded here is directly comparable in the child.
+    Sent as epoch seconds, the clock every process on the host shares; the
+    child converts it to its own monotonic clock on arrival.
     """
     env = dict(os.environ)
-    env[DEADLINE_ENV_VAR] = repr(time.monotonic() + hook_timeout_for_cli(cli_type))
+    env[DEADLINE_ENV_VAR] = repr(time.time() + hook_timeout_for_cli(cli_type))
+    # The pipe to the child is UTF-8 on both ends (try_cli decodes it so).
+    env["PYTHONIOENCODING"] = "utf-8"
     return env
 
 
@@ -708,6 +711,23 @@ def _venv_autorun(venv_root: Path) -> Path | None:
     return None
 
 
+def _read_stdin_as_utf8() -> None:
+    """Decode stdin as UTF-8, the encoding every harness writes its payload in.
+
+    CPython decodes piped stdin with the locale code page (cp1252 on Windows),
+    which has no mapping for bytes such as 0x81 (in `ā`, `の`, `с`): the hook
+    died with a traceback and exit 1, a non-blocking error to the harness, so
+    the guarded command ran. Copy of logging_utils.use_utf8_stdio's stdin half.
+    """
+    reconfigure = getattr(sys.stdin, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        pass
+
+
 def _tolerate_stderr_encoding() -> None:
     """Let a deny reason reach a non-UTF-8 stream instead of crashing.
 
@@ -719,7 +739,7 @@ def _tolerate_stderr_encoding() -> None:
 
     Reconfiguring changes an encoding and writes nothing, so this cannot add
     output to either stream. hook_entry stays stdlib-only, so this is a
-    deliberate copy of logging_utils.use_utf8_output rather than an import.
+    deliberate copy of logging_utils.use_utf8_stdio rather than an import.
     """
     reconfigure = getattr(sys.stderr, "reconfigure", None)
     if reconfigure is None:
@@ -951,7 +971,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     payload.setdefault("_cwd", payload.get("cwd") or os.getcwd())
     payload["cli_type"] = cli_type
     timeout = hook_timeout_for_cli(cli_type)
-    payload[HOOK_DEADLINE_PAYLOAD_KEY] = time.monotonic() + timeout
+    payload[HOOK_DEADLINE_PAYLOAD_KEY] = time.time() + timeout
     event_name = payload.get("hook_event_name", "unknown")
     connected = False
     try:
@@ -1055,7 +1075,10 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, e
             cmd,
             input=stdin_data,
             capture_output=True,
-            text=True,
+            # UTF-8 both ways between this process and its child, whatever the
+            # locale: cli_env_with_deadline sets the child's PYTHONIOENCODING.
+            encoding="utf-8",
+            errors="replace",
             timeout=hook_timeout_for_cli(cli_type),
             env=cli_env_with_deadline(cli_type),
         )
@@ -1591,6 +1614,7 @@ def main() -> None:
         for the fallback path.
     """
     _tolerate_stderr_encoding()
+    _read_stdin_as_utf8()
 
     # Read before anything else, and before any autorun import: the state this
     # exists for is "autorun cannot be imported", so a check placed after the

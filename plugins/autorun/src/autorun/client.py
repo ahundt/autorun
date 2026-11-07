@@ -156,6 +156,7 @@ def client_total_budget(cli_type: str) -> float:
 #: one; hook_entry.py keeps its own copy because it must stay stdlib-only.
 from .config import HOOK_DEADLINE_ENV_VAR as DEADLINE_ENV_VAR  # noqa: E402
 from .config import HOOK_DEADLINE_PAYLOAD_KEY as DEADLINE_PAYLOAD_KEY  # noqa: E402
+from .config import monotonic_deadline  # noqa: E402
 
 #: How many attempts to allow a pid that is alive but holds no daemon flock.
 #: The gap between a daemon starting and taking its flock is short; anything
@@ -202,9 +203,9 @@ def client_deadline(cli_type: str) -> float:
     client reporting why the daemon did not answer and the harness reporting
     only "autorun CLI timed out".
 
-    ``time.monotonic()`` is system-wide on Linux, macOS and Windows, so the
-    instant recorded in the parent is meaningful here. A value that is absent,
-    unparseable, already past, or improbably far ahead falls back to the local
+    The wrapper sends epoch seconds, converted here by
+    ``config.monotonic_deadline``. A value that is absent, unparseable,
+    already past, or improbably far either way falls back to the local
     budget: a stale variable inherited from an unrelated process must not make
     every hook fail instantly.
 
@@ -215,25 +216,13 @@ def client_deadline(cli_type: str) -> float:
     still to ask in. Floored, that request gets its one attempt.
     """
     local = time.monotonic() + client_total_budget(cli_type)
-    raw = os.environ.get(DEADLINE_ENV_VAR)
-    if not raw:
-        return local
-    try:
-        supplied = float(raw)
-    except (TypeError, ValueError):
-        return local
-    remaining = supplied - time.monotonic()
-    if remaining <= 0 or remaining > _MAX_PLAUSIBLE_WRAPPER_SECONDS:
+    supplied = monotonic_deadline(os.environ.get(DEADLINE_ENV_VAR))
+    if supplied is None or supplied <= time.monotonic():
         return local
     return max(
         supplied - CLIENT_BUDGET_MARGIN_SECONDS,
         time.monotonic() + MINIMUM_ATTEMPT_SECONDS,
     )
-
-
-#: Any wrapper budget beyond this is a stale or foreign value, not ours. Owned
-#: by config.py so every reader of the deadline applies the same sanity bound.
-from .config import MAX_PLAUSIBLE_WRAPPER_SECONDS as _MAX_PLAUSIBLE_WRAPPER_SECONDS  # noqa: E402
 
 
 def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
@@ -588,7 +577,8 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
 
     cli_type = detect_cli_type(payload)
     payload["cli_type"] = cli_type
-    payload[DEADLINE_PAYLOAD_KEY] = client_deadline(cli_type)
+    # Epoch seconds on the wire; forward() and the daemon convert on arrival.
+    payload[DEADLINE_PAYLOAD_KEY] = time.time() + (client_deadline(cli_type) - time.monotonic())
 
     return payload, cli_type
 
@@ -631,7 +621,9 @@ def run_client() -> int:
     spawned: list = []
     # forward() attempt number of the latest spawn; a list for the nested scope.
     last_spawn_attempt: list = []
-    deadline = payload[DEADLINE_PAYLOAD_KEY]
+    deadline = monotonic_deadline(payload[DEADLINE_PAYLOAD_KEY])
+    if deadline is None:  # prepare_payload_for_daemon set it; never fail open on a bad value
+        deadline = time.monotonic() + client_total_budget(payload.get("cli_type", "claude"))
 
     def _spawn_outcome() -> str:
         if not spawned:
@@ -886,4 +878,7 @@ def run_client() -> int:
 
 
 if __name__ == "__main__":
+    from .logging_utils import use_utf8_stdio
+
+    use_utf8_stdio()
     run_client()

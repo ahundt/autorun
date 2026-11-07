@@ -23,7 +23,7 @@ Intercepts autorun commands before they reach Claude Code, saving tokens and pro
 import sys
 
 # This launcher prints recovery steps at a moment when the autorun package may
-# not be importable, so it cannot reach logging_utils.use_utf8_output() -- that
+# not be importable, so it cannot reach logging_utils.use_utf8_stdio() -- that
 # lives in the package that just failed to import. A Windows console (or any
 # PYTHONIOENCODING=cp1252 parent) cannot encode the emoji below, and without
 # this the user gets a UnicodeEncodeError traceback in place of the very

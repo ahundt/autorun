@@ -36,12 +36,12 @@ from pathlib import Path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from autorun.logging_utils import use_utf8_output
+from autorun.logging_utils import use_utf8_stdio
 from autorun.task_lifecycle import TaskLifecycle
 
 
 def main():
-    use_utf8_output()
+    use_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="Task lifecycle management CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter

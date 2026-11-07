@@ -117,6 +117,9 @@ def test_the_wrapper_and_the_client_agree_on_the_unrecoverable_guidance():
 
     assert module._RESPONSE_TIMEOUT_GUIDANCE == RESPONSE_TIMEOUT_GUIDANCE
     assert module.HOOK_DEADLINE_PAYLOAD_KEY == HOOK_DEADLINE_PAYLOAD_KEY
+    from autorun.config import HOOK_DEADLINE_ENV_VAR
+
+    assert module.DEADLINE_ENV_VAR == HOOK_DEADLINE_ENV_VAR
 
     # The JavaScript bridge (Pi, Prime, OpenCode) is installed by a verbatim
     # copy, so it keeps a third spelling of both sentences.
@@ -128,6 +131,7 @@ def test_the_wrapper_and_the_client_agree_on_the_unrecoverable_guidance():
     ).read_text(encoding="utf-8")
     assert f"const INTERVENTION_GUIDANCE = {json.dumps(UNRECOVERABLE_GUIDANCE)};" in bridge
     assert f"const RETRY_GUIDANCE = {json.dumps(module._RETRY_GUIDANCE)};" in bridge
+    assert f"const HOOK_DEADLINE_PAYLOAD_KEY = {json.dumps(HOOK_DEADLINE_PAYLOAD_KEY)};" in bridge
 
 
 def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
@@ -156,8 +160,10 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
 
 
 def test_client_forwards_its_effective_deadline_to_the_daemon(monkeypatch):
-    wrapper_deadline = __import__("time").monotonic() + 10.0
-    monkeypatch.setenv("AUTORUN_HOOK_DEADLINE_MONOTONIC", str(wrapper_deadline))
+    from autorun.config import HOOK_DEADLINE_ENV_VAR, HOOK_DEADLINE_PAYLOAD_KEY
+
+    wrapper_deadline = __import__("time").time() + 10.0
+    monkeypatch.setenv(HOOK_DEADLINE_ENV_VAR, repr(wrapper_deadline))
     monkeypatch.setattr(
         "autorun.client.get_stable_process_identity",
         lambda: StableProcessIdentity(12345, 67890),
@@ -165,9 +171,8 @@ def test_client_forwards_its_effective_deadline_to_the_daemon(monkeypatch):
 
     payload, _ = prepare_payload_for_daemon({"hook_event_name": "PreToolUse"})
 
-    assert payload["_autorun_hook_deadline_monotonic"] == pytest.approx(
-        wrapper_deadline - 0.2
-    )
+    # Epoch seconds on the wire, so a Node or Python reader can convert it.
+    assert payload[HOOK_DEADLINE_PAYLOAD_KEY] == pytest.approx(wrapper_deadline - 0.2, abs=0.05)
 
 
 def test_client_preserves_identity_already_supplied_by_the_hook_wrapper(monkeypatch):
@@ -258,14 +263,15 @@ def test_the_client_deadline_comes_from_the_wrapper_when_it_supplies_one(monkeyp
         client_total_budget,
     )
 
-    supplied = _time.monotonic() + 2.0
-    monkeypatch.setenv(DEADLINE_ENV_VAR, repr(supplied))
-    assert client_deadline("claude") == supplied - CLIENT_BUDGET_MARGIN_SECONDS
+    monkeypatch.setenv(DEADLINE_ENV_VAR, repr(_time.time() + 2.0))
+    expected = _time.monotonic() + 2.0 - CLIENT_BUDGET_MARGIN_SECONDS
+    assert client_deadline("claude") == pytest.approx(expected, abs=0.05)
 
     # A deadline that already passed, is unparseable, or is implausibly distant
     # is a stale or foreign value; falling back beats failing every hook.
     local_budget = client_total_budget("claude")
-    for value in (repr(_time.monotonic() - 5.0), "not-a-float", repr(_time.monotonic() + 3600)):
+    for value in (repr(_time.time() - 5.0), "not-a-float", repr(_time.time() + 3600),
+                  repr(_time.monotonic() + 2.0)):  # a monotonic value from an older wrapper
         monkeypatch.setenv(DEADLINE_ENV_VAR, value)
         assert client_deadline("claude") > _time.monotonic() + local_budget - 1.0
 
@@ -297,7 +303,7 @@ def test_a_deadline_squeezed_below_the_margin_still_buys_one_attempt(monkeypatch
     )
 
     for remaining in (0.19, 0.1, 0.01):
-        monkeypatch.setenv(DEADLINE_ENV_VAR, repr(_time.monotonic() + remaining))
+        monkeypatch.setenv(DEADLINE_ENV_VAR, repr(_time.time() + remaining))
         deadline = client_deadline("claude")
 
         assert deadline > _time.monotonic(), (

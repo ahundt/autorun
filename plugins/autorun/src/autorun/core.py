@@ -63,7 +63,7 @@ from .session_manager import (
     state_failure_is_contention,
     state_lock_timeout,
 )
-from .config import CONFIG, HOOK_DEADLINE_PAYLOAD_KEY
+from .config import CONFIG, HOOK_DEADLINE_PAYLOAD_KEY, monotonic_deadline
 from .platforms import (
     PLATFORMS as _PLATFORMS,
     hook_platforms,
@@ -3461,7 +3461,7 @@ class AutorunDaemon:
                 # such as the OpenCode plugin sends plain "cwd". Accept both so
                 # a frame that took the short path is not left without a cwd.
                 cwd=normalized.get("cwd"),
-                deadline_monotonic=payload.get(HOOK_DEADLINE_PAYLOAD_KEY),
+                deadline_monotonic=monotonic_deadline(payload.get(HOOK_DEADLINE_PAYLOAD_KEY)),
                 permission_mode=normalized["permission_mode"],
                 source=normalized["source"],
                 agent_id=normalized["agent_id"],

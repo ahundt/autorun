@@ -313,6 +313,10 @@ def main() -> None:
     """Entry point for /ar:tabs — discover, analyze, and display Claude tmux sessions."""
     import argparse
 
+    from autorun.logging_utils import use_utf8_stdio
+
+    use_utf8_stdio()
+
     parser = argparse.ArgumentParser(description='Claude tmux session manager')
     parser.add_argument('--execute', action='store_true',
                         help='Execute mode: read JSON from stdin with action details')

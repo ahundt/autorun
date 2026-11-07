@@ -305,7 +305,7 @@ class TestHookEntryExecutionPriority:
         assert forwarded["_cwd"] == os.getcwd()
         # The daemon skips a request whose hook already stopped waiting.
         deadline = forwarded[hook_entry.HOOK_DEADLINE_PAYLOAD_KEY]
-        assert 0 < deadline - time.monotonic() <= hook_entry.hook_timeout_for_cli("codex")
+        assert 0 < deadline - time.time() <= hook_entry.hook_timeout_for_cli("codex")
         assert json.loads(capsys.readouterr().out)["decision"] == "block"
 
     def test_direct_daemon_unavailable_uses_existing_cli_fallback(
@@ -1436,6 +1436,59 @@ class TestTryCliRobustness:
         output = json.loads(captured.out)
         assert output.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
         assert "timed out" in captured.err
+
+    def test_the_pipe_to_the_cli_child_is_utf8_both_ways(self, monkeypatch, capsys):
+        """try_cli hands the payload to its child with text=True, which encodes
+        with the locale (cp1252 on Windows): `ā` raised UnicodeEncodeError
+        before the child ran. The child here is a real Python process that
+        echoes what it read, so the real kwargs and env carry the bytes."""
+        hook_entry = load_hook_entry_module()
+        echo = (
+            "import json,sys; text=sys.stdin.read(); "
+            "print(json.dumps({'hookSpecificOutput': {'permissionDecision': 'deny', "
+            "'permissionDecisionReason': text}}, ensure_ascii=False))"
+        )
+        real_run = subprocess.run
+
+        def run_echo(_cmd, **kwargs):
+            return real_run([sys.executable, "-c", echo], **kwargs)
+
+        monkeypatch.setattr(hook_entry.subprocess, "run", run_echo)
+        monkeypatch.setenv("PYTHONIOENCODING", "cp1252")  # what the child would inherit
+
+        with pytest.raises(SystemExit):
+            hook_entry.try_cli(Path(sys.executable), "rm /tmp/ā-の-с", "codex", "PreToolUse")
+
+        assert "ā-の-с" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("decoder", ["cp1252", "utf-8"])
+    def test_hook_reads_utf8_stdin_whatever_the_locale_decoder(self, ensure_single_daemon, decoder):
+        """Harnesses write UTF-8. Windows' CPython decodes piped stdin with the
+        ANSI code page, where bytes such as 0x81 (in `ā`, `の`, `с`) have no
+        mapping: the hook died with a traceback and exit 1, which harnesses
+        treat as a non-blocking error, so the guarded command ran. Forced
+        here with PYTHONIOENCODING so the Windows behaviour runs on any OS.
+        """
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+        env["PYTHONIOENCODING"] = decoder
+        payload = json.dumps({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm /tmp/ā-の-с"},
+        }, ensure_ascii=False).encode("utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(HOOK_ENTRY)],
+            input=payload, capture_output=True, env=env, timeout=10,
+        )
+
+        stderr = result.stderr.decode("utf-8", "replace")
+        assert "Traceback" not in stderr, stderr
+        assert result.returncode == 2, (result.returncode, stderr)
+        output = json.loads(result.stdout)
+        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "ā-の-с" in output["hookSpecificOutput"]["permissionDecisionReason"]
 
     def test_hook_rm_blocked_no_stderr(self, ensure_single_daemon):
         """Full e2e: hook_entry.py blocks rm with exit code 2.

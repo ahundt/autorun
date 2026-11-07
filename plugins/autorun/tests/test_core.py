@@ -1339,12 +1339,14 @@ class TestAutorunDaemon:
     @pytest.mark.asyncio
     async def test_handle_client_passes_the_request_deadline_to_event_context(self):
         daemon = AutorunDaemon(AutorunApp())
-        deadline = time.monotonic() + 10.0
+        from autorun.config import HOOK_DEADLINE_PAYLOAD_KEY
+
+        expected = time.monotonic() + 10.0
         payload = {
             "hook_event_name": "PreToolUse",
             "session_id": "deadline-propagation",
             "cli_type": "codex",
-            "_autorun_hook_deadline_monotonic": deadline,
+            HOOK_DEADLINE_PAYLOAD_KEY: time.time() + 10.0,  # epoch on the wire
         }
         reader = Mock()
         reader.readuntil = AsyncMock(return_value=json.dumps(payload).encode() + b"\n")
@@ -1367,7 +1369,7 @@ class TestAutorunDaemon:
         await daemon.handle_client(reader, FakeWriter())
 
         ctx = daemon._dispatch_with_timeout.await_args.args[0]
-        assert ctx.deadline_monotonic == deadline
+        assert ctx.deadline_monotonic == pytest.approx(expected, abs=0.05)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

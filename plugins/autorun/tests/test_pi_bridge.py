@@ -7,6 +7,7 @@ user's Pi configuration or contact a model provider.
 from __future__ import annotations
 
 import json
+import time
 import os
 import shutil
 import socket
@@ -1274,6 +1275,12 @@ console.log(JSON.stringify(response));
     assert frames[0]["cli_type"] == "pi"
     assert frames[0]["protocol_version"] == 1
     assert frames[0]["session_id"] == "pi-session"
+    # The bridge's deadline, as epoch seconds the daemon converts to its own
+    # monotonic clock (Node's hrtime is not Python's on macOS after a sleep).
+    from autorun.config import HOOK_DEADLINE_PAYLOAD_KEY
+
+    remaining = frames[0][HOOK_DEADLINE_PAYLOAD_KEY] - time.time()
+    assert 0 < remaining <= 2.0
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
