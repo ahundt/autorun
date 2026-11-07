@@ -276,19 +276,19 @@ DEFAULT_INTEGRATIONS = {
     "git checkout --": {
         "action": "block",
         "suggestion": "CAUTION: 'git checkout -- <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVE:**\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow (default 1 use): /ar:ok 'git checkout --'\nScope: [N|5m|permanent] (default 1 use)",
-        "redirect": "git stash push {file} -m 'WIP: {file}'",
+        "redirect": "git stash push -m 'WIP: {file}' -- {file}",
         "when": "_file_differs_from_ref",
     },
     "git checkout": {  # Catch modern syntax: git checkout path/to/file (without --)
         "action": "block",
         "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Switch branches** (if not targeting a file):\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <name>' cannot be told apart from a path without guessing, so it is blocked while the repo has uncommitted changes. Creating a branch ('git checkout -b <new-branch>') and 'git switch <branch>' are always allowed.\n\nTo allow (default 1 use): /ar:ok 'git checkout'\nScope: [N|5m|permanent] (default 1 use)",
-        "redirect": "git stash push {file} -m 'WIP: {file}'",
+        "redirect": "git stash push -m 'WIP: {file}' -- {file}",
         "when": "_file_differs_from_ref",
     },
     "git restore": {
         "action": "block",
         "suggestion": "CAUTION: 'git restore <file>' permanently discards unstaged changes with no recovery.\n\n**SAFER ALTERNATIVE (RECOMMENDED):**\n   git stash push <file> -m 'WIP: <file>'\n\nNote: 'git restore --staged <file>' (unstage only) is safe and allowed.\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow (default 1 use): /ar:ok 'git restore'\nScope: [N|5m|permanent] (default 1 use)",
-        "redirect": "git stash push {file} -m 'WIP: {file}'",
+        "redirect": "git stash push -m 'WIP: {file}' -- {file}",
         "when": "_restore_is_destructive",
     },
     "git stash drop": {
@@ -398,8 +398,9 @@ DEFAULT_INTEGRATIONS = {
     "awk": {
         "action": "block",
         "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["awk"]}},
-        # Like cat/grep/find: reading a pipe is not reading a file.
-        "when": "_not_in_pipe",
+        # Like cat/grep/find, a filter on a pipe is allowed; one that edits,
+        # writes, runs a command, reads a file or runs as root is not.
+        "when": "_awk_does_more_than_filter_stdin",
         "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno awk",
     },
     "grep": {
@@ -920,6 +921,11 @@ CONFIG = {
     # longest gap between two of those restarts was 58 s, so the window must
     # exceed it. Install handoffs are exempt: they exist to load new code.
     "daemon_restart_coalesce_seconds": 60.0,
+    # How long --restart-daemon waits for the daemon's event loop to answer a
+    # health probe before treating it as wedged. The loop answers the probe
+    # itself, ahead of any handler, so a loaded daemon answers in milliseconds
+    # (266 calls/s sandbox load: p99 under 0.6 s); a wedged one never does.
+    "daemon_round_trip_probe_seconds": 2.0,
     # Timeout layering is intentional and must stay ordered:
     # daemon_dispatch_timeouts_seconds < daemon_client_response_timeouts_seconds
     # < hook_wrapper_timeouts_seconds < outer harness hooks.json timeout.

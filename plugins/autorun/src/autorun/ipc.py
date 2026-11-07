@@ -157,7 +157,9 @@ def get_address() -> str:
 
 #: Connections the kernel may queue before refusing. asyncio defaults to 100,
 #: and a hundred sessions firing hooks at once overflowed it, so every extra
-#: connect waited out a client retry. The OS maximum is the right ceiling.
+#: connect waited out a client retry. The kernel clamps this to its own limit
+#: (macOS kern.ipc.somaxconn, 128 by default; Linux net.core.somaxconn, 4096
+#: since 5.4), so raise that sysctl for a deeper queue.
 LISTEN_BACKLOG = socket.SOMAXCONN
 
 
@@ -245,6 +247,35 @@ def is_responding() -> bool:
                 s.connect(("127.0.0.1", port))
         return True
     except Exception:
+        return False
+
+
+#: A request carrying this key is answered by the daemon's event loop with the
+#: same object, before any handler runs. connect() alone succeeds against a
+#: wedged daemon, whose listen backlog the kernel keeps accepting into.
+ROUND_TRIP_PROBE_KEY = "_autorun_round_trip_probe"
+
+
+def answers_round_trip(timeout: float | None = None) -> bool:
+    """Whether the daemon's event loop answers a request within ``timeout``."""
+    import json
+
+    if timeout is None:
+        from .config import CONFIG
+
+        timeout = float(CONFIG["daemon_round_trip_probe_seconds"])
+    try:
+        if HAS_UNIX_SOCKETS:
+            family, address = socket.AF_UNIX, str(SOCKET_PATH)
+        else:
+            family, address = socket.AF_INET, ("127.0.0.1", _read_port())
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(address)
+            s.sendall(json.dumps({ROUND_TRIP_PROBE_KEY: True}).encode() + b"\n")
+            reply = s.makefile("rb").readline()
+        return json.loads(reply or b"null") == {ROUND_TRIP_PROBE_KEY: True}
+    except (OSError, ValueError):
         return False
 
 

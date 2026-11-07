@@ -288,14 +288,31 @@ UNRECOVERABLE_GUIDANCE = (
 LOAD_EVENT_CODES = frozenset({
     "daemon_dispatch_timeout",
     "daemon_dispatch_contained",
-    "daemon_response_timeout",
 })
+
+#: A request the daemon never answered. From the client a loaded daemon and a
+#: wedged one look the same: the kernel queues the connection for either. So
+#: retry once, and restart only if it repeats. The restart is safe to advise
+#: because `--restart-daemon` leaves a daemon alone that started moments ago
+#: and answers a health probe, so repeated advice cannot become a restart
+#: loop. The JS bridge carries this exact text (daemon-client.mjs).
+RESPONSE_TIMEOUT_GUIDANCE = (
+    "Blocking this tool call because the autorun daemon took the request but "
+    "did not answer in time: it is either very busy or stuck. Retry the same "
+    "tool call once. If that is blocked the same way, run "
+    "`autorun --restart-daemon` in a terminal; it leaves a daemon that just "
+    "restarted and answers a health check alone, and replaces one that does not."
+)
+
+#: Errors that mean a request was sent and no answer came back. On 3.10
+#: asyncio.TimeoutError is not an OSError, so it is listed on its own.
+UNANSWERED_REQUEST_ERRORS = (OSError, asyncio.TimeoutError)
 
 
 class DaemonDidNotAnswer(RuntimeError):
     """The daemon accepted a request and missed the deadline answering it.
 
-    It is alive, so this is load: a restart would cut off every other session.
+    Busy or stuck: the client cannot tell which (see RESPONSE_TIMEOUT_GUIDANCE).
     """
 
 
@@ -341,6 +358,8 @@ def build_daemon_failure_response(
 
     if event_code in LOAD_EVENT_CODES:
         reason = f"[autorun] {tagged_message}. {load_guidance()}"
+    elif event_code == "daemon_response_timeout":
+        reason = f"[autorun] {tagged_message}. {RESPONSE_TIMEOUT_GUIDANCE}"
     else:
         reason = (
             f"[autorun] {tagged_message}. Blocking tool use because autorun could "
@@ -707,14 +726,13 @@ def run_client() -> int:
                 cli_type=cli_type,
                 source="buffer-error",
             )
-        except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
+        except UNANSWERED_REQUEST_ERRORS as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
             if sent:
                 # A daemon accepted the connection and may already be running
-                # this hook, so sending it again could run it twice. On 3.11+
-                # this is also where a response timeout lands, because
-                # asyncio.TimeoutError is an OSError there.
+                # this hook, so sending it again could run it twice. A
+                # response timeout lands here too, on every Python version.
                 raise DaemonDidNotAnswer(
                     f"Daemon accepted the request but did not answer: {e!r}"
                 ) from e

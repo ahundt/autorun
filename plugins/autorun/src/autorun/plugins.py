@@ -80,6 +80,7 @@ from .scoped_allow import (
 )
 from .command_detection import (
     PRIVILEGE_ESCALATING_WRAPPERS,
+    mentions_privilege_escalation,
     command_matches_pattern,
     command_tokens_for,
     extract_commands,
@@ -169,18 +170,28 @@ def _tail_follow_requested(tokens: tuple[str, ...]) -> bool:
 
 
 def _shell_join(words: list[str]) -> str:
-    """shlex.join, except a word with `$` is double-quoted so it still expands.
+    """shlex.join, except words that must still expand the way the user meant.
 
     shlex.join single-quotes `$work`, so `rm -rf "$work"` was answered with
     `trash '$work'`, a file literally named $work (2026-11-06). shlex has
-    already dropped the original quotes, so a literal `'$x'` operand is the
-    one case this reads as a variable; deleting a file named `$x` is rarer
-    than deleting what `$x` names. Backticks and `"`/`\\` are escaped.
+    already dropped the original quotes, so a word with `$` is double-quoted
+    to keep a variable a variable; a literal `'$x'` operand is the one case
+    this misreads, and deleting a file named `$x` is rarer than deleting what
+    `$x` names. A word with `$(` or a backtick stays single-quoted: that
+    would *run* something, never the case for a file the user named. A
+    leading `~/` stays bare so it still names the home directory.
     """
-    return " ".join(
-        '"' + re.sub(r'(["\\`])', r"\\\1", word) + '"' if "$" in word else shlex.quote(word)
-        for word in words
-    )
+
+    def quote(word: str) -> str:
+        if word.startswith("~/"):
+            return "~/" + quote(word[2:]) if word[2:] else "~/"
+        if "$(" in word or "`" in word:
+            return shlex.quote(word)
+        if "$" in word:
+            return '"' + re.sub(r'(["\\])', r"\\\1", word) + '"'
+        return shlex.quote(word)
+
+    return " ".join(quote(word) for word in words)
 
 
 def _default_integration_allows_native_shell_read(ctx: EventContext, pattern: str, command: str, source: str) -> bool:
@@ -194,6 +205,10 @@ def _default_integration_allows_native_shell_read(ctx: EventContext, pattern: st
         return False
     platform = platform_for(ctx.cli_type)
     if pattern not in platform.native_shell_read_commands:
+        return False
+    # Judged over the whole line: the matched segment alone missed a privileged
+    # read in another segment or inside `$(...)` (`cat f; sudo cat x`).
+    if mentions_privilege_escalation(command):
         return False
     # Same wrapper grammar the block matched with (any entry of the shared
     # transparent-wrapper table, or VAR=value), minus privilege escalation.
@@ -1494,10 +1509,20 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                                 # {args}: all operands; {file_args}: non-flag ones;
                                 # {file}: the last non-flag one. Re-quoted for the shell.
                                 operands = list(tokens[1:])
-                                non_flag_parts = [p for p in operands if p != "--" and not p.startswith("-")]
+                                # After `--` every word is an operand, `-x` included,
+                                # and it needs its own `--` to stay one.
+                                end = operands.index("--") if "--" in operands else len(operands)
+                                non_flag_parts = [p for p in operands[:end] if not p.startswith("-")] + operands[end + 1:]
+
+                                def as_operands(words: list[str]) -> str:
+                                    prefix = "-- " if any(w.startswith("-") for w in words) else ""
+                                    return prefix + _shell_join(words)
+
                                 redirect_cmd = redirect.replace("{args}", _shell_join(operands))
-                                redirect_cmd = redirect_cmd.replace("{file_args}", _shell_join(non_flag_parts))
+                                redirect_cmd = redirect_cmd.replace("{file_args}", as_operands(non_flag_parts))
                                 if "{file}" in redirect_cmd:
+                                    # Bare: `{file}` also sits inside messages and
+                                    # before options; templates put `--` themselves.
                                     file_val = _shell_join(non_flag_parts[-1:]) or _shell_join(operands)
                                     redirect_cmd = redirect_cmd.replace("{file}", file_val)
                                 msg += f"\n\nUse instead: `{redirect_cmd}`"

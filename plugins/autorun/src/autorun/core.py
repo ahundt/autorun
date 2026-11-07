@@ -872,8 +872,7 @@ class ThreadSafeDB:
                     session_id,
                     timeout=self._state_timeout if timeout is None else timeout,
                 ) as state:
-                    for stored_field, value in state.items():
-                        self._cache[f"{session_id}:{stored_field}"] = value
+                    self._publish_hydrated(session_id, state.items())
                 self._loaded_sessions.add(session_id)
                 field_key = f"{session_id}:{field}"
                 return self._cache[field_key] if field_key in self._cache else default
@@ -952,8 +951,7 @@ class ThreadSafeDB:
                 raise SessionPersistenceError(f"State update was not saved for {session_id} ({field}): {exc}") from exc
             if has_staged_value:
                 dirty.pop(key, None)
-            for stored_field, stored in hydrated.items():
-                self._cache[f"{session_id}:{stored_field}"] = stored
+            self._publish_hydrated(session_id, hydrated.items())
             self._cache[key] = persisted
             self._loaded_sessions.add(session_id)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
@@ -1044,9 +1042,26 @@ class ThreadSafeDB:
             self._volatile_bytes -= entry[1]
 
     def _drop_volatile(self, key: str) -> None:
-        """Forget an advisory entry entirely."""
+        """Forget an advisory entry entirely.
+
+        Storage may still hold an older value for the key, which hydration
+        skipped while the advisory one was live, so the session is no longer
+        fully cached: the next read goes back to storage.
+        """
         self._drop_volatile_bookkeeping(key)
         self._cache.pop(key, None)
+        self._loaded_sessions.discard(self._split_key(key)[0])
+
+    def _publish_hydrated(self, session_id: str, items) -> None:
+        """Cache fields read from storage, keeping any live advisory value.
+
+        A volatile value is newer than the stored one by construction, so
+        loading the session's other fields must not put the stored one back.
+        """
+        for field, value in items:
+            key = f"{session_id}:{field}"
+            if key not in self._volatile:
+                self._cache[key] = value
 
     def _evict_volatile_over_limits(self) -> None:
         """Discard the oldest advisory entries until the limits are met.
@@ -1116,13 +1131,12 @@ class ThreadSafeDB:
     def _refresh_session_cache(self, session_id: str) -> None:
         """Re-read one session so cached fields match what is on disk."""
         prefix = f"{session_id}:"
-        for key in [key for key in self._cache if key.startswith(prefix)]:
+        for key in [key for key in self._cache if key.startswith(prefix) and key not in self._volatile]:
             del self._cache[key]
         self._loaded_sessions.discard(session_id)
         try:
             with session_state(session_id, timeout=self._state_timeout) as state:
-                for field, value in state.items():
-                    self._cache[f"{session_id}:{field}"] = value
+                self._publish_hydrated(session_id, state.items())
             self._loaded_sessions.add(session_id)
         except Exception as e:
             logger.warning(
@@ -1161,24 +1175,6 @@ class ThreadSafeDB:
                     )
                 self._batch.timeout = None
 
-    def _holds_durable_value(self, key: str, value: Any) -> bool:
-        """Whether storage is known to hold exactly ``value`` for ``key``.
-
-        The cache publishes a durable key only after its transaction commits
-        or after reading it from storage, so a cached durable entry is the
-        stored value. Volatile entries are advisory and prove nothing.
-        Compared by type and canonical JSON: ``False == 0`` must not count.
-        """
-        if key not in self._cache or key in self._volatile:
-            return False
-        cached = self._cache[key]
-        if type(cached) is not type(value):
-            return False
-        try:
-            return json.dumps(cached, sort_keys=True) == json.dumps(value, sort_keys=True)
-        except (TypeError, ValueError):
-            return False
-
     def _persist_many(
         self, values: Dict[str, Any], *, timeout: float | None = None
     ) -> None:
@@ -1197,12 +1193,10 @@ class ThreadSafeDB:
         """
         with self._lock:
             grouped: Dict[str, Dict[str, Any]] = {}
+            # Every value is written, even one the cache already holds: the
+            # cache cannot see writes made outside it (another process, a
+            # direct session_state() caller), so equality proves nothing.
             for key, value in values.items():
-                if self._holds_durable_value(key, value):
-                    # Storage already has it: a blind reset of an unchanged
-                    # flag would otherwise cost a transaction serialised behind
-                    # every other session's.
-                    continue
                 session_id, field = self._split_key(key)
                 grouped.setdefault(session_id, {})[field] = value
 
@@ -3097,8 +3091,9 @@ class AutorunDaemon:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.store = ThreadSafeDB()
         self._cleanup_registered = False
-        # event -> {running dispatch: its deadline}. A dispatch past its
-        # deadline still holds its slot until its thread ends.
+        # event -> {running dispatch: when its own budget, counted from the
+        # moment it got its slot, runs out}. A dispatch past that still holds
+        # its slot until its thread ends.
         self._active_dispatches: Dict[str, Dict[asyncio.Future, float]] = {}
         # Keyed by (event, session): one session's slow handler backs off that
         # session only. The per-event semaphore is what bounds stuck threads.
@@ -3106,10 +3101,12 @@ class AutorunDaemon:
         self._dispatch_semaphores: Dict[str, tuple[int, asyncio.Semaphore]] = {}
 
     def _slots_stalled(self, event: str, max_concurrent: int) -> bool:
-        """Whether every slot for ``event`` is held by a handler past its deadline.
+        """Whether every slot for ``event`` is held by a handler past its budget.
 
         Waiting cannot free such a slot, so this is a stall that needs a
-        restart; anything less is load that clears by itself.
+        restart; anything less is load that clears by itself. The budget is
+        counted from slot acquisition: counted from arrival, every holder in
+        an ordinary queue looks overdue by the time a later request gives up.
         """
         active = self._active_dispatches.get(event, {})
         now = time.monotonic()
@@ -3183,7 +3180,7 @@ class AutorunDaemon:
             semaphore.release()
             raise
         active = self._active_dispatches.setdefault(event, {})
-        active[dispatch] = deadline
+        active[dispatch] = time.monotonic() + timeout
 
         def release(completed: asyncio.Future) -> None:
             semaphore.release()
@@ -3322,6 +3319,9 @@ class AutorunDaemon:
                 skip_response = True
                 return
             payload = json.loads(data.decode())
+            if payload.get(ipc.ROUND_TRIP_PROBE_KEY):
+                response = {ipc.ROUND_TRIP_PROBE_KEY: True}
+                return
 
             event = payload.get("hook_event_name", "unknown")
             tool = payload.get("tool_name", "")

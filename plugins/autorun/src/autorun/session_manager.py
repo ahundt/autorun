@@ -343,7 +343,14 @@ class _JSONStore:
         return loaded
 
     def _save(self):
-        atomic_write_json(Path(self._state_file), self._data)
+        # Reported as a state error, as _load reports a failed read and the
+        # SQLite store reports a failed commit: callers handle that one type.
+        try:
+            atomic_write_json(Path(self._state_file), self._data)
+        except OSError as exc:
+            raise SessionPersistenceError(
+                f"Could not save state file {self._state_file}: {exc}"
+            ) from exc
 
     def _assert_authoritative(self) -> None:
         """Refuse a transaction after SQLite has taken state authority.

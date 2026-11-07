@@ -595,12 +595,14 @@ def restart_daemon(
             else get_daemon_pid(src_dir=src_dir)
         )
 
-        if pid and not replace_runtime_daemon and not all_daemons and is_daemon_responding():
+        # A round trip, not connect(): a wedged daemon's listen backlog still
+        # accepts connections, and a wedged daemon is what a restart is for.
+        if pid and not replace_runtime_daemon and not all_daemons and ipc.answers_round_trip():
             window = float(CONFIG["daemon_restart_coalesce_seconds"])
             age = _daemon_age_seconds(pid)
             if age is not None and age < window and not _source_newer_than(src_dir, age):
                 print(
-                    f"  ✓ Daemon PID {pid} started {age:.0f}s ago and is responding;"
+                    f"  ✓ Daemon PID {pid} started {age:.0f}s ago and answers a health check;"
                     " not restarting it again."
                 )
                 print(

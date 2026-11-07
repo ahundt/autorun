@@ -48,8 +48,11 @@ from .command_detection import (
     command_tokens_for,
     extract_commands,
     git_subcommand_index,
+    PRIVILEGE_ESCALATING_WRAPPERS,
+    mentions_privilege_escalation,
     nested_scripts,
     shell_command_from_tool_input,
+    shell_words,
     shells_running_downloads,
     strip_transparent_command_wrappers,
 )
@@ -1283,6 +1286,139 @@ def _sed_modifies_files(ctx: any) -> bool:
         return False
 
 
+#: awk options that only shape parsing; any other option (-f, -i inplace,
+#: -E, --exec, -l, ...) loads or edits something.
+_AWK_FILTER_OPTIONS_WITH_ARG: Final = frozenset({"-F", "-v", "--field-separator", "--assign"})
+#: Program text that runs a command or reads another source, after string
+#: literals are removed.
+_AWK_PROGRAM_RUNS_OR_READS = re.compile(r"\bsystem\b|\bgetline\b|\|&")
+#: print/printf output redirected to a file or a command, after string
+#: literals and parenthesised expressions (`print ($3 > 1 ? ...)`) are removed.
+_AWK_PRINT_REDIRECTS = re.compile(r"\bprintf?\b[^;{}]*(?:>|\|)")
+_AWK_STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
+_AWK_INNERMOST_PARENS = re.compile(r"\([^()]*\)")
+#: Shell words that end one simple command and start the next.
+_SHELL_COMMAND_SEPARATORS: Final = frozenset({";", "&&", "||", "|", "|&", "&", "(", ")", "\n"})
+#: Redirections that only duplicate a descriptor or feed inline text.
+_HARMLESS_REDIRECT_TARGETS: Final = frozenset({"/dev/null"})
+
+
+def _awk_program_leaves_the_pipe(program: str) -> bool:
+    code = _AWK_STRING_LITERAL.sub('""', program)
+    if _AWK_PROGRAM_RUNS_OR_READS.search(code):
+        return True
+    while _AWK_INNERMOST_PARENS.search(code):
+        code = _AWK_INNERMOST_PARENS.sub("", code)
+    return bool(_AWK_PRINT_REDIRECTS.search(code))
+
+
+def _awk_argv_only_filters_stdin(argv: list[str]) -> bool:
+    """Whether one awk argv (wrappers stripped) reads stdin and writes stdout."""
+    program_seen = False
+    i = 1
+    while i < len(argv):
+        token = argv[i]
+        if not program_seen and token.startswith("-") and token != "-":
+            head = token.split("=", 1)[0]
+            if head in _AWK_FILTER_OPTIONS_WITH_ARG:
+                i += 1 if "=" in token else 2
+                continue
+            if token[:2] in {"-F", "-v"}:  # -F: or -vx=1, joined
+                i += 1
+                continue
+            return False
+        if not program_seen:
+            if _awk_program_leaves_the_pipe(token):
+                return False
+            program_seen = True
+            i += 1
+            continue
+        # After the program only `var=value` keeps reading stdin; any other
+        # operand is a file to read.
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token):
+            return False
+        i += 1
+    return program_seen
+
+
+def _split_shell_commands(words: list[str]) -> list[tuple[list[str], list[tuple[str, str]]]]:
+    """Group shell words into simple commands: (argv, [(redirect op, target)])."""
+    commands: list[tuple[list[str], list[tuple[str, str]]]] = []
+    argv: list[str] = []
+    redirects: list[tuple[str, str]] = []
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if word in _SHELL_COMMAND_SEPARATORS:
+            commands.append((argv, redirects))
+            argv, redirects = [], []
+        elif word and set(word) <= set("<>&|"):
+            if argv and argv[-1].isdigit():
+                argv.pop()  # `2>`: the descriptor is part of the redirection
+            target = words[i + 1] if i + 1 < len(words) else ""
+            redirects.append((word, target))
+            i += 1
+        else:
+            argv.append(word)
+        i += 1
+    commands.append((argv, redirects))
+    return [(a, r) for a, r in commands if a or r]
+
+
+def _awk_does_more_than_filter_stdin(ctx: any) -> bool:
+    """Block awk unless every awk on the line only filters its input stream.
+
+    `ls | awk '{print $5}'` reads a pipe like `ls | grep x`, so it is allowed,
+    as cat/grep/find in a pipe are. Being in a pipe is not enough: awk can
+    edit (`-i inplace`), write (`print > f`, `> out`), run commands
+    (`system()`), read named files, or run as root, wherever it sits.
+
+    Judged on quote-aware shell words, and closed whenever it cannot see:
+    a line that does not parse, a command substitution that may hold an
+    awk, or a matched awk it cannot find all block.
+    """
+    try:
+        cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
+        if not cmd:
+            return False
+        if any(_awk_does_more_in(script) for script in nested_scripts(cmd)):
+            return True
+        return _awk_does_more_in(cmd)
+    except Exception as e:
+        logger.warning("_awk_does_more_than_filter_stdin predicate error: %s", e)
+        return True
+
+
+def _awk_does_more_in(script: str) -> bool:
+    words = shell_words(script)
+    if words is None:
+        return True
+    outside_single_quotes = re.sub(r"'[^']*'", "", script)
+    if "$(" in outside_single_quotes or "`" in outside_single_quotes:
+        return True  # a substitution's command is not a word here
+    awk_seen = False
+    for argv, redirects in _split_shell_commands(words):
+        stripped = strip_transparent_command_wrappers(argv)
+        if not stripped or _get_basename(stripped[0]) != "awk":
+            continue
+        awk_seen = True
+        wrappers = argv[: len(argv) - len(stripped)]
+        if any(_get_basename(w) in PRIVILEGE_ESCALATING_WRAPPERS for w in wrappers):
+            return True
+        for op, target in redirects:
+            if op.startswith("<<"):
+                continue  # heredoc / here-string: inline input
+            if op.endswith("&") or op.startswith(">&"):
+                if target.isdigit() or target == "-":
+                    continue  # 2>&1: descriptor duplication
+            if target in _HARMLESS_REDIRECT_TARGETS:
+                continue
+            return True  # writes a file, or reads one with `<`
+        if not _awk_argv_only_filters_stdin(stripped):
+            return True
+    return not awk_seen
+
+
 def _restore_touches_worktree(tokens: list[str]) -> bool:
     """Return whether one `git restore` segment writes the working tree.
 
@@ -1409,6 +1545,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_checkout_targets_file_with_changes": _checkout_targets_file_with_changes,
     "_not_in_pipe": _not_in_pipe,
     "_sed_modifies_files": _sed_modifies_files,
+    "_awk_does_more_than_filter_stdin": _awk_does_more_than_filter_stdin,
     "_restore_is_destructive": _restore_is_destructive,
     "_tmutil_mutates_backup_safety": _tmutil_mutates_backup_safety,
     "_shell_runs_downloaded_script": _shell_runs_downloaded_script,

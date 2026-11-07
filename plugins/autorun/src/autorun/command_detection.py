@@ -456,6 +456,31 @@ _TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
         flags_with_arg=frozenset({"-u", "--user", "-D", "--description"}), stop_flags=_HELP_VERSION,
     ),
     "kdesudo": CommandWrapperSpec(flags_with_arg=frozenset({"-u"}), stop_flags=_HELP_VERSION),
+    # systemd's sudo replacement, util-linux's root-only su, and setpriv
+    # (`--reuid=0` changes the user like sudo does).
+    "run0": CommandWrapperSpec(
+        flags_with_arg=frozenset({
+            "-u", "--user", "-g", "--group", "-D", "--chdir", "--nice", "--setenv",
+            "--unit", "--property", "--description", "--slice", "--machine", "--background",
+        }),
+        stop_flags=_HELP_VERSION,
+    ),
+    "runuser": CommandWrapperSpec(
+        flags_with_arg=frozenset({
+            "-u", "--user", "-g", "--group", "-G", "--supp-group", "-s", "--shell",
+            "-w", "--whitelist-environment",
+        }),
+        stop_flags=_HELP_VERSION,
+    ),
+    "setpriv": CommandWrapperSpec(
+        flags_with_arg=frozenset({
+            "--reuid", "--regid", "--ruid", "--euid", "--rgid", "--egid", "--groups",
+            "--inh-caps", "--ambient-caps", "--bounding-set", "--securebits",
+            "--pdeathsig", "--selinux-label", "--apparmor-profile",
+            "--landlock-access", "--landlock-rule", "--seccomp-filter",
+        }),
+        stop_flags=_HELP_VERSION,
+    ),
     "nohup": CommandWrapperSpec(stop_flags=_HELP_VERSION),
     "time": CommandWrapperSpec(
         flags_with_arg=frozenset({"-f", "--format", "-o", "--output"}),
@@ -495,8 +520,44 @@ TRANSPARENT_COMMAND_WRAPPERS: Final[frozenset[str]] = frozenset(_TRANSPARENT_WRA
 #: Wrappers that run their child as another (usually privileged) user. A read
 #: that is harmless as yourself is not harmless through one of these.
 PRIVILEGE_ESCALATING_WRAPPERS: Final[frozenset[str]] = frozenset(
-    {"sudo", "doas", "pkexec", "gksudo", "kdesudo"}
+    {"sudo", "doas", "pkexec", "gksudo", "kdesudo", "run0", "runuser", "setpriv", "su"}
 )
+
+
+def shell_words(cmd: str) -> list[str] | None:
+    """The line as the shell tokenises it, operators as their own words.
+
+    Quotes and backslashes are resolved (`s''udo` is `sudo`) and `;`, `|`,
+    `&`, `(`, `)`, `<`, `>` inside quotes stay inside their word, which a
+    split on operator characters gets wrong. None when the line does not
+    parse (an unclosed quote): callers that guard must then refuse.
+    """
+    lexer = shlex.shlex(cmd or "", posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def mentions_privilege_escalation(cmd: str) -> bool:
+    """Whether any word on a line names a run-as-another-user wrapper.
+
+    Checked over every shell word, quoted text split too, so `s''udo`,
+    `$(sudo ...)`, `` `sudo ...` `` and `su -c '...'` are all seen. A line
+    that does not parse counts as mentioning one.
+    """
+    words = shell_words(cmd)
+    if words is None:
+        return True
+    return any(
+        _get_basename(part) in PRIVILEGE_ESCALATING_WRAPPERS
+        for word in words
+        # `X=`sudo` and "$(sudo" stay one shell word; split at the
+        # characters that can sit between an assignment or substitution
+        # and the command it runs.
+        for part in re.split(r"[\s=`$(){}\"';|&]+", word)
+    )
 
 # Derived, not listed: integrations.py reads these as prefixes, and a name it
 # knew that the pattern layer did not (nohup, time, doas, ...) let
@@ -826,6 +887,19 @@ def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
     )
 
 
+def shell_segments(cmd: str):
+    """Yield (segment text, its shlex argv) for each simple command on a line.
+
+    Covers the line itself and then every script it runs (`bash -c '...'`),
+    split at shell operators. Quoting survives in the argv, unlike the
+    strings `extract_commands` returns.
+    """
+    for script in (cmd, *nested_scripts(cmd)):
+        for segment in _SHELL_OPERATORS.split(script):
+            if (segment := segment.strip()) and (tokens := _shlex_split_safe(segment)):
+                yield segment, tokens
+
+
 def command_tokens_for(
     cmd: str,
     pattern: str,
@@ -848,30 +922,22 @@ def command_tokens_for(
     wanted = ParsedPattern.from_string(pattern)
     command_name = pattern.split()[0]
 
-    for script in (cmd, *nested_scripts(cmd)):
-        for segment in _SHELL_OPERATORS.split(script):
-            if not (segment := segment.strip()):
-                continue
+    for _segment, tokens in shell_segments(cmd):
+        name, string, _potential = _extract_from_tokens(tokens)
+        if name != command_name or not ExtractedCommands.string_matches(string, wanted):
+            continue
+        if not allow_prefixes and _get_basename(tokens[0]) != command_name:
+            continue
 
-            tokens = _shlex_split_safe(segment)
-            if not tokens:
-                continue
-
-            name, string, _potential = _extract_from_tokens(tokens)
-            if name != command_name or not ExtractedCommands.string_matches(string, wanted):
-                continue
-            if not allow_prefixes and _get_basename(tokens[0]) != command_name:
-                continue
-
-            for i, token in enumerate(tokens):
-                if _get_basename(token) == command_name:
-                    # A segment reached through an excluded wrapper (sudo cat)
-                    # is not this command as far as the caller is concerned.
-                    if excluded_wrappers and any(
-                        _get_basename(prefix) in excluded_wrappers for prefix in tokens[:i]
-                    ):
-                        break
-                    return tuple(tokens[i:])
+        for i, token in enumerate(tokens):
+            if _get_basename(token) == command_name:
+                # A segment reached through an excluded wrapper (sudo cat)
+                # is not this command as far as the caller is concerned.
+                if excluded_wrappers and any(
+                    _get_basename(prefix) in excluded_wrappers for prefix in tokens[:i]
+                ):
+                    break
+                return tuple(tokens[i:])
 
     return ()
 

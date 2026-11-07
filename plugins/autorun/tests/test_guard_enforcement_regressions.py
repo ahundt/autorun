@@ -815,3 +815,147 @@ class TestAwkInPipeIsAllowedLikeItsSiblings:
 
     def test_awk_on_a_file_is_still_redirected(self):
         assert plugins.check_blocked_commands(_bash("awk '{print $1}' data.txt")) is not None
+
+    @pytest.mark.parametrize("cmd", [
+        "true | awk -i inplace '{gsub(/a/,\"b\")}1' f",   # edits a file
+        "ls | awk '{print $1}' > out",                     # writes a file
+        "ls | awk 'BEGIN{print \"x\" > \"/tmp/o\"}'",      # writes from the program
+        "true | awk 'BEGIN{system(\"git push --force\")}'",  # runs a command
+        "true | sudo awk '{print}' /etc/shadow",           # reads as root
+        "awk '{print $1}' f | sort",                       # reads a named file
+        "ls | awk -f prog.awk",                            # runs a program file
+    ])
+    @pytest.mark.parametrize("cli", ["claude", "codex"])
+    def test_awk_in_a_pipe_that_does_more_than_filter_it_is_blocked(self, cmd, cli):
+        ctx = EventContext(
+            session_id=_sid(), event="PreToolUse", tool_name="Bash",
+            tool_input={"command": cmd}, cli_type=cli, store=ThreadSafeDB(),
+        )
+        assert _decision(plugins.check_blocked_commands(ctx)) == "deny", cmd
+
+
+def _codex_bash(cmd: str) -> EventContext:
+    return EventContext(
+        session_id=_sid(), event="PreToolUse", tool_name="Bash",
+        tool_input={"command": cmd}, cli_type="codex", store=ThreadSafeDB(),
+    )
+
+
+class TestCodexReadExemptionCoversTheWholeLine:
+    """Codex reads files through the shell, so plain reads are exempt; a read
+    as another user anywhere on the line must not ride along."""
+
+    @pytest.mark.parametrize("cmd", [
+        "X=$(sudo cat /etc/shadow) cat f",
+        "X=`sudo cat /etc/shadow` cat f",
+        "X=$(doas cat /root/.ssh/id_rsa) cat f",
+        "cat f; sudo cat /etc/shadow",
+        "cat a && sudo cat /etc/shadow",
+        'cat f "$(sudo cat /etc/shadow)"',
+        "run0 cat /etc/shadow",
+        "runuser -u root -- cat /etc/shadow",
+        "setpriv --reuid=0 cat /etc/shadow",
+    ])
+    def test_a_privileged_read_anywhere_on_the_line_is_blocked(self, cmd):
+        assert _decision(plugins.check_blocked_commands(_codex_bash(cmd))) == "deny", cmd
+
+    @pytest.mark.parametrize("cmd", [
+        "cat f",
+        "rtk cat f",
+        "LC_ALL=C cat f",
+        'cat "$(git rev-parse --show-toplevel)/README.md"',
+    ])
+    def test_a_plain_read_is_still_exempt(self, cmd):
+        # Not denied; a `git` word may still add advisory commit guidance.
+        assert _decision(plugins.check_blocked_commands(_codex_bash(cmd))) != "deny", cmd
+
+
+class TestPrivilegeWrappersAreRecognised:
+    @pytest.mark.parametrize("cmd", [
+        "run0 rm -rf x",
+        "runuser -u root -- rm -rf x",
+        "setpriv --reuid=0 rm -rf x",
+        "run0 git push --force",
+    ])
+    def test_a_blocked_command_behind_one_is_blocked(self, cmd):
+        assert _decision(plugins.check_blocked_commands(_bash(cmd))) == "deny", cmd
+
+
+class TestRedirectSuggestionsNameWhatTheCommandNamed:
+    def test_a_literal_command_substitution_is_not_made_executable(self):
+        reason = _reason(plugins.check_blocked_commands(_bash("rm -rf '$(id)'")))
+        assert 'trash "$(id)"' not in reason
+        assert "trash '$(id)'" in reason
+
+    def test_a_variable_still_expands(self):
+        assert 'trash "$work"' in _reason(plugins.check_blocked_commands(_bash('rm -rf "$work"')))
+
+    def test_a_home_path_keeps_its_tilde_expandable(self):
+        reason = _reason(plugins.check_blocked_commands(_bash("rm -rf ~/x")))
+        assert "trash ~/x" in reason
+
+    def test_an_operand_after_end_of_options_is_kept(self):
+        reason = _reason(plugins.check_blocked_commands(_bash("rm -rf -- -x")))
+        assert "trash -- -x" in reason
+
+
+class TestAwkIsJudgedOnTheWholeQuotedLine:
+    """Review of the awk predicate: splitting on `;` inside quotes, and not
+    looking inside `$(...)`, let awk programs through that HEAD blocked."""
+
+    @pytest.mark.parametrize("cmd", [
+        "awk 'BEGIN{x=1; system(\"touch /tmp/arsb_pwn\")}'",
+        "awk '{n++; print > \"/tmp/arsb_pwn\"}' /etc/hosts",
+        "awk '{a=1; print a}' /etc/passwd",
+        "X=$(awk 'BEGIN{system(\"touch /tmp/arsb_pwn\")}')",
+        "echo `awk 'BEGIN{system(\"touch /tmp/arsb_pwn\")}'`",
+        "ls | awk '{print \"}\" > \"/tmp/x\"}'",
+        "ls | awk '{print $1}' > out.txt",
+        "ls | awk '{print $1}' < data.txt",
+    ])
+    def test_awk_that_leaves_the_pipe_is_blocked_however_it_is_quoted(self, cmd):
+        assert _decision(plugins.check_blocked_commands(_bash(cmd))) == "deny", cmd
+
+    @pytest.mark.parametrize("cmd", [
+        "ls | awk '{print $1 \"|\" $2}'",
+        "ls | awk '{printf \"%s|%s\\n\", $1, $2}'",
+        "ls | awk '{print \"| \" $1 \" |\"}'",
+        "ps aux | awk '{print ($3 > 1 ? \"hi\" : \"lo\")}'",
+        "ls | awk '{print $1}' 2>/dev/null",
+        "ps aux | awk '$11 == \"sudo\" {print $2}'",
+        "ps aux | awk '$3 > 10'",
+        "df -h | awk 'NR>1 {print $5 \" used\"}'",
+        "ls | awk '{print $(NF-1)}'",
+    ])
+    def test_a_plain_filter_on_a_pipe_is_allowed(self, cmd):
+        assert plugins.check_blocked_commands(_bash(cmd)) is None, cmd
+
+
+class TestCodexPrivilegeCheckReadsShellWords:
+    @pytest.mark.parametrize("cmd", [
+        "cat a; s''udo cat /etc/shadow",
+        "cat a; s\\udo cat /etc/shadow",
+        "cat a; su root -c 'cat /etc/shadow'",
+    ])
+    def test_quoting_a_privilege_wrapper_does_not_hide_it(self, cmd):
+        assert _decision(plugins.check_blocked_commands(_codex_bash(cmd))) == "deny", cmd
+
+
+class TestRedirectQuotingEdgeCases:
+    def test_a_home_path_with_a_variable_keeps_both_expandable(self):
+        reason = _reason(plugins.check_blocked_commands(_bash('rm -rf ~/"$d"')))
+        assert 'trash ~/"$d"' in reason
+
+    def test_a_dash_named_file_stays_one_pathspec_in_git_stash(self, tmp_path):
+        """`git stash push -- -x -m 'WIP'` makes `-m` a pathspec and fails."""
+        import subprocess
+
+        from test_integrations import _init_git_repo
+
+        repo = _init_git_repo(tmp_path / "repo")
+        (repo / "-x").write_text("v1\n")
+        subprocess.run(["git", "add", "--", "-x"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", "seed"], cwd=repo, check=True, capture_output=True)
+        (repo / "-x").write_text("v2\n")
+        reason = _reason(plugins.check_blocked_commands(_bash_in(repo, "git checkout -- -x")))
+        assert "git stash push -m 'WIP: -x' -- -x" in reason

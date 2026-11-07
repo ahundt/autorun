@@ -41,6 +41,9 @@ export function autorunDisabled() {
 // installed by a plain copy, so it cannot import them;
 // test_client_fail_closed.py pins all three spellings together.
 const RETRY_GUIDANCE = "This clears on its own; retry shortly.";
+// = autorun.client.RESPONSE_TIMEOUT_GUIDANCE, for a request the daemon took and
+// never answered; test_daemon_throughput.py pins the two together.
+const RESPONSE_TIMEOUT_GUIDANCE = "Blocking this tool call because the autorun daemon took the request but did not answer in time: it is either very busy or stuck. Retry the same tool call once. If that is blocked the same way, run `autorun --restart-daemon` in a terminal; it leaves a daemon that just restarted and answers a health check alone, and replaces one that does not.";
 const INTERVENTION_GUIDANCE = "Retrying will not help: the same failure repeats. Repair it in a terminal (run the repair step named in the error, or `autorun --status` for diagnosis) and the next hook recovers on its own. To stand autorun down, ask the user to start a new session with AUTORUN_DISABLE=1 set where the harness is launched; a prefix on a command has no effect.";
 
 // Same reason shape as hook_entry.py's fail_closed_tool_gate; the repair step
@@ -54,6 +57,18 @@ function blockedBecause(message, recoverable = false) {
       permissionDecision: "deny",
       permissionDecisionReason:
         `[autorun] ${message}. Blocking tool use to avoid fail-open. ${guidance}`,
+    },
+  };
+}
+
+// The Python client reports the same failure under the same event code.
+function didNotAnswer() {
+  return {
+    hookSpecificOutput: {
+      permissionDecision: "deny",
+      permissionDecisionReason:
+        "[autorun] [AR_EVENT_V1:daemon_response_timeout] autorun daemon did not answer in time. " +
+        RESPONSE_TIMEOUT_GUIDANCE,
     },
   };
 }
@@ -221,7 +236,7 @@ export function createDaemonBridge({
     const deadline = Date.now() + timeoutMs;
     const { response, connected } = await exchange(payload, deadline);
     if (response) return response;
-    if (connected) return blockedBecause("autorun daemon did not answer in time");
+    if (connected) return didNotAnswer();
     return askHookEntry(payload, deadline);
   }
 

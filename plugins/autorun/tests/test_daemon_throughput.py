@@ -11,6 +11,7 @@ through a write transaction therefore costs every other session time, and the
 from __future__ import annotations
 
 import contextlib
+import json
 
 import pytest
 
@@ -95,26 +96,6 @@ def test_pause_checks_take_no_transaction_once_the_session_is_hydrated(
     assert transactions == []
 
 
-def test_rewriting_an_unchanged_value_takes_no_transaction(backend, transactions):
-    """A blind set of the value storage already holds changes nothing.
-
-    PostToolUse resets ``task_staleness_enforce_next`` to False on every call
-    from a dozen sites; each was a durable transaction behind every session.
-    """
-    store = ThreadSafeDB()
-    store.set("sess:flag", False)
-    transactions.clear()
-
-    store.set("sess:flag", False)
-    with store.batch_writes():
-        store.set("sess:flag", False)
-    assert transactions == []
-
-    store.set("sess:flag", True)
-    assert transactions == ["sess"]
-    assert ThreadSafeDB().get("sess:flag") is True
-
-
 def test_a_cold_session_still_persists_a_blind_set(backend, transactions):
     """Without a hydrated cache there is nothing to compare against."""
     ThreadSafeDB().set("cold:flag", True)
@@ -135,6 +116,70 @@ def test_a_volatile_value_is_still_made_durable(backend, transactions):
     store.set("vol:counter", 3)
     assert transactions == ["vol"]
     assert ThreadSafeDB().get("vol:counter") == 3
+
+
+def test_a_set_after_another_writer_changed_storage_still_lands(backend):
+    """The cache cannot see writes made outside it, so it cannot prove a no-op.
+
+    Another process (the CLI, the hook's own fallback, an old daemon still
+    draining during a restart) or a direct ``session_state()`` caller may
+    change storage. A daemon set that matched its stale cache was skipped,
+    leaving the other writer's value in place.
+    """
+    daemon = ThreadSafeDB()
+    daemon.set("sess:flag", False)
+    with session_manager.session_state("sess") as state:
+        state["flag"] = True
+
+    daemon.set("sess:flag", False)
+    with daemon.batch_writes():
+        daemon.set("sess:flag", False)
+    assert ThreadSafeDB().get("sess:flag") is False
+
+
+@pytest.mark.parametrize("first_read", ["update", "get"])
+def test_hydrating_a_session_keeps_a_newer_volatile_value(backend, first_read):
+    """A volatile value is newer than any checkpoint of it on disk; loading
+    the session's other fields must not put the older stored one back."""
+    with session_manager.session_state("vol") as state:
+        state["counter"] = 3
+    daemon = ThreadSafeDB()
+    daemon.set_volatile("vol:counter", 7)
+    if first_read == "update":
+        daemon.update("vol:other", lambda _current: 1)
+    else:
+        daemon.get("vol:other")
+    assert daemon.get("vol:counter") == 7
+
+
+def test_an_expired_volatile_value_falls_back_to_storage(backend):
+    """Expiry forgets the advisory value, not the stored one beneath it."""
+    import time
+
+    with session_manager.session_state("vol") as state:
+        state["counter"] = 3
+    daemon = ThreadSafeDB(volatile_max_age_seconds=0.01)
+    daemon.get("vol:other")  # hydrates the session
+    daemon.set_volatile("vol:counter", 7)
+    time.sleep(0.05)
+    assert daemon.get("vol:counter", "DEFAULT") == 3
+
+
+def test_a_full_disk_while_pruning_a_pause_enforces_tasks_normally(backend, monkeypatch):
+    """Pruning an expired pause writes; on the JSON backend a full disk raised
+    a bare OSError out of the pause check instead of the state error every
+    reader handles, so the tool call failed instead of enforcing normally."""
+    import errno
+    import time
+
+    ctx = _ctx(ThreadSafeDB(), "full-disk")
+    activate_task_pause(ctx, scope=ScopeSpec(ttl_seconds=1), reason="x", now=time.time() - 10)
+
+    def full(*_args, **_kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(session_manager, "atomic_write_json", full)
+    assert task_enforcement_is_paused(ctx) is False
 
 
 def test_daemon_startup_builds_the_bash_parser_before_serving(monkeypatch):
@@ -237,8 +282,12 @@ def test_an_unreachable_daemon_still_names_the_restart():
     assert "autorun --restart-daemon" in str(response)
 
 
-def _restart_with_daemon_aged(monkeypatch, age_seconds, src_dir=None, **kwargs):
-    """Run restart_daemon() against a healthy daemon of the given age."""
+def _restart_with_daemon_aged(monkeypatch, age_seconds, src_dir=None, answers=True, **kwargs):
+    """Run restart_daemon() against a daemon of the given age.
+
+    ``answers`` is whether it answers a round-trip probe; it always accepts
+    a connect(), as a wedged daemon's listen backlog does.
+    """
     from contextlib import contextmanager
     from pathlib import Path
     from unittest import mock
@@ -257,6 +306,7 @@ def _restart_with_daemon_aged(monkeypatch, age_seconds, src_dir=None, **kwargs):
     monkeypatch.setattr(restart_mod, "_resolve_src_dir", lambda: src_dir)
     monkeypatch.setattr(restart_mod, "get_daemon_pid", lambda **_: 4242)
     monkeypatch.setattr(restart_mod, "is_daemon_responding", lambda: True)
+    monkeypatch.setattr(restart_mod.ipc, "answers_round_trip", lambda *a, **k: answers)
     monkeypatch.setattr(restart_mod, "_daemon_age_seconds", lambda pid: age_seconds)
     monkeypatch.setattr(restart_mod, "_stop_daemon", stop)
     monkeypatch.setattr(restart_mod, "_start_daemon", start)
@@ -477,10 +527,9 @@ def test_a_missing_dependency_is_reported_with_its_repair(monkeypatch, capsys):
 
 
 def test_a_failed_save_leaves_no_unsaved_value_in_the_cache(tmp_path, monkeypatch):
-    """update() hydrated the cache inside the transaction, before the save. A
-    save failing with OSError (disk full) is not a SessionStateError, so the
-    except that drops the key never ran: the daemon then served a value
-    storage never accepted, and the no-op-write check skipped saving it ever.
+    """update() hydrated the cache inside the transaction, before the save, so
+    a save failing on a full disk left the daemon serving a value storage
+    never accepted. The failure now surfaces as the state error callers handle.
     """
     import errno
 
@@ -496,7 +545,7 @@ def test_a_failed_save_leaves_no_unsaved_value_in_the_cache(tmp_path, monkeypatc
 
         with monkeypatch.context() as patch:
             patch.setattr(session_manager, "atomic_write_json", disk_full)
-            with pytest.raises(OSError):
+            with pytest.raises(session_manager.SessionPersistenceError):
                 daemon.update("disk:flag", lambda _current: True)
 
         assert daemon.get("disk:flag") is False, "served a value that was never saved"
@@ -575,14 +624,120 @@ async def test_slots_held_by_handlers_still_within_budget_report_load(monkeypatc
         await busy
 
 
-def test_an_accepted_request_that_times_out_is_reported_as_load():
-    """The daemon took the request, so it is alive; a restart would cut off
-    every other session. 101 such denials in 73 sessions advised a restart."""
+@pytest.mark.asyncio
+async def test_a_queue_of_handlers_each_within_budget_is_never_a_stall(monkeypatch):
+    """A slot holder's budget starts when it gets the slot, not when it arrived.
+
+    Measured from arrival, every holder in a queue is "overdue" by the time a
+    later request gives up waiting, so a healthy daemon whose handlers each
+    finish well inside their budget told agents to restart it.
+    """
+    import asyncio
+    import time
+    from unittest.mock import Mock
+
+    from autorun.core import AutorunDaemon
+
+    budget = 0.4
+    handler_seconds = budget * 0.6
+    slots = 2
+
+    def dispatch(ctx):
+        time.sleep(handler_seconds)
+        return None
+
+    app = Mock()
+    app.dispatch.side_effect = dispatch
+    monkeypatch.setattr(core, "dispatch_timeout_for_event", lambda _event: budget)
+    monkeypatch.setitem(core.CONFIG, "daemon_dispatch_max_concurrent_per_event", slots)
+    daemon = AutorunDaemon(app)
+    results = await asyncio.gather(*(
+        daemon._dispatch_with_timeout(
+            EventContext(session_id=f"s{i}", event="PreToolUse"), "codex"
+        )
+        for i in range(slots * 3)
+    ))
+    assert not any("daemon_dispatch_stalled" in str(r) for r in results)
+    await asyncio.sleep(handler_seconds * 2)  # let the running threads end
+
+
+def test_an_unanswered_request_says_retry_once_then_restart():
+    """A request the daemon never answered is ambiguous: a loaded daemon and a
+    wedged one look the same from the client, since the kernel queues the
+    connection either way. Restart advice on the first one sent fifteen agents
+    restarting a loaded daemon (2026-11-06); load advice on every one leaves a
+    wedged daemon wedged. So: retry once, and restart only if it repeats --
+    a restart against a fresh daemon that passes a health check does nothing.
+    """
     from autorun import client
 
     accepted = client.DaemonDidNotAnswer("Daemon accepted the request but did not answer")
-    assert client.failure_event_code(accepted) in client.LOAD_EVENT_CODES
-    assert client.failure_event_code(FileNotFoundError()) not in client.LOAD_EVENT_CODES
+    code = client.failure_event_code(accepted)
+    assert code == "daemon_response_timeout"
+    assert code not in client.LOAD_EVENT_CODES
+    reason = client.build_daemon_failure_response(
+        "PreToolUse", "codex", str(accepted), event_code=code
+    )["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "Retry the same tool call once" in reason
+    assert "autorun --restart-daemon" in reason
+    assert "Do not run" not in reason
+
+
+def test_the_js_bridge_gives_the_same_advice_for_an_unanswered_request():
+    """Pi, Prime and OpenCode reach the daemon through the JS bridge; it said
+    "Retrying will not help" where the Python client said "do not restart"."""
+    from pathlib import Path
+
+    from autorun import client
+
+    bridge = (Path(client.__file__).parent / "bridge_template" / "daemon-client.mjs").read_text()
+    assert f"const RESPONSE_TIMEOUT_GUIDANCE = {json.dumps(client.RESPONSE_TIMEOUT_GUIDANCE)};" in bridge
+    assert "AR_EVENT_V1:daemon_response_timeout" in bridge
+
+
+def test_a_response_timeout_on_python_3_10_is_still_an_unanswered_request(monkeypatch):
+    """asyncio.TimeoutError is an OSError only from 3.11; on 3.10 it skipped
+    the handler that recognises an accepted request and read as daemon-down."""
+    import asyncio
+
+    from autorun import client
+
+    assert asyncio.TimeoutError in client.UNANSWERED_REQUEST_ERRORS
+    assert OSError in client.UNANSWERED_REQUEST_ERRORS
+
+
+@pytest.mark.asyncio
+async def test_the_daemon_answers_a_round_trip_probe_without_dispatching(monkeypatch):
+    """A connect() succeeds against a wedged daemon (the kernel queues it), so
+    health needs an answer from the event loop itself."""
+    import asyncio
+    from unittest.mock import Mock
+
+    from autorun import ipc
+    from autorun.core import AutorunDaemon
+
+    app = Mock()
+    daemon = AutorunDaemon(app)
+    reader = asyncio.StreamReader()
+    reader.feed_data(json.dumps({ipc.ROUND_TRIP_PROBE_KEY: True}).encode() + b"\n")
+    reader.feed_eof()
+    written = []
+    writer = Mock()
+    writer.write.side_effect = written.append
+    writer.drain = Mock(side_effect=lambda: asyncio.sleep(0))
+    writer.wait_closed = Mock(side_effect=lambda: asyncio.sleep(0))
+
+    await daemon.handle_client(reader, writer)
+    assert json.loads(b"".join(written)) == {ipc.ROUND_TRIP_PROBE_KEY: True}
+    app.dispatch.assert_not_called()
+
+
+def test_a_young_daemon_that_fails_the_round_trip_is_replaced(monkeypatch):
+    """Coalescing skipped any daemon under a minute old that accepted a
+    connect(), so a wedged one could not be replaced at all."""
+    window = core.CONFIG["daemon_restart_coalesce_seconds"]
+    code, stop = _restart_with_daemon_aged(monkeypatch, window / 2, answers=False)
+    stop.assert_called_once()
 
 
 def test_restart_in_a_read_only_sandbox_reports_instead_of_crashing(monkeypatch, capsys):
