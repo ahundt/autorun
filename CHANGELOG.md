@@ -539,6 +539,11 @@ describe what changed between rc1 and rc3.
 107. `/ar:cache status` reported the harness that started the daemon, not the
      session that asked, so a Codex session sharing a daemon with Claude Code
      saw `cli: claude`. It now reports the calling session's harness.
+108. On Windows, `autorun --restart-daemon` killed the daemon before graceful
+     cleanup could run, leaving its port, token, and PID files behind. Restarts
+     now request shutdown over the existing authenticated IPC transport on every
+     OS, falling back to terminate and kill if the request fails or shutdown
+     times out.
 
 ### For contributors
 

@@ -967,6 +967,10 @@ CONFIG = {
     # itself, ahead of any handler, so a loaded daemon answers in milliseconds
     # (266 calls/s sandbox load: p99 under 0.6 s); a wedged one never does.
     "daemon_round_trip_probe_seconds": 2.0,
+    # Administrative shutdown carries the target PID so a scoped restart
+    # cannot stop a different daemon at the published endpoint.
+    "daemon_shutdown_request_key": "_autorun_shutdown",
+    "daemon_shutdown_timeout_seconds": 5.0,
     # Timeout layering is intentional and must stay ordered:
     # daemon_dispatch_timeouts_seconds < daemon_client_response_timeouts_seconds
     # < hook_wrapper_timeouts_seconds < outer harness hooks.json timeout.

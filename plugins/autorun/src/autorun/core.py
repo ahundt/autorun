@@ -3379,6 +3379,7 @@ class AutorunDaemon:
         # None = pass-through (dispatch returned None = nothing fired = output nothing)
         response = None
         skip_response = False
+        shutdown_requested = False
 
         try:
             # Read payload (READ_BUFFER_LIMIT set on server to accept large payloads)
@@ -3400,6 +3401,11 @@ class AutorunDaemon:
             payload = json.loads(data.decode())
             if payload.get(ipc.ROUND_TRIP_PROBE_KEY):
                 response = {ipc.ROUND_TRIP_PROBE_KEY: True}
+                return
+            shutdown_key = CONFIG["daemon_shutdown_request_key"]
+            if shutdown_key in payload:
+                shutdown_requested = payload[shutdown_key] == os.getpid()
+                response = {shutdown_key: os.getpid()} if shutdown_requested else {}
                 return
 
             event = payload.get("hook_event_name", "unknown")
@@ -3627,6 +3633,11 @@ class AutorunDaemon:
                 from .client import _log_hook_lifecycle
 
                 _log_hook_lifecycle("DAEMON PROCESSING END", Event=event, Duration=f"{duration:.2f}ms")
+
+            # Close this connection before start() enters async_stop(), whose
+            # server.wait_closed() waits for connected clients on Python 3.12+.
+            if shutdown_requested and self._shutdown_event:
+                self._shutdown_event.set()
 
     async def watchdog(self):
         """

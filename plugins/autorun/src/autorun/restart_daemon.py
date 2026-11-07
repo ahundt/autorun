@@ -3,7 +3,7 @@
 
 Performs a full stop-cleanup-start cycle with:
 - Exclusive restart lock (prevents concurrent restarts)
-- SIGTERM graceful shutdown with SIGKILL fallback
+- Authenticated IPC shutdown with terminate/kill fallback
 - Stale file cleanup (socket, lock)
 - __pycache__ purge (prevents stale bytecode)
 - Conflicting package detection
@@ -505,23 +505,21 @@ def _all_daemon_processes() -> list:
 
 
 def _stop_daemon(pid: int, *, src_dir: Path | None = None) -> None:
-    """Stop a running daemon gracefully, with SIGKILL fallback.
+    """Stop through authenticated IPC, falling back to terminate then kill."""
+    print(f"  Requesting graceful shutdown of PID {pid}")
+    timeout = float(CONFIG["daemon_shutdown_timeout_seconds"])
+    shutdown_clean = ipc.request_shutdown(pid) and wait_for_shutdown(
+        max_wait=timeout, src_dir=src_dir
+    )
 
-    Steps:
-    1. Send SIGTERM for graceful shutdown
-    2. Wait for FULL shutdown (PID gone AND socket closed)
-    3. If timeout: SIGKILL force + cleanup stale files
-    4. If clean but stale files remain: cleanup
-    """
-    print(f"  Sending SIGTERM to PID {pid}")
-    try:
-        proc = psutil.Process(pid)
-        proc.terminate()  # SIGTERM on Unix, TerminateProcess on Windows
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        pass
-
-    # Wait for FULL shutdown (PID gone AND socket closed)
-    shutdown_clean = wait_for_shutdown(max_wait=5.0, src_dir=src_dir)
+    if not shutdown_clean:
+        print(f"  Sending terminate to PID {pid}")
+        try:
+            proc = psutil.Process(pid)
+            proc.terminate()  # SIGTERM on Unix, TerminateProcess on Windows
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+        shutdown_clean = wait_for_shutdown(max_wait=timeout, src_dir=src_dir)
 
     if not shutdown_clean:
         # Daemon didn't shut down cleanly - force it

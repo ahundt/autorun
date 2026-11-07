@@ -312,6 +312,18 @@ ROUND_TRIP_PROBE_KEY = "_autorun_round_trip_probe"
 
 def answers_round_trip(timeout: float | None = None) -> bool:
     """Whether the daemon's event loop answers a request within ``timeout``."""
+    return _request_round_trip({ROUND_TRIP_PROBE_KEY: True}, timeout)
+
+
+def request_shutdown(pid: int) -> bool:
+    """Ask the authenticated endpoint to stop only if it owns ``pid``."""
+    from .config import CONFIG
+
+    return _request_round_trip({CONFIG["daemon_shutdown_request_key"]: pid})
+
+
+def _request_round_trip(payload: dict, timeout: float | None = None) -> bool:
+    """Send one authenticated JSON line and require an identical reply."""
     import json
 
     if timeout is None:
@@ -328,11 +340,11 @@ def answers_round_trip(timeout: float | None = None) -> bool:
             s.connect(address)
             s.sendall(
                 connection_preamble()
-                + json.dumps({ROUND_TRIP_PROBE_KEY: True}).encode()
+                + json.dumps(payload).encode()
                 + b"\n"
             )
             reply = s.makefile("rb").readline()
-        return json.loads(reply or b"null") == {ROUND_TRIP_PROBE_KEY: True}
+        return json.loads(reply or b"null") == payload
     except (OSError, ValueError):
         return False
 
