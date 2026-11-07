@@ -2486,8 +2486,9 @@ def test_tasks_command_configures_agent_scope(scope):
 def test_tasks_command_status():
     """/ar:tasks (no args) returns a status string."""
     result = _dispatch("/ar:tasks", session_id="test-tasks-status")
-    text = str(result).lower()
-    assert "staleness" in text or "on" in text or "off" in text
+    text = str(result)
+    # "on" matched nearly any text ("session"), so this could not fail.
+    assert "Staleness reminders: on" in text and "Task enforcement pause: inactive" in text
 
 
 def test_command_response_sends_to_both_channels():

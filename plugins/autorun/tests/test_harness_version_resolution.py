@@ -47,13 +47,16 @@ def test_an_unknown_version_is_none_not_a_guess(monkeypatch):
 def test_a_registered_source_is_read_when_present(monkeypatch):
     """A harness that declares a source has it consulted."""
     monkeypatch.delenv(HARNESS_VERSION_ENV_VAR, raising=False)
-    platform = next(
-        (p for p in hook_platforms() if p.version_env_vars), None
-    )
-    if platform is None:
-        pytest.skip("no harness declares a version source yet")
-    monkeypatch.setenv(platform.version_env_vars[0], "1.2.3")
-    assert harness_version(platform.name) == "1.2.3"
+    # No harness declares one yet, so this skipped everywhere and the read
+    # path ran nowhere; register one on a copy for the test's duration.
+    import dataclasses
+
+    from autorun.platforms import PLATFORMS
+
+    platform = dataclasses.replace(PLATFORMS["codex"], version_env_vars=("AUTORUN_TEST_HARNESS_VERSION",))
+    monkeypatch.setitem(PLATFORMS, "codex", platform)
+    monkeypatch.setenv("AUTORUN_TEST_HARNESS_VERSION", "1.2.3")
+    assert harness_version("codex") == "1.2.3"
 
 
 def test_no_platform_claims_a_source_it_cannot_justify():

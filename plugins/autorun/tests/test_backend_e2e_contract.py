@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from autorun.platforms import PLATFORMS
+from autorun.platforms import PLATFORMS, hook_platforms
 from e2e_support import (
     BACKEND_E2E_CONTRACTS,
     autorun_extension_listed,
@@ -150,7 +150,7 @@ def test_bare_task_pause_is_five_minutes_through_real_hook_process(
     assert find_task_recovery_marker(result.stdout), result.stdout
 
 
-@pytest.mark.parametrize("cli", ["claude", "gemini", "qwen", "codex", "pi", "prime"])
+@pytest.mark.parametrize("cli", [p.name for p in hook_platforms()])
 def test_remote_write_commands_are_denied_through_real_hook_process(cli, tmp_path):
     """Every hook backend, including the Pi family, gates pushes and releases.
 
@@ -291,6 +291,12 @@ def test_concurrent_git_warning_is_attempted_once_through_real_hook_processes(
     except OSError:
         appended_log = ""
     failed_open = "delivering fail-open" in appended_log
+    # Every call timing out is what a deadlock in the warning-claim lock looks
+    # like, not contention: some hook would otherwise have got through.
+    assert len(timed_out) < CONCURRENT_WARNING_CALLS, (
+        f"all {CONCURRENT_WARNING_CALLS} concurrent hooks timed out",
+        [result.stderr[-400:] for result in timed_out],
+    )
     if timed_out or (failed_open and delivered != 1):
         pytest.skip(
             f"runner contention: {len(timed_out)} wrapper timeouts, "

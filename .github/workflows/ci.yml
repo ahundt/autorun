@@ -27,6 +27,10 @@ jobs:
           - {os: macos-latest, python-version: "3.13"}
           - {os: windows-latest, python-version: "3.13"}
     runs-on: ${{ matrix.os }}
+    env:
+      # Bun is installed below; without it ~30 bridge tests skip and CI stays
+      # green. conftest.py fails the session instead when this is set.
+      AUTORUN_REQUIRE_JS_RUNTIME: "1"
 
     steps:
       - name: Checkout repository
@@ -171,6 +175,10 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
+    env:
+      # Bun is installed below; without it ~30 bridge tests skip and CI stays
+      # green. conftest.py fails the session instead when this is set.
+      AUTORUN_REQUIRE_JS_RUNTIME: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

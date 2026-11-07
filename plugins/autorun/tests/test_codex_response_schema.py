@@ -268,7 +268,25 @@ def test_every_autorun_command_returns_codex_valid_userprompt_json(alias):
     assert_codex_response_valid("UserPromptSubmit", response)
 
 
-@pytest.mark.parametrize("cli_type", ["claude", "gemini", "codex"])
+#: Every harness with hooks, from the registry: a hand-written list covered 3
+#: of 8 and let a command that returned nothing on the others pass.
+from autorun.platforms import hook_platforms as _hook_platforms  # noqa: E402
+
+_HOOK_PLATFORM_NAMES = [p.name for p in _hook_platforms()]
+
+
+def _visible_text(response: dict) -> str:
+    """Text the harness shows, in whichever field its protocol uses:
+    Antigravity carries it in injectSteps[].ephemeralMessage."""
+    steps = response.get("injectSteps") or []
+    return (
+        response.get("systemMessage")
+        or response.get("hookSpecificOutput", {}).get("additionalContext")
+        or " ".join(step.get("ephemeralMessage", "") for step in steps if isinstance(step, dict))
+    )
+
+
+@pytest.mark.parametrize("cli_type", _HOOK_PLATFORM_NAMES)
 @pytest.mark.parametrize("alias", sorted(plugins.app.command_handlers))
 def test_every_autorun_command_alias_dispatches_for_all_hook_platforms(cli_type, alias):
     prompt = _sample_prompt(alias)
@@ -281,7 +299,7 @@ def test_every_autorun_command_alias_dispatches_for_all_hook_platforms(cli_type,
     )
     response = plugins.app.dispatch(ctx)
     assert response is not None, f"{cli_type} {alias} did not dispatch"
-    visible = response.get("systemMessage") or response.get("hookSpecificOutput", {}).get("additionalContext")
+    visible = _visible_text(response)
     assert visible, response
     if "hookSpecificOutput" in response:
         assert response["hookSpecificOutput"]["hookEventName"] == get_cli_event_name("UserPromptSubmit", cli_type)
@@ -289,7 +307,7 @@ def test_every_autorun_command_alias_dispatches_for_all_hook_platforms(cli_type,
         assert_codex_response_valid("UserPromptSubmit", response)
 
 
-@pytest.mark.parametrize("cli_type", ["claude", "gemini", "codex"])
+@pytest.mark.parametrize("cli_type", _HOOK_PLATFORM_NAMES)
 def test_registered_commands_return_visible_output_for_all_hook_platforms(cli_type):
     ctx = EventContext(
         session_id=f"cmd-visible-{cli_type}",
@@ -300,13 +318,13 @@ def test_registered_commands_return_visible_output_for_all_hook_platforms(cli_ty
     )
     response = plugins.app.dispatch(ctx)
     assert response is not None
-    visible = response.get("systemMessage") or response.get("hookSpecificOutput", {}).get("additionalContext")
+    visible = _visible_text(response)
     assert visible, response
     if cli_type == "codex":
         assert_codex_response_valid("UserPromptSubmit", response)
 
 
-@pytest.mark.parametrize("cli_type", ["claude", "gemini", "codex"])
+@pytest.mark.parametrize("cli_type", _HOOK_PLATFORM_NAMES)
 def test_stateful_policy_command_mutates_shared_store_for_all_hook_platforms(cli_type):
     store = ThreadSafeDB()
     session_id = f"stateful-policy-{cli_type}-{uuid.uuid4().hex}"

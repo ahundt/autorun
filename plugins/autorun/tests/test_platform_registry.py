@@ -916,3 +916,16 @@ def test_skill_placement_rejects_an_unvalidated_mode():
 
     with pytest.raises(ValueError, match="skill placement"):
         routes_for(PLATFORMS["codex"], "shared")
+
+
+def test_every_harness_bash_tool_reaches_the_bash_guards():
+    """check_blocked_commands gates on ctx.tool_name in config.BASH_TOOLS. A
+    harness whose shell tool is missing there (new, or renamed upstream)
+    skips every bash guard -- rm, git push, tmutil -- with no error."""
+    from autorun.config import BASH_TOOLS
+
+    for platform in PLATFORMS.values():
+        tool = platform.tool_names.get("bash")
+        if tool is None:  # no shell tool (ForgeCode)
+            continue
+        assert tool in BASH_TOOLS, (platform.name, tool)

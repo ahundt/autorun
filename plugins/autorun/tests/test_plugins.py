@@ -32,6 +32,7 @@ import pytest
 from autorun.core import app, EventContext, ThreadSafeDB
 from autorun.config import CONFIG
 from autorun import plugins
+from autorun.platforms import PLATFORMS, hook_platforms
 
 
 # ============================================================================
@@ -1437,7 +1438,7 @@ class TestBlockingCommandBehavior:
         ctx.activation_prompt = "/ar:blocks"
 
         result = app.command_handlers["/ar:blocks"](ctx)
-        assert "No session blocks" in result or "no" in result.lower()
+        assert "No session blocks or allows" in result
 
 
 class TestGlobalBlockingCommands:
@@ -1824,7 +1825,7 @@ class TestDefaultIntegrationsConfig:
 # Time Machine consent is platform-independent because every harness reaches
 # the same shell-command integration before executing the child process.
 # ForgeCode's registered schema is `none`: it has no blocking hook response API.
-@pytest.mark.parametrize("cli_type", ["claude", "gemini", "antigravity", "qwen", "codex"])
+@pytest.mark.parametrize("cli_type", [p.name for p in hook_platforms()])
 @pytest.mark.parametrize(
     "command",
     [
@@ -1841,7 +1842,8 @@ def test_time_machine_history_mutation_requires_consent_across_harnesses(
     ctx = EventContext(
         session_id=f"test-tmutil-{cli_type}",
         event="PreToolUse",
-        tool_name="Bash" if cli_type in {"claude", "codex"} else "run_shell_command",
+        # The harness's real shell tool (Antigravity's is run_command).
+        tool_name=PLATFORMS[cli_type].tool_names["bash"],
         tool_input={"command": command},
         cli_type=cli_type,
         store=store,

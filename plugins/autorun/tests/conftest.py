@@ -848,6 +848,10 @@ def _live_install_canary_enabled(config) -> bool:
 
 def pytest_sessionstart(session):
     """Record production daemon PIDs and the live install before any tests run."""
+    if os.environ.get("AUTORUN_REQUIRE_JS_RUNTIME") == "1" and shutil.which("bun") is None:
+        # The OpenCode and Pi bridge tests skip without Bun; where CI installs
+        # it on purpose, its absence is a broken runner, not a reason to skip.
+        raise pytest.UsageError("AUTORUN_REQUIRE_JS_RUNTIME=1 but `bun` is not on PATH")
     DaemonManager.snapshot_production_pids()
     if _live_install_canary_enabled(session.config):
         session.config._autorun_live_install = _live_install_fingerprint()

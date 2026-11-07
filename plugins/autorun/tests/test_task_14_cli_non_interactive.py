@@ -111,8 +111,10 @@ class TestCLINonInteractive:
             timeout=30
         )
 
-        # Should succeed without prompting
-        assert result.returncode in [0, 1]  # 0 if cleared, 1 if error
+        # Clearing a session with no tasks succeeds; [0, 1] let a crash pass.
+        assert result.returncode == 0, result.stderr
+        assert "Cleared 0 task(s)" in result.stdout
+        assert "Traceback" not in result.stderr
 
         # Should NOT contain confirmation prompts
         assert "Type 'yes' to confirm:" not in result.stdout
@@ -142,10 +144,11 @@ class TestCLINonInteractive:
             timeout=30
         )
 
-        # Status may fail with exit code 1 if no session, but should never hang
-        assert result.returncode in [0, 1], f"Unexpected exit code: {result.returncode}"
-        # Should show either status output OR error message (not hang)
-        assert len(result.stdout) > 0 or len(result.stderr) > 0
+        # With no session identity it exits 1 and says how to name one; a
+        # traceback or any other code is a crash, not this answer.
+        assert result.returncode == 1, (result.returncode, result.stderr)
+        assert "No standalone session identity found" in result.stdout + result.stderr
+        assert "Traceback" not in result.stderr
         # Should NOT hang waiting for input
         assert "Modify settings" not in result.stdout
 

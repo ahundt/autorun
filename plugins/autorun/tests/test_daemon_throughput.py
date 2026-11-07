@@ -368,7 +368,9 @@ def test_a_load_denial_tells_the_agent_to_wait_not_to_restart(event_code):
     text = str(response)
     cooldown = core.CONFIG["daemon_dispatch_timeout_cooldown_seconds"]
 
-    assert "deny" in text or "block" in text
+    # The decision itself, not the word anywhere: an allow that says
+    # "blocked" in its message passed the old check.
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "--restart-daemon" not in text.replace("Do not run `autorun --restart-daemon`", "")
     assert "Retrying will not help" not in text
     assert f"{cooldown:g}" in text
