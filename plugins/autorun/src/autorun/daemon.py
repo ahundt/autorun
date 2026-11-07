@@ -42,6 +42,13 @@ def main() -> None:
         raise SystemExit(1) from error
     logger.info("Plugins loaded successfully")
 
+    # Build the shell parser now. It is lazy so a one-shot hook process pays
+    # only when it parses, but here the first PreToolUse after every start
+    # would pay ~0.6 s of LALR table construction inside its dispatch budget.
+    from .command_detection import _bashlex
+
+    _bashlex()
+
     daemon = AutorunDaemon(app)
     try:
         asyncio.run(daemon.start())

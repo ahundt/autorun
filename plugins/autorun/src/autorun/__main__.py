@@ -1016,7 +1016,46 @@ def run_hook_handler() -> int:
         return run_direct()
 
 
+def _reinstall_command() -> str:
+    """The reinstall that restores this install's declared dependencies."""
+    from autorun.installer.discovery import marketplace_root
+    from autorun.installer.entrypoint import _PLUGIN_DISTRIBUTIONS
+
+    root = marketplace_root()  # follows an editable install back to its checkout
+    if root is not None:
+        return f"uv tool install --force --editable {root / 'plugins' / 'autorun'}"
+    return f"uv tool install --force {_PLUGIN_DISTRIBUTIONS['ar'][0]}"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run one command; report a missing dependency instead of a traceback.
+
+    Dependencies are imported lazily, so an install made before one was added
+    to pyproject.toml fails only when a command first reaches it -- `--status`
+    reading ~/.codex/config.toml needed tomlkit. Reinstalling is the repair.
+    """
+    try:
+        result = _main(argv)
+    except ModuleNotFoundError as missing:
+        # stdout, never stderr: a hook's stderr disables every hook.
+        print(
+            f"autorun cannot run this command: Python module "
+            f"'{missing.name}' is not installed in autorun's environment "
+            f"({sys.executable}).\n"
+            f"Reinstall autorun to restore its dependencies:\n"
+            f"    {_reinstall_command()}"
+        )
+        return 1
+    # Hook mode runs outside the handler above: stdout is the hook response
+    # there, and its failures already have their own fail-open/closed path.
+    return run_hook_handler() if result is _RUN_AS_HOOK else result
+
+
+#: Returned by _main when no command matched and stdin is a pipe.
+_RUN_AS_HOOK = object()
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
     """Main entry point.
 
     Args:
@@ -1247,7 +1286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if interactive:
         parser.print_help()
         return 0
-    return run_hook_handler()
+    return _RUN_AS_HOOK
 
 
 if __name__ == "__main__":

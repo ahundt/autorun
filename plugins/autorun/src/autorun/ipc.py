@@ -155,6 +155,12 @@ def get_address() -> str:
     return f"tcp:127.0.0.1:{port}" if port else "tcp:127.0.0.1:<not started>"
 
 
+#: Connections the kernel may queue before refusing. asyncio defaults to 100,
+#: and a hundred sessions firing hooks at once overflowed it, so every extra
+#: connect waited out a client retry. The OS maximum is the right ceiling.
+LISTEN_BACKLOG = socket.SOMAXCONN
+
+
 async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.AbstractServer:
     """Start the daemon IPC server (platform-appropriate).
 
@@ -169,7 +175,7 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
 
     if HAS_UNIX_SOCKETS:
         return await asyncio.start_unix_server(
-            client_handler, str(SOCKET_PATH), limit=limit
+            client_handler, str(SOCKET_PATH), limit=limit, backlog=LISTEN_BACKLOG
         )
     else:
         # Port 0: the OS hands out a free one. The port used to be a hash of
@@ -181,7 +187,7 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
         # could not start. Clients read the port from this file and always
         # did, so nothing needed the value to be predictable.
         server = await asyncio.start_server(
-            client_handler, "127.0.0.1", 0, limit=limit
+            client_handler, "127.0.0.1", 0, limit=limit, backlog=LISTEN_BACKLOG
         )
         port = server.sockets[0].getsockname()[1]
         # Publish only a complete port value. If publication fails, do not

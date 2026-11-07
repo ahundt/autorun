@@ -273,9 +273,51 @@ def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
 UNRECOVERABLE_GUIDANCE = (
     "Retrying will not help: the same failure repeats. Repair it in a terminal "
     "(run the repair step named in the error, or `autorun --status` for "
-    "diagnosis) and the next hook recovers on its own. Set AUTORUN_DISABLE=1 "
-    "to stand autorun down."
+    "diagnosis) and the next hook recovers on its own. To stand autorun down, "
+    "ask the user to start a new session with AUTORUN_DISABLE=1 set where the "
+    "harness is launched; a prefix on a command has no effect."
 )
+
+
+#: Denials the daemon issues while it is healthy but loaded: a handler ran past
+#: its budget, or its session is backing off after one did. Both clear on their
+#: own after ``daemon_dispatch_timeout_cooldown_seconds``. Agents act on denial
+#: text, and on 2026-11-06 about fifteen of them obeyed the restart advice
+#: below: twenty restarts in thirty minutes, each one deleting the socket every
+#: other session was using. So these say wait, never restart.
+LOAD_EVENT_CODES = frozenset({
+    "daemon_dispatch_timeout",
+    "daemon_dispatch_contained",
+    "daemon_response_timeout",
+})
+
+
+class DaemonDidNotAnswer(RuntimeError):
+    """The daemon accepted a request and missed the deadline answering it.
+
+    It is alive, so this is load: a restart would cut off every other session.
+    """
+
+
+def failure_event_code(error: BaseException) -> str:
+    """The event code a client-side failure is reported under."""
+    if isinstance(error, DaemonDidNotAnswer):
+        return "daemon_response_timeout"
+    return "daemon_unavailable_or_timeout"
+
+
+def load_guidance() -> str:
+    """Tell an agent that a load denial clears by itself, and how long to wait."""
+    from .config import CONFIG
+
+    cooldown = float(CONFIG["daemon_dispatch_timeout_cooldown_seconds"])
+    return (
+        "Blocking this tool call because autorun is busy and could not evaluate "
+        f"it in time. This clears on its own within {cooldown:g}s: retry the "
+        "same tool call after that. Do not run `autorun --restart-daemon`: a "
+        "restart cuts off every session sharing the daemon and adds load. If "
+        "this repeats for minutes, tell the user; `autorun --status` diagnoses it."
+    )
 
 
 def build_daemon_failure_response(
@@ -297,11 +339,14 @@ def build_daemon_failure_response(
             "systemMessage": f"[autorun] {tagged_message}" if message else "",
         }
 
-    reason = (
-        f"[autorun] {tagged_message}. Blocking tool use because autorun could "
-        f"not evaluate this permission gate. Repair with "
-        f"`autorun --restart-daemon` in a terminal. {UNRECOVERABLE_GUIDANCE}"
-    )
+    if event_code in LOAD_EVENT_CODES:
+        reason = f"[autorun] {tagged_message}. {load_guidance()}"
+    else:
+        reason = (
+            f"[autorun] {tagged_message}. Blocking tool use because autorun could "
+            f"not evaluate this permission gate. Repair with "
+            f"`autorun --restart-daemon` in a terminal. {UNRECOVERABLE_GUIDANCE}"
+        )
     try:
         from .platforms import platform_for
 
@@ -670,7 +715,7 @@ def run_client() -> int:
                 # this hook, so sending it again could run it twice. On 3.11+
                 # this is also where a response timeout lands, because
                 # asyncio.TimeoutError is an OSError there.
-                raise RuntimeError(
+                raise DaemonDidNotAnswer(
                     f"Daemon accepted the request but did not answer: {e!r}"
                 ) from e
 
@@ -814,7 +859,7 @@ def run_client() -> int:
                 hook_event,
                 cli_type,
                 f"Daemon unavailable or timed out: {e}",
-                event_code="daemon_unavailable_or_timeout",
+                event_code=failure_event_code(e),
             ),
             event=hook_event,
             cli_type=cli_type,

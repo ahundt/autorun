@@ -4034,6 +4034,12 @@ def register_hooks(app_instance) -> None:
           check_task_staleness (plugins.py) counts tool calls → reminds at threshold.
           enforce_task_staleness (plugins.py) escalates to warn-then-deny.
         """
+        # Only the main agent's Stop arms this (handle_stop returns before arming
+        # on SubagentStop), so a subagent's tool call leaves it for the parent:
+        # the subagent cannot act on the parent's tasks, and consuming the
+        # one-shot here hid it from the parent (2026-11-06).
+        if ctx.agent_id:
+            return None
         injection = ctx.pending_stop_injection
         if not injection:
             return None

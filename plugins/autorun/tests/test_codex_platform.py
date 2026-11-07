@@ -190,6 +190,22 @@ def test_default_integration_platform_overrides_keep_claude_and_fix_codex_find()
     assert "ar:ok find" in codex
 
 
+def test_codex_default_suggestions_name_only_what_codex_has():
+    """Codex has a shell and apply_patch, no Read/Write tool with named
+    parameters. On 2026-11-06 Codex sessions were told to use a "shell file
+    inspection tool ... with file_path=" that does not exist."""
+    from autorun.config import DEFAULT_INTEGRATIONS
+    from autorun.core import format_suggestion
+    from autorun.integrations import Integration
+
+    claude_only = ("file_path=", "content=", "old_string=", "limit=", "offset", "shell file inspection tool", "pattern='**")
+    for name, spec in DEFAULT_INTEGRATIONS.items():
+        intg = Integration.from_dict(name, spec)
+        codex = format_suggestion(intg.message_for_cli("codex"), "codex")
+        leaked = [term for term in claude_only if term in codex]
+        assert not leaked, f"{name}: Codex text names {leaked}"
+
+
 def test_codex_formats_autorun_commands_with_platform_display_prefix():
     from autorun.core import canonicalize_command_prompt, format_command_for_cli, format_commands_for_cli
 

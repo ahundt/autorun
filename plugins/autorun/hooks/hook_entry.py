@@ -549,8 +549,9 @@ _RETRY_GUIDANCE = "This clears on its own; retry shortly."
 _INTERVENTION_GUIDANCE = (
     "Retrying will not help: the same failure repeats. Repair it in a terminal "
     "(run the repair step named in the error, or `autorun --status` for "
-    "diagnosis) and the next hook recovers on its own. Set AUTORUN_DISABLE=1 "
-    "to stand autorun down."
+    "diagnosis) and the next hook recovers on its own. To stand autorun down, "
+    "ask the user to start a new session with AUTORUN_DISABLE=1 set where the "
+    "harness is launched; a prefix on a command has no effect."
 )
 
 

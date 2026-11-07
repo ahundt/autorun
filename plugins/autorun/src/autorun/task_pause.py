@@ -15,7 +15,7 @@ from .config import (
 )
 from .core import EventContext, logger
 from .scoped_allow import ScopeSpec, ScopedGrant, fingerprint_call
-from .session_manager import SessionPersistenceError
+from .session_manager import SessionPersistenceError, SessionStateError
 
 
 _STATE_KEY = "task_enforcement_pause"
@@ -147,25 +147,47 @@ def resume_task_pause(
     return resumed
 
 
+def _active_pause(ctx: EventContext, *, now: float | None) -> TaskPause | None:
+    """Return the active pause, writing only to prune a stale or invalid one.
+
+    Every tool call asks this, from every session, so the common answers (no
+    pause, an active pause) come from a plain read. A write transaction is
+    serialised behind every other session's; routing these reads through
+    ``state_update`` cost four of them per tool call and, at sixty sessions,
+    pushed hook dispatch past its timeout (2026-11-06).
+    """
+    stored = ctx.state_get(_STATE_KEY)
+    if stored is None:
+        return None
+    pause = TaskPause.from_value(stored)
+    if pause is not None and pause.grant.is_active(now=now):
+        return pause
+
+    current: TaskPause | None = None
+
+    def prune(value: object) -> dict[str, object] | None:
+        # Re-decided under the lock: another process may have renewed it.
+        nonlocal current
+        fresh = TaskPause.from_value(value)
+        if fresh is None or not fresh.grant.is_active(now=now):
+            return None
+        current = fresh
+        return fresh.to_dict()
+
+    ctx.state_update(_STATE_KEY, prune)
+    return current
+
+
 def task_enforcement_is_paused(
     ctx: EventContext,
     *,
     now: float | None = None,
 ) -> bool:
     """Read and lazily prune pause state without consuming a Stop count."""
-    active = False
-
-    def inspect(value: object) -> dict[str, object] | None:
-        nonlocal active
-        pause = TaskPause.from_value(value)
-        if pause is None or not pause.grant.is_active(now=now):
-            return None
-        active = True
-        return pause.to_dict()
-
     try:
-        ctx.state_update(_STATE_KEY, inspect)
-    except SessionPersistenceError as exc:
+        active = _active_pause(ctx, now=now) is not None
+    except SessionStateError as exc:
+        # Any unreadable state, a corrupt file included, enforces normally.
         logger.warning(
             "Task-pause state could not be read; enforcing tasks normally: %s",
             exc,
@@ -235,24 +257,14 @@ def task_pause_guidance(
     report_unavailable: bool = False,
     periodic_recovery_only: bool = False,
 ) -> str | None:
-    """Return active pause guidance from one atomic read, or ``None``.
+    """Return active pause guidance from one read, or ``None``.
 
     Periodic recovery applies only to a reason-bearing indefinite pause. Timed
     and counted pauses recover through their configured scope.
     """
-    current: TaskPause | None = None
-
-    def inspect(value: object) -> dict[str, object] | None:
-        nonlocal current
-        pause = TaskPause.from_value(value)
-        if pause is None or not pause.grant.is_active(now=now):
-            return None
-        current = pause
-        return pause.to_dict()
-
     try:
-        ctx.state_update(_STATE_KEY, inspect)
-    except SessionPersistenceError as exc:
+        current = _active_pause(ctx, now=now)
+    except SessionStateError as exc:
         logger.warning("Task-pause status read failed: %s", exc)
         if report_unavailable:
             return "⚠️ Task enforcement pause status unavailable; normal enforcement remains active. Resolve the session-state error and retry."

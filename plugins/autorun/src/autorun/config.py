@@ -118,6 +118,50 @@ _CODEX_FIND_SUGGESTION = (
     "- Block globally: /ar:globalno find"
 )
 
+def _codex_suggestion(command: str, body: str) -> str:
+    """Codex block text: what to do instead, then the allow/block commands.
+
+    Codex has a shell and apply_patch, no Read/Write/Edit tool with named
+    parameters, so the Claude texts below cannot be reworded by {tool} slots.
+    """
+    return (
+        f"Command blocked: {command}\n{body}\n\n"
+        "**Commands:**\n"
+        f"- Allow (default 1 use): /ar:ok {command}\n"
+        "Scope: [N|5m|permanent] (default 1 use)\n"
+        f"- Block globally: /ar:globalno {command}"
+    )
+
+
+# Codex reads files through the shell, so plugins.py exempts a plain cat/head/
+# tail (Platform.native_shell_read_commands). Only these forms still reach the block.
+_CODEX_SHELL_READ_BODY = (
+    "Codex reads files through the shell, so a plain `{command}` read is allowed. "
+    "This one was blocked because it writes a file (`>` or `>>`), follows a file "
+    "(`tail -f`), or reads as another user (`sudo`, `doas`).\n\n"
+    "**Instead:**\n"
+    "- Create or change a file: apply_patch\n"
+    "- Read the end of a growing log: `tail -n 200 <file>`, once\n"
+    "- Read a file only another user can read: ask the user"
+)
+
+_CODEX_PLATFORM_SUGGESTIONS = {
+    **{
+        command: _codex_suggestion(command, _CODEX_SHELL_READ_BODY.format(command=command))
+        for command in ("cat", "head", "tail")
+    },
+    "awk": _codex_suggestion(
+        "awk",
+        "Use `rg -n '<pattern>' <file>` to find lines, `sed -n '<start>,<end>p' <file>` "
+        "to print a range, or a short Python script to split fields.",
+    ),
+    "sed": _codex_suggestion(
+        "sed", "Use apply_patch to change files; `sed -n` that only prints is allowed."
+    ),
+    "echo >": _codex_suggestion("'echo >'", "Use apply_patch to create or change files."),
+}
+
+
 # Detects a package-version assignment in edited file content (used by the
 # version-bump consent guard's `file` integrations). Matches the version FIELD
 # being set — not a dependency's version constraint. Covers:
@@ -323,7 +367,7 @@ DEFAULT_INTEGRATIONS = {
             "check what this script does.\n\n"
             "**Instead:** download the file, read it, then run it:\n"
             "  curl -fsSL -o /tmp/install.sh <url>\n"
-            "  # read /tmp/install.sh with the {read} tool\n"
+            "  # read /tmp/install.sh first ({read})\n"
             "  sh /tmp/install.sh\n\n"
             "To allow (default 1 use): /ar:ok <shell>, the shell the download is fed to, e.g. /ar:ok sh or /ar:ok bash\n"
             "Scope: [N|5m|permanent] (default 1 use)"
@@ -347,11 +391,15 @@ DEFAULT_INTEGRATIONS = {
     #                               where no Claude-style model tool exists
     "sed": {
         "action": "block",
+        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["sed"]}},
         "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno sed",
         "when": "_sed_modifies_files",
     },
     "awk": {
         "action": "block",
+        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["awk"]}},
+        # Like cat/grep/find: reading a pipe is not reading a file.
+        "when": "_not_in_pipe",
         "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno awk",
     },
     "grep": {
@@ -368,21 +416,25 @@ DEFAULT_INTEGRATIONS = {
     },
     "cat": {
         "action": "block",
+        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["cat"]}},
         "suggestion": "Command blocked: cat\nUse the {read} tool instead of cat command.\n\n**Why:**\n- {read} tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: {read} tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok cat\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno cat",
         "when": "_not_in_pipe",
     },
     "head": {
         "action": "block",
+        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["head"]}},
         "suggestion": "Command blocked: head\nUse the {read} tool with limit parameter instead of head.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok head\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno head",
         "when": "_not_in_pipe",
     },
     "tail": {
         "action": "block",
+        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["tail"]}},
         "suggestion": "Command blocked: tail\nUse the {read} tool with offset parameter instead of tail.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: {read} tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok tail\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno tail",
         "when": "_not_in_pipe",
     },
     "echo >": {
         "action": "block",
+        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["echo >"]}},
         "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok 'echo >'\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno 'echo >'",
     },
     # Git history rewriting tools — permanently alter commit history (v0.10)
@@ -861,6 +913,13 @@ CONFIG = {
     # remain alive instead of spawning an unbounded cluster of worker threads.
     "daemon_dispatch_max_concurrent_per_event": 4,
     "daemon_dispatch_timeout_cooldown_seconds": 5.0,
+    # A --restart-daemon issued while a daemon that started this recently is
+    # answering is a duplicate of the restart that produced it, so it does
+    # nothing. On 2026-11-06 agents restarted the daemon twenty times in thirty
+    # minutes, each fixing the socket gap the previous restart opened; the
+    # longest gap between two of those restarts was 58 s, so the window must
+    # exceed it. Install handoffs are exempt: they exist to load new code.
+    "daemon_restart_coalesce_seconds": 60.0,
     # Timeout layering is intentional and must stay ordered:
     # daemon_dispatch_timeouts_seconds < daemon_client_response_timeouts_seconds
     # < hook_wrapper_timeouts_seconds < outer harness hooks.json timeout.

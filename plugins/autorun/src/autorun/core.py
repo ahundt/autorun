@@ -933,6 +933,17 @@ class ThreadSafeDB:
                     value = updater(current)
                     persisted = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
                     state[field] = persisted
+                    # The session is marked loaded below, after which get()
+                    # answers a missing key with its default, so every field
+                    # read here must be cached -- but only once the save below
+                    # has committed. Publishing inside this block cached a
+                    # value whose save then failed with OSError (disk full),
+                    # which no SessionStateError handler removes.
+                    hydrated = (
+                        dict(state.items())
+                        if session_id not in self._loaded_sessions
+                        else {}
+                    )
             except SessionStateError as exc:
                 self._cache.pop(key, None)
                 self._loaded_sessions.discard(session_id)
@@ -941,6 +952,8 @@ class ThreadSafeDB:
                 raise SessionPersistenceError(f"State update was not saved for {session_id} ({field}): {exc}") from exc
             if has_staged_value:
                 dirty.pop(key, None)
+            for stored_field, stored in hydrated.items():
+                self._cache[f"{session_id}:{stored_field}"] = stored
             self._cache[key] = persisted
             self._loaded_sessions.add(session_id)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
@@ -1148,6 +1161,24 @@ class ThreadSafeDB:
                     )
                 self._batch.timeout = None
 
+    def _holds_durable_value(self, key: str, value: Any) -> bool:
+        """Whether storage is known to hold exactly ``value`` for ``key``.
+
+        The cache publishes a durable key only after its transaction commits
+        or after reading it from storage, so a cached durable entry is the
+        stored value. Volatile entries are advisory and prove nothing.
+        Compared by type and canonical JSON: ``False == 0`` must not count.
+        """
+        if key not in self._cache or key in self._volatile:
+            return False
+        cached = self._cache[key]
+        if type(cached) is not type(value):
+            return False
+        try:
+            return json.dumps(cached, sort_keys=True) == json.dumps(value, sort_keys=True)
+        except (TypeError, ValueError):
+            return False
+
     def _persist_many(
         self, values: Dict[str, Any], *, timeout: float | None = None
     ) -> None:
@@ -1167,6 +1198,11 @@ class ThreadSafeDB:
         with self._lock:
             grouped: Dict[str, Dict[str, Any]] = {}
             for key, value in values.items():
+                if self._holds_durable_value(key, value):
+                    # Storage already has it: a blind reset of an unchanged
+                    # flag would otherwise cost a transaction serialised behind
+                    # every other session's.
+                    continue
                 session_id, field = self._split_key(key)
                 grouped.setdefault(session_id, {})[field] = value
 
@@ -3053,6 +3089,7 @@ class AutorunDaemon:
         self.running = False
         self.last_activity = time.time()
         self.active_pids: Set[int] = set()
+        self._seen_sessions: "OrderedDict[str, None]" = OrderedDict()
         self._server = None
         self._daemon_lock = None
         self._watchdog_task: Optional[asyncio.Task] = None
@@ -3060,20 +3097,46 @@ class AutorunDaemon:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.store = ThreadSafeDB()
         self._cleanup_registered = False
-        self._active_dispatches: Dict[str, Set[asyncio.Future]] = {}
-        self._dispatch_circuit_open_until: Dict[str, float] = {}
+        # event -> {running dispatch: its deadline}. A dispatch past its
+        # deadline still holds its slot until its thread ends.
+        self._active_dispatches: Dict[str, Dict[asyncio.Future, float]] = {}
+        # Keyed by (event, session): one session's slow handler backs off that
+        # session only. The per-event semaphore is what bounds stuck threads.
+        self._dispatch_circuit_open_until: Dict[tuple[str, str], float] = {}
         self._dispatch_semaphores: Dict[str, tuple[int, asyncio.Semaphore]] = {}
+
+    def _slots_stalled(self, event: str, max_concurrent: int) -> bool:
+        """Whether every slot for ``event`` is held by a handler past its deadline.
+
+        Waiting cannot free such a slot, so this is a stall that needs a
+        restart; anything less is load that clears by itself.
+        """
+        active = self._active_dispatches.get(event, {})
+        now = time.monotonic()
+        overdue = sum(1 for until in active.values() if until <= now)
+        return overdue >= max_concurrent
+
+    def _note_session(self, session_key: str, cli_type: str) -> None:
+        """Log each session once at INFO, remembering at most VOLATILE_MAX_ENTRIES."""
+        if session_key in self._seen_sessions:
+            self._seen_sessions.move_to_end(session_key)
+            return
+        self._seen_sessions[session_key] = None
+        while len(self._seen_sessions) > VOLATILE_MAX_ENTRIES:
+            self._seen_sessions.popitem(last=False)
+        logger.info("New session %s (cli=%s)", session_key, cli_type)
 
     async def _dispatch_with_timeout(self, ctx: EventContext, cli_type: str):
         """Run one handler with bounded per-event concurrency and timeout containment."""
         event = ctx.event
         timeout = dispatch_timeout_for_event(event)
-        cooldown = float(CONFIG.get("daemon_dispatch_timeout_cooldown_seconds", 5.0))
-        max_concurrent = max(1, int(CONFIG.get("daemon_dispatch_max_concurrent_per_event", 4)))
+        cooldown = float(CONFIG["daemon_dispatch_timeout_cooldown_seconds"])
+        max_concurrent = max(1, int(CONFIG["daemon_dispatch_max_concurrent_per_event"]))
         deadline = time.monotonic() + timeout
         if ctx.deadline_monotonic is not None:
             deadline = min(deadline, ctx.deadline_monotonic)
         object.__setattr__(ctx, "_deadline_monotonic", deadline)
+        circuit_key = (event, ctx.session_id)
 
         def circuit_response():
             return daemon_failure_response(
@@ -3083,11 +3146,11 @@ class AutorunDaemon:
                 event_code="daemon_dispatch_contained",
             )
 
-        circuit_deadline = self._dispatch_circuit_open_until.get(event, 0.0)
+        circuit_deadline = self._dispatch_circuit_open_until.get(circuit_key, 0.0)
         if time.monotonic() < circuit_deadline:
             return circuit_response()
         if circuit_deadline:
-            self._dispatch_circuit_open_until.pop(event, None)
+            self._dispatch_circuit_open_until.pop(circuit_key, None)
 
         semaphore_entry = self._dispatch_semaphores.get(event)
         if semaphore_entry is None or semaphore_entry[0] != max_concurrent:
@@ -3097,9 +3160,18 @@ class AutorunDaemon:
         try:
             await asyncio.wait_for(semaphore.acquire(), timeout=max(0.0, deadline - time.monotonic()))
         except asyncio.TimeoutError:
+            if self._slots_stalled(event, max_concurrent):
+                logger.error(f"Every '{event}' slot is held by a handler past its deadline")
+                return daemon_failure_response(
+                    event,
+                    cli_type,
+                    f"Every handler slot for '{event}' is held by a handler that has "
+                    "run past its deadline and is not finishing",
+                    event_code="daemon_dispatch_stalled",
+                )
             return circuit_response()
 
-        circuit_deadline = self._dispatch_circuit_open_until.get(event, 0.0)
+        circuit_deadline = self._dispatch_circuit_open_until.get(circuit_key, 0.0)
         if time.monotonic() < circuit_deadline:
             semaphore.release()
             return circuit_response()
@@ -3110,15 +3182,15 @@ class AutorunDaemon:
         except Exception:
             semaphore.release()
             raise
-        active = self._active_dispatches.setdefault(event, set())
-        active.add(dispatch)
+        active = self._active_dispatches.setdefault(event, {})
+        active[dispatch] = deadline
 
         def release(completed: asyncio.Future) -> None:
             semaphore.release()
             current = self._active_dispatches.get(event)
             if current is None:
                 return
-            current.discard(completed)
+            current.pop(completed, None)
             if not current:
                 self._active_dispatches.pop(event, None)
 
@@ -3129,7 +3201,11 @@ class AutorunDaemon:
                 timeout=max(0.0, deadline - time.monotonic()),
             )
         except asyncio.TimeoutError:
-            self._dispatch_circuit_open_until[event] = time.monotonic() + cooldown
+            now = time.monotonic()
+            # Drop expired entries so sessions that never return cannot grow this.
+            for key in [k for k, until in self._dispatch_circuit_open_until.items() if until <= now]:
+                del self._dispatch_circuit_open_until[key]
+            self._dispatch_circuit_open_until[circuit_key] = now + cooldown
             logger.error(f"Handler for '{event}' timed out after {timeout:g}s")
             return daemon_failure_response(
                 event,
@@ -3138,7 +3214,7 @@ class AutorunDaemon:
                 event_code="daemon_dispatch_timeout",
             )
         else:
-            self._dispatch_circuit_open_until.pop(event, None)
+            self._dispatch_circuit_open_until.pop(circuit_key, None)
             return response
 
     def _run_pi_task_operation(self, ctx: EventContext, operation: str, payload: dict) -> dict:
@@ -3234,11 +3310,17 @@ class AutorunDaemon:
             try:
                 data = await reader.readuntil(b"\n")
             except asyncio.IncompleteReadError as e:
-                if not e.partial:
+                # A client that hangs up mid-send (its own deadline passed while
+                # it wrote a large payload) is a disconnect, not a handler error.
+                if e.partial:
+                    logger.warning(
+                        "Client disconnected after sending %d of its payload bytes",
+                        len(e.partial),
+                    )
+                else:
                     logger.debug("Client disconnected before sending daemon payload")
-                    skip_response = True
-                    return
-                raise
+                skip_response = True
+                return
             payload = json.loads(data.decode())
 
             event = payload.get("hook_event_name", "unknown")
@@ -3251,16 +3333,20 @@ class AutorunDaemon:
             # Debug logging (lazy % formatting avoids str(payload) when debug is off)
             logger.debug("Daemon received payload (%d bytes): %s", len(data), payload)
 
-            # Track the Claude session PID (injected by client)
+            # The process that launched this hook keeps the daemon alive while
+            # it lives. Codex starts each hook from a fresh process, so this is
+            # one PID per call there, not per session: log it only at DEBUG.
             pid = payload.get("_pid")
             if pid and pid not in self.active_pids:
                 self.active_pids.add(pid)
-                logger.info(f"New session PID: {pid} (active: {len(self.active_pids)})")
+                logger.debug("Hook launcher PID %s (tracked: %d)", pid, len(self.active_pids))
 
             # Normalize payload (includes transcript truncation and CLI detection)
             normalized = normalize_hook_payload(payload)
             cli_type = normalized["cli_type"]
-            logger.info(f"handle_client: cli_type={cli_type} event={event} tool={tool}")
+            # Per-call lines at INFO rotated the 5 MB log every hour or two at
+            # sixty sessions, erasing the history an outage needs.
+            logger.debug("handle_client: cli_type=%s event=%s tool=%s", cli_type, event, tool)
 
             # Resolve session identity (supports tri-layer for resume robustness)
             raw_session_id = normalized["session_id"]
@@ -3270,6 +3356,7 @@ class AutorunDaemon:
                 fallback_id=raw_session_id,
                 transcript_path=normalized.get("transcript_path"),
             )
+            self._note_session(identity.key, cli_type)
 
             # Build context with shared store for magic state persistence
             # _cwd is injected by client.py:197 and used by plan_export.py:project_dir

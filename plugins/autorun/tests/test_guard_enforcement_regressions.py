@@ -113,6 +113,10 @@ class TestUseInsteadIsBuiltFromTheMatchedCommand:
             "cd /tmp && rm -rf build": "trash build",
             "sudo rm -rf /var/x": "trash /var/x",
             "rm -rf 'my dir'": "trash 'my dir'",
+            # 2026-11-06: four of ten suggestions read `trash '$tmp'`, which
+            # names a file called $tmp. Variables keep expanding.
+            'rm -rf "$work"': 'trash "$work"',
+            'rm -R "$out/samples/a b.png"': 'trash "$out/samples/a b.png"',
         }
         for cmd, expected in cases.items():
             reason = _reason(plugins.check_blocked_commands(_bash(cmd)))
@@ -796,3 +800,18 @@ class TestAllowListWritesDoNotUndoConcurrentClaims:
             monkeypatch, sid, store, lambda: plugins.cleanup_expired_allows(start)
         )
         assert _decision(second) == "deny", second
+
+
+class TestAwkInPipeIsAllowedLikeItsSiblings:
+    """cat/grep/find yield to pipes; awk did not (24 false blocks, 2026-11-06)."""
+
+    @pytest.mark.parametrize("cmd", [
+        "ls -l | awk '{print $5}'",
+        "rg -c -F x . | awk -F: '{s+=$2} END {print s+0}'",
+        "shasum -a 256 f | awk '{print $1}'",
+    ])
+    def test_awk_reading_a_pipe_is_allowed(self, cmd):
+        assert plugins.check_blocked_commands(_bash(cmd)) is None, cmd
+
+    def test_awk_on_a_file_is_still_redirected(self):
+        assert plugins.check_blocked_commands(_bash("awk '{print $1}' data.txt")) is not None

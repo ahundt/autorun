@@ -36,8 +36,9 @@ import math
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Final
 
 from .command_detection import (
@@ -238,6 +239,7 @@ def invalidate_caches() -> None:
     - User files have been modified
     """
     _integration_cache.clear()
+    _rule_file_listing_cache.clear()
 
 
 def default_integrations() -> dict:
@@ -290,10 +292,52 @@ def _integration_files(cwd: str | None) -> list[Path]:
     for root in dict.fromkeys(roots):
         for glob_pattern in CONFIG.get("integration_search_paths", [".claude/autorun.*.local.md"]):
             try:
-                files.extend(path for path in sorted(root.glob(glob_pattern)) if path.is_file())
+                files.extend(_glob_rule_files(root, glob_pattern))
             except Exception as e:
                 logger.warning(f"Error globbing pattern {glob_pattern} under {root}: {e}")
     return files
+
+
+#: FAT records modification times in 2 s steps, the coarsest resolution of the
+#: filesystems autorun runs on. A directory listed within this long of its last
+#: change can change again without its mtime moving, so such a listing is never
+#: reused -- the rule git applies to its own index ("racy git").
+DIRECTORY_MTIME_RESOLUTION_NS = 2_000_000_000
+_GLOB_MAGIC = frozenset("*?[")
+# (directory, file-name pattern) -> (directory mtime_ns, matching files).
+# ponytail: one entry per rule directory a daemon has served, never evicted,
+# the same bound as _integration_cache above.
+_rule_file_listing_cache: dict[tuple[str, str], tuple[int, list[Path]]] = {}
+
+
+def _glob_rule_files(root: Path, glob_pattern: str) -> list[Path]:
+    """Rule files matching ``glob_pattern`` under ``root``, listed only on change.
+
+    Every PreToolUse asks, from every session, and listing each directory from
+    the session up to the repository root plus home was 70% of the dispatch
+    (3.5 ms of 4.2 ms). Which names a directory holds changes only when the
+    directory's own mtime does, so one stat decides whether to list again.
+    """
+    relative = PurePath(glob_pattern)
+    if _GLOB_MAGIC & set(str(relative.parent)):
+        return sorted(path for path in root.glob(glob_pattern) if path.is_file())
+    directory = root / relative.parent
+    key = (str(directory), relative.name)
+    try:
+        mtime_ns = directory.stat().st_mtime_ns
+    except OSError:
+        _rule_file_listing_cache.pop(key, None)
+        return []
+    cached = _rule_file_listing_cache.get(key)
+    if cached is not None and cached[0] == mtime_ns:
+        return list(cached[1])
+    listed_at_ns = time.time_ns()
+    found = sorted(path for path in directory.glob(relative.name) if path.is_file())
+    if mtime_ns + DIRECTORY_MTIME_RESOLUTION_NS <= listed_at_ns:
+        _rule_file_listing_cache[key] = (mtime_ns, found)
+    else:
+        _rule_file_listing_cache.pop(key, None)
+    return list(found)
 
 
 def load_all_integrations(cwd: str | None = None) -> list[Integration]:

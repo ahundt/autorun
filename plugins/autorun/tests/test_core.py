@@ -163,7 +163,10 @@ class TestDispatchTimeoutContainment:
         assert elapsed < 0.15
         assert all(isinstance(result, dict) for result in results)
         rendered = json.dumps(results)
-        assert "timed out" in rendered and "temporarily contained" in rendered
+        # Every slot is held by a handler past its 0.01s deadline, so callers
+        # that cannot get one are told it is a stall (restart is the repair),
+        # not load that clears by itself.
+        assert "timed out" in rendered and "daemon_dispatch_stalled" in rendered
         assert "private command must not appear" not in rendered
 
         # Expiring the cooldown must not admit more work while executor threads
@@ -171,7 +174,7 @@ class TestDispatchTimeoutContainment:
         await asyncio.sleep(0.03)
         retry = await daemon._dispatch_with_timeout(contexts[0], "claude")
         assert calls <= 4
-        assert "daemon_dispatch_contained" in json.dumps(retry)
+        assert "daemon_dispatch_stalled" in json.dumps(retry)
 
 
 class TestDaemonFailureResponsesAreNative:

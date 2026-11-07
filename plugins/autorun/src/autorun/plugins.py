@@ -79,6 +79,7 @@ from .scoped_allow import (
     parse_scope_tokens,
 )
 from .command_detection import (
+    PRIVILEGE_ESCALATING_WRAPPERS,
     command_matches_pattern,
     command_tokens_for,
     extract_commands,
@@ -167,6 +168,21 @@ def _tail_follow_requested(tokens: tuple[str, ...]) -> bool:
     return False
 
 
+def _shell_join(words: list[str]) -> str:
+    """shlex.join, except a word with `$` is double-quoted so it still expands.
+
+    shlex.join single-quotes `$work`, so `rm -rf "$work"` was answered with
+    `trash '$work'`, a file literally named $work (2026-11-06). shlex has
+    already dropped the original quotes, so a literal `'$x'` operand is the
+    one case this reads as a variable; deleting a file named `$x` is rarer
+    than deleting what `$x` names. Backticks and `"`/`\\` are escaped.
+    """
+    return " ".join(
+        '"' + re.sub(r'(["\\`])', r"\\\1", word) + '"' if "$" in word else shlex.quote(word)
+        for word in words
+    )
+
+
 def _default_integration_allows_native_shell_read(ctx: EventContext, pattern: str, command: str, source: str) -> bool:
     """Allow default read-command redirects to yield to platform-native shell reads.
 
@@ -179,7 +195,13 @@ def _default_integration_allows_native_shell_read(ctx: EventContext, pattern: st
     platform = platform_for(ctx.cli_type)
     if pattern not in platform.native_shell_read_commands:
         return False
-    tokens = command_tokens_for(command, pattern, allow_prefixes=False)
+    # Same wrapper grammar the block matched with (any entry of the shared
+    # transparent-wrapper table, or VAR=value), minus privilege escalation.
+    # allow_prefixes=False here let the block see `rtk cat f` while the
+    # exemption did not, so every wrapped Codex read was denied (2026-11-06).
+    tokens = command_tokens_for(
+        command, pattern, excluded_wrappers=PRIVILEGE_ESCALATING_WRAPPERS
+    )
     if not tokens:
         return False
     if _has_shell_output_redirection(command):
@@ -1473,10 +1495,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                                 # {file}: the last non-flag one. Re-quoted for the shell.
                                 operands = list(tokens[1:])
                                 non_flag_parts = [p for p in operands if p != "--" and not p.startswith("-")]
-                                redirect_cmd = redirect.replace("{args}", shlex.join(operands))
-                                redirect_cmd = redirect_cmd.replace("{file_args}", shlex.join(non_flag_parts))
+                                redirect_cmd = redirect.replace("{args}", _shell_join(operands))
+                                redirect_cmd = redirect_cmd.replace("{file_args}", _shell_join(non_flag_parts))
                                 if "{file}" in redirect_cmd:
-                                    file_val = shlex.join(non_flag_parts[-1:]) or shlex.join(operands)
+                                    file_val = _shell_join(non_flag_parts[-1:]) or _shell_join(operands)
                                     redirect_cmd = redirect_cmd.replace("{file}", file_val)
                                 msg += f"\n\nUse instead: `{redirect_cmd}`"
                             used = waiving_grants(pattern, "literal")

@@ -464,6 +464,39 @@ class TestPlatformAwareShellFileInspection:
     @pytest.mark.parametrize(
         "command",
         [
+            # Any transparent wrapper from the shared wrapper table, plus a plain
+            # VAR=value prefix. rtk is one supported wrapper among them; the
+            # 2026-11-06 Codex sessions happened to use it, but nothing here
+            # depends on it being installed.
+            "env LC_ALL=C head -20 README.md",
+            "LC_ALL=C tail -n 40 app.log",
+            "timeout 5 cat README.md",
+            "nice -n 5 tail -n 40 app.log",
+            "nohup head -20 README.md",
+            "command cat README.md",
+            "rtk cat README.md",
+            "rtk proxy tail -n 40 app.log",
+            "env cat a.txt; sed -n '1,120p' b.txt",
+        ],
+    )
+    def test_codex_allows_wrapped_native_reads(self, command):
+        """The block matched through rtk/env wrappers but the exemption did
+        not, so every wrapped read was denied."""
+        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
+        assert result is None, f"Codex wrapped read must pass through: {result!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        ["env sudo cat /etc/sudoers", "sudo env cat secrets.txt", "doas tail app.log",
+         "timeout 5 sudo head secrets.txt"],
+    )
+    def test_codex_still_blocks_privileged_reads_through_wrappers(self, command):
+        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
+        assert result is not None, f"Privileged read must still be handled: {command}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
             "cat README.md > /tmp/out.txt",
             "head -20 README.md >> /tmp/out.txt",
             "tail -n 40 daemon.log > /tmp/out.txt",
@@ -479,6 +512,10 @@ class TestPlatformAwareShellFileInspection:
         assert result is not None, f"Unsafe shell read form must be handled: {command}"
         perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
         assert perm == "deny", f"Unsafe shell read form must be denied, got {perm!r}"
+        # The reason reaches the model: it must name what Codex can do (2026-11-06:
+        # it named a "shell file inspection tool ... file_path=" Codex lacks).
+        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert "apply_patch" in msg and "file_path=" not in msg, msg
 
     @pytest.mark.parametrize(
         "cli_type,expected",

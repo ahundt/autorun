@@ -15,6 +15,7 @@ from autorun.command_detection import (
     ParsedPattern,
     command_matches_pattern,
     extract_commands,
+    strip_transparent_command_wrappers,
 )
 from autorun.config import CONFIG
 
@@ -905,3 +906,28 @@ def test_a_redirect_operator_in_a_pattern_matches_the_redirect(cmd: str, expecte
     """bashlex puts redirects in redirect nodes, not words, so the default
     `echo >` guard never matched anything bashlex could parse."""
     assert command_matches_pattern(cmd, "echo >") is expected
+
+
+@pytest.mark.parametrize(
+    "tokens, expected",
+    [
+        # POSIX prefix assignments run the command after them, exactly as
+        # `env NAME=value cmd` does, so both reduce to the same argv.
+        (["LC_ALL=C", "tail", "-n", "40", "f"], ["tail", "-n", "40", "f"]),
+        (["A=1", "B=2", "cat", "f"], ["cat", "f"]),
+        (["env", "LC_ALL=C", "tail", "f"], ["tail", "f"]),
+        (["A=1", "env", "B=2", "nice", "cat", "f"], ["cat", "f"]),
+        (["A=1", "sudo", "cat", "f"], ["cat", "f"]),
+        # A line of only assignments runs no command and stays as written.
+        (["A=1", "B=2"], ["A=1", "B=2"]),
+        # An operand that looks like an assignment is still an operand.
+        (["echo", "A=1"], ["echo", "A=1"]),
+    ],
+)
+def test_prefix_assignments_strip_like_env(tokens, expected):
+    assert strip_transparent_command_wrappers(tokens) == expected
+
+
+def test_prefix_assignment_command_is_extracted():
+    names, _ = extract_commands("FOO=1 rm -rf build")
+    assert "rm" in names

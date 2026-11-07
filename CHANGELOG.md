@@ -6,12 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0] - 2026-11-01
+## [1.0.0] - 2026-11-06
 
-autorun 1.0.0 is the first stable release. autorun puts a gate in front of an
-AI coding agent's tool calls, for example stopping `rm -rf` before it runs and
-suggesting `trash` instead, on Claude Code, Google Antigravity, Qwen Code, Codex
-CLI, Pi, ForgeCode, and OpenCode. Since 1.0.0rc3, a review of every module
+autorun 1.0.0 is the first stable release. autorun checks an AI coding agent's
+tool calls before they run, on Claude Code, Google Antigravity, Qwen Code, Codex
+CLI, Pi, ForgeCode, and OpenCode; it stops `rm -rf`, for example, and suggests
+`trash` instead. Since 1.0.0rc3, a review of every module
 fixed ways past the guards (an `/ar:ok` allow approved the whole command line,
 and commands run through a wrapper or a shell went unchecked), an
 `autorun --update` that installed unreleased code, an `autorun --no-bootstrap`
@@ -334,6 +334,58 @@ describe what changed between rc1 and rc3.
     uses the tool's own format on every path.
 76. In Pi and Prime Agent with `AUTORUN_DISABLE=1`, task results told you to
     restart the daemon; they now say autorun is disabled.
+77. With about 60 sessions sharing one daemon, autorun blocked tool calls
+    across all of them with `daemon_dispatch_contained`, and the agents ran
+    the `autorun --restart-daemon` the message recommended: twenty restarts
+    in thirty minutes, each deleting the socket every other session was
+    using. Four changes stop this:
+    1. Each tool call took about five state-database write transactions,
+       including four for reading whether tasks were paused, and every
+       session waited behind every other. Reads no longer take a write
+       transaction, and rewriting a value that has not changed writes
+       nothing.
+    2. One slow call now pauses checks for its own session only, not for
+       every session.
+    3. A denial caused by load says it clears by itself within a few seconds
+       and not to restart the daemon. An unreachable daemon still names the
+       restart.
+    4. `autorun --restart-daemon` does nothing when a daemon that started
+       within the last minute is answering.
+
+    A first tool call after a restart no longer pays about 0.6 s to load the
+    shell parser, and finding project rule files no longer lists their
+    directories on every call. The daemon accepts as many waiting connections
+    as the operating system allows, not asyncio's default of 100. The daemon
+    log records each session once, not two lines per tool call, which had
+    rotated away all but the last half hour of history.
+    `autorun --status` with a missing dependency now names the module and the
+    reinstall command, not a traceback. In a 100-session test (five tool calls each,
+    all sessions at once, same machine load before and after), the median
+    check before a tool call fell from 844 ms to 54 ms, against a 3 s limit.
+    At a steady 66 tool calls per second, five times the rate logged during
+    the outage, no call failed and 99% answered within 9 ms.
+
+    When every check slot is held by a call past its deadline, the denial
+    still names the restart, since waiting will not clear it. Inside Codex's
+    sandbox, `autorun --restart-daemon` reports that it cannot take the lock,
+    not a `PermissionError` traceback. The disable message now says to set
+    `AUTORUN_DISABLE=1` where the harness is launched: agents had put it in
+    front of 1,055 commands, where it has no effect. A client that hangs up
+    mid-request is logged as one warning, not an error with a traceback.
+78. Codex blocked plain file reads behind a wrapper, such as `rtk cat f`,
+    `env LC_ALL=C head f` or `LC_ALL=C tail -n 40 log`, and told the agent to
+    use a "shell file inspection tool" with Claude's `file_path=` parameter,
+    which Codex does not have. Those reads now run, and the Codex text for
+    `cat`, `head`, `tail`, `awk`, `sed` and `echo >` names what Codex can use
+    (`apply_patch`, `rg -n`, `sed -n`). A read through `sudo` or `doas`, one
+    that writes a file, and `tail -f` are still blocked.
+79. `awk` reading a pipe, such as `ls -l | awk '{print $5}'`, was blocked;
+    like `cat`, `grep` and `find`, it is now allowed in a pipe.
+80. The `rm` guard suggested `trash '$tmp'` for `rm -rf "$tmp"`, naming a
+    file literally called `$tmp`; it now suggests `trash "$tmp"`.
+81. A subagent's tool call could receive its parent session's "CANNOT STOP"
+    task list, which it could not act on and which the parent then never
+    saw. The list now waits for the parent's next tool call.
 
 ### For contributors
 

@@ -31,13 +31,14 @@ import shutil
 import sys
 import time
 import subprocess
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import psutil
 from filelock import FileLock, Timeout
 
 from . import ipc
+from .config import CONFIG
 
 LOCK_PATH = ipc.AUTORUN_LOCK_PATH
 RESTART_LOCK_PATH = ipc.daemon_restart_lock_path()
@@ -118,6 +119,28 @@ def is_daemon_responding() -> bool:
     return ipc.is_responding()
 
 
+def _source_newer_than(src_dir: Path, age_seconds: float) -> bool:
+    """Whether any autorun source file changed after a daemon of this age started.
+
+    A restart is never a duplicate when the code it would load is new.
+    """
+    started = time.time() - age_seconds
+    try:
+        return any(
+            path.stat().st_mtime > started for path in Path(src_dir).rglob("*.py")
+        )
+    except OSError:
+        return True  # cannot tell: restart rather than keep stale code
+
+
+def _daemon_age_seconds(pid: int) -> float | None:
+    """Seconds since ``pid`` started, or None when it cannot be read."""
+    try:
+        return max(0.0, time.time() - psutil.Process(pid).create_time())
+    except (psutil.Error, OSError):
+        return None
+
+
 def wait_for_shutdown(max_wait: float = 5.0, *, src_dir: Path | None = None) -> bool:
     """Poll for daemon shutdown with progress dots.
 
@@ -170,6 +193,14 @@ def verify_bashlex() -> bool:
         return False
 
 
+class RestartLockUnavailable(OSError):
+    """The restart lock could not be created where autorun keeps its state."""
+
+    def __init__(self, path: Path, cause: OSError):
+        super().__init__(cause.errno, f"cannot write {path}: {cause.strerror or cause}")
+        self.path = path
+
+
 @contextmanager
 def restart_lock():
     """Context manager for the restart lock. Yields True if acquired, False otherwise.
@@ -191,6 +222,10 @@ def restart_lock():
         acquired = True
     except Timeout:
         pass
+    except OSError as exc:
+        # A sandbox that cannot write ~/.autorun (Codex workspace-write) fails
+        # here; raise a type the caller reports instead of a traceback.
+        raise RestartLockUnavailable(RESTART_LOCK_PATH, exc) from exc
 
     try:
         yield acquired
@@ -531,7 +566,18 @@ def restart_daemon(
         return 1
 
     # Step 0: Acquire restart lock (prevent concurrent restarts)
-    with restart_lock() as acquired:
+    # ExitStack enters the lock so a failure to create it can be reported on
+    # its own, while the `with` below still owns releasing it.
+    held = ExitStack()
+    try:
+        acquired = held.enter_context(restart_lock())
+    except RestartLockUnavailable as exc:
+        print(f"  ✗ Cannot restart: {exc}")
+        print("    This process may not write autorun's state directory (a sandbox")
+        print("    usually). Run `autorun --restart-daemon` from a terminal, or ask")
+        print("    the user to.")
+        return 1
+    with held:
         if not acquired:
             print("  ⚠️  Another restart already in progress")
             return 1
@@ -548,6 +594,21 @@ def restart_daemon(
             if replace_runtime_daemon
             else get_daemon_pid(src_dir=src_dir)
         )
+
+        if pid and not replace_runtime_daemon and not all_daemons and is_daemon_responding():
+            window = float(CONFIG["daemon_restart_coalesce_seconds"])
+            age = _daemon_age_seconds(pid)
+            if age is not None and age < window and not _source_newer_than(src_dir, age):
+                print(
+                    f"  ✓ Daemon PID {pid} started {age:.0f}s ago and is responding;"
+                    " not restarting it again."
+                )
+                print(
+                    f"    A restart within {window:g}s of the last one only cuts off"
+                    " every session sharing the daemon. Run it again after that"
+                    " if this daemon is still misbehaving."
+                )
+                return 0
 
         # Steps 2-3: Stop the daemon owned by this source tree, if any.
         if pid:

@@ -518,3 +518,34 @@ def test_stop_replay_still_delivers_while_work_remains(
         "with tasks still incomplete the block must reach the AI, including the "
         f"override actions. Got: {delivered[:300]!r}"
     )
+
+
+def test_subagent_tool_call_does_not_consume_the_parent_stop_block(
+    isolated_task_config, isolated_session, monkeypatch
+):
+    """Only the main Stop arms the replay, so only the main agent receives it.
+
+    Observed 2026-11-06: a reviewer subagent's PostToolUse delivered the
+    parent's "CANNOT STOP #381" block. The subagent cannot act on the parent's
+    tasks, and the one-shot replay was spent, so the parent never saw it.
+    """
+    monkeypatch.setattr("autorun.task_lifecycle.is_enabled", lambda: True)
+    sid = "stop-replay-subagent"
+    store = ThreadSafeDB()
+    manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+    _seed_tasks(manager, 1)
+
+    stop_ctx = _make_stop_ctx(sid, cli_type="claude", store=store)
+    manager.handle_stop(stop_ctx)
+    assert stop_ctx.pending_stop_injection, "fixture needs an armed injection"
+
+    sub = _posttooluse_ctx(sid, store)
+    object.__setattr__(sub, "_agent_id", "agent-reviewer-1")
+    _delivery_handler()(sub)
+    delivered = " ".join(str(n) for n in getattr(sub, "_chain_notifications", []))
+    assert "CANNOT STOP" not in delivered, f"subagent received the parent's block: {delivered[:300]!r}"
+
+    parent = _posttooluse_ctx(sid, store)
+    _delivery_handler()(parent)
+    delivered = " ".join(str(n) for n in getattr(parent, "_chain_notifications", []))
+    assert "CANNOT STOP" in delivered, "the parent must still receive its own block"

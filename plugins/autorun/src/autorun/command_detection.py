@@ -492,6 +492,12 @@ _TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
 
 TRANSPARENT_COMMAND_WRAPPERS: Final[frozenset[str]] = frozenset(_TRANSPARENT_WRAPPER_SPECS)
 
+#: Wrappers that run their child as another (usually privileged) user. A read
+#: that is harmless as yourself is not harmless through one of these.
+PRIVILEGE_ESCALATING_WRAPPERS: Final[frozenset[str]] = frozenset(
+    {"sudo", "doas", "pkexec", "gksudo", "kdesudo"}
+)
+
 # Derived, not listed: integrations.py reads these as prefixes, and a name it
 # knew that the pattern layer did not (nohup, time, doas, ...) let
 # `nohup rm -rf x` through the `rm -rf` block.
@@ -605,6 +611,14 @@ def strip_transparent_command_wrappers(tokens: list[str]) -> list[str]:
     """
     stripped = list(tokens)
     while stripped:
+        # POSIX prefix assignments (`LC_ALL=C tail f`) run the command after
+        # them, as `env LC_ALL=C tail f` does. A line of only assignments runs
+        # no command, so it is left as written.
+        assignments = 0
+        while assignments < len(stripped) and _is_env_assignment(stripped[assignments]):
+            assignments += 1
+        if 0 < assignments < len(stripped):
+            stripped = stripped[assignments:]
         spec = _TRANSPARENT_WRAPPER_SPECS.get(_get_basename(stripped[0]))
         if spec is None:
             break
@@ -817,6 +831,7 @@ def command_tokens_for(
     pattern: str,
     *,
     allow_prefixes: bool = True,
+    excluded_wrappers: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
     """Argv of the first command in a shell string that `pattern` matches.
 
@@ -850,6 +865,12 @@ def command_tokens_for(
 
             for i, token in enumerate(tokens):
                 if _get_basename(token) == command_name:
+                    # A segment reached through an excluded wrapper (sudo cat)
+                    # is not this command as far as the caller is concerned.
+                    if excluded_wrappers and any(
+                        _get_basename(prefix) in excluded_wrappers for prefix in tokens[:i]
+                    ):
+                        break
                     return tuple(tokens[i:])
 
     return ()

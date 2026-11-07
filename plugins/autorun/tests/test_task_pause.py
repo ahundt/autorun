@@ -13,13 +13,14 @@ from autorun import plugins
 from autorun import session_manager
 from autorun.core import EventContext, ThreadSafeDB
 from autorun.scoped_allow import ScopeSpec
-from autorun.session_manager import SessionPersistenceError
+from autorun.session_manager import SessionBackendError, SessionPersistenceError
 from autorun.platforms import hook_platforms
 from autorun.task_pause import (
     activate_task_pause,
     resume_task_pause,
     task_enforcement_is_paused,
     task_pause_allows_stop,
+    task_pause_guidance,
     task_pause_status,
 )
 from autorun.task_lifecycle import TaskLifecycle
@@ -35,7 +36,6 @@ PROCESS_JOIN_TIMEOUT_SECONDS = 120.0
 # missing sibling into BrokenBarrierError -> nonzero child exit -> a clean
 # parent assertion.
 BARRIER_TIMEOUT_SECONDS = 90.0
-QUEUE_READ_TIMEOUT_SECONDS = 5.0
 PAUSE_REMINDER_THRESHOLD = 25
 CONCURRENT_REMINDER_PROCESSES = 8
 # Identifies the pause recovery reminder among everything a hook may attach.
@@ -465,13 +465,17 @@ def test_spawned_processes_emit_one_pause_recovery_reminder(
         ]
         for process in processes:
             process.start()
+        # Drain before joining. A child cannot exit until its queued result is
+        # flushed into the pipe, so joining first deadlocks as soon as the
+        # results outgrow the pipe buffer -- which lock-contention warnings in
+        # `other` can do ("Joining processes that use queues", multiprocessing
+        # docs). Five children hung that way for half an hour.
+        observations = [
+            results.get(timeout=PROCESS_JOIN_TIMEOUT_SECONDS) for _process in processes
+        ]
         for process in processes:
             process.join(timeout=PROCESS_JOIN_TIMEOUT_SECONDS)
             assert process.exitcode == 0
-
-        observations = [
-            results.get(timeout=QUEUE_READ_TIMEOUT_SECONDS) for _process in processes
-        ]
         emitted = sum(count for count, _counter, _state_dir, _other in observations)
         other = [
             message
@@ -636,11 +640,13 @@ def test_spawned_processes_claim_counted_pause_atomically(
         ]
         for process in processes:
             process.start()
+        # Drained before joining for the reason given in the reminder test above.
+        claimed = [results.get(timeout=PROCESS_JOIN_TIMEOUT_SECONDS) for _process in processes]
         for process in processes:
             process.join(timeout=PROCESS_JOIN_TIMEOUT_SECONDS)
             assert process.exitcode == 0
 
-        assert sum(results.get(timeout=QUEUE_READ_TIMEOUT_SECONDS) for _process in processes) == allowed_count
+        assert sum(claimed) == allowed_count
         assert not task_enforcement_is_paused(_context(session_id), now=101.1)
     finally:
         session_manager._CONFIG["state_backend"] = previous_backend
@@ -715,8 +721,15 @@ def test_state_failure_enforces_tasks_normally():
         def state_update(self, *_args, **_kwargs):
             raise SessionPersistenceError("database unavailable")
 
+        def state_get(self, *_args, **_kwargs):
+            # What the real EventContext.state_get raises for state it cannot
+            # parse: contention alone becomes a default, everything else is a
+            # SessionStateError other than SessionPersistenceError.
+            raise SessionBackendError("state file will not parse")
+
     ctx = FailingContext()
     assert not task_enforcement_is_paused(ctx)
+    assert task_pause_guidance(ctx) is None
     assert not task_pause_allows_stop(ctx)
 
 

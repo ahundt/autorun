@@ -41,7 +41,7 @@ export function autorunDisabled() {
 // installed by a plain copy, so it cannot import them;
 // test_client_fail_closed.py pins all three spellings together.
 const RETRY_GUIDANCE = "This clears on its own; retry shortly.";
-const INTERVENTION_GUIDANCE = "Retrying will not help: the same failure repeats. Repair it in a terminal (run the repair step named in the error, or `autorun --status` for diagnosis) and the next hook recovers on its own. Set AUTORUN_DISABLE=1 to stand autorun down.";
+const INTERVENTION_GUIDANCE = "Retrying will not help: the same failure repeats. Repair it in a terminal (run the repair step named in the error, or `autorun --status` for diagnosis) and the next hook recovers on its own. To stand autorun down, ask the user to start a new session with AUTORUN_DISABLE=1 set where the harness is launched; a prefix on a command has no effect.";
 
 // Same reason shape as hook_entry.py's fail_closed_tool_gate; the repair step
 // is the one autorun.client.build_daemon_failure_response names.
