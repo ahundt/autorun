@@ -129,21 +129,29 @@ class TestSessionTargetingRegression:
         for cmd in test_commands:
             assert cmd not in current_content, f"Command '{cmd}' should NOT appear in current session"
 
-    def test_tmux_environment_detection(self):
-        """Test that we can detect the current tmux environment when inside tmux."""
-        from autorun.tmux_utils import TmuxUtilities
+    def test_tmux_environment_detection_outside_tmux(self, monkeypatch):
+        monkeypatch.delenv("TMUX", raising=False)
+        assert TmuxUtilities().detect_tmux_environment() is None
 
-        tmux_utils = TmuxUtilities()
-        env_info = tmux_utils.detect_tmux_environment()
+    def test_tmux_environment_detection_inside_tmux(self, monkeypatch):
+        """Pose as a process in the test session's pane, as tmux would set it
+        up, so this branch runs in CI where the suite is not inside tmux."""
+        pane = subprocess.run(
+            tmux_argv('display-message', '-p', '-t', self.test_session, '#{pane_id}'),
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        socket_path = os.environ.get("AUTORUN_TEST_TMUX_SOCKET")
+        if not socket_path:
+            pytest.skip("needs the suite's private tmux server (conftest.py)")
+        monkeypatch.setenv("TMUX", f"{socket_path},0,0")
+        monkeypatch.setenv("TMUX_PANE", pane)
 
-        if not os.environ.get("TMUX"):
-            assert env_info is None
-            return
+        env_info = TmuxUtilities().detect_tmux_environment()
 
-        assert env_info is not None, "Should detect tmux environment when running inside tmux"
-        assert 'session' in env_info, "Environment info should include session"
-        assert 'window' in env_info, "Environment info should include window"
-        assert 'pane' in env_info, "Environment info should include pane"
+        assert env_info is not None
+        assert env_info["session"] == self.test_session
+        assert env_info["window"] and env_info["pane"]
+        assert env_info["socket_path"] == socket_path
 
     def test_execute_tmux_command_construction(self):
         """Test that execute_tmux_command constructs commands correctly"""
