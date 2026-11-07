@@ -575,7 +575,7 @@ class TestMainFunctionRouting:
         assert result == 0
         captured = capsys.readouterr()
         assert "autorun" in captured.out
-        assert "1.0.0" in captured.out.split()
+        assert "1.0.0rc4" in captured.out.split()
 
     def test_install_calls_install_plugins(self):
         """Test that --install calls install_plugins function."""

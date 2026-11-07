@@ -207,7 +207,7 @@ settings and checks are in
 
 ```bash
 autorun --install --gemini --force
-autorun --status --gemini      # lists ar@1.0.0
+autorun --status --gemini      # lists ar@1.0.0rc4
 ```
 
 ### Skills

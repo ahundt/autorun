@@ -6,12 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0] - 2026-11-06
+## [1.0.0rc4] - 2026-11-07
 
-autorun 1.0.0 is the first stable release. autorun checks an AI coding agent's
-tool calls before they run, on Claude Code, Google Antigravity, Qwen Code, Codex
-CLI, Pi, ForgeCode, and OpenCode; it stops `rm -rf`, for example, and suggests
-`trash` instead. Since 1.0.0rc3, a review of every module
+autorun 1.0.0rc4 is the last release candidate before 1.0.0. autorun checks an
+AI coding agent's tool calls before they run, on Claude Code, Google
+Antigravity, Qwen Code, Codex CLI, Pi, ForgeCode, and OpenCode; it stops
+`rm -rf`, for example, and suggests `trash` instead. Since 1.0.0rc3, the daemon
+keeps answering with 200 sessions sharing it instead of blocking tool calls and
+telling agents to restart it, and a review of every module
 fixed ways past the guards (an `/ar:ok` allow approved the whole command line,
 and commands run through a wrapper or a shell went unchecked), an
 `autorun --update` that installed unreleased code, an `autorun --no-bootstrap`

@@ -168,7 +168,7 @@ wheels = [
 
 [[package]]
 name = "autorun-ai"
-version = "1.0.0"
+version = "1.0.0rc4"
 source = { editable = "plugins/autorun" }
 dependencies = [
     { name = "bashlex" },
@@ -255,7 +255,7 @@ dev = [
 
 [[package]]
 name = "autorun-workspace"
-version = "1.0.0"
+version = "1.0.0rc4"
 source = { editable = "." }
 
 [package.optional-dependencies]
