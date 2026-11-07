@@ -536,6 +536,9 @@ describe what changed between rc1 and rc3.
      Antigravity read hook stdout as JSON and reported a hook error. The
      client now logs that reply and answers as if the daemon had nothing to
      say.
+107. `/ar:cache status` reported the harness that started the daemon, not the
+     session that asked, so a Codex session sharing a daemon with Claude Code
+     saw `cli: claude`. It now reports the calling session's harness.
 
 ### For contributors
 

@@ -2827,7 +2827,7 @@ def handle_cache(ctx: EventContext) -> str:
     parts = tail.split()
     target_session = "__global__" if parts and parts[0].lower() == "global" else ctx.session_id
     return ctx.state_synchronize(
-        lambda: cache_command(tail, ctx.session_id),
+        lambda: cache_command(tail, ctx.session_id, ctx.cli_type),
         session_id=target_session,
     )
 

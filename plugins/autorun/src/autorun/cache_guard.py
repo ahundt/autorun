@@ -801,8 +801,8 @@ def _cmd_no(rest: list, session_id: str) -> str:
     return "ar:cache overrides cleared; gate re-armed."
 
 
-def _cmd_status(rest: list, session_id: str) -> str:
-    return _render_status(session_id)
+def _cmd_status(rest: list, session_id: str, cli_type: str | None = None) -> str:
+    return _render_status(session_id, cli_type)
 
 
 _CACHE_HANDLERS: dict = {
@@ -813,15 +813,17 @@ _CACHE_HANDLERS: dict = {
 }
 
 
-def cache_command(args: str, session_id: str) -> str:
+def cache_command(args: str, session_id: str, cli_type: str | None = None) -> str:
     """Dispatch /ar:cache subcommands. Grammar: on|off|set|ok|no|status [global]."""
     parts = (args or "").strip().split()
     sub = (parts[0] if parts else "").lower()
     if sub == "global":
-        return "[global] " + cache_command(" ".join(parts[1:]), _GLOBAL_SESSION_ID)
+        return "[global] " + cache_command(" ".join(parts[1:]), _GLOBAL_SESSION_ID, cli_type)
     fn = _CACHE_HANDLERS.get(sub)
     if fn is None:
         return f"ar:cache: unknown subcommand {sub!r}. Try: on, off, set, ok, no, status"
+    if fn is _cmd_status:
+        return fn(parts[1:], session_id, cli_type)
     return fn(parts[1:], session_id)
 
 
@@ -832,7 +834,7 @@ def _safe_is_valid(gd: dict) -> bool:
         return False
 
 
-def _render_status(session_id: str) -> str:
+def _render_status(session_id: str, cli_type: str | None = None) -> str:
     """Pretty status — ONE filelock acquisition for all state reads."""
     with session_state(session_id) as st:
         s_toggle = st.get(_TOGGLE_KEY)
@@ -858,7 +860,9 @@ def _render_status(session_id: str) -> str:
             merged.update({k: v for k, v in blob.items() if k in _fields and v is not None})
     cfg = CacheGuardConfig(**merged)
 
-    cli = detect_cli_type() or "claude"
+    # The daemon runs this, so its own environment names whichever harness
+    # started it; the caller passes the session's harness.
+    cli = cli_type or detect_cli_type() or "claude"
     scope = "global" if session_id == _GLOBAL_SESSION_ID else "session"
     lines = [
         f"ar:cache [{scope}] — {'enabled' if enabled else 'disabled (default)'} — cli: {cli}",

@@ -1254,3 +1254,21 @@ class TestRepeatedTemporaryToggleKeepsTheStandingState:
 
         clock.now += 3601
         assert is_cache_enabled(sid) is True, "reverts to the standing enable"
+
+
+def test_cache_status_reports_the_calling_session_harness(monkeypatch, tmp_state_dir):
+    """The status runs inside the daemon, whose environment is whichever
+    harness started it; it must report the session that asked."""
+    from autorun import cache_guard
+
+    monkeypatch.setattr(cache_guard, "detect_cli_type", lambda *a, **k: "claude")
+    out = cache_guard.cache_command("status", _sid(), cli_type="codex")
+    assert "cli: codex" in out, out
+
+
+def test_the_ar_cache_command_passes_the_session_harness():
+    import inspect
+
+    from autorun import plugins
+
+    assert "cache_command(tail, ctx.session_id, ctx.cli_type)" in inspect.getsource(plugins)
