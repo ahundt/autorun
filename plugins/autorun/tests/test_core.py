@@ -144,6 +144,7 @@ class TestDispatchTimeoutContainment:
         monkeypatch.setattr(core, "dispatch_timeout_for_event", lambda _event: 0.01)
         monkeypatch.setitem(core.CONFIG, "daemon_dispatch_max_concurrent_per_event", 4)
         monkeypatch.setitem(core.CONFIG, "daemon_dispatch_timeout_cooldown_seconds", 0.02)
+        monkeypatch.setitem(core.CONFIG, "daemon_dispatch_stall_grace_seconds", 0.0)
         contexts = [
             EventContext(
                 session_id=f"timeout-cluster-{index}",

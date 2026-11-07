@@ -251,6 +251,11 @@ def hook_timeout_for_cli(cli_type: str) -> float:
 
 #: Absolute monotonic instant the wrapper stops waiting, handed to the CLI.
 DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_MONOTONIC"
+#: The same instant in a payload sent straight to the daemon, which skips a
+#: request whose hook stopped waiting. Stdlib copy of
+#: ``autorun.config.HOOK_DEADLINE_PAYLOAD_KEY``, pinned by
+#: test_client_fail_closed.py.
+HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_monotonic"
 
 
 def cli_env_with_deadline(cli_type: str) -> dict:
@@ -534,6 +539,15 @@ def _peek_event_name(default: str = "unknown") -> str:
 # arbitrary package build code. Disabling a broken safety gate is a human's
 # decision, and AUTORUN_DISABLE is how a human makes it.
 _RETRY_GUIDANCE = "This clears on its own; retry shortly."
+#: Stdlib copy of ``autorun.client.RESPONSE_TIMEOUT_GUIDANCE`` (busy or
+#: stuck: retry once, then restart), pinned by test_client_fail_closed.py.
+_RESPONSE_TIMEOUT_GUIDANCE = (
+    "Blocking this tool call because the autorun daemon took the request but "
+    "did not answer in time: it is either very busy or stuck. Retry the same "
+    "tool call once. If that is blocked the same way, run "
+    "`autorun --restart-daemon` in a terminal; it leaves a daemon that just "
+    "restarted and answers a health check alone, and replaces one that does not."
+)
 #: Kept ASCII on purpose. The exit-2 deny path prints this reason to stderr as
 #: raw text, and stderr's encoding belongs to whatever launched the harness.
 #: `_tolerate_stderr_encoding` sets errors="replace", so a stray character would
@@ -561,17 +575,18 @@ def fail_closed_tool_gate(
     event_name: str,
     *,
     recoverable: bool = False,
+    guidance: str | None = None,
 ) -> NoReturn:
     """Block tool execution when autorun cannot evaluate a permission gate.
 
-    ``recoverable`` says whether waiting can fix this. It decides only the
-    guidance text; the tool is denied either way, because fail-open on a
-    permission gate is the failure this path exists to prevent.
+    ``recoverable`` says whether waiting can fix this; ``guidance`` replaces
+    the text it selects when a failure has more specific advice. Either way
+    the tool is denied, because fail-open on a permission gate is the failure
+    this path exists to prevent.
     """
-    reason = (
-        f"[autorun] {message}. Blocking tool use to avoid fail-open. "
-        + (_RETRY_GUIDANCE if recoverable else _INTERVENTION_GUIDANCE)
-    )
+    if guidance is None:
+        guidance = _RETRY_GUIDANCE if recoverable else _INTERVENTION_GUIDANCE
+    reason = f"[autorun] {message}. Blocking tool use to avoid fail-open. {guidance}"
     if event_name == "PermissionRequest":
         # Claude Code, Codex and Qwen read this event's verdict only from
         # hookSpecificOutput.decision; a PreToolUse-shaped deny (or Claude's
@@ -935,11 +950,13 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     # worktree, or a harness launched from elsewhere).
     payload.setdefault("_cwd", payload.get("cwd") or os.getcwd())
     payload["cli_type"] = cli_type
+    timeout = hook_timeout_for_cli(cli_type)
+    payload[HOOK_DEADLINE_PAYLOAD_KEY] = time.monotonic() + timeout
     event_name = payload.get("hook_event_name", "unknown")
     connected = False
     try:
         with socket.socket(family, socket.SOCK_STREAM) as daemon_socket:
-            daemon_socket.settimeout(hook_timeout_for_cli(cli_type))
+            daemon_socket.settimeout(timeout)
             daemon_socket.connect(address)
             connected = True
             daemon_socket.sendall(json.dumps(payload).encode("utf-8") + b"\n")
@@ -954,9 +971,27 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     except socket.timeout:
         if connected:
             _append_debug_log("Direct daemon fast path timed out after connecting")
-            fail_after_cli_timeout(cli_type, event_name)
+            message = (
+                "[AR_EVENT_V1:daemon_response_timeout] Daemon accepted the "
+                f"request but did not answer within {timeout:g}s"
+            )
+            if is_tool_gate_event(event_name):
+                fail_closed_tool_gate(
+                    message, cli_type, event_name, guidance=_RESPONSE_TIMEOUT_GUIDANCE
+                )
+            fail_open_for_cli(message, cli_type, event_name)
         return False, 0
-    except (ConnectionError, OSError, ValueError, json.JSONDecodeError) as error:
+    except OSError as error:
+        # ConnectionError included: the daemon closed or reset the connection,
+        # which a restarting daemon does; the next hook reaches its successor.
+        if connected:
+            message = f"Daemon closed the connection without answering: {type(error).__name__}"
+            _append_debug_log(message)
+            if is_tool_gate_event(event_name):
+                fail_closed_tool_gate(message, cli_type, event_name, recoverable=True)
+            fail_open_for_cli(message, cli_type, event_name)
+        return False, 0
+    except ValueError as error:  # json.JSONDecodeError included
         if connected:
             message = f"Daemon returned an invalid response: {type(error).__name__}"
             _append_debug_log(message)

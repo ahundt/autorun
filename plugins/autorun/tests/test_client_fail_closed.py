@@ -112,6 +112,11 @@ def test_the_wrapper_and_the_client_agree_on_the_unrecoverable_guidance():
     spec.loader.exec_module(module)
 
     assert module._INTERVENTION_GUIDANCE == UNRECOVERABLE_GUIDANCE
+    from autorun.client import RESPONSE_TIMEOUT_GUIDANCE
+    from autorun.config import HOOK_DEADLINE_PAYLOAD_KEY
+
+    assert module._RESPONSE_TIMEOUT_GUIDANCE == RESPONSE_TIMEOUT_GUIDANCE
+    assert module.HOOK_DEADLINE_PAYLOAD_KEY == HOOK_DEADLINE_PAYLOAD_KEY
 
     # The JavaScript bridge (Pi, Prime, OpenCode) is installed by a verbatim
     # copy, so it keeps a third spelling of both sentences.

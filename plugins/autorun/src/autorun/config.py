@@ -914,6 +914,11 @@ CONFIG = {
     # remain alive instead of spawning an unbounded cluster of worker threads.
     "daemon_dispatch_max_concurrent_per_event": 4,
     "daemon_dispatch_timeout_cooldown_seconds": 5.0,
+    # How far past its budget a slot holder must be before "every slot is
+    # held" is reported as a stall needing a restart rather than as load.
+    # Budgets are 2-3 s; under machine load handlers run at a multiple of
+    # that and still finish, so the grace is an order of magnitude above them.
+    "daemon_dispatch_stall_grace_seconds": 30.0,
     # A --restart-daemon issued while a daemon that started this recently is
     # answering is a duplicate of the restart that produced it, so it does
     # nothing. On 2026-11-06 agents restarted the daemon twenty times in thirty

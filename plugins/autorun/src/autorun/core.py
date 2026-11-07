@@ -3157,27 +3157,42 @@ class AutorunDaemon:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.store = ThreadSafeDB()
         self._cleanup_registered = False
-        # event -> {running dispatch: when its own budget, counted from the
-        # moment it got its slot, runs out}. A dispatch past that still holds
-        # its slot until its thread ends.
-        self._active_dispatches: Dict[str, Dict[asyncio.Future, float]] = {}
+        # event -> {running dispatch: (when its own budget, counted from the
+        # moment it got its slot, runs out; its session)}. A dispatch past
+        # that still holds its slot until its thread ends.
+        self._active_dispatches: Dict[str, Dict[asyncio.Future, tuple[float, str]]] = {}
         # Keyed by (event, session): one session's slow handler backs off that
         # session only. The per-event semaphore is what bounds stuck threads.
         self._dispatch_circuit_open_until: Dict[tuple[str, str], float] = {}
         self._dispatch_semaphores: Dict[str, tuple[int, asyncio.Semaphore]] = {}
 
     def _slots_stalled(self, event: str, max_concurrent: int) -> bool:
-        """Whether every slot for ``event`` is held by a handler past its budget.
+        """Whether every slot for ``event`` is held by a handler that is stuck.
 
         Waiting cannot free such a slot, so this is a stall that needs a
         restart; anything less is load that clears by itself. The budget is
-        counted from slot acquisition: counted from arrival, every holder in
-        an ordinary queue looks overdue by the time a later request gives up.
+        counted from slot acquisition (from arrival, every holder in an
+        ordinary queue looks overdue by the time a later request gives up),
+        and a holder counts as stuck only once it is past its budget by
+        ``daemon_dispatch_stall_grace_seconds``: a loaded machine runs
+        handlers at a multiple of their budget and they still finish.
         """
         active = self._active_dispatches.get(event, {})
-        now = time.monotonic()
-        overdue = sum(1 for until in active.values() if until <= now)
+        stuck_before = time.monotonic() - float(CONFIG["daemon_dispatch_stall_grace_seconds"])
+        overdue = sum(1 for until, _session in active.values() if until <= stuck_before)
         return overdue >= max_concurrent
+
+    def _session_has_overdue_dispatch(self, event: str, session_id: str) -> bool:
+        """Whether this session already holds an ``event`` slot past its budget.
+
+        Its answer was already given up on; letting it take another slot is
+        how one hung session fills them all once its cooldown lapses.
+        """
+        now = time.monotonic()
+        return any(
+            session == session_id and until <= now
+            for until, session in self._active_dispatches.get(event, {}).values()
+        )
 
     def _note_session(self, session_key: str, cli_type: str) -> None:
         """Log each session once at INFO, remembering at most VOLATILE_MAX_ENTRIES."""
@@ -3209,11 +3224,25 @@ class AutorunDaemon:
                 event_code="daemon_dispatch_contained",
             )
 
+        def unavailable_response():
+            if not self._slots_stalled(event, max_concurrent):
+                return circuit_response()
+            logger.error(f"Every '{event}' slot is held by a handler past its deadline")
+            return daemon_failure_response(
+                event,
+                cli_type,
+                f"Every handler slot for '{event}' is held by a handler that has "
+                "run past its deadline and is not finishing",
+                event_code="daemon_dispatch_stalled",
+            )
+
         circuit_deadline = self._dispatch_circuit_open_until.get(circuit_key, 0.0)
         if time.monotonic() < circuit_deadline:
             return circuit_response()
         if circuit_deadline:
             self._dispatch_circuit_open_until.pop(circuit_key, None)
+        if self._session_has_overdue_dispatch(event, ctx.session_id):
+            return unavailable_response()
 
         semaphore_entry = self._dispatch_semaphores.get(event)
         if semaphore_entry is None or semaphore_entry[0] != max_concurrent:
@@ -3223,16 +3252,7 @@ class AutorunDaemon:
         try:
             await asyncio.wait_for(semaphore.acquire(), timeout=max(0.0, deadline - time.monotonic()))
         except asyncio.TimeoutError:
-            if self._slots_stalled(event, max_concurrent):
-                logger.error(f"Every '{event}' slot is held by a handler past its deadline")
-                return daemon_failure_response(
-                    event,
-                    cli_type,
-                    f"Every handler slot for '{event}' is held by a handler that has "
-                    "run past its deadline and is not finishing",
-                    event_code="daemon_dispatch_stalled",
-                )
-            return circuit_response()
+            return unavailable_response()
 
         circuit_deadline = self._dispatch_circuit_open_until.get(circuit_key, 0.0)
         if time.monotonic() < circuit_deadline:
@@ -3246,7 +3266,7 @@ class AutorunDaemon:
             semaphore.release()
             raise
         active = self._active_dispatches.setdefault(event, {})
-        active[dispatch] = time.monotonic() + timeout
+        active[dispatch] = (time.monotonic() + timeout, ctx.session_id)
 
         def release(completed: asyncio.Future) -> None:
             semaphore.release()

@@ -427,6 +427,22 @@ describe what changed between rc1 and rc3.
     other session's; the reset now writes only when the flag is set. Evicting
     an in-memory-only value no longer forces the session's whole state to be
     re-read unless that value hid a stored one.
+88. When every handler slot for an event was held by a handler past its 2-3 s
+    budget, the daemon told waiting sessions it had stalled and to restart it,
+    even when those handlers were finishing slowly on a loaded machine. A slot
+    now counts as stuck only after
+    `daemon_dispatch_stall_grace_seconds` (default 30) beyond its budget, and a
+    session whose earlier handler for the same event is still running past its
+    budget is answered as busy instead of taking a second slot.
+89. A hook that reached the daemon directly from `hooks/hook_entry.py`, without
+    the `autorun` client, did not send its deadline, so the daemon could run a
+    request whose hook had already given up. It now sends it.
+90. On that direct path a daemon that took a request and did not answer
+    reported "autorun CLI timed out" with no next step, and a daemon that closed
+    the connection while restarting reported a failure needing a person. The
+    first now gets the client's busy-or-stuck guidance (retry once, then
+    `autorun --restart-daemon`), the second "retry shortly"; a malformed answer
+    still says retrying will not help.
 
 ### For contributors
 

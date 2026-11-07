@@ -6,6 +6,7 @@ Tests for hooks/hook_entry.py and daemon.py bootstrap
 TDD-driven tests for hook entry point and daemon bootstrap functionality.
 """
 import json
+import time
 import io
 import builtins
 import os
@@ -302,6 +303,9 @@ class TestHookEntryExecutionPriority:
         assert forwarded["cli_type"] == "codex"
         assert forwarded["_pid"] == os.getppid()
         assert forwarded["_cwd"] == os.getcwd()
+        # The daemon skips a request whose hook already stopped waiting.
+        deadline = forwarded[hook_entry.HOOK_DEADLINE_PAYLOAD_KEY]
+        assert 0 < deadline - time.monotonic() <= hook_entry.hook_timeout_for_cli("codex")
         assert json.loads(capsys.readouterr().out)["decision"] == "block"
 
     def test_direct_daemon_unavailable_uses_existing_cli_fallback(
@@ -349,6 +353,47 @@ class TestHookEntryExecutionPriority:
         assert exc.value.code == 0
         response = json.loads(capsys.readouterr().out)
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+        # Busy or stuck: the client's own wording, so the agent gets one
+        # answer however the hook reached the daemon.
+        assert "[AR_EVENT_V1:daemon_response_timeout]" in response["reason"]
+        assert hook_entry._RESPONSE_TIMEOUT_GUIDANCE in response["reason"]
+
+    def test_daemon_closing_without_an_answer_says_retry(self, tmp_path, monkeypatch, capsys):
+        """A daemon that closes the connection unanswered is restarting or
+        exiting; the next hook reaches its replacement, so this is not a
+        failure that needs a person."""
+        hook_entry = load_hook_entry_module()
+        stage_daemon_endpoint(tmp_path)
+
+        class ClosedSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def settimeout(self, _timeout):
+                return None
+
+            def connect(self, _address):
+                return None
+
+            def sendall(self, _data):
+                return None
+
+            def makefile(self, *_args, **_kwargs):
+                return io.StringIO("")
+
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+        monkeypatch.setattr(hook_entry.socket, "socket", lambda *_args: ClosedSocket())
+        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex"})
+
+        with pytest.raises(SystemExit):
+            hook_entry.try_daemon(payload, "codex")
+
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert hook_entry._RETRY_GUIDANCE in reason
+        assert hook_entry._INTERVENTION_GUIDANCE not in reason
 
     def test_connected_daemon_invalid_response_fails_closed(self, tmp_path, monkeypatch, capsys):
         """A processed permission event is never replayed after malformed output."""

@@ -687,6 +687,7 @@ async def test_slots_held_by_handlers_past_their_deadline_report_a_stall(monkeyp
 
     timeout_seconds = 0.05
     daemon, release = _blocking_daemon(monkeypatch, timeout_seconds, slots=1)
+    monkeypatch.setitem(core.CONFIG, "daemon_dispatch_stall_grace_seconds", 0.0)
     try:
         hung = await daemon._dispatch_with_timeout(
             EventContext(session_id="hang-1", event="PreToolUse"), "codex"
@@ -762,6 +763,77 @@ async def test_a_queue_of_handlers_each_within_budget_is_never_a_stall(monkeypat
     ))
     assert not any("daemon_dispatch_stalled" in str(r) for r in results)
     await asyncio.sleep(handler_seconds * 2)  # let the running threads end
+
+
+@pytest.mark.asyncio
+async def test_handlers_that_overrun_their_budget_but_finish_are_not_a_stall(monkeypatch):
+    """Overdue is not stuck. Handlers that each take about twice their budget
+    on a loaded machine still free their slots; reporting that as a stall
+    told every waiting session to restart a daemon that was making progress."""
+    import asyncio
+    import time
+    from unittest.mock import Mock
+
+    from autorun.core import AutorunDaemon
+
+    budget = 0.1
+    handler_seconds = budget * 2.5
+    slots = 2
+
+    def dispatch(ctx):
+        time.sleep(handler_seconds)
+        return None
+
+    app = Mock()
+    app.dispatch.side_effect = dispatch
+    monkeypatch.setattr(core, "dispatch_timeout_for_event", lambda _event: budget)
+    monkeypatch.setitem(core.CONFIG, "daemon_dispatch_max_concurrent_per_event", slots)
+    daemon = AutorunDaemon(app)
+    results = await asyncio.gather(*(
+        daemon._dispatch_with_timeout(EventContext(session_id=f"slow{i}", event="PreToolUse"), "codex")
+        for i in range(slots * 3)
+    ))
+    assert not any("daemon_dispatch_stalled" in str(r) for r in results)
+    await asyncio.sleep(handler_seconds * 2)
+
+
+@pytest.mark.asyncio
+async def test_a_session_with_an_overdue_handler_does_not_take_a_second_slot(monkeypatch):
+    """One session whose handler hangs must not fill every slot by retrying
+    once its cooldown lapses; the next session still gets a slot."""
+    import asyncio
+
+    timeout_seconds = 0.05
+    daemon, release = _blocking_daemon(monkeypatch, timeout_seconds, slots=2)
+    monkeypatch.setitem(core.CONFIG, "daemon_dispatch_timeout_cooldown_seconds", 0.0)
+    try:
+        first = await daemon._dispatch_with_timeout(EventContext(session_id="hang-1", event="PreToolUse"), "codex")
+        assert "daemon_dispatch_timeout" in str(first)
+        again = await daemon._dispatch_with_timeout(EventContext(session_id="hang-1", event="PreToolUse"), "codex")
+        assert "daemon_dispatch_contained" in str(again)
+        assert daemon.app.dispatch.call_count == 1
+        other = await daemon._dispatch_with_timeout(EventContext(session_id="other", event="PreToolUse"), "codex")
+        assert other is None
+    finally:
+        release.set()
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_a_request_whose_hook_already_gave_up_is_not_dispatched(monkeypatch):
+    """The hook stops waiting at its deadline. Running the handler after that
+    spends a slot on an answer nobody reads and can apply side effects (a
+    counted allow, a task update) the agent was told did not happen."""
+    import time
+
+    daemon, release = _blocking_daemon(monkeypatch, 1.0, slots=1)
+    try:
+        late = EventContext(session_id="late", event="PreToolUse", deadline_monotonic=time.monotonic() - 0.01)
+        result = await daemon._dispatch_with_timeout(late, "codex")
+        assert "daemon_dispatch_contained" in str(result)
+        assert daemon.app.dispatch.call_count == 0
+    finally:
+        release.set()
 
 
 def test_an_unanswered_request_says_retry_once_then_restart():
