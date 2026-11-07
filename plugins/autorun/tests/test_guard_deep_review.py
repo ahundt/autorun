@@ -126,7 +126,9 @@ def _working_bash() -> str | None:
     return None
 
 
-def test_a_git_stash_suggestion_never_executes_the_users_arguments(tmp_path):
+def _stash_suggestion(tmp_path) -> str:
+    """The command the guard suggests for a `git reset --hard` whose argument
+    carries a command substitution."""
     from test_integrations import _init_git_repo
 
     repo = _init_git_repo(tmp_path / "repo")
@@ -134,9 +136,26 @@ def test_a_git_stash_suggestion_never_executes_the_users_arguments(tmp_path):
     reason = _reason("git reset --hard 'x$(touch p)'", cwd=str(repo))
     suggestion = [line for line in reason.splitlines() if "Use instead" in line]
     assert suggestion, reason
-    assert "$(" not in suggestion[0]
+    return suggestion[0].split("`")[1]
+
+
+def test_a_git_stash_suggestion_never_executes_the_users_arguments(tmp_path):
+    """Checked with the parser the guards use, so it holds with no shell
+    installed: one plain command, a fixed message, nothing of the user's."""
+    from autorun.command_detection import shell_words
+
+    command = _stash_suggestion(tmp_path)
+    assert "touch p" not in command and "$(" not in command and "`" not in command
+    words = shell_words(command)
+    assert words is not None, command
+    assert not set(words) & {";", "|", "||", "&", "&&", "(", ")", "<", ">"}, words
+    assert words[:5] == ["git", "stash", "push", "-m", "WIP: saved instead of discarding"], words
+
+
+def test_a_git_stash_suggestion_is_valid_bash(tmp_path):
+    """The same suggestion through a real shell's parser, where one runs."""
     shell = _working_bash()
     if shell is None:
         pytest.skip("no bash that runs: install Git for Windows or a WSL distribution")
-    bash = subprocess.run([shell, "-n", "-c", suggestion[0].split("`")[1]], capture_output=True)
+    bash = subprocess.run([shell, "-n", "-c", _stash_suggestion(tmp_path)], capture_output=True)
     assert bash.returncode == 0, bash.stderr
