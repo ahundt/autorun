@@ -9,6 +9,7 @@ guard cannot read as one is blocked.
 from __future__ import annotations
 
 import subprocess
+import sys
 import uuid
 
 import pytest
@@ -114,5 +115,7 @@ def test_a_git_stash_suggestion_never_executes_the_users_arguments(tmp_path):
     suggestion = [line for line in reason.splitlines() if "Use instead" in line]
     assert suggestion, reason
     assert "$(" not in suggestion[0]
+    if sys.platform == "win32":
+        return  # `bash` there is the WSL launcher, with no distribution on CI
     bash = subprocess.run(["bash", "-n", "-c", suggestion[0].split("`")[1]], capture_output=True)
     assert bash.returncode == 0, bash.stderr
