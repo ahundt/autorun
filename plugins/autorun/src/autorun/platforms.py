@@ -28,16 +28,17 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 
-def _process_home() -> Path:
-    """Return the configured process home on every supported OS.
+def process_home() -> Path:
+    """The home every harness, the daemon and the installer resolve.
 
-    ``Path.home()`` consults the account database on Windows and therefore
-    ignores a test or deployment that intentionally redirects ``HOME``.  The
-    installer treats ``HOME`` as its isolation seam, so prefer it whenever it
-    is present and fall back to the platform-native home lookup otherwise.
+    ``Path.home()``: ``$HOME`` on POSIX and ``USERPROFILE`` on Windows, where
+    Python has ignored ``HOME`` since 3.8; Node's ``os.homedir()``, which
+    Claude Code, Gemini CLI and the Pi bridge use, follows the same rule. The
+    installer preferred ``$HOME`` everywhere, so on Windows with a mapped
+    ``HOME`` it installed where no harness reads. Tests redirect both
+    variables (test_cross_platform_spec.py), so both platforms stay isolated.
     """
-    configured = os.environ.get("HOME")
-    return Path(configured) if configured else Path.home()
+    return Path.home()
 
 
 # The register(Platform(...)) declarations below provide Click/Typer-like
@@ -176,7 +177,7 @@ class HomeDirSkills(SkillRoute):
         question, and an optional one at that — a caller omitting it would
         silently get the real home instead of a type error.
         """
-        root = home if home is not None else _process_home()
+        root = home if home is not None else process_home()
         return (root / self.subdir,) if self.subdir else ()
 
     def describe(self) -> str:
@@ -547,6 +548,13 @@ class QwenHookProtocol(HookProtocol):
             "decision. Check the autorun hook/daemon logs, run "
             "`autorun --restart-daemon`, then retry."
         )
+
+    def response_for_unhandled_hook(self, event: str | None = None) -> dict:
+        """Stop keeps only decision/reason (filter below), so its no-op is {}:
+        the {"continue": true} the base class gives is what the filter strips."""
+        if event in {"Stop", "SubagentStop"}:
+            return {}
+        return HookProtocol.response_for_unhandled_hook(self, event)
 
     def filter_response_to_harness_schema(self, event: str, response: dict) -> dict | None:
         """Keep only fields accepted by Qwen's documented native schema."""
@@ -1286,6 +1294,10 @@ CLAUDE = register(
         binary="claude",
         command_invocation_hint="Type /ar to autocomplete, or /ar:<command> directly.",
         standalone_session_env_vars=("CLAUDE_SESSION_ID",),
+        # Checked after every other platform's payload signals and before the
+        # environment: Claude is the default, but its own transcript path
+        # outranks a variable inherited from a parent harness.
+        detect_path_hints=(".claude", "/claude/"),
         has_hooks=True,
         schema_type="strict",
         hook_protocol=CLAUDE_HOOKS,
@@ -1392,7 +1404,8 @@ GEMINI = register(
                 "BeforeToolSelection",
             }
         ),
-        detect_path_hints=(".gemini",),
+        # "/gemini/": a harness home moved by its environment variable.
+        detect_path_hints=(".gemini", "/gemini/"),
         harness_cli_to_autorun_events={
             "BeforeTool": "PreToolUse",
             "AfterTool": "PostToolUse",
@@ -1551,7 +1564,7 @@ QWEN = register(
         standalone_session_env_vars=("QWEN_SESSION_ID",),
         # Native event names overlap Claude and therefore cannot identify Qwen alone.
         detect_event_names=frozenset(),
-        detect_path_hints=(".qwen",),
+        detect_path_hints=(".qwen", "/qwen/"),
         harness_cli_to_autorun_events={"PreCompact": "PreCompress"},
         autorun_to_harness_cli_events={
             "PreToolUse": "PreToolUse",
@@ -1640,7 +1653,7 @@ CODEX = register(
         ),
         detect_session_keys=("CODEX_THREAD_ID", "CODEX_SESSION_ID"),
         standalone_session_env_vars=("CODEX_THREAD_ID", "CODEX_SESSION_ID"),
-        detect_path_hints=(".codex",),
+        detect_path_hints=(".codex", "/codex/"),
         has_hooks=True,
         schema_type="strict",  # same JSON schema as Claude Code
         hook_protocol=CODEX_HOOKS,
@@ -2104,6 +2117,22 @@ def get_platform(name: str) -> Platform | None:
 def hook_platforms() -> list[Platform]:
     """All platforms that support external hooks (excludes ForgeCode)."""
     return [p for p in PLATFORMS.values() if p.has_hooks]
+
+
+#: A variable naming a project directory (GEMINI_PROJECT_DIR, CODEX_PROJECT_DIR)
+#: identifies a harness only when Claude's is absent: Gemini CLI sets
+#: CLAUDE_PROJECT_DIR as a compatibility alias of its own
+#: (https://geminicli.com/docs/hooks/), and a child process inherits them, so
+#: beside it they tell harnesses apart no better than the cwd. Session ids do.
+PROJECT_DIR_ENV_SUFFIX = "_PROJECT_DIR"
+CLAUDE_PROJECT_DIR_ENV = "CLAUDE_PROJECT_DIR"
+
+
+def env_var_identifies_harness(name: str, environ) -> bool:
+    """Whether a set detection variable counts toward naming its harness."""
+    if not environ.get(name):
+        return False
+    return not (name.endswith(PROJECT_DIR_ENV_SUFFIX) and environ.get(CLAUDE_PROJECT_DIR_ENV))
 
 
 def detection_platforms() -> list[Platform]:

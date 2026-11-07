@@ -60,16 +60,7 @@ _SHADOWED = ("backup", "reference")
 _UV_MAX_DEPTH = 4
 
 
-def process_home() -> Path:
-    """Return the configured process home on every supported OS.
-
-    ``Path.home()`` consults the account database on Windows and therefore
-    ignores a test or deployment that intentionally redirects ``HOME``.  The
-    installer treats ``HOME`` as its isolation seam, so prefer it whenever it
-    is present and fall back to the platform-native home lookup otherwise.
-    """
-    configured = os.environ.get("HOME")
-    return Path(configured) if configured else Path.home()
+from ..platforms import process_home  # noqa: E402  one owner; re-exported for installer callers
 
 
 def _uv_data_dir(override_env: str, leaf: str) -> Path:

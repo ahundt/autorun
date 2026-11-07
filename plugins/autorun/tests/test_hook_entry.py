@@ -490,9 +490,7 @@ class TestHookEntryExecutionPriority:
         if cli_type == "claude":
             assert response["continue"] is True
         else:
-            # Gemini-family replies also say why, in their user-visible field.
-            response.pop("systemMessage", None)
-            assert response == expected
+            assert _without_failure_message(response, expected) == expected
 
     def test_hook_timeout_is_platform_specific(self):
         """Hook wrapper budgets must match CONFIG when autorun imports work."""
@@ -520,13 +518,15 @@ class TestHookEntryExecutionPriority:
         for cli_type, timeout in resolved.items():
             assert hook_entry.hook_timeout_for_cli(cli_type) == timeout
 
-    @pytest.mark.parametrize("cli_type", ["claude", "gemini", "qwen"])
+    @pytest.mark.parametrize("cli_type", ["claude", "gemini", "codex", "pi", "prime", "opencode"])
     def test_a_lifecycle_timeout_tells_the_user_it_timed_out(self, capsys, cli_type):
         """A timed-out Stop lets the agent go; the user must see why.
 
-        Gemini and Qwen used to get a bare {"continue": true}, the same reply
-        as a hook that ran and had nothing to say, so neither a user nor a
-        failing test could tell that autorun never decided.
+        These used to get a bare no-op, the same reply as a hook that ran and
+        had nothing to say, so neither a user nor a failing test could tell
+        that autorun never decided. Qwen's Stop keeps only decision/reason and
+        Antigravity's carries it in reason; both are covered by
+        test_wrapper_fail_open_tells_the_user_what_the_client_path_would.
         """
         hook_entry = load_hook_entry_module()
 
@@ -541,7 +541,9 @@ class TestHookEntryExecutionPriority:
 
     @pytest.mark.parametrize(
         ("event", "expected"),
-        [("Stop", {"decision": ""}), ("SubagentStop", {"decision": ""}), ("PostToolUse", {})],
+        [("Stop", {"decision": "", "reason": "TIMEOUT"}),
+         ("SubagentStop", {"decision": "", "reason": "TIMEOUT"}),
+         ("PostToolUse", {})],
     )
     def test_an_antigravity_lifecycle_timeout_is_event_native(self, capsys, event, expected):
         """fail_open_for_cli printed {} for every Antigravity event, while the
@@ -552,6 +554,9 @@ class TestHookEntryExecutionPriority:
             hook_entry.fail_after_cli_timeout("antigravity", event)
 
         assert exc.value.code == 0
+        timeout = f"{hook_entry.hook_timeout_for_cli('antigravity'):g}s"
+        message = f"[autorun] autorun CLI timed out after {timeout}"
+        expected = {k: message if v == "TIMEOUT" else v for k, v in expected.items()}
         assert json.loads(capsys.readouterr().out) == expected
 
     def test_the_stdlib_no_op_matches_the_registry_for_every_platform_and_event(self):
@@ -1187,8 +1192,8 @@ class TestTryCliRobustness:
         ("cli_type", "expected"),
         [
             ("claude", {"continue": True}),
-            ("gemini", {"continue": True, "systemMessage": "[autorun] Cannot locate plugin source"}),
-            ("qwen", {"continue": True, "systemMessage": "[autorun] Cannot locate plugin source"}),
+            ("gemini", {"continue": True}),
+            ("qwen", {"continue": True}),
             ("codex", {}),
             ("antigravity", {}),
         ],
@@ -1215,7 +1220,7 @@ class TestTryCliRobustness:
         if cli_type == "claude":
             assert response["continue"] is True
         else:
-            assert response == expected
+            assert _without_failure_message(response, expected) == expected
 
     @pytest.mark.parametrize("failure", ["ImportError", "RuntimeError"])
     def test_antigravity_fallback_failure_uses_root_deny_schema(
@@ -2275,3 +2280,85 @@ def test_the_stdlib_fail_closed_permission_request_deny_is_the_registrys(cli_typ
         reason, "PermissionRequest"
     )
     assert "daemon unavailable" in reason
+
+
+class TestFallbacksUseThePayloadHarness:
+    """Every fallback must answer in the shape of the harness that sent the
+    payload. Called without one, detection fell back to environment hints: a
+    Claude session started from inside Codex (CODEX_THREAD_ID set) got Codex's
+    deny at exit 0, which Claude ignores, so a broken install failed open."""
+
+    CLAUDE_GATE = json.dumps({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "rm x"},
+        "session_id": "s",
+        "transcript_path": "/home/u/.claude/projects/p/s.jsonl",  # as Claude sends it
+    })
+
+    def test_fallback_error_on_a_claude_gate_denies_with_exit_2(self, monkeypatch, capsys):
+        hook_entry = load_hook_entry_module()
+        monkeypatch.setenv("CODEX_THREAD_ID", "inherited-from-a-parent-codex")
+        monkeypatch.setattr(hook_entry.sys, "argv", ["hook_entry.py"])
+        monkeypatch.setattr(hook_entry.sys, "stdin", io.StringIO(self.CLAUDE_GATE))
+
+        assert hook_entry.detect_cli_type(json.loads(self.CLAUDE_GATE)) == "claude"
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.fail_after_fallback_error("Import error")
+
+        assert exc.value.code == 2
+        assert "Import error" in capsys.readouterr().err
+
+    def test_autorun_disable_answers_in_the_payload_harness_shape(self, tmp_path):
+        env = dict(os.environ, AUTORUN_DISABLE="1", CODEX_THREAD_ID="inherited",
+                   AUTORUN_HOME=str(tmp_path))
+        env.pop("CLAUDE_PLUGIN_ROOT", None)
+        result = subprocess.run(
+            [sys.executable, str(HOOK_ENTRY)],
+            input=self.CLAUDE_GATE, capture_output=True, text=True, env=env, timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        # Claude's no-op, not Codex's empty object.
+        assert json.loads(result.stdout).get("continue") is True
+
+
+def _without_failure_message(response: dict, no_op: dict) -> dict:
+    """A native no-op with the failure message, minus the message: drops
+    systemMessage, and the continue:true that carries it when the no-op has none."""
+    response = dict(response)
+    if response.pop("systemMessage", None) is not None and "continue" not in no_op:
+        response.pop("continue", None)
+    return response
+
+
+def _fail_open_cases():
+    from autorun.platforms import hook_platforms
+
+    events = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SubagentStop", "SessionEnd"]
+    for platform in hook_platforms():
+        for event in events:
+            native = platform.autorun_to_harness_cli_events.get(event, event)
+            yield pytest.param(platform.name, native, id=f"{platform.name}-{native}")
+
+
+@pytest.mark.parametrize("cli_type,native_event", list(_fail_open_cases()))
+def test_wrapper_fail_open_tells_the_user_what_the_client_path_would(cli_type, native_event, capsys):
+    """A lifecycle hook that fails open in the stdlib wrapper must still say
+    why, in a field the harness keeps. The wrapper added systemMessage only
+    for Gemini and Qwen, so Codex, Pi, Prime, OpenCode and Antigravity users
+    saw nothing on a timeout the client path would have reported, and Qwen's
+    Stop got fields its own filter strips."""
+    from autorun.client import build_daemon_failure_response
+    from autorun.core import validate_hook_response
+
+    message = "autorun CLI timed out after 5s"
+    client = validate_hook_response(
+        native_event, build_daemon_failure_response(native_event, cli_type, message), cli_type
+    )
+    hook_entry = load_hook_entry_module()
+    with pytest.raises(SystemExit):
+        hook_entry.fail_open_for_cli(message, cli_type, native_event)
+    wrapper = json.loads(capsys.readouterr().out)
+
+    assert set(wrapper) <= set(client), (wrapper, client)
+    assert (message in json.dumps(client)) == (message in json.dumps(wrapper)), (wrapper, client)

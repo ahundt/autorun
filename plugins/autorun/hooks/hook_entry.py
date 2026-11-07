@@ -158,14 +158,37 @@ _PAYLOAD_DETECTORS = (
     ("gemini", ("GEMINI_SESSION_ID", "sessionId"),
      ("AfterAgent", "AfterModel", "AfterTool", "BeforeAgent", "BeforeModel", "BeforeTool",
       "BeforeToolSelection"),
-     (".gemini",)),
-    ("qwen", ("QWEN_SESSION_ID",), (), (".qwen",)),
-    ("codex", ("CODEX_THREAD_ID", "CODEX_SESSION_ID"), (), (".codex",)),
+     (".gemini", "/gemini/")),
+    ("qwen", ("QWEN_SESSION_ID",), (), (".qwen", "/qwen/")),
+    ("codex", ("CODEX_THREAD_ID", "CODEX_SESSION_ID"), (), (".codex", "/codex/")),
     ("pi", ("PI_SESSION_ID",), (), (".pi/agent",)),
     ("prime", (), (), (".prime/agent",)),
     ("forgecode", (), (), (".forge",)),
     ("opencode", (), (), (".opencode", ".config/opencode")),
 )
+#: platforms.CLAUDE.detect_path_hints, checked after every row above.
+_CLAUDE_PATH_HINTS = (".claude", "/claude/")
+#: Each platform's detect_env_vars, same order; the rule applied to them is
+#: platforms.env_var_identifies_harness. All pinned by
+#: test_multi_platform_detection.py, by value and by behaviour.
+_ENV_DETECTORS = (
+    ("antigravity", ("ANTIGRAVITY_SESSION_ID", "ANTIGRAVITY_PROJECT_DIR", "AGY_SESSION_ID")),
+    ("gemini", ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI")),
+    ("qwen", ("QWEN_SESSION_ID", "QWEN_PROJECT_DIR", "QWEN_CODE")),
+    ("codex", ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_PROJECT_DIR")),
+    ("pi", ("PI_CODING_AGENT", "PI_SESSION_ID")),
+    ("prime", ()),
+    ("forgecode", ("FORGE_CONFIG", "_FORGE_CONVERSATION_ID")),
+    ("opencode", ("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR")),
+)
+
+
+def _env_var_identifies_harness(name: str) -> bool:
+    """Copy of platforms.env_var_identifies_harness: a *_PROJECT_DIR beside
+    CLAUDE_PROJECT_DIR (which Gemini sets as an alias) names no harness."""
+    if not os.environ.get(name):
+        return False
+    return not (name.endswith("_PROJECT_DIR") and os.environ.get("CLAUDE_PROJECT_DIR"))
 
 
 def explicit_event_name() -> str | None:
@@ -315,6 +338,11 @@ def detect_cli_type(payload: dict | None = None) -> str:
                 if value in _VALID_CLI_TYPES:
                     return value
 
+        if payload is None:
+            # A fallback called without the payload must still answer in the
+            # shape of the harness that sent it; environment hints alone can
+            # name a parent harness (CODEX_THREAD_ID under a Claude session).
+            payload = _peek_payload()
         if payload:
             explicit = payload.get("cli_type") or payload.get("source")
             if explicit in _VALID_CLI_TYPES:
@@ -329,43 +357,14 @@ def detect_cli_type(payload: dict | None = None) -> str:
                     return name
                 if any(hint in transcript_path for hint in path_hints):
                     return name
-            # Directory spellings the registry does not list, such as a harness
-            # home moved by its environment variable.
-            for hint, name in (("/codex/", "codex"), ("/qwen/", "qwen"), ("/gemini/", "gemini")):
-                if hint in transcript_path:
-                    return name
-            if ".claude" in transcript_path or "/claude/" in transcript_path:
+            if any(hint in transcript_path for hint in _CLAUDE_PATH_HINTS):
                 return "claude"
 
-        # Platform-specific environment variables. Antigravity shares the
-        # ~/.gemini root and may coexist with Gemini variables, so its own
-        # variables are checked before any gemini answer can win.
-        if (
-            os.environ.get("ANTIGRAVITY_SESSION_ID")
-            or os.environ.get("AGY_SESSION_ID")
-            or os.environ.get("ANTIGRAVITY_PROJECT_DIR")
-        ):
-            return "antigravity"
-        if os.environ.get("GEMINI_SESSION_ID") or os.environ.get("GEMINI_CLI"):
-            return "gemini"
-        if os.environ.get("QWEN_SESSION_ID") or os.environ.get("QWEN_CODE"):
-            return "qwen"
-        if (
-            os.environ.get("CODEX_SESSION_ID")
-            or os.environ.get("CODEX_THREAD_ID")
-            or os.environ.get("CODEX_PROJECT_DIR")
-        ):
-            return "codex"
-        if os.environ.get("FORGE_CONFIG") or os.environ.get("_FORGE_CONVERSATION_ID"):
-            return "forgecode"
-        if os.environ.get("OPENCODE_CONFIG") or os.environ.get("OPENCODE_CONFIG_DIR"):
-            return "opencode"
-        if os.environ.get("PI_CODING_AGENT") or os.environ.get("PI_SESSION_ID"):
-            return "pi"
-        if os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
-            return "gemini"
-        if os.environ.get("QWEN_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
-            return "qwen"
+        # Registry order: Antigravity shares the ~/.gemini root and may
+        # coexist with Gemini variables, so it is checked first.
+        for name, env_vars in _ENV_DETECTORS:
+            if any(_env_var_identifies_harness(var) for var in env_vars):
+                return name
 
         # Default to Claude (safe fallback - preserves existing behavior)
         return "claude"
@@ -474,13 +473,32 @@ def fail_open_for_cli(message: str, cli_type: str, event_name: str) -> NoReturn:
     if cli_type == "claude":
         fail_open(message)
     response = dict(_unhandled_response(cli_type, event_name) or {})
-    if message and cli_type in {"gemini", "qwen"}:
-        # systemMessage reaches the user here too. Without it a timeout reads
-        # exactly like a hook that ran and had nothing to say. Claude common
-        # fields are invalid on Antigravity's protocol and never added there.
-        response["systemMessage"] = f"[autorun] {message}"
+    # The message reaches the user in the field the harness keeps, as on the
+    # client path; without it a timeout reads exactly like a hook that ran and
+    # had nothing to say.
+    overrides = _FAIL_OPEN_MESSAGE_FIELDS.get(cli_type, {})
+    field = overrides.get(event_name, overrides.get(None, "systemMessage"))
+    text = f"[autorun] {message}"
+    if message and field == "systemMessage":
+        response.setdefault("continue", True)
+        response["systemMessage"] = text
+    elif message and field == "reason":
+        response["reason"] = text
+    elif message and field == "injectSteps":
+        response["injectSteps"] = [{"ephemeralMessage": text}]
     print(json.dumps(response))
     sys.exit(0)
+
+
+#: Where a fail-open message goes, by harness then event (None: every other
+#: event); "systemMessage" otherwise. A stdlib copy of what each protocol's
+#: filter_response_to_harness_schema keeps, pinned by test_hook_entry.py's
+#: test_wrapper_fail_open_tells_the_user_what_the_client_path_would.
+_FAIL_OPEN_MESSAGE_FIELDS = {
+    "antigravity": {"Stop": "reason", "SubagentStop": "reason",
+                    "UserPromptSubmit": "injectSteps", None: None},
+    "qwen": {"Stop": None, "SubagentStop": None},
+}
 
 
 def is_tool_gate_event(event_name: str) -> bool:
@@ -503,16 +521,21 @@ def _peek_stdin_text() -> str:
     return ""
 
 
+def _peek_payload() -> dict | None:
+    """The hook payload, read without consuming stdin, or None."""
+    try:
+        payload = json.loads(_peek_stdin_text() or "null")
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _peek_event_name(default: str = "unknown") -> str:
     """Best-effort event name extraction for fallback safety decisions."""
-    text = _peek_stdin_text()
-    if not text:
+    payload = _peek_payload()
+    if payload is None:
         return explicit_event_name() or default
-    try:
-        payload = json.loads(text)
-        return payload.get("hook_event_name") or explicit_event_name() or default
-    except (json.JSONDecodeError, TypeError, AttributeError):
-        return default
+    return payload.get("hook_event_name") or explicit_event_name() or default
 
 
 # The fail-closed reason below names the commands that repair a broken runtime.
@@ -904,6 +927,8 @@ def _unhandled_response(cli_type: str, event_name: str) -> dict | None:
             return {"decision": "allow"}
         if event_name in {"Stop", "SubagentStop"}:
             return {"decision": ""}
+        return {}
+    if cli_type == "qwen" and event_name in {"Stop", "SubagentStop"}:
         return {}
     if cli_type in {"gemini", "qwen"}:
         return {"continue": True}
@@ -1616,22 +1641,24 @@ def main() -> None:
     _tolerate_stderr_encoding()
     _read_stdin_as_utf8()
 
-    # Read before anything else, and before any autorun import: the state this
-    # exists for is "autorun cannot be imported", so a check placed after the
-    # import that fails would never run. fail_closed_tool_gate lets no command
-    # through, the repair included, so this is the human's only way out.
-    if os.environ.get("AUTORUN_DISABLE", "").strip().lower() in ("1", "true", "yes"):
-        fail_open_for_cli("", detect_cli_type(), _peek_event_name())
-
     import io
 
-    # Read stdin once — it can only be consumed once
+    # Read stdin once — it can only be consumed once — and keep a seekable
+    # copy, so every later fallback can still see which harness sent it.
     stdin_data = ""
     try:
         if not sys.stdin.isatty():
             stdin_data = sys.stdin.read()
     except EOFError:
         pass
+    sys.stdin = io.StringIO(stdin_data)
+
+    # Before any autorun import: the state this exists for is "autorun cannot
+    # be imported", so a check placed after the import that fails would never
+    # run. fail_closed_tool_gate lets no command through, the repair included,
+    # so this is the human's only way out.
+    if os.environ.get("AUTORUN_DISABLE", "").strip().lower() in ("1", "true", "yes"):
+        fail_open_for_cli("", detect_cli_type(), _peek_event_name())
 
     # Debug logging (ALWAYS enabled to diagnose hook issues)
     debug_lines = []

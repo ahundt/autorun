@@ -1447,6 +1447,7 @@ def apply_user_config(target: dict) -> dict:
 # autorun.platforms.PLATFORMS — adding a new CLI = adding one Platform()
 # definition there. No parallel maintenance here.
 from .platforms import PLATFORMS as _PLATFORMS, detection_platforms as _detection_platforms  # noqa: E402
+from .platforms import env_var_identifies_harness as _env_var_identifies_harness  # noqa: E402
 
 # Ordered detectors for all non-default CLIs. Each entry is a 5-tuple:
 #   (name, session_id_keys, event_names, path_hints, env_vars)
@@ -1507,10 +1508,15 @@ def detect_cli_type(payload: dict = None) -> str:
                 path = str(payload.get("transcript_path", ""))
                 if any(h in path for h in path_hints):
                     return name
+        # Claude is the default, but its own transcript path outranks a
+        # variable inherited from a parent harness.
+        path = str(payload.get("transcript_path", ""))
+        if any(h in path for h in _PLATFORMS["claude"].detect_path_hints):
+            return "claude"
 
-    # 6: Environment variables
+    # 6: Environment variables (see platforms.env_var_identifies_harness)
     for name, _, _, _, env_vars in _CLI_DETECTORS:
-        if env_vars and any(os.environ.get(k) for k in env_vars):
+        if any(_env_var_identifies_harness(k, os.environ) for k in env_vars):
             return name
 
     # 7: Default fallback

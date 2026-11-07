@@ -536,3 +536,89 @@ def test_hook_entry_payload_detectors_are_the_registrys():
         for name, keys, events, hints in module._PAYLOAD_DETECTORS
     ]
     assert copy == registry
+
+
+# ─── hook_entry and config detect the same harness (behavioural pin) ─────────
+_DETECTION_ENV = sorted({
+    var for p in __import__("autorun.platforms", fromlist=["x"]).PLATFORMS.values()
+    for var in p.detect_env_vars
+} | {"CLAUDE_PROJECT_DIR", "AUTORUN_CLI_TYPE"})
+
+_ENV_CASES = [
+    {},
+    {"PI_CODING_AGENT": "1", "OPENCODE_CONFIG": "x"},
+    {"PI_SESSION_ID": "s", "FORGE_CONFIG": "x"},
+    {"GEMINI_PROJECT_DIR": "/p", "CLAUDE_PROJECT_DIR": "/p"},
+    {"QWEN_PROJECT_DIR": "/p", "CLAUDE_PROJECT_DIR": "/p"},
+    {"CODEX_PROJECT_DIR": "/p", "CLAUDE_PROJECT_DIR": "/p"},
+    {"GEMINI_PROJECT_DIR": "/p"},
+    {"GEMINI_SESSION_ID": "g", "CLAUDE_PROJECT_DIR": "/p"},
+    {"CODEX_THREAD_ID": "t"},
+] + [{var: "1"} for var in _DETECTION_ENV if var not in {"CLAUDE_PROJECT_DIR", "AUTORUN_CLI_TYPE"}]
+
+_PAYLOAD_CASES = [
+    None,
+    {"hook_event_name": "PreToolUse", "transcript_path": "/home/u/.claude/projects/p/s.jsonl"},
+    {"hook_event_name": "PreToolUse", "transcript_path": "/srv/codex/sessions/s.jsonl"},
+    {"hook_event_name": "PreToolUse", "transcript_path": "/srv/qwen/tmp/s.jsonl"},
+    {"hook_event_name": "PreToolUse", "transcript_path": "/srv/gemini/tmp/s.jsonl"},
+    {"hook_event_name": "BeforeTool"},
+]
+
+
+@pytest.mark.parametrize("env", _ENV_CASES, ids=lambda e: "+".join(e) or "none")
+@pytest.mark.parametrize("payload", _PAYLOAD_CASES, ids=lambda p: (p or {}).get("transcript_path", str(p)))
+def test_hook_entry_and_config_detect_the_same_harness(monkeypatch, env, payload):
+    """hook_entry.py keeps a stdlib copy of detection for when autorun cannot
+    import; literal-presence checks let its order and rules drift (Pi after
+    OpenCode there, before it here), so the two answered differently for one
+    hook. The answer is pinned, not the source text."""
+    import importlib.util
+    import io
+    import sys as _sys
+
+    from autorun.config import detect_cli_type
+
+    path = Path(__file__).resolve().parent.parent / "hooks" / "hook_entry.py"
+    spec = importlib.util.spec_from_file_location("autorun_hook_entry_detect", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    for var in _DETECTION_ENV:
+        monkeypatch.delenv(var, raising=False)
+    for var, value in env.items():
+        monkeypatch.setenv(var, value)
+    monkeypatch.setattr(_sys, "argv", ["hook_entry.py"])
+    monkeypatch.setattr(_sys, "stdin", io.StringIO(""))
+
+    assert module.detect_cli_type(payload) == detect_cli_type(payload)
+
+
+def test_an_inherited_project_dir_does_not_override_a_claude_session(monkeypatch):
+    """Gemini sets CLAUDE_PROJECT_DIR as an alias of GEMINI_PROJECT_DIR
+    (https://geminicli.com/docs/hooks/), so a *_PROJECT_DIR beside it never
+    tells harnesses apart; only session ids do."""
+    from autorun.config import detect_cli_type
+
+    for var in _DETECTION_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/p")
+    monkeypatch.setenv("GEMINI_PROJECT_DIR", "/p")
+    claude_payload = {"hook_event_name": "PreToolUse",
+                      "transcript_path": "/home/u/.claude/projects/p/s.jsonl"}
+    assert detect_cli_type(claude_payload) == "claude"
+    assert detect_cli_type(None) == "claude"
+
+
+def test_hook_entry_detection_tables_equal_the_registry():
+    import importlib.util
+
+    from autorun.platforms import PLATFORMS, detection_platforms
+
+    path = Path(__file__).resolve().parent.parent / "hooks" / "hook_entry.py"
+    spec = importlib.util.spec_from_file_location("autorun_hook_entry_env_table", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module._ENV_DETECTORS == tuple((p.name, p.detect_env_vars) for p in detection_platforms())
+    assert module._CLAUDE_PATH_HINTS == PLATFORMS["claude"].detect_path_hints

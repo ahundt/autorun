@@ -37,7 +37,6 @@ one marker read, plus a tree hash only when the target is about to change.
 
 from __future__ import annotations
 
-import os
 from itertools import chain
 from dataclasses import dataclass, field
 from enum import Enum
@@ -79,34 +78,34 @@ class Context:
 
     marketplace_root: Path
     plugin_dirs: tuple[Path, ...] = ()
-    #: The home this run targets. It must agree with ``$HOME``, and defaults to
-    #: it. Setting this alone does *not* relocate an install: home-anchored
-    #: skill routes resolve through the process-home seam (``$HOME`` when set), so a
-    #: caller that changes only this field gets a partly-relocated result — some
-    #: paths moved, some not. Redirect ``$HOME`` and let this default.
+    #: The home this run targets. It must agree with ``process_home()``
+    #: (``$HOME`` on POSIX, ``USERPROFILE`` on Windows) and defaults to it.
+    #: Setting this alone does *not* relocate an install: home-anchored skill
+    #: routes resolve through ``process_home()``, so a caller that changes only
+    #: this field gets a partly-relocated result. Use ``redirected_home``.
     home: Path = field(default_factory=process_home)
 
     def __post_init__(self) -> None:
-        """Refuse a ``home`` that disagrees with ``$HOME``.
+        """Refuse a ``home`` that disagrees with ``process_home()``.
 
         Setting this field alone relocates *some* paths and not others: a skill
-        route anchored at ``Path.home()`` reads ``$HOME`` directly, so a caller
+        route anchored at ``Path.home()`` reads the environment directly, so a caller
         who redirects only this one gets a walk that reads a sandbox and writes
         a real home. That is not a hypothetical — it uninstalled 16 skills from
         a live machine during a self-check that looked isolated.
 
         Raising is the only safe answer. Silently correcting the field would
         hide the caller's mistaken belief, and honouring it would keep the split
-        that caused the damage. ``$HOME`` is the seam; redirect it and let this
-        default.
+        that caused the damage. ``redirected_home`` moves the seam; use it and
+        let this default.
         """
-        declared = Path(os.environ["HOME"]) if "HOME" in os.environ else None
-        if declared is not None and self.home != declared:
+        declared = process_home()
+        if self.home != declared:
             raise ValueError(
-                f"Context(home={self.home}) disagrees with $HOME={declared}. "
-                "Home-anchored routes resolve through the process-home seam, "
-                "which reads $HOME when set, so this would read one home and write another. Set the "
-                "HOME environment variable instead and leave `home` to default."
+                f"Context(home={self.home}) disagrees with the process home {declared}. "
+                "Home-anchored routes resolve through platforms.process_home() "
+                "($HOME on POSIX, USERPROFILE on Windows), so this would read one home and "
+                "write another. Set that environment variable instead and leave `home` to default."
             )
     settings: Mapping[str, object] = field(default_factory=dict)
     force: bool = False

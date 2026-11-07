@@ -498,8 +498,10 @@ def detect_update_method(
     are positive provenance.  Everything else is a Python distribution and is
     upgraded in the current interpreter (uv is only the transport when present).
     """
+    from ..platforms import process_home
+
     source = (origin or Path(__file__)).resolve()
-    base = (home or Path(os.environ.get("HOME", str(Path.home())))).resolve()
+    base = (home or process_home()).resolve()
     from ..platforms import PLATFORMS
     from . import discovery
 

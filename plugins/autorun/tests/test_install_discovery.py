@@ -337,3 +337,30 @@ def test_the_uv_fallback_ignores_a_file_outside_every_uv_tree(tmp_path, monkeypa
     monkeypatch.setenv("AUTORUN_DEV_PATH", str(tmp_path / "checkout"))
 
     assert list(discovery._from_uv_tool_search(tmp_path / "elsewhere" / "discovery.py")) == []
+
+
+def test_installer_and_runtime_resolve_one_home(monkeypatch, tmp_path):
+    """The harnesses, the daemon (Path.home()) and the installer must agree on
+    the home. On Windows Path.home() reads USERPROFILE, as Node's os.homedir()
+    does, and ignores HOME; the installer preferred $HOME, so with a mapped
+    HOME=H:\\ it wrote H:\\.claude while Claude Code read C:\\Users\\x\\.claude
+    and the install did nothing. Simulated here by a Path.home() that differs
+    from $HOME, which is that machine's state."""
+    from pathlib import Path
+
+    from autorun import platforms
+    from autorun.installer import discovery, runtime, traversal
+
+    profile = tmp_path / "profile"
+    monkeypatch.setenv("HOME", str(tmp_path / "mapped-home"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: profile))
+
+    assert discovery.process_home is platforms.process_home
+    assert platforms.process_home() == profile
+    assert traversal.Context(marketplace_root=tmp_path).home == profile  # and does not raise
+    seen = []
+    real_config_dir = discovery.config_dir
+    monkeypatch.setattr(discovery, "config_dir",
+                        lambda platform, home=None: seen.append(home) or real_config_dir(platform, home=home))
+    runtime.detect_update_method(origin=tmp_path / "x.py", available=lambda _name: False)
+    assert seen and all(home == profile.resolve() for home in seen)
