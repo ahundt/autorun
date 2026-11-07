@@ -226,7 +226,7 @@ class TestPlanCommandHandlers:
         # key nothing here ever sets and reports False either way.
         assert plugins._task_progress_state_get(
             ctx, "task_staleness_enforce_next", None
-        ) is False
+        ) in (None, False)  # not armed: unset reads as False
 
     @pytest.mark.unit
     @pytest.mark.parametrize("spelling", ("/ar:pn", "/ar:pp"))
@@ -259,7 +259,7 @@ class TestPlanCommandHandlers:
         assert ctx.plan_awaiting_execution_tasks is False
         assert plugins._task_progress_state_get(
             ctx, "task_staleness_enforce_next", None
-        ) is False
+        ) in (None, False)  # not armed: unset reads as False
         assert "update_plan` is unavailable in Codex Plan mode" in text
 
     @pytest.mark.unit

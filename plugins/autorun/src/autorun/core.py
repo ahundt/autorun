@@ -834,6 +834,9 @@ class ThreadSafeDB:
         self._volatile_max_bytes = volatile_max_bytes
         self._volatile_max_age_seconds = volatile_max_age_seconds
         self._volatile_bytes = 0
+        # Volatile keys whose value hides one storage may hold: only their
+        # eviction needs the session re-read.
+        self._shadowing: set[str] = set()
         # "Advisory, in memory" is only meaningful while something outlives one
         # hook. Without a daemon each hook is its own process, so an advisory
         # value would be discarded before anything could read it back — a
@@ -884,6 +887,34 @@ class ThreadSafeDB:
                 raise SessionBackendError(
                     f"Could not read persistent state for {key!r}: {exc}"
                 ) from exc
+
+    def get_stored(self, key: str, default=None, *, timeout: float | None = None) -> Any:
+        """Read one field from storage, not the cache, and refresh the cache.
+
+        For state that another process may change while this daemon runs: the
+        hook's in-process fallback and a daemon overlapping a restart both
+        write storage directly. Takes no cache lock while reading and no
+        storage write slot, so it costs one indexed read on SQLite.
+        """
+        from .session_manager import MISSING, get_session_manager
+
+        session_id, field = self._split_key(key)
+        try:
+            value = get_session_manager().read_field(
+                session_id, field, MISSING,
+                timeout=self._state_timeout if timeout is None else timeout,
+            )
+        except SessionStateError:
+            raise
+        except Exception as exc:
+            raise SessionBackendError(f"Could not read persistent state for {key!r}: {exc}") from exc
+        with self._lock:
+            if key not in self._volatile and session_id in self._loaded_sessions:
+                if value is MISSING:
+                    self._cache.pop(key, None)
+                else:
+                    self._cache[key] = value
+        return default if value is MISSING else value
 
     def set(self, key: str, value: Any, *, timeout: float | None = None):
         """Set value in both memory cache and persistent JSON store."""
@@ -943,7 +974,11 @@ class ThreadSafeDB:
                         if session_id not in self._loaded_sessions
                         else {}
                     )
-            except SessionStateError as exc:
+            except Exception as exc:
+                # Any failure, raw sqlite3/OSError included, as set() and get()
+                # report it. The key may also be tracked as volatile: drop that
+                # too, or hydration would keep skipping the stored value.
+                self._drop_volatile_bookkeeping(key)
                 self._cache.pop(key, None)
                 self._loaded_sessions.discard(session_id)
                 if isinstance(exc, SessionPersistenceError):
@@ -968,6 +1003,7 @@ class ThreadSafeDB:
         if isinstance(value, (list, dict, set)):
             value = copy.deepcopy(value)
         with self._lock:
+            self._note_shadowing(key)
             self._cache[key] = value
             self._track_volatile(key, value)
 
@@ -991,6 +1027,7 @@ class ThreadSafeDB:
                 current = copy.deepcopy(current)
             value = updater(current)
             cached = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+            self._note_shadowing(key)
             self._cache[key] = cached
             self._track_volatile(key, cached)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
@@ -1040,17 +1077,31 @@ class ThreadSafeDB:
         entry = self._volatile.pop(key, None)
         if entry is not None:
             self._volatile_bytes -= entry[1]
+        self._shadowing.discard(key)
+
+    def _note_shadowing(self, key: str) -> None:
+        """Record that a volatile write hides a value storage may hold.
+
+        True when a durable value is cached for the key, or when the session
+        was never read, so what storage holds is unknown.
+        """
+        session_id = self._split_key(key)[0]
+        if (key in self._cache and key not in self._volatile) or session_id not in self._loaded_sessions:
+            self._shadowing.add(key)
 
     def _drop_volatile(self, key: str) -> None:
         """Forget an advisory entry entirely.
 
-        Storage may still hold an older value for the key, which hydration
-        skipped while the advisory one was live, so the session is no longer
-        fully cached: the next read goes back to storage.
+        When the value hid a stored one (see _note_shadowing), the session is
+        no longer fully cached and the next read goes back to storage. Other
+        evictions keep the session cached: re-reading for every one turned
+        the volatile limit into a storage read per call once exceeded.
         """
+        shadowed = key in self._shadowing
         self._drop_volatile_bookkeeping(key)
         self._cache.pop(key, None)
-        self._loaded_sessions.discard(self._split_key(key)[0])
+        if shadowed:
+            self._loaded_sessions.discard(self._split_key(key)[0])
 
     def _publish_hydrated(self, session_id: str, items) -> None:
         """Cache fields read from storage, keeping any live advisory value.
@@ -1060,7 +1111,9 @@ class ThreadSafeDB:
         """
         for field, value in items:
             key = f"{session_id}:{field}"
-            if key not in self._volatile:
+            if key in self._volatile:
+                self._shadowing.add(key)
+            else:
                 self._cache[key] = value
 
     def _evict_volatile_over_limits(self) -> None:
@@ -1211,6 +1264,7 @@ class ThreadSafeDB:
                             state[field] = value
                 except Exception as e:
                     for field in fields:
+                        self._drop_volatile_bookkeeping(f"{session_id}:{field}")
                         self._cache.pop(f"{session_id}:{field}", None)
                     # The session is no longer known to be fully hydrated, so the
                     # next read must go back to storage rather than concluding a
@@ -2168,6 +2222,18 @@ class EventContext:
     def agent_transcript_path(self) -> "str | None":
         """Child-agent transcript path when the harness reports one separately."""
         return self._agent_transcript_path
+
+    def state_get_stored(self, name: str, default=None, *, session_id: str | None = None):
+        """Read a session-scoped field from storage, bypassing the daemon cache.
+
+        For the few fields another process may change while this daemon
+        runs (see ThreadSafeDB.get_stored). Other stores read normally.
+        """
+        store = object.__getattribute__(self, "_store")
+        target_session = session_id or object.__getattribute__(self, "_session_id")
+        if isinstance(store, ThreadSafeDB):
+            return store.get_stored(f"{target_session}:{name}", default)
+        return self.state_get(name, default, session_id=session_id)
 
     def state_get(self, name: str, default=None, *, session_id: str | None = None):
         """Read a session-scoped field through the shared daemon cache.

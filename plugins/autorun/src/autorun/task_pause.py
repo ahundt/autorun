@@ -156,7 +156,9 @@ def _active_pause(ctx: EventContext, *, now: float | None) -> TaskPause | None:
     ``state_update`` cost four of them per tool call and, at sixty sessions,
     pushed hook dispatch past its timeout (2026-11-06).
     """
-    stored = ctx.state_get(_STATE_KEY)
+    # From storage: a pause granted or resumed by another process (the
+    # hook's in-process fallback, a daemon overlapping a restart) must count.
+    stored = ctx.state_get_stored(_STATE_KEY)
     if stored is None:
         return None
     pause = TaskPause.from_value(stored)

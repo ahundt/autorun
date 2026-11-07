@@ -620,6 +620,20 @@ class SessionStateManager:
         with self._store.session(session_id, timeout) as s:
             yield s
 
+    def read_field(self, session_id: str, field: str, default=None,
+                   timeout: float = DEFAULT_SESSION_TIMEOUT):
+        """One stored field, read fresh. ``MISSING`` (the module sentinel)
+        when the caller passes it as ``default`` and the field is absent.
+
+        SQLite reads without the writer slot. The JSON store reloads its
+        file under its lock and, with nothing changed, writes nothing.
+        """
+        read = getattr(self._store, "read_field", None)
+        if read is not None:
+            return read(session_id, field, default, timeout=timeout)
+        with self._store.session(session_id, timeout) as state:
+            return state.get(field, default)
+
     @contextlib.contextmanager
     def shared_session_state(self, session_id: str,
                               timeout: float = SHARED_ACCESS_TIMEOUT, **_):

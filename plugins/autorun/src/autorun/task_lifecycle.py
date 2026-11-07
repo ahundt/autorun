@@ -117,6 +117,18 @@ def task_progress_state_set(ctx: EventContext, name: str, value) -> None:
     ctx.state_set(name, value, session_id=task_progress_state_session_id(ctx))
 
 
+def clear_task_staleness_enforcement(ctx: EventContext) -> None:
+    """Clear the one-shot staleness deny flag, writing only when it is set.
+
+    Many paths reset it on every tool call. An unconditional reset was a
+    durable write transaction per call, serialised behind every session's.
+    The check reads the same cached value enforce_task_staleness reads, so
+    the two never disagree about whether the flag is armed.
+    """
+    if task_progress_state_get(ctx, "task_staleness_enforce_next", False):
+        task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+
+
 def task_progress_state_update(ctx: EventContext, name: str, updater, default=None):
     return ctx.state_update_volatile(
         name,
@@ -2265,7 +2277,7 @@ class TaskLifecycle:
             ctx.task_tool_evidence,
             TASK_UPDATE_CAPABILITY_ROLES,
         ):
-            task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+            clear_task_staleness_enforcement(ctx)
             return None
 
         # Find blocking tasks. Parked and delegated work is retained and shown

@@ -1156,7 +1156,7 @@ def test_restricted_pi_family_child_never_arms_staleness(monkeypatch, cli_type, 
     assert "TASK UPDATE" not in str(result)
     assert plugins._task_progress_state_get(
         ctx, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
 
 
 @pytest.mark.parametrize(
@@ -1183,7 +1183,7 @@ def test_pi_plan_reminder_requires_create_capability(active_tools):
     # answers False whether or not the reminder armed.
     assert plugins._task_progress_state_get(
         ctx, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
 
 
 def test_pi_existing_task_reminder_requires_update_capability(monkeypatch):
@@ -1202,7 +1202,7 @@ def test_pi_existing_task_reminder_requires_update_capability(monkeypatch):
     assert "TASK UPDATE" not in str(result)
     assert plugins._task_progress_state_get(
         ctx, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
 
 
 def test_capable_child_plan_reminder_keeps_parent_cadence_unchanged():
@@ -1226,7 +1226,7 @@ def test_capable_child_plan_reminder_keeps_parent_cadence_unchanged():
 
     assert plugins._task_progress_state_get(
         parent, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
     assert plugins._task_progress_state_get(
         parent, "task_staleness_reminder_count", None
     ) == 9
@@ -1248,7 +1248,7 @@ def test_capable_child_plan_reminder_keeps_parent_cadence_unchanged():
 
     assert plugins._task_progress_state_get(
         child, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
     assert plugins._task_progress_state_get(
         parent, "task_staleness_enforce_next", None
     ) is True
@@ -1268,7 +1268,7 @@ def test_pi_no_tasks_reminder_requires_create_capability(monkeypatch):
     assert "NO TASKS EXIST" not in str(result)
     assert plugins._task_progress_state_get(
         ctx, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
 
 
 def test_primary_and_subagent_cadence_counters_are_independent(monkeypatch):
@@ -1331,7 +1331,7 @@ def test_restricted_pi_session_start_does_not_arm_immediate_task_denial():
     # set, so asserting on it would answer False no matter what ran.
     assert plugins._task_progress_state_get(
         ctx, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
 
 
 def test_capable_child_session_start_uses_agent_local_cadence_state():
@@ -1652,7 +1652,7 @@ def test_restricted_pi_family_child_is_not_denied_an_impossible_task_call(cli_ty
     )
     assert plugins._task_progress_state_get(
         ctx, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
 
 
 @pytest.mark.parametrize("cli_type", ["pi", "prime"])
@@ -1763,7 +1763,7 @@ def test_known_restricted_and_capable_agent_enforcement_is_thread_local():
     ) == 2
     assert plugins._task_progress_state_get(
         restricted, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
 
 
 def test_enforce_staleness_deny_on_third_offense():
@@ -1839,7 +1839,7 @@ def test_codex_without_tool_inventory_clears_impossible_update_plan_denial(
     assert result is None or "update_plan" not in str(result)
     assert plugins._task_progress_state_get(
         ctx, "task_staleness_enforce_next", None
-    ) is False
+    ) in (None, False)  # not armed: unset reads as False
 
 
 def test_codex_staleness_warning_mentions_update_plan():

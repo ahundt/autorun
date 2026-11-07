@@ -2099,6 +2099,7 @@ def _required_task_mutation_available(ctx: EventContext) -> bool:
 # agent-local cadence implementation rather than duplicating state-key logic.
 _task_progress_state_get = task_lifecycle.task_progress_state_get
 _task_progress_state_set = task_lifecycle.task_progress_state_set
+_clear_task_staleness_enforcement = task_lifecycle.clear_task_staleness_enforcement
 _task_progress_state_update = task_lifecycle.task_progress_state_update
 _task_progress_state_update_durable = task_lifecycle.task_progress_state_update_durable
 
@@ -2179,7 +2180,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
         if reminder:
             ctx.add_chain_notification(reminder, channel="both")
         if not can_create_tasks:
-            _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+            _clear_task_staleness_enforcement(ctx)
         ctx.add_chain_notification("Plan accepted (autorun already active)", channel="human")
         return None
 
@@ -2497,17 +2498,17 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     if task_enforcement_is_paused(ctx):
         return None
     if not _task_staleness_applies(ctx):
-        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _clear_task_staleness_enforcement(ctx)
         return None
     if not _task_progress_state_get(ctx, "task_staleness_enforce_next", False):
         return None
     if not _required_task_mutation_available(ctx):
-        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _clear_task_staleness_enforcement(ctx)
         return None
 
     # Always let Task tools through and reset all counters
     if is_task_tool(_task_cli_hint(ctx), ctx.tool_name):
-        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _clear_task_staleness_enforcement(ctx)
         _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
         ctx.plan_task_reminder_count = 0
         return None
@@ -2519,7 +2520,7 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
         return None
 
     # One-shot per threshold crossing.
-    _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+    _clear_task_staleness_enforcement(ctx)
     reminder_count = _task_progress_state_get(
         ctx,
         "task_staleness_reminder_count",
@@ -2601,7 +2602,7 @@ def _reset_task_progress_cadence(ctx: EventContext) -> None:
     """Reset into the steady cadence after genuine task/plan progress."""
     _task_progress_state_set(ctx, "tool_calls_since_task_update", 0)
     _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
-    _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+    _clear_task_staleness_enforcement(ctx)
     _task_progress_state_set(ctx, "task_staleness_last_threshold", 0)
     _task_progress_state_set(
         ctx,
@@ -2617,7 +2618,7 @@ def initialize_task_staleness_cadence(ctx: EventContext) -> None:
         return None
     _task_progress_state_set(ctx, "tool_calls_since_task_update", 0)
     _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
-    _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+    _clear_task_staleness_enforcement(ctx)
     _task_progress_state_set(ctx, "task_staleness_last_threshold", 0)
     _task_progress_state_set(
         ctx,
@@ -2638,7 +2639,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         return None
 
     if not _task_staleness_applies(ctx):
-        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _clear_task_staleness_enforcement(ctx)
         return None
 
     pause_guidance = task_pause_guidance(
@@ -2723,7 +2724,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         ctx.task_tool_evidence,
         required_roles,
     ):
-        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _clear_task_staleness_enforcement(ctx)
         return None
 
     reminder_count = _task_progress_state_update_durable(
@@ -2780,7 +2781,7 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
         ctx.task_tool_evidence,
         TASK_CREATE_CAPABILITY_ROLES,
     ):
-        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _clear_task_staleness_enforcement(ctx)
         return None
     awaiting_planning = ctx.plan_awaiting_planning_tasks
     awaiting_execution = ctx.plan_awaiting_execution_tasks
@@ -2795,7 +2796,7 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
         if awaiting_execution:
             ctx.plan_awaiting_execution_tasks = False
         ctx.plan_task_reminder_count = 0
-        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _clear_task_staleness_enforcement(ctx)
         return None
 
     # DRY helper selects message based on flags (execution priority over planning)
@@ -2848,7 +2849,7 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
     def reset_counter(*, initial_phase: bool | None = None) -> None:
         _task_progress_state_set(ctx, "tool_calls_since_task_update", 0)
         _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
-        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _clear_task_staleness_enforcement(ctx)
         _task_progress_state_set(ctx, "task_staleness_last_threshold", 0)
         if initial_phase is not None:
             _task_progress_state_set(
@@ -3367,7 +3368,7 @@ def _make_plan_handler(skill_name: str):
         )
         if not can_create_tasks:
             ctx.plan_awaiting_execution_tasks = False
-            _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+            _clear_task_staleness_enforcement(ctx)
 
         if not md_path.exists():
             return f"❌ Error: plan skill not found: {skill_name}"

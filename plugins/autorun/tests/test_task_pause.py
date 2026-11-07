@@ -727,6 +727,8 @@ def test_state_failure_enforces_tasks_normally():
             # SessionStateError other than SessionPersistenceError.
             raise SessionBackendError("state file will not parse")
 
+        state_get_stored = state_get  # the pause is read from storage directly
+
     ctx = FailingContext()
     assert not task_enforcement_is_paused(ctx)
     assert task_pause_guidance(ctx) is None

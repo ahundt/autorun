@@ -182,6 +182,109 @@ def test_a_full_disk_while_pruning_a_pause_enforces_tasks_normally(backend, monk
     assert task_enforcement_is_paused(ctx) is False
 
 
+@pytest.fixture
+def failing_storage(monkeypatch):
+    """Make the next durable transactions fail the way a full disk or a locked
+    SQLite database does: with a raw error from inside the transaction."""
+    import sqlite3
+
+    real = core.session_state
+    state = {"fail": False}
+
+    @contextlib.contextmanager
+    def maybe_failing(session_id, *args, **kwargs):
+        with real(session_id, *args, **kwargs) as stored:
+            yield stored
+            if state["fail"]:
+                raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(core, "session_state", maybe_failing)
+    return state
+
+
+def test_a_failed_save_of_a_volatile_key_leaves_the_stored_value_readable(backend, failing_storage):
+    """The failed write dropped the cached value but left the key marked
+    volatile, so hydration skipped the stored value and reads returned the
+    default for good (tool_calls_since_task_update is written both ways)."""
+    with session_manager.session_state("orph") as state:
+        state["n"] = 7
+    daemon = ThreadSafeDB()
+    daemon.update_volatile("orph:n", lambda current: (current or 0) + 1)
+    failing_storage["fail"] = True
+    with pytest.raises(session_manager.SessionStateError):
+        daemon.set("orph:n", 0)
+    failing_storage["fail"] = False
+    assert daemon.get("orph:n", "DEFAULT") == 7
+
+
+def test_a_raw_storage_error_inside_update_is_reported_as_a_state_error(backend, failing_storage):
+    """set() and get() report storage failures as state errors; update() let
+    a raw sqlite3/OSError escape and fail the whole dispatch."""
+    daemon = ThreadSafeDB()
+    failing_storage["fail"] = True
+    with pytest.raises(session_manager.SessionPersistenceError):
+        daemon.update("raw:n", lambda current: (current or 0) + 1)
+
+
+def test_evicting_a_volatile_key_that_hides_nothing_keeps_the_session_cached(backend, transactions):
+    """Only a volatile value that shadows a stored one needs a re-read after
+    it goes; dropping the cached flag for every eviction turned the volatile
+    limit into a storage read per call once the working set exceeded it."""
+    daemon = ThreadSafeDB(volatile_max_entries=1)
+    daemon.get("cliff:stored")  # hydrate
+    daemon.set_volatile("cliff:a", 1)
+    daemon.set_volatile("cliff:b", 2)  # evicts cliff:a
+    transactions.clear()
+    assert daemon.get("cliff:missing", "DEFAULT") == "DEFAULT"
+    assert transactions == []
+
+
+def test_a_steady_tool_call_takes_no_write_transaction(backend, transactions):
+    """With no task to track, PreToolUse and PostToolUse rewrote
+    task_staleness_enforce_next=False on every call: one write transaction
+    per tool call, serialised behind every other session's."""
+    from autorun import plugins  # noqa: F401  registers handlers
+    from autorun.core import app
+
+    store = ThreadSafeDB()
+
+    def call(event, i):
+        return EventContext(
+            session_id="steady", event=event, prompt="", tool_name="Bash",
+            tool_input={"command": f"ls /tmp/{i}"},
+            tool_result={"stdout": "ok"} if event == "PostToolUse" else None,
+            store=store, session_identity_authority="payload", cli_type="claude",
+            cwd="/tmp", session_transcript=[],
+        )
+
+    for event in ("PreToolUse", "PostToolUse"):
+        app.dispatch(call(event, 0))  # first call hydrates and records state
+    transactions.clear()
+    for i in range(1, 4):
+        for event in ("PreToolUse", "PostToolUse"):
+            app.dispatch(call(event, i))
+    assert transactions == []
+
+
+def test_a_pause_change_made_by_another_process_is_seen(backend):
+    """The hook's in-process fallback and an overlapping daemon write state
+    outside this daemon's cache. A pause read from the cache kept enforcement
+    off after the user resumed, for the life of the daemon."""
+    import time
+
+    from autorun.task_pause import resume_task_pause
+
+    daemon = _ctx(ThreadSafeDB(), "two-proc")
+    other_process = _ctx(ThreadSafeDB(), "two-proc")
+    assert task_enforcement_is_paused(daemon) is False  # hydrated, not paused
+
+    activate_task_pause(other_process, scope=ScopeSpec(ttl_seconds=600), reason="x", now=time.time())
+    assert task_enforcement_is_paused(daemon) is True
+
+    resume_task_pause(other_process)
+    assert task_enforcement_is_paused(daemon) is False
+
+
 def test_daemon_startup_builds_the_bash_parser_before_serving(monkeypatch):
     """The first Bash check must not pay the parser build inside its budget.
 
