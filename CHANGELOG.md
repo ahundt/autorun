@@ -583,6 +583,11 @@ describe what changed between rc1 and rc3.
     patterns and a `when` can now block more often, never less.
     `pdf_to_txt`'s unused `remove_empty` parameter is gone and its options
     after `resume` are keyword-only.
+7. Antigravity's PascalCase tool-argument names moved from a
+   `cli_type == "antigravity"` branch in `core.normalize_hook_payload` to
+   `Platform.tool_input_aliases`. `test_bridge_timeout_order.py` pins the
+   JavaScript bridge's 5 s timer above the hook wrapper and daemon-response
+   timeouts in `CONFIG` for Pi, Prime and OpenCode.
 
 ## [1.0.0rc3] - 2026-10-06
 

@@ -609,19 +609,12 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         or {}
     )
     tool_input = dict(raw_tool_input) if isinstance(raw_tool_input, dict) else {}
-    if cli_type == "antigravity":
-        # Antigravity's documented arguments are PascalCase. Preserve them for
-        # diagnostics while adding the canonical aliases existing policies use.
-        for native, canonical in (
-            ("CommandLine", "command"),
-            ("TargetFile", "file_path"),
-            ("CodeContent", "content"),
-            ("ReplacementContent", "new_string"),
-            ("TargetContent", "old_string"),
-        ):
-            value = tool_input.get(native)
-            if canonical not in tool_input and value is not None:
-                tool_input[canonical] = value
+    # A harness's own argument names (Antigravity's are PascalCase) stay for
+    # diagnostics; the canonical names existing policies read are added.
+    for native, canonical in platform_for(cli_type).tool_input_aliases.items():
+        value = tool_input.get(native)
+        if canonical not in tool_input and value is not None:
+            tool_input[canonical] = value
 
     transcript_path = payload.get("transcript_path") or payload.get("transcriptPath")
     workspace_paths = payload.get("workspacePaths")

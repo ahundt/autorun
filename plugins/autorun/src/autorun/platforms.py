@@ -1075,6 +1075,9 @@ class Platform:
     # SubagentStop (https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/hooks.md)
     # and the template, written for Gemini CLI, has no such event.
     cloned_hook_events: Mapping[str, str] = field(default_factory=dict)
+    # Tool-argument names a harness uses in place of the canonical ones
+    # policies read (native -> canonical). Antigravity's are PascalCase.
+    tool_input_aliases: Mapping[str, str] = field(default_factory=dict)
 
     # === Bug workaround applicability ===
     has_exit2_workaround: bool = False  # Claude https://github.com/anthropics/claude-code/issues/4669
@@ -1533,6 +1536,13 @@ ANTIGRAVITY = register(
     Platform(
         name="antigravity",
         windows_hook_shell="powershell",  # [Inference] built from Gemini CLI's hook runner
+        tool_input_aliases={
+            "CommandLine": "command",
+            "TargetFile": "file_path",
+            "CodeContent": "content",
+            "ReplacementContent": "new_string",
+            "TargetContent": "old_string",
+        },
         display_name="Google Antigravity",
         binary="agy",
         detect_env_vars=(
