@@ -8,8 +8,9 @@ guard cannot read as one is blocked.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
-import sys
+from pathlib import Path
 import uuid
 
 import pytest
@@ -106,6 +107,25 @@ def test_a_bare_home_operand_stays_expandable():
     assert "trash '~'" not in _reason("rm -rf ~")
 
 
+def _working_bash() -> str | None:
+    """The first bash that runs: PATH's, then Git for Windows' bundled one.
+
+    On Windows PATH's `bash` is usually the WSL launcher, which exits 1 when
+    no distribution is installed (GitHub's runners); Git's bash is real.
+    """
+    candidates = [shutil.which("bash")]
+    git = shutil.which("git")
+    if git:
+        candidates.append(str(Path(git).resolve().parents[1] / "bin" / "bash.exe"))
+    for candidate in filter(None, candidates):
+        try:
+            if subprocess.run([candidate, "-c", "exit 0"], capture_output=True, timeout=30).returncode == 0:
+                return candidate
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return None
+
+
 def test_a_git_stash_suggestion_never_executes_the_users_arguments(tmp_path):
     from test_integrations import _init_git_repo
 
@@ -115,7 +135,8 @@ def test_a_git_stash_suggestion_never_executes_the_users_arguments(tmp_path):
     suggestion = [line for line in reason.splitlines() if "Use instead" in line]
     assert suggestion, reason
     assert "$(" not in suggestion[0]
-    if sys.platform == "win32":
-        return  # `bash` there is the WSL launcher, with no distribution on CI
-    bash = subprocess.run(["bash", "-n", "-c", suggestion[0].split("`")[1]], capture_output=True)
+    shell = _working_bash()
+    if shell is None:
+        pytest.skip("no bash that runs: install Git for Windows or a WSL distribution")
+    bash = subprocess.run([shell, "-n", "-c", suggestion[0].split("`")[1]], capture_output=True)
     assert bash.returncode == 0, bash.stderr
