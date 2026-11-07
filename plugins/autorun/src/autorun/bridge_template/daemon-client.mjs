@@ -5,6 +5,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 
 const PROTOCOL_VERSION = 1;
@@ -22,7 +23,11 @@ function daemonTarget(socketPath, portFile) {
   try {
     const port = Number(readFileSync(portFile, "utf8").trim());
     if (Number.isInteger(port) && port > 0 && port <= 65535) {
-      return { host: "127.0.0.1", port };
+      // Loopback reaches every local process, so the daemon serves only a
+      // client that first sends the token it published beside the port
+      // (= ipc.connection_preamble(); test_ipc_tcp_auth.py).
+      const token = readFileSync(join(dirname(portFile), "daemon.token"), "utf8").trim();
+      return { host: "127.0.0.1", port, preamble: `${token}\n` };
     }
   } catch {
     // No valid loopback port file.
@@ -137,7 +142,7 @@ export function createDaemonBridge({
       socket.setEncoding("utf8");
       socket.on("connect", () => {
         connected = true;
-        socket.write(frame);
+        socket.write((target.preamble ?? "") + frame);
       });
       socket.on("data", (chunk) => {
         text += chunk;

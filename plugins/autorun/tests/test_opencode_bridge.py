@@ -214,8 +214,13 @@ class TestDaemonSocketFrames:
         thread.start()
         return frames, thread
 
+    _TCP_TOKEN = "stub-token"
+
     def _serve_tcp(self, replies, connections=2):
-        """The same stub daemon on loopback, which is how Windows listens."""
+        """The same stub daemon on loopback, which is how Windows listens.
+
+        Like ipc.start_server it serves a connection only when its first line
+        is the token published beside the port file."""
         frames = []
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -232,14 +237,15 @@ class TestDaemonSocketFrames:
                     break
                 with conn:
                     data = b""
-                    while not data.endswith(b"\n"):
+                    while data.count(b"\n") < 2:
                         chunk = conn.recv(4096)
                         if not chunk:
                             break
                         data += chunk
-                    if not data:
+                    token, _, request = data.decode("utf-8").partition("\n")
+                    if token != self._TCP_TOKEN or not request:
                         continue
-                    frame = json.loads(data.decode("utf-8"))
+                    frame = json.loads(request)
                     frames.append(frame)
                     reply = replies.get(frame.get("hook_event_name"), {})
                     conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
@@ -271,6 +277,7 @@ class TestDaemonSocketFrames:
         )
         port_file = tmp_path / "daemon.port"
         port_file.write_text(str(port), encoding="utf-8")
+        (tmp_path / "daemon.token").write_text(self._TCP_TOKEN, encoding="utf-8")
 
         result = _run_shim(
             tmp_path,

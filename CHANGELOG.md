@@ -509,6 +509,14 @@ describe what changed between rc1 and rc3.
      so a path with characters outside it, such as a user name with `ā`,
      came back garbled or stopped the background dependency install. Every
      text file and child process is now read as UTF-8.
+102. On Windows, where the daemon listens on `127.0.0.1` because Python there
+     has no Unix sockets, any local process, including another user's,
+     could send it requests such as an `/ar:ok` grant. The daemon now writes
+     a random token to `daemon.token` beside `daemon.port` at each start and
+     serves only connections that send it first; the hook wrapper, the
+     autorun client and the Pi, Prime and OpenCode bridges all send it. On
+     macOS and Linux the Unix socket in the owner-only `~/.autorun` is
+     unchanged.
 
 ### For contributors
 

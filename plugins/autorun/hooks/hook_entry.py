@@ -879,8 +879,12 @@ def _daemon_port_path() -> Path:
     return _autorun_home() / "daemon.port"
 
 
-def _daemon_endpoint() -> "tuple[int, object] | None":
-    """Return (family, address) for a live daemon, or None if there is none.
+def _daemon_endpoint() -> "tuple[int, object, bytes] | None":
+    """Return (family, address, preamble) for a live daemon, or None.
+
+    The preamble is ipc.connection_preamble(): nothing on a Unix socket, the
+    token line ipc.start_server published on loopback, which every local
+    process could otherwise reach (test_ipc_tcp_auth.py).
 
     CPython does not expose socket.AF_UNIX on Windows
     (https://github.com/python/cpython/issues/77589), so the daemon listens on
@@ -893,13 +897,14 @@ def _daemon_endpoint() -> "tuple[int, object] | None":
         socket_path = _daemon_socket_path()
         if not socket_path.exists():
             return None
-        return socket.AF_UNIX, str(socket_path)
+        return socket.AF_UNIX, str(socket_path), b""
 
     try:
         port = int(_daemon_port_path().read_text(encoding="utf-8").strip())
+        token = (_autorun_home() / "daemon.token").read_text(encoding="utf-8").strip()
     except (OSError, ValueError):
         return None
-    return socket.AF_INET, ("127.0.0.1", port)
+    return socket.AF_INET, ("127.0.0.1", port), token.encode("ascii") + b"\n"
 
 
 def _can_use_direct_daemon(autorun_bin: Path | None) -> bool:
@@ -978,7 +983,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     endpoint = _daemon_endpoint()
     if endpoint is None:
         return False, 0
-    family, address = endpoint
+    family, address, preamble = endpoint
 
     try:
         payload = json.loads(stdin_data or "{}")
@@ -1004,7 +1009,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
             daemon_socket.settimeout(timeout)
             daemon_socket.connect(address)
             connected = True
-            daemon_socket.sendall(json.dumps(payload).encode("utf-8") + b"\n")
+            daemon_socket.sendall(preamble + json.dumps(payload).encode("utf-8") + b"\n")
             with daemon_socket.makefile("r", encoding="utf-8") as response_stream:
                 response_line = response_stream.readline()
         if not response_line:

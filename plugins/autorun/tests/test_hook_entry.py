@@ -44,7 +44,11 @@ def stage_daemon_endpoint(tmp_path: Path):
         unix_socket.touch()
         return str(unix_socket)
     (tmp_path / "daemon.port").write_text("49999", encoding="utf-8")
+    (tmp_path / "daemon.token").write_text(STAGED_TOKEN, encoding="utf-8")
     return ("127.0.0.1", 49999)
+
+
+STAGED_TOKEN = "staged-token"
 
 
 def write_fake_cli(
@@ -299,7 +303,10 @@ class TestHookEntryExecutionPriority:
         handled, exit_code = hook_entry.try_daemon(payload, "codex")
 
         assert handled is True and exit_code == 0
-        forwarded = json.loads(bytes(sent).decode())
+        *preamble, request = bytes(sent).decode().splitlines()
+        # Loopback carries the daemon's token first; a Unix socket nothing.
+        assert preamble == ([] if hasattr(socket, "AF_UNIX") else [STAGED_TOKEN])
+        forwarded = json.loads(request)
         assert forwarded["cli_type"] == "codex"
         assert forwarded["_pid"] == os.getppid()
         assert forwarded["_cwd"] == os.getcwd()

@@ -25,7 +25,9 @@ Usage:
 """
 
 import asyncio
+import hmac
 import os
+import secrets
 import socket
 import subprocess
 from pathlib import Path
@@ -52,6 +54,10 @@ def ensure_config_dir():
 
 AUTORUN_SOCKET_PATH = AUTORUN_CONFIG_DIR / "daemon.sock"
 AUTORUN_PORT_FILE = AUTORUN_CONFIG_DIR / "daemon.port"
+# The loopback listener's credential. A Unix socket in the 0700 config
+# directory reaches only its owner; 127.0.0.1 reaches every local process, so
+# a TCP client proves it can read this owner-only file before it is served.
+AUTORUN_TOKEN_FILE = AUTORUN_CONFIG_DIR / "daemon.token"
 AUTORUN_LOCK_PATH = AUTORUN_CONFIG_DIR / "daemon.lock"
 AUTORUN_LOG_FILE = AUTORUN_CONFIG_DIR / "daemon.log"
 
@@ -72,6 +78,12 @@ PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
 # Backward-compatible aliases (used internally by ipc functions below)
 SOCKET_PATH = AUTORUN_SOCKET_PATH
 PORT_FILE = AUTORUN_PORT_FILE
+TOKEN_FILE = AUTORUN_TOKEN_FILE
+
+#: Random bytes in a token (hex-encoded on disk and on the wire).
+TOKEN_BYTES = 32
+#: How long a TCP client has to send its token line before it is dropped.
+TOKEN_READ_TIMEOUT_SECONDS = 5.0
 
 
 def process_start_units(pid: int) -> int:
@@ -188,8 +200,19 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
         # hook belonging to it fell through to a CLI waiting for a daemon that
         # could not start. Clients read the port from this file and always
         # did, so nothing needed the value to be predictable.
+        # The token is published before the port: a client that finds the
+        # port can always find the token that goes with it.
+        # atomic_write_text stages with mkstemp (owner-only, 0600) but keeps an
+        # existing file's mode, so an earlier token is removed first.
+        token = secrets.token_hex(TOKEN_BYTES)
+        TOKEN_FILE.unlink(missing_ok=True)
+        atomic_write_text(TOKEN_FILE, token)
         server = await asyncio.start_server(
-            client_handler, "127.0.0.1", 0, limit=limit, backlog=LISTEN_BACKLOG
+            _require_token(client_handler, token.encode("ascii")),
+            "127.0.0.1",
+            0,
+            limit=limit,
+            backlog=LISTEN_BACKLOG,
         )
         port = server.sockets[0].getsockname()[1]
         # Publish only a complete port value. If publication fails, do not
@@ -201,6 +224,34 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
             await server.wait_closed()
             raise
         return server
+
+
+def _require_token(client_handler, token: bytes):
+    """Serve a TCP connection only after its first line equals ``token``."""
+
+    async def authenticated(reader, writer):
+        try:
+            line = await asyncio.wait_for(reader.readline(), TOKEN_READ_TIMEOUT_SECONDS)
+        except (asyncio.TimeoutError, TimeoutError, ConnectionError, ValueError):
+            line = b""
+        # A connect-only liveness probe sends nothing and lands here too.
+        if not hmac.compare_digest(line.strip(), token):
+            writer.close()
+            return
+        await client_handler(reader, writer)
+
+    return authenticated
+
+
+def connection_preamble() -> bytes:
+    """What a client sends before its request: the token line on TCP, else nothing.
+
+    Raises:
+        FileNotFoundError: the TCP daemon has not published a token.
+    """
+    if HAS_UNIX_SOCKETS:
+        return b""
+    return TOKEN_FILE.read_text(encoding="utf-8").strip().encode("ascii") + b"\n"
 
 
 async def connect(*, limit: int = 2**16, timeout: float = 5.0):
@@ -224,7 +275,10 @@ async def connect(*, limit: int = 2**16, timeout: float = 5.0):
         )
     else:
         port = _read_port()
-        return await asyncio.open_connection("127.0.0.1", port, limit=limit)
+        preamble = connection_preamble()
+        reader, writer = await asyncio.open_connection("127.0.0.1", port, limit=limit)
+        writer.write(preamble)
+        return reader, writer
 
 
 def is_responding() -> bool:
@@ -272,7 +326,11 @@ def answers_round_trip(timeout: float | None = None) -> bool:
         with socket.socket(family, socket.SOCK_STREAM) as s:
             s.settimeout(timeout)
             s.connect(address)
-            s.sendall(json.dumps({ROUND_TRIP_PROBE_KEY: True}).encode() + b"\n")
+            s.sendall(
+                connection_preamble()
+                + json.dumps({ROUND_TRIP_PROBE_KEY: True}).encode()
+                + b"\n"
+            )
             reply = s.makefile("rb").readline()
         return json.loads(reply or b"null") == {ROUND_TRIP_PROBE_KEY: True}
     except (OSError, ValueError):
@@ -315,11 +373,11 @@ def cleanup_socket():
         except OSError:
             pass
     else:
-        try:
-            if PORT_FILE.exists():
-                PORT_FILE.unlink()
-        except OSError:
-            pass
+        for path in (PORT_FILE, TOKEN_FILE):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _read_port() -> int:
