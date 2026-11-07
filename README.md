@@ -3,9 +3,9 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-autorun adds hooks to AI coding agents (Claude Code, Codex, Qwen Code, Pi, and
-five more) that keep them working until a task is verified, stop destructive
-shell commands before they run, and limit file creation to the policy you set.
+An AI coding agent left alone stops mid-task, calls a first draft done, and runs commands you would never approve. autorun adds hooks that send it back to work and block those commands.
+
+It works with Claude Code, Codex, Qwen Code, Pi and five more agents, from one install.
 
 ## Why autorun
 
@@ -42,9 +42,9 @@ Start a new agent session (agents read hooks when a session starts), then:
 Codex hides slash commands it does not know, so type `ar:st` there. Every
 agent's spelling is in [Command spelling](#command-spelling).
 
-Expect the agent to be steered away from shell commands such as `rm`, `cat`,
-`grep` and `sed -i` toward `trash` and its own tools: the
-[guards](#command-guards) list all 50, and `/ar:ok <command>` allows one run.
+From now on autorun blocks commands such as `rm`, `sed -i`, and `cat` or `grep`
+outside a pipe, and names the safer command or tool for each.
+[Command guards](#command-guards) lists all 50; `/ar:ok <command>` allows one run.
 
 **Upgrade** with the same install plus `--force`:
 
@@ -53,8 +53,8 @@ uv tool install --force autorun-ai && autorun --install
 ```
 
 Write `'autorun-ai[pdf]'` instead if you installed the PDF backends, or the
-upgrade removes them. Restart open agent sessions afterwards: each reads its
-hooks when it starts. If you installed only through the Claude Code
+upgrade removes them. Then restart open agent sessions, since each reads its
+hooks only when it starts. If you installed only through the Claude Code
 marketplace, run `claude plugin marketplace update autorun && claude plugin
 update ar@autorun` instead. Each release's notes give the version-pinned
 command.
@@ -83,14 +83,9 @@ command.
 
 ### Supported agents
 
-`autorun --install` installs into every agent it finds; a flag below limits it
-to one. It writes hooks, commands and skills, and turns on each agent's task
-tool in its settings (Claude's `~/.claude/settings.json`, Codex's
-`~/.codex/config.toml`, Qwen's `~/.qwen/settings.json`). The hooks talk to a
-background autorun daemon that starts with the first hook and serves every
-session. Preview the writes with `autorun --install-dry-run`, and check an
-install with `autorun --status`. Config keys named below go in
-`~/.autorun/autorun.config.json`.
+`autorun --install` sets up every agent it finds, or one agent with a flag below. It writes hooks, commands and skills, and turns on each agent's task tool in its settings (Claude's `~/.claude/settings.json`, Codex's `~/.codex/config.toml`, Qwen's `~/.qwen/settings.json`). The hooks talk to a background autorun daemon, which starts with the first hook and serves every session.
+
+Preview the writes with `autorun --install-dry-run` and check them with `autorun --status`. Config keys named below go in `~/.autorun/autorun.config.json`.
 
 | Agent | How autorun connects | Install only this one | Type commands as |
 |---|---|---|---|
@@ -138,15 +133,13 @@ Changing autorun itself? Development installs run in a sandbox: see
 
 ### Codex CLI
 
-autorun writes Codex hooks to `~/.codex/hooks.json` and publishes its skills as
-the local plugin `ar@personal`: plugin `ar` from the generated marketplace
-`personal` in `~/.agents/plugins/marketplace.json`, with its files in
-`~/plugins/ar`, where Codex keeps personal plugins. Set the
-`codex_plugin_source_dir` config key to `~/.codex/plugins` to follow Codex's
-documentation instead. If Codex asks, run `/hooks` once so it trusts the hook
-hashes.
+Codex gets hooks in `~/.codex/hooks.json` and a local plugin, `ar@personal`,
+with its files in `~/plugins/ar` (where Codex keeps personal plugins) and its
+entry in `~/.agents/plugins/marketplace.json`. To use the folder Codex's
+documentation names instead, set the `codex_plugin_source_dir` config key to
+`~/.codex/plugins`. If Codex asks, run `/hooks` once so it trusts the hooks.
 
-Codex loads a hook from every source that declares it, so choose one source:
+Codex would run the same hook twice if two places declare it, so pick one:
 
 ```bash
 autorun --install --codex --codex-hook-source user      # default: ~/.codex/hooks.json only
@@ -174,24 +167,25 @@ pi
 ```
 
 The extension in `~/.pi/agent/extensions/ar/` (`~/.prime/agent/extensions/ar/`
-for Prime Agent) sends tool calls, prompts, results, session events and
-`agent_settled` to the same daemon the other agents use. A denied tool call
-returns Pi's `{ block: true, reason }`. When autorun refuses to let the agent
-settle, it starts the next turn with a hidden `autorun-continuation` message,
-so the continuation is never shown as your text. Pi also accepts `ar:st`,
-`ar-st` and `/ar:st`, and loads skills with `/skill:<name>`.
+for Prime Agent) passes Pi's tool calls, prompts, results and session events to
+the same autorun daemon the other agents use. A blocked tool call comes back as
+Pi's `{ block: true, reason }`. When autorun keeps the agent from finishing
+(`agent_settled`), it starts the next turn with a hidden
+`autorun-continuation` message, so the transcript never shows it as something
+you typed. Pi also accepts `ar:st`, `ar-st` and `/ar:st`, and loads skills with
+`/skill:<name>`.
 
 Pi gets `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet` tools backed by
 the same task tracking as Claude. `TaskUpdate` takes one `taskId` or an atomic
 `taskUpdates` array, including `addBlockedBy` and `addBlocks`;
 `status="deleted"` deletes.
 
-The guard sees model tool calls only. A `!` shell line you type is not checked,
-and neither is a child `pi --no-extensions`. `pi-subagents` passes
-`--no-extensions` when an agent definition lists its own `extensions:` (or a
-capability ceiling denies extensions), so add
-`~/.pi/agent/extensions/ar/index.ts` (or the `~/.prime` path) to that list.
-Agents without an `extensions:` key inherit the guard.
+autorun checks the tool calls the model makes. It does not check a `!` shell
+line you type, or a child `pi --no-extensions`. `pi-subagents` starts a child
+that way when an agent definition lists its own `extensions:` (or a capability
+ceiling denies extensions), so add `~/.pi/agent/extensions/ar/index.ts` (or the
+`~/.prime` path) to that list. Agents without an `extensions:` key inherit the
+guard.
 
 ### Qwen Code
 
@@ -206,9 +200,10 @@ sessions get Qwen's response format.
 
 ### Legacy Gemini CLI
 
-Standalone Gemini CLI is supported only when asked for. It needs v0.28.0 or
-later with hooks enabled in `~/.gemini/settings.json`; the settings and checks
-are in [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md#gemini-cli-checklist).
+autorun installs into the standalone Gemini CLI only when you pass `--gemini`.
+It needs v0.28.0 or later with hooks enabled in `~/.gemini/settings.json`; the
+settings and checks are in
+[TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md#gemini-cli-checklist).
 
 ```bash
 autorun --install --gemini --force
@@ -217,8 +212,8 @@ autorun --status --gemini      # lists ar@1.0.0
 
 ### Skills
 
-An install also publishes skills: instructions the agent loads when a task
-matches. Common ones:
+Skills are instructions an agent loads when your request matches one. An install
+adds these, among others:
 
 | Skill | Use it to |
 |-------|---------|
@@ -236,9 +231,9 @@ in Pi. A skill is not an `/ar:*` command.
 
 #### Choosing where skills are installed
 
-Several agents read both the shared `~/.agents/skills` folder and their own
-skills folder, and one copy in each lists the skill twice. `--skill-placement`
-chooses the route:
+Some agents read two skills folders, the shared `~/.agents/skills` and their
+own. A skill copied into both shows up twice. `--skill-placement` picks one
+route per agent:
 
 ```bash
 autorun --install                                     # auto (default)
@@ -259,9 +254,8 @@ the flag repeats. Valid harness names are `antigravity`, `claude`, `codex`,
 or mode is rejected before anything is written, with the valid list.
 
 `AUTORUN_SKILL_PLACEMENT` takes the same values, space- or comma-separated
-(`AUTORUN_SKILL_PLACEMENT="native codex=both"`).
-The flag wins over the variable; a bad variable value is ignored, while a bad
-flag stops the install.
+(`AUTORUN_SKILL_PLACEMENT="native codex=both"`). If both are set, the flag is
+used. A bad variable value is ignored, while a bad flag stops the install.
 `autorun --install-dry-run` prints the resolved mode, where it came from, and
 each agent's target folders.
 
@@ -281,14 +275,9 @@ autorun --install --claude --claude-agents-skills copy  # copy instead (Windows 
 autorun --install --claude --claude-agents-skills none  # default: leave ~/.claude/skills alone
 ```
 
-`AUTORUN_CLAUDE_AGENTS_SKILLS` sets the mode for unattended installs; the flag
-wins. The bridge skips skills a plugin already provides (Claude Code would list
-them twice), never replaces an existing directory, and links each skill folder
-separately, because a symlinked `skills/` folder stops Claude Code loading user
-skills ([anthropics/claude-code#38051](https://github.com/anthropics/claude-code/issues/38051)).
-Restart Claude Code to see new skills. `autorun --uninstall` removes only links it
-created. The `shared_agents_dir` and `shared_agents_skills_subdir` config keys
-move the shared folder for both install and uninstall.
+`AUTORUN_CLAUDE_AGENTS_SKILLS` sets the mode for unattended installs, and the flag overrides it. The bridge skips skills a plugin already provides (Claude Code would list them twice) and never replaces an existing directory. It links each skill folder separately, because a symlinked `skills/` folder stops Claude Code loading user skills ([anthropics/claude-code#38051](https://github.com/anthropics/claude-code/issues/38051)); if `~/.claude/skills` is itself a symlink, the bridge writes nothing into it and does not say so. Restart Claude Code to see new skills.
+
+`autorun --uninstall` removes only links it created. The `shared_agents_dir` and `shared_agents_skills_subdir` config keys move the shared folder for both install and uninstall.
 
 ## Commands
 
@@ -309,14 +298,9 @@ spellings they pass to autorun:
 | `/ar-st` | never arrives | runs | never arrives | runs, for the installed files named below |
 | `ar:task-status`, `ar:task-ignore`, under any prefix above | runs as `ar:task status` and `ar:task ignore` | same | same | never arrives |
 
-"Never arrives" means the agent keeps the text and answers itself: Codex keeps
-its slash menu closed, Claude Code and Qwen Code print their own "Unknown
-skill" and "Unknown command" errors, and ForgeCode sends autorun no events. On
-ForgeCode and OpenCode the installed files `ar-go`, `ar-st`, `ar-allow`,
-`ar-find`, `ar-commit` and `ar-ph` are the commands. autorun's replies use each
-agent's spelling: `/ar:` on Claude Code, Gemini CLI, Qwen Code and Antigravity, `/ar ` on Pi,
-`ar:` on Codex, and `/ar-` on ForgeCode and OpenCode. Examples below use the
-Claude spelling.
+"Never arrives" means the agent handles the text itself and it never reaches autorun. Codex keeps its slash menu closed; Claude Code and Qwen Code answer with their own "Unknown skill" or "Unknown command" error; ForgeCode sends autorun no events. On ForgeCode and OpenCode the installed files `ar-go`, `ar-st`, `ar-allow`, `ar-find`, `ar-commit` and `ar-ph` are the commands.
+
+autorun's replies use each agent's spelling: `/ar:` on Claude Code, Gemini CLI, Qwen Code and Antigravity, `/ar ` on Pi, `ar:` on Codex, and `/ar-` on ForgeCode and OpenCode. Examples below use the Claude spelling.
 
 ### File policies
 
@@ -378,12 +362,12 @@ and `/.../` is read as a regular expression when it contains metacharacters.
 The first match in this order decides:
 
 1. allows: `/ar:ok`, `/ar:globalok`
-2. session blocks (a deny beats a warning)
+2. session blocks (a deny overrides a warning)
 3. global blocks
 4. rule files: `.claude/autorun.*.local.md` in the working directory and each
    parent up to the repository root (outside a repository, the working
    directory only), nearest first, then `~/.claude/autorun.*.local.md`; for the
-   same pattern the nearest file wins
+   same pattern the nearest file's rule applies
 5. the built-in guards above (`DEFAULT_INTEGRATIONS` in
    `plugins/autorun/src/autorun/config.py`)
 
@@ -400,10 +384,10 @@ The agent must print each stage's marker before moving on:
 3. **Verify** against the requirements, then print
    `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY`.
 
-Until it prints the marker, each attempt to stop is answered with the next
-instruction. After 3 rechecks (`max_recheck_count`) the instruction becomes a
-direct demand to finish verification. Approving a plan in Claude Code's plan
-mode starts the same run.
+Each time the agent tries to stop before printing the marker, autorun sends it
+the next instruction. After 3 rechecks (`max_recheck_count`) the instruction
+becomes a direct demand to finish verification. Approving a plan in Claude
+Code's plan mode starts the same run.
 
 | Command | Effect |
 |---|---|
@@ -419,7 +403,7 @@ mode starts the same run.
 | `/ar:pn`, `/ar:plannew` | write a plan with checkbox steps, dependencies, and how each step is verified |
 | `/ar:pr`, `/ar:planrefine` | critique the plan against the code and fill its gaps |
 | `/ar:pu`, `/ar:planupdate` | fold new requirements into the plan |
-| `/ar:pp`, `/ar:planprocess` | carry the plan out, reviewing after each step |
+| `/ar:pp`, `/ar:planprocess` | carry the plan out in a three-stage run, reviewing after each step |
 
 ```text
 /ar:plannew Design a REST API with authentication and tests
@@ -427,15 +411,15 @@ mode starts the same run.
 /ar:planprocess
 ```
 
-Plan export, on by default, copies each plan you accept into `notes/` in your
-project and each plan you reject into `notes/rejected/`, as
-`{datetime}_{name}.md`, so plans outlive the session that wrote them
-(`/ar:pe off` stops it for this project):
+Plan export saves your plans as files in your project, so they outlive the
+session that wrote them. It is on by default. Each plan you accept goes to
+`notes/`, each plan you reject to `notes/rejected/`, named
+`{datetime}_{name}.md`; `/ar:pe off` stops it for this project.
 
 | Command | Effect |
 |---|---|
 | `/ar:pe`, `/ar:planexport` | show whether export is on and which setting decided it |
-| `/ar:pe on\|off` | pin export for this project; the pin beats the global default |
+| `/ar:pe on\|off` | pin export for this project; the pin overrides the global default |
 | `/ar:pe globalon\|globaloff` | set the default for every project |
 | `/ar:pe dir <path>` | export folder (template variables allowed) |
 | `/ar:pe pattern <template>` | file name pattern |
@@ -444,10 +428,10 @@ project and each plan you reject into `notes/rejected/`, as
 
 ### Task tracking
 
-While tracked tasks are open, autorun's Stop hook lists them and sends the
-agent back to work. To talk something through without that pressure, run
-`/ar:tasks pause <reason>`: reminders and task-based Stop enforcement pause,
-task status is unchanged, and command guards stay on.
+While tracked tasks are open, autorun's Stop hook lists them and sends the agent
+back to work. To talk something through first, run `/ar:tasks pause <reason>`.
+Reminders and task-based Stop enforcement pause; task status and command guards
+stay as they are.
 
 | Command | Effect |
 |---|---|
@@ -460,20 +444,21 @@ task status is unchanged, and command guards stay on.
 | `/ar:task prompts scope all\|user\|subagent` | which agents get reminders |
 | `/ar:task recovery on\|off\|min <N>` | stale-task recovery, and how many identical Stops trigger it |
 
-**Staleness reminders.** An agent that stops updating its tasks gets a reminder
-after 25 tool calls in a fresh session, then every 50 calls after that first
-reminder or after any real task or plan update (`TaskCreate`, `TaskUpdate`,
-`TodoWrite`, Codex `update_plan`, or the agent's equivalent), which also
-resets the count. Main agents and subagents count separately. The defaults are
-the `task_staleness_initial_threshold`, `task_staleness_subsequent_threshold`
-and `task_staleness_agent_scope` config keys. Resume and compaction keep the
-current phase; a fresh start or clear begins again at 25.
+**Staleness reminders.** If the agent stops updating its tasks, autorun reminds
+it after 25 tool calls in a new session and every 50 calls after that. Any real
+task or plan update (`TaskCreate`, `TaskUpdate`, `TodoWrite`, Codex
+`update_plan`, or the agent's equivalent) restarts the count. Main agents and
+subagents count separately. The defaults are the
+`task_staleness_initial_threshold`, `task_staleness_subsequent_threshold` and
+`task_staleness_agent_scope` config keys. Resume and compaction keep the current
+phase; a fresh start or clear begins again at 25.
 
-**Stale tasks.** When the same task IDs block Stop twice in a row with no tool
-call other than task updates between, the Stop message tells the agent to print
-`AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` for any task its harness no longer
-knows. autorun then marks that task ignored. A real task that needs discussion
-calls for `/ar:tasks pause <reason>` instead.
+**Stale tasks.** A harness can lose a task that autorun still tracks, and that
+task would keep blocking Stop. If the same task IDs block Stop twice in a row with
+only task updates in between, the Stop message tells the agent to print
+`AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` for each task its harness no longer has,
+and autorun marks that task ignored. For a real task that needs discussion, use
+`/ar:tasks pause <reason>`.
 
 **Bounded Stops.** autorun blocks the first 3 consecutive Stops
 (`stop_block_max_count`) while tasks remain; the next one may end that
@@ -504,11 +489,11 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 |---|---|
 | `/ar:gc`, `/ar:commit` | the 17-step commit process: `<files>:` or `type(scope):` subjects, concrete wording, a secrets check |
 | `/ar:ph`, `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
-| `/ar:tm`, `/ar:tmux` | create, list and clean up isolated tmux sessions |
-| `/ar:tt`, `/ar:ttest` | test a CLI or plugin in an isolated tmux session |
+| `/ar:tm`, `/ar:tmux` | create, list and clean up isolated tmux sessions (Claude Code subagent: `ar:tmux-session-automation`) |
+| `/ar:tt`, `/ar:ttest` | test a CLI or plugin in an isolated tmux session (Claude Code subagent: `ar:cli-test-automation`) |
 | `/ar:tabs` | list the agent sessions running in your tmux windows, lettered A, B, C, with directory, purpose and status |
 | `/ar:tabw` | type into those sessions after stating what it will send, e.g. `/ar:tabw awaiting:continue` or `/ar:tabw A:git status, B:pwd` |
-| `/ar:cache` | off by default; blocks tool use while Claude Code's prompt cache is cold or the context is near compaction, so a resumed session does not pay to rebuild it: `on\|off [5m\|1h\|perm]`, `set ratio\|read\|age\|full <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`, `2d`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>` |
+| `/ar:cache` | off by default; blocks tool use while Claude Code's prompt cache is cold or the context is near compaction, so a resumed session does not pay to rebuild it: `on\|off [5m\|1h\|perm]` (a timed one reverts when it ends), `set ratio\|read\|age\|full <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`, `2d`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>` |
 | `/ar:restart-daemon` | restart the daemon for this install |
 | `/ar:gemini` | when to hand a task to Gemini: images, PDFs, video, search |
 | `/ar:test` | check that autorun's commands are loaded |
@@ -592,13 +577,12 @@ autorun file justify                 # alias j
 autorun file search                  # aliases find, f
 ```
 
-No global policy exists: every session starts at allow-all, and `--global`
-says so (with `allow`, `justify` or `search` it exits 1). While hooks run
-through the daemon (the default), `allow`, `justify` and `search` exit 1 and
-name the slash command to run in the session instead, because the daemon owns
-session state; with `AUTORUN_USE_DAEMON=0` they write the policy. Without
-`--session`, the session comes from `$AUTORUN_SESSION_ID`, then the one active
-session if there is exactly one.
+Each session starts at allow-all, and there is no global policy; `--global` says
+so and exits 1 with `allow`, `justify` or `search`. While hooks run through the
+daemon (the default), the daemon owns session state, so `allow`, `justify` and
+`search` exit 1 and print the slash command to run in the session instead. With
+`AUTORUN_USE_DAEMON=0` they write the policy. Without `--session`, autorun uses
+`$AUTORUN_SESSION_ID`, then the only active session if there is exactly one.
 
 **Tasks:**
 
@@ -625,9 +609,9 @@ different folders (`codex-home=codex:codex:~/.codex-home` and
 `codex-work=codex:codex:~/.codex-work`). The `::` before the display name lets
 `config_dir` itself contain `:`.
 
-**Config folders.** The `harness_config_dirs` config key (for example
-`{"codex": "~/.codex-work"}`) beats the agent's own variable (`CLAUDE_CONFIG_DIR`,
-`CODEX_HOME`, `QWEN_HOME`, `FORGE_CONFIG`), which beats the default. The
+**Config folders.** The `harness_config_dirs` config key (for example `{"codex":
+"~/.codex-work"}`) overrides the agent's own variable (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, `QWEN_HOME`, `FORGE_CONFIG`), which overrides the default. The
 desktop apps share the CLI folders: the ChatGPT/Codex app (`com.openai.codex`)
 uses `~/.codex`, and Claude Desktop's local Code sessions use `~/.claude`.
 
@@ -666,9 +650,10 @@ Accepted values: `--codex-hook-source: user|plugin|both|none`;
 
 ## Related tools
 
-[AI Session Search](https://github.com/ahundt/ai-session-search) (`aise`)
-searches your past agent sessions. Its `corrections` report lists what you keep
-telling agents to fix; each repeat is a candidate `/ar:no` guard or rule file:
+A correction you give agents again and again is a candidate `/ar:no` guard or
+rule file. [AI Session Search](https://github.com/ahundt/ai-session-search)
+(`aise`) searches your past agent sessions, and its `corrections` report lists
+those repeats:
 
 ```bash
 aise skills run corrections --when 30d --limit 50
@@ -682,7 +667,8 @@ welcome. [AGENTS.md](AGENTS.md) has the sandboxed development install and the
 test commands, [plugins/autorun/AGENTS.md](plugins/autorun/AGENTS.md) the code
 conventions, and [INTEGRATION_GUIDE.md](plugins/autorun/docs/INTEGRATION_GUIDE.md)
 where to add a command, handler or guard. Hook internals:
-[HOOK_ARCHITECTURE.md](plugins/autorun/HOOK_ARCHITECTURE.md); hook APIs:
+[HOOK_ARCHITECTURE.md](plugins/autorun/HOOK_ARCHITECTURE.md); state storage and locking:
+[developer-internals.md](docs/developer-internals.md); hook APIs:
 [Claude Code](docs/claude-code-hooks-api.md),
 [Gemini CLI](docs/gemini-cli-hooks-api.md),
 [Codex CLI](docs/codex-cli-hooks-api.md),

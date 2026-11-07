@@ -19,8 +19,8 @@ the session looks healthy.
    --project ${CLAUDE_PLUGIN_ROOT} python`, never bare `python3`, and
    `allowed-tools` says `Bash(uv *)`, not `Bash(python3:*)`. This includes
    `!`-prefixed dynamic output.
-3. **`hooks/hook_entry.py` never writes to stderr**; errors go through
-   `fail_open()`, which writes JSON to stdout.
+3. **`hooks/hook_entry.py` writes to stderr only for Claude's exit-2 deny**;
+   other errors go through `fail_open()`, which writes JSON to stdout.
 4. **Cache sync**: a `pyproject.toml` or `hooks.json` fix reaches a harness only
    through `autorun --install --force` (sandboxed; live only on the user's
    instruction). Hand-copying into `~/.claude/plugins/cache/` is overwritten by

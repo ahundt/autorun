@@ -1,13 +1,12 @@
 # PDF Extractor plugin: development guide
 
-Users read [README.md](README.md): install, the extras, usage and the backend
-table live there only. This file covers working on the code.
+Install, the extras, usage and the backend table are in [README.md](README.md);
+this file is for changing the code.
 
 ## Layout
 
-This directory is a harness plugin, not a Python distribution: there is no
-`pyproject.toml` or `uv.lock` here. The code ships inside `autorun-ai` behind
-the `pdf` extras.
+This directory has no `pyproject.toml` or `uv.lock`, because the code ships
+inside `autorun-ai` behind the `pdf` extras.
 
 ```
 plugins/pdf-extractor/

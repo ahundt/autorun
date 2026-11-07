@@ -1,8 +1,9 @@
 # Hook architecture
 
-How a hook event from any agent reaches autorun's handlers and comes back in
-that agent's format, and where each agent's differences live. For adding a
-handler, start with [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md).
+Each agent sends hook events in its own format and expects answers in its own
+format. autorun turns them into one internal event, runs its handlers once, and
+answers in the caller's format. To add a handler, start with
+[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md).
 
 ## The path of one event
 
@@ -30,12 +31,12 @@ run before autorun's dependencies exist. `main()` reads stdin once, then:
    dependencies.
 
 When it cannot decide, a lifecycle event fails open (`fail_open_for_cli()`) and
-a tool-permission event fails closed (`fail_closed_tool_gate()`): a gate that
-fails open stops blocking anything. On an exit-0 path it never writes to
-stderr, because Claude Code discards the JSON response of any hook that does;
+a tool-permission event fails closed (`fail_closed_tool_gate()`), because a gate
+that fails open blocks nothing. On an exit-0 path it never writes to stderr,
+because Claude Code discards the JSON response of any hook that does;
 diagnostics go to `~/.autorun/hook_entry_debug.log`. `detect_cli_type()` here
-and in `config.py` decide which agent is calling; the manifests also pass
-`--cli <name>`.
+and in `config.py` decide which agent is calling; the Gemini-family manifests
+also pass `--cli <name>`.
 
 **`core.normalize_hook_payload()`** maps the agent's event name to autorun's
 (`to_autorun_event`, from the registry), reads the session id from
@@ -65,10 +66,9 @@ which disables every hook in the file
 closed as not planned), while Gemini reads only `<ext>/hooks/hooks.json`
 ([google-gemini/gemini-cli#14449](https://github.com/google-gemini/gemini-cli/issues/14449)).
 The template under `src/` is outside Claude's scan. The repository root's
-`gemini-extension.json` and `hooks/` are symlinks into the template, so
-`gemini extensions install` from a clone or a GitHub URL finds a manifest.
-Neither bug's resolution changes this: the two agents' native layouts still
-conflict.
+`gemini-extension.json` and `hooks/` are symlinks into the template, so `gemini
+extensions install` from a clone or a GitHub URL finds a manifest. The two
+agents' native layouts still conflict, so the split stays.
 
 Pinned by `tests/test_split_layout.py` (which events go where),
 `tests/harness_hook_events.py` (the one allowlist of event names per agent),
@@ -86,10 +86,13 @@ Pinned by `tests/test_split_layout.py` (which events go where),
    `plugins.py`, the registry, and both manifests ([AGENTS.md](AGENTS.md)).
 3. **Timeouts:** seconds for Claude, milliseconds for the Gemini family. A
    Gemini `"timeout": 10` gives the hook 10 ms.
-4. **Gemini hook entries need `"type": "command"`.**
+4. **Gemini hook entries need `"type": "command"` and a command with no
+   leading `VAR=value`**, which Gemini CLI does not support. Claude's command
+   starts with `P=...`, so do not copy it across.
 5. **Test Gemini interactively in tmux**, not with `subprocess.run(["gemini",
-   ...])`, which waits for a terminal; the `tmux-automation` skill has the
-   recipe.
+   ...])`, which waits for a terminal. The `tmux-automation` skill has the tmux
+   recipe; `tests/test_gemini_before_tool_hooks.py` is a worked Gemini example
+   (a paid test).
 
 ## Tests
 

@@ -205,9 +205,9 @@ command that must run outside the lock has to say why, on the line.
 ### Stage 2: Pre-flight checks
 
 These run on the machine you are sitting at, and prove that platform only. A
-green local run is the precondition for pushing, not evidence the release is
-sound: the Windows and Linux jobs exist because they fail on things macOS never
-sees. Stage 3's exact-SHA CI run is the separate precondition for tagging.
+green local run lets you push. It does not prove the release, because the
+Windows and Linux jobs catch failures macOS cannot reproduce. Stage 3's
+exact-SHA CI run is what allows tagging.
 
 ```bash
 # Capture one candidate commit and require every later check to name it.
@@ -319,13 +319,13 @@ run once each: `coverage` (75% floor), `release-artifacts` (`-m release`),
 `tmux-integration` (`-m tmux`), and `state-benchmark` (`-m benchmark`). Those
 four are the only place their markers run, since the matrix deselects them.
 
-Two failure shapes are worth recognising before reading logs. A job that dies
-in "Install dependencies" with "Unable to find lockfile at `uv.lock`" means the
-lockfile is missing from the checkout, not that a dependency broke. A job whose
-JUnit XML never appears, with a `+++ Timeout +++` stack dump instead of a test
-summary, hit the global per-test timeout in `pyproject.toml`: pytest-timeout
-kills the whole session, so the remaining tests never run and the first
-reported failure is the only one you get.
+Two CI failures look like something else. A job that dies in "Install
+dependencies" with "Unable to find lockfile at `uv.lock`" means the lockfile is
+missing from the checkout, not that a dependency broke. A job whose JUnit XML
+never appears, with a `+++ Timeout +++` stack dump instead of a test summary,
+hit the global per-test timeout in `pyproject.toml`: pytest-timeout kills the
+whole session, so the remaining tests never run and the first reported failure
+is the only one you get.
 
 Browser: <https://github.com/ahundt/autorun/actions/workflows/ci.yml>, newest
 run. Check its commit against `$release_sha` before reading the result; a run
@@ -518,9 +518,9 @@ EOF
 ```
 
 The first tag pushed under this runbook predates that flag, so its annotation is
-the stripped form. It was left alone rather than retagged: the commit under it is
-correct, the published release body comes from `--notes-file` and is unaffected,
-and moving a pushed tag is the one thing the recovery table below rules out.
+the stripped form. It was not retagged. The commit under it is correct, the
+published release body comes from `--notes-file` and is unaffected, and moving a
+pushed tag is the one thing the recovery table below rules out.
 
 ### Stage 5: Verify the tag, then approve the tag run — **RELEASER public write**
 
@@ -626,11 +626,10 @@ finds a later stable release. The command below derives the flag from the
 version with that same rule rather than asking anyone to choose it. The flag
 governs **self-update only**.
 
-It does not govern fresh installs, and that is expected rather than a marking
-failure. `claude plugin marketplace add` follows the default branch, so a fresh
-install takes whatever `main` holds regardless of any release flag. Both halves
-are true at once: a stable user is not pulled onto an RC by the updater, while
-anyone installing from scratch during an RC window gets the RC.
+Fresh installs ignore the flag. `claude plugin marketplace add` follows the
+default branch, so a fresh install takes whatever `main` holds. A stable user is
+never pulled onto an RC by the updater, while anyone installing from scratch
+during an RC window gets the RC.
 
 Browser: <https://github.com/ahundt/autorun/releases/new> (or the **Draft a new
 release** button on the releases page). Labels below were read off the live form
@@ -653,8 +652,7 @@ describes a "This is a pre-release" checkbox that the form does not have.
    version (digits and dots only, such as `1.0.0`) leave it at **None**.
 5. **Publish release**, or **Save draft** to look at it first.
 
-`gh release create` has no `--web` flag, so this URL is the route rather than a
-shortcut to it.
+`gh release create` has no `--web` flag, so use this URL.
 
 Commands. Use the reviewed release draft, not generated notes, and make retries
 idempotent by inspecting first.
@@ -662,9 +660,9 @@ idempotent by inspecting first.
 **autorun blocks its own release command.** Every maintainer of this repository
 runs autorun, and its safety guard answers `gh release create` with `Command
 blocked: gh release create` / `The user requires explicit permission before
-creating releases`. That is the guard working, not a broken checklist, and it
-lands on an agent-driven release rather than on a human typing the command. Grant
-it for the attempt, or take the browser route above:
+creating releases`. The guard is doing its job: it checks commands an agent
+runs, and a command you type in your own terminal never reaches it. Grant it for
+the attempt, or take the browser route above:
 
 ```bash
 /ar:ok 'gh release create'
@@ -902,7 +900,10 @@ Unchecked replacement turns ALL three into `("0.10.1", "v0.10.1", ...)` — coll
 
 ### Gotcha 3: Minimum version deps in root pyproject.toml
 
-`pyproject.toml` has `autorun[pdf,pdf-gpu,pdf-llm,pdf-progress]>=0.10.0` in `[project.optional-dependencies]`. That is a **minimum** version requirement. Only bump it for breaking changes, not patch releases.
+The root `pyproject.toml` has
+`autorun-ai[pdf,pdf-gpu,pdf-llm,pdf-progress]>=0.10.0` in
+`[project.optional-dependencies]`. That is a **minimum** version requirement.
+Only bump it for breaking changes, not patch releases.
 
 ### Gotcha 4: Block message scope hint must be on separate line
 

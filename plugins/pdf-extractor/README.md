@@ -1,8 +1,8 @@
 # PDF Extractor
 
 Turns PDFs into Markdown or plain text that you or an AI agent can read. It
-tries up to nine extraction libraries in turn, so a PDF that one library
-garbles usually comes out of the next.
+tries up to nine extraction libraries in turn and keeps the first one that
+succeeds.
 
 ## Install
 
@@ -22,10 +22,10 @@ extract-pdfs --list-backends     # what is installed, and what each missing back
 | `pdf-progress` | tqdm progress bars |
 | `pdf-all` | all four |
 
-Combine extras as `'autorun-ai[pdf,pdf-gpu]'`, or install from GitHub with
-`uv tool install 'autorun-ai[pdf] @
+Combine extras as `'autorun-ai[pdf,pdf-gpu]'`, or install from GitHub with `uv
+tool install 'autorun-ai[pdf] @
 git+https://github.com/ahundt/autorun.git#subdirectory=plugins/autorun'`.
-Without any extra `extract-pdfs` still runs: `pdftotext` works once poppler is
+Without any extra `extract-pdfs` still runs. `pdftotext` works once poppler is
 installed (`brew install poppler`, `apt install poppler-utils`), and an
 extraction attempt names the extra it needs.
 
@@ -74,8 +74,8 @@ files, metadata = pdf_to_txt("./pdfs/", "./output/", return_metadata=True)
 
 ## Backends
 
-Without `--backends`, GPU backends go first when a GPU is present and last
-otherwise.
+Without `--backends`, GPU backends go first when a CUDA GPU is present and
+last otherwise.
 
 | Backend | License | Best for |
 |---------|---------|----------|

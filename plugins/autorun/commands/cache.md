@@ -16,8 +16,8 @@ cache-read tokens below floor, or cache age above ceiling), using the same
 
 ```
 /ar:cache                    # show status (enabled? thresholds? active overrides?)
-/ar:cache on [5m|1h|perm]    # enable (optionally for a window)
-/ar:cache off [5m|1h|perm]   # disable
+/ar:cache on [5m|1h|perm]    # enable; a timed window reverts to the prior state when it ends
+/ar:cache off [5m|1h|perm]   # disable; a timed window reverts the same way
 
 /ar:cache set ratio 0.3      # block when cache_read / total_input < 30%
 /ar:cache set read 50k       # block when cache_read_tokens < 50,000

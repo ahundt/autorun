@@ -124,7 +124,7 @@ Claude Code and Gemini CLI, but adapts model-facing guidance to Codex:
 - Plain bounded `cat`, `head`, and `tail` reads are allowed for Codex; redirects,
   follow-mode `tail`, and prefixed forms such as `sudo cat` remain blocked.
 
-Claude/Gemini examples usually show `/ar:*`. In Codex, prefer `ar:*` or
+Examples written for Claude and Gemini show `/ar:*`. In Codex, prefer `ar:*` or
 `ar <command>` (for example `ar:st` or `ar:ok git push`) because unknown slash
 commands can be intercepted before `UserPromptSubmit` hooks see them.
 When Codex does not deliver `UserPromptSubmit`, autorun's transcript fallback

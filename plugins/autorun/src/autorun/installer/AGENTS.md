@@ -94,7 +94,7 @@ that need it. No disk access: stage generated content to a temp dir and point th
   extension gave shared-root harnesses two unmarked, unprunable copies.
 - **Markers say `ar` everywhere.** A tree recorded as `autorun` was unremovable
   under `ar`, which leaked 362 files.
-- **A step knows only today's paths.** The sweep (`traversal.retirements`)
+- **A step names only today's paths.** The sweep (`traversal.retirements`)
   visits selected harnesses' config roots, so a retired route *inside* one is
   found by its marker. A retired route *outside* every root is not: declare
   it in `Platform.retired_config_dirs` (Antigravity's

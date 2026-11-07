@@ -69,13 +69,13 @@ cannot affect safety or correctness. Stop events are normally serial within one
 session, but this is not a substitute for atomic APIs in code shared with other
 events.
 
-### Lock contention is a normal condition, not a defect
+### A lock timeout under load is contention
 
 `HOOK_STATE_LOCK_TIMEOUT` bounds one acquisition attempt. Enough concurrent hook
 processes on a CPU-starved machine will exceed it and raise
-`SessionTimeoutError`. That is contention, not a broken lock: the lock still
-serializes every transaction it does grant, and an operation that retries after
-a timeout commits normally.
+`SessionTimeoutError`. This is contention. The lock still serializes every
+transaction it grants, and an operation that retries after a timeout commits
+normally.
 
 Two rules follow, and both are easy to get wrong:
 
@@ -120,9 +120,9 @@ contention window that never opens at one process count can open readily at
 twice that, while more iterations of an insufficiently contended run only cost
 time.
 
-The image has no `uv` and no `claude` binary, so tests that drive a real CLI —
-the demo, plan-export hook, and Gemini end-to-end modules — fail there for
-environmental reasons rather than code ones. Read the failure names before
+The image has no `uv` and no `claude` binary, so tests that drive a real CLI
+(the demo, plan-export hook, and Gemini end-to-end modules) fail there because
+those tools are missing, whatever the code does. Read the failure names before
 concluding anything from a full-suite run in this container.
 
 Two traps specific to probing this area:
@@ -227,8 +227,8 @@ The install output names each harness's outcome. A harness the sandbox lacks
 can be skipped, so create its config directory in the sandbox first when it is
 the one under test.
 
-Prove the isolation rather than assuming it. Record the full listing, not just
-a digest, so a difference can be *diffed* rather than merely detected:
+Prove the isolation with a full listing of the live trees before and after the
+run, so any difference can be diffed:
 
 ```bash
 snapshot() {
@@ -257,9 +257,9 @@ Empty output over a window that contains the sandboxed run proves nothing in
 those trees was written, regardless of what a digest taken at some other
 moment says.
 
-One caveat this check catches: install output abbreviates the sandbox home back
-to `~`, so a line reading `written to ~/.agents/plugins/marketplace.json` is not
-evidence of a leak on its own. Compare the fingerprint, not the message.
+Install output abbreviates the sandbox home to `~`, so `written to
+~/.agents/plugins/marketplace.json` says nothing about the live tree. Compare
+the listings.
 
 ## Regression Specification
 
@@ -308,7 +308,7 @@ plus one allowed and one denied hook request for each installed harness schema.
   `autorun --restart-daemon`; do not mask persistent I/O with a larger timeout.
 - Test removed the live socket or PID file: confirm import-time `AUTORUN_HOME`
   isolation and run the daemon restart command once after fixing the test root.
-- Command reports success but the next hook sees old configuration: find the
+- Command reports success but the next hook reads old configuration: find the
   direct `session_state()` mutation and route it through `state_set`,
   `state_update`, or `state_synchronize`.
 - State lock timeout: report the session, event, configured lock budget, and

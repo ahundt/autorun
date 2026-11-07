@@ -1,6 +1,7 @@
 # Extending autorun
 
-How a hook event reaches autorun's code, and the three places to add behavior.
+Most changes to autorun are a new slash command, a handler, or a guard
+([Add behavior](#add-behavior)). Each hook event takes this path to reach them.
 
 ## The path of a hook event
 
@@ -15,12 +16,11 @@ agent hook event
 Claude Code reads `hooks/hooks.json`; the installer generates each Gemini-family
 extension's own `hooks/hooks.json`. Details: [HOOK_ARCHITECTURE.md](../HOOK_ARCHITECTURE.md).
 
-The daemon starts on the first hook event and keeps running Python code from
-when it started, so changed code takes effect only after
-`uv run --project plugins/autorun python -m autorun --restart-daemon`, which
-restarts the daemon of whichever `AUTORUN_HOME` it runs under. Run it, like
-everything here, under the root [AGENTS.md](../../../AGENTS.md) sandbox, never
-against your live state.
+The daemon starts with the first hook event and keeps the Python code it started
+with. To load your changes, run `uv run --project plugins/autorun python -m
+autorun --restart-daemon`, which restarts the daemon for whichever
+`AUTORUN_HOME` it runs under. Run it, like everything on this page, in the root
+[AGENTS.md](../../../AGENTS.md) sandbox, never against your live state.
 
 ## Run a hook without the daemon
 
@@ -55,15 +55,14 @@ def note_large_writes(ctx: EventContext):
     return None
 ```
 
-A rule that blocks tools does not get its own `PreToolUse` handler: it belongs
-in the guard chain (`plugins.check_blocked_commands`), after `/ar:ok` allows and
-before pattern blocks, or an allow can never override it. Most such rules are a
-guard entry (below).
+Put a rule that blocks tools in the guard chain
+(`plugins.check_blocked_commands`), after `/ar:ok` allows and before pattern
+blocks, so an allow can still override it. Most such rules are a guard entry
+(below).
 
-Related commands share a factory rather than copies: `_make_policy_handler()`
-for file policies, `_make_block_op()` for block and allow commands. A new event
-needs its Gemini analog in the same change; the rules are in
-[AGENTS.md](../AGENTS.md).
+Related commands share one factory: `_make_policy_handler()` for file policies,
+`_make_block_op()` for block and allow commands. A new event needs its Gemini
+analog in the same change; the rules are in [AGENTS.md](../AGENTS.md).
 
 **A guard:** add an entry to `DEFAULT_INTEGRATIONS` in `src/autorun/config.py`
 with a `suggestion` naming the safer command.

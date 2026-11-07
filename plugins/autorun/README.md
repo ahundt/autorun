@@ -1,9 +1,9 @@
 # autorun
 
-autorun adds hooks to AI coding agents (Claude Code, Codex, Qwen Code, Pi and
-others) that keep them working until a task is verified, stop destructive shell
-commands such as `rm -rf` and `git reset --hard` before they run, and limit file
-creation to the policy you set.
+An AI coding agent left alone stops mid-task, calls a first draft done, and runs
+commands such as `rm -rf` or `git reset --hard`. autorun adds hooks that send it
+back to work and block those commands. It works with Claude Code, Codex, Qwen
+Code, Pi and five more agents.
 
 ## Install
 
@@ -28,8 +28,8 @@ claude plugin install ar@autorun
 uv tool install 'autorun-ai[pdf]'    # adds the PDF backends for `extract-pdfs`
 ```
 
-The `pdf-extractor` agent plugin is not a separate package: its extraction code
-ships in this one behind the `pdf` extra.
+The `pdf-extractor` agent plugin's extraction code ships in this package, behind
+the `pdf` extra.
 
 ## What each agent gets
 

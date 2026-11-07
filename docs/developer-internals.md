@@ -2,7 +2,6 @@
 
 Every hook from every running agent session reads and writes one shared state
 store through the daemon, so a change here can corrupt state for all of them.
-This is what the store is, how it is locked, and which API to use.
 
 ## Where state lives
 
@@ -22,17 +21,17 @@ migrator's receipts; see the comment above `_DEFAULT_STATE_DIR_PARTS`.
 
 The JSON store (`session_manager._JSONStore`) takes a `filelock` lock across
 processes and a `threading.RLock` within one, re-reads the file on every
-acquisition so it sees other processes' writes, and writes through
+acquisition to pick up other processes' writes, and writes through
 `durable_io.atomic_write_json` (temporary file, then rename) so a crash leaves
 the old or the new file, never half of one. The daemon's single-instance lock is
 a separate `fcntl.flock` at `ipc.daemon_flock_path()`.
 
 ## Which API to use
 
-On daemon paths, read and write through `EventContext.state_get`,
-`state_set` and `state_update`; wrap legacy helpers in `state_synchronize`.
-Do not call `session_manager.session_state()` from a handler: it bypasses the
-daemon's per-session hydration, and full reads on warm hooks are what
+On daemon paths, read and write through `EventContext.state_get`, `state_set`
+and `state_update`; wrap legacy helpers in `state_synchronize`. Calling
+`session_manager.session_state()` from a handler bypasses the daemon's
+per-session hydration and reads the whole file on a warm hook, which
 `plugins/autorun/AGENTS.md` rule 6 forbids. `SessionLock` remains only as a
 no-op shim for old callers.
 

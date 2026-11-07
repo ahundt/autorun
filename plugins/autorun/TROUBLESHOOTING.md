@@ -18,14 +18,13 @@ previous bootstrap failed: .../.venv/bin/python: No module named autorun.
 Blocking tool use to avoid fail-open.
 ```
 
-autorun cannot import its own code, so it cannot judge any command, and it
-denies rather than allows: a gate that fails open stops blocking `rm -rf` and
-everything else without telling anyone.
+autorun cannot load its own code, so it cannot check any command. It blocks
+every tool call, because a broken guard that let calls through would let `rm -rf`
+through too, unnoticed.
 
-This does not clear on its own, and the agent cannot fix it: the gate denies
-the repair command too, so no crafted command can talk its way past it.
-`/ar:sos` cannot help either; the failure happens before any session state is
-read.
+This does not clear on its own, and the agent cannot fix it, because the repair
+command is blocked too. `/ar:sos` cannot help either; the failure happens before
+autorun reads any session state.
 
 **Fix it in a terminal, outside the agent.** Run the `uv pip install --python
 ...` command the denial names. For Claude's plugin cache it looks like:
@@ -47,11 +46,11 @@ export AUTORUN_DISABLE=1
 claude          # or codex, qwen, pi, ...
 ```
 
-autorun reads this before importing anything, so it works in exactly this
-state. It turns off every protection (command guards, file policies, task
-enforcement) until you unset it; it is not a fix. `AUTORUN_NO_BOOTSTRAP=1` is
-different: it stops autorun reinstalling itself in the background, and the gate
-still denies. Use it when the repeated reinstall attempts are the problem.
+autorun reads this before importing anything, so it works in exactly this state.
+It turns off every protection (command guards, file policies, task enforcement)
+until you unset it; it is not a fix. `AUTORUN_NO_BOOTSTRAP=1` only stops autorun
+reinstalling itself in the background, and calls stay blocked. Use it when the
+repeated reinstall attempts are the problem.
 
 ## Commands or guards do nothing
 
@@ -100,12 +99,12 @@ Standalone Gemini CLI (legacy, installed only with `--gemini`):
 
 ## A dangerous command was not blocked
 
-1. Check for an allow you gave earlier: `/ar:blocks` and `/ar:globalstatus`
+1. Check for an allow you gave earlier. `/ar:blocks` and `/ar:globalstatus`
    list blocks and allows, and `/ar:clear` / `/ar:globalclear` remove them.
    `/ar:ok` with a count or duration stays active until it runs out.
-2. Check that the agent's harness can block at all: ForgeCode receives advice
-   only, and Pi's guard sees model tool calls but not a `!` line you type (see
-   the [README](../../README.md#pi-and-prime-agent)).
+2. Check that the agent's harness can block at all. ForgeCode receives advice
+   only, and Pi's guard checks only the model's tool calls, so a `!` line you
+   type runs unchecked (see the [README](../../README.md#pi-and-prime-agent)).
 3. Test: ask the agent to run `rm /tmp/autorun-test` and expect a block that
    suggests `trash`. If nothing happens, work through
    [Commands or guards do nothing](#commands-or-guards-do-nothing).
@@ -125,12 +124,12 @@ same tools can also vanish mid-session
 
 `autorun --install` sets the variable in the `env` object of
 `~/.claude/settings.json` unless you already set it. Start a new session
-afterwards: settings are read at startup, and a hook cannot change its parent's
-environment. Without the variable, autorun enforces task tracking only after the
-session has made a task call (older models have the tools anyway), and its
-session-start notice says tracking is not enforced yet.
+afterwards, because Claude Code reads settings at startup and a hook cannot
+change its environment. Without the variable, autorun enforces task tracking
+only after the session has made a task call (older models have the tools
+anyway), and its session-start notice says tracking is not enforced yet.
 
-If the tools are still missing, try one load in the session, not a retry loop:
+If the tools are still missing, load them once in the session:
 
 ```text
 ToolSearch query: select:TaskCreate,TaskUpdate,TaskList,TaskGet
@@ -147,15 +146,15 @@ the project's `.claude/settings.json`, then start a new session:
 }
 ```
 
-Remove any `CLAUDE_CODE_ENABLE_TASKS` set to `0`: it switches Claude Code to the
+Remove any `CLAUDE_CODE_ENABLE_TASKS` set to `0`. It switches Claude Code to the
 older `TodoWrite`, which autorun does not track. To discuss without enforcement
 while keeping the tasks, run `/ar:task pause <reason>`.
 
-To keep the tools off, set `CLAUDE_CODE_ENABLE_TODO_TOOLS` to `"0"` yourself:
+To keep the tools off, set `CLAUDE_CODE_ENABLE_TODO_TOOLS` to `"0"` yourself.
 `autorun --install` leaves a value you set alone, and `--uninstall` removes only
 the value it added. Deleting the line does not opt out, because the next install
-adds it back. `autorun --status` shows each setting as `current`, `would set`, or
-kept. To turn off autorun's recovery text for #80305 and #80401:
+adds it back. `autorun --status` shows each setting as `current`, `would set`,
+or kept. To turn off autorun's recovery text for #80305 and #80401:
 
 ```bash
 export AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_GATED_OFF_BUG_80305_WORKAROUND_ENABLED=false
@@ -165,7 +164,7 @@ export AUTORUN_BUG_CLAUDE_CODE_TASK_TOOLS_VANISH_MID_SESSION_BUG_80401_WORKAROUN
 ## Task tools on other harnesses
 
 autorun enforces task tracking only where the harness's own task tool exists.
-Where it cannot tell, it does not block, and tracks what the agent records.
+When it cannot tell, it does not block and only records what the agent tracks.
 
 | Harness | Tool | Off by default since | What turns it on |
 |---|---|---|---|

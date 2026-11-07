@@ -22,9 +22,9 @@ sessions looping and burned ~12% of a week's tokens (2026-08-15).
    edit, link, or deletion under the live config directories. Your own task
    list, an `/ar:ok` grant for something else, or "to verify the fix" is not
    that instruction. Report what a sandboxed `--install-dry-run` shows instead.
-3. **Prove isolation** by snapshotting the live trees before and after; a
-   sandboxed hook that says `autorun CLI timed out` usually means the socket
-   path is too long.
+3. **Prove isolation** by snapshotting the live trees before and after. If a
+   sandboxed hook says `autorun CLI timed out`, check the socket path length
+   first.
 
 ```bash
 SB=$(mktemp -d /tmp/arsb.XXXXXX); mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"   # short and unique per run
@@ -73,8 +73,8 @@ the marketplace and never by PyPI. `autorun-ai` is **only** the PyPI
 distribution, and only because PyPI prohibits the bare name ("This project name
 isn't allowed"). Write `autorun-ai` just where a *distribution* is named:
 install commands, `[project] name`, `[tool.uv.sources]` keys, dependency
-requirements, `uv build --package`, and `importlib.metadata.version(...)` — the
-last four fail silently rather than loudly when missed.
+requirements, `uv build --package`, and `importlib.metadata.version(...)`; a miss
+in the last four fails silently.
 
 The wheel is `autorun_ai-*.whl`, but that is **not** a fourth name to write:
 nothing declares it, PEP 427 just normalises `-` to `_`. Derive it
@@ -108,6 +108,7 @@ markers: `AUTORUN_INITIAL_TASKS_COMPLETED` →
 Needs uv and Python 3.10 or later.
 
 ```bash
+uv sync --project plugins/autorun --locked --dev --all-extras                          # CI's test environment, every extra included
 uv run --project plugins/autorun pytest plugins/autorun/tests/test_unit_simple.py -q   # quick
 uv run --project plugins/autorun pytest plugins/autorun/tests/ -q                       # full
 uvx ruff check --select E9,F63,F7,F82 .                                                 # the lint CI runs
@@ -115,7 +116,7 @@ uvx ruff check --select E9,F63,F7,F82 .                                         
 
 Paid model calls are off unless you export
 `AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1`, and every such test carries the
-`real_money` marker, so which ones they are is a query rather than a claim:
+`real_money` marker, so these queries list them:
 
 ```bash
 uv run --project plugins/autorun pytest plugins/autorun/tests/ -m real_money --collect-only -q   # list what would cost money
