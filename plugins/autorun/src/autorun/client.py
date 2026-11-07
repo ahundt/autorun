@@ -542,6 +542,49 @@ def get_stable_process_identity() -> StableProcessIdentity:
         return StableProcessIdentity(fallback_pid, None)
 
 
+#: Shells a harness may start a hook command through. Each exits with its hook,
+#: so its PID says nothing about whether the session is still running.
+LAUNCHER_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "fish", "pwsh", "powershell", "cmd"})
+
+
+def launcher_pid(pid: int) -> int:
+    """The first ancestor of ``pid`` that is not a launcher shell, or ``pid``.
+
+    hooks/hook_entry.py reports its parent. Claude Code's POSIX command
+    `exec`s the interpreter, so that parent is the harness; Gemini CLI runs
+    hooks through PowerShell on Windows and Claude Code through Git Bash, and
+    there the parent is a shell that exits with the hook, which made a live
+    session look ended to plan export (_plan_session_still_running).
+    """
+    try:
+        import psutil
+
+        from .tmux_utils import is_named_process
+
+        process = psutil.Process(pid)
+        for _ in range(_STABLE_PID_PARENT_SCAN_DEPTH):
+            if not is_named_process(process.name(), (), LAUNCHER_SHELLS):
+                return process.pid
+            parent = process.parent()
+            if parent is None:
+                break
+            process = parent
+    except Exception:  # psutil missing, process gone, or access denied
+        pass
+    return pid
+
+
+def resolve_launcher_pid(payload: dict) -> None:
+    """Point a hook payload's ``_pid`` past launcher shells, in place.
+
+    A payload carrying ``_pid_started_at_units`` came from
+    get_stable_process_identity, which already walked to the harness.
+    """
+    pid = payload.get("_pid")
+    if isinstance(pid, int) and pid > 0 and "_pid_started_at_units" not in payload:
+        payload["_pid"] = launcher_pid(pid)
+
+
 def get_stable_pid() -> int:
     """Compatibility accessor for callers that need only the stable PID."""
     return get_stable_process_identity().pid

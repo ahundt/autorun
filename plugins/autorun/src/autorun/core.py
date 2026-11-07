@@ -3422,6 +3422,9 @@ class AutorunDaemon:
             # The process that launched this hook keeps the daemon alive while
             # it lives. Codex starts each hook from a fresh process, so this is
             # one PID per call there, not per session: log it only at DEBUG.
+            from .client import resolve_launcher_pid
+
+            resolve_launcher_pid(payload)
             pid = payload.get("_pid")
             if pid and pid not in self.active_pids:
                 self.active_pids.add(pid)

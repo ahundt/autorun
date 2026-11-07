@@ -934,7 +934,7 @@ def run_direct(payload: dict | None = None) -> int:
         normalize_hook_payload,
         resolve_session_identity,
     )
-    from .client import output_hook_response, prepare_payload_for_daemon
+    from .client import output_hook_response, prepare_payload_for_daemon, resolve_launcher_pid
     from .config import HOOK_DEADLINE_PAYLOAD_KEY, monotonic_deadline
 
     # Import plugins to register all handlers on the shared `app` object
@@ -951,6 +951,7 @@ def run_direct(payload: dict | None = None) -> int:
             pass
 
     payload, cli_type = prepare_payload_for_daemon(payload)
+    resolve_launcher_pid(payload)
     normalized = normalize_hook_payload(payload)
     identity = resolve_session_identity(
         pid=payload["_pid"],
