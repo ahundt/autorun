@@ -378,29 +378,28 @@ describe what changed between rc1 and rc3.
     JavaScript bridge alike. The restart's no-op now requires the daemon to
     answer a health probe, not merely accept a connection, so a stuck daemon
     under a minute old is replaced.
-78. Codex blocked plain file reads behind a wrapper, such as `rtk cat f`,
-    `env LC_ALL=C head f` or `LC_ALL=C tail -n 40 log`, and told the agent to
-    use a "shell file inspection tool" with Claude's `file_path=` parameter,
-    which Codex does not have. Those reads now run, and the Codex text for
-    `cat`, `head`, `tail`, `awk`, `sed` and `echo >` names what Codex can use
-    (`apply_patch`, `rg -n`, `sed -n`). A line that runs anything through
-    `sudo`, `doas`, `su`, `run0`, `runuser` or `setpriv`, however it is
-    quoted or wherever a `#` sits before it, a read that writes a file
-    (`<>` included), and a `tail -f` in any part of the line are still
-    blocked.
-79. `awk` filtering a pipe, such as `ls -l | awk '{print $5}'`, was blocked;
-    like `cat`, `grep` and `find`, a plain filter on a pipe is now allowed:
-    printing fields and strings, an `NR`/field condition, a column sum, or
-    `!seen[$0]++`. Any other `awk` program is still blocked, since awk can
-    run commands, write and read files and load code in ways a reading of
-    the program text misses.
-80. The `rm` guard suggested `trash '$tmp'` for `rm -rf "$tmp"`, naming a
-    file literally called `$tmp`; it now suggests `trash "$tmp"`. A `~/`
-    path and a bare `~` stay expandable, an operand after `--` is kept, and
-    a literal `'$(...)'` stays quoted so the suggestion never runs it. The
+78. Codex blocked plain file reads behind a wrapper (`rtk cat f`,
+    `env LC_ALL=C head f`, `LC_ALL=C tail -n 40 log`) and told the agent to
+    use a "shell file inspection tool" with a `file_path=` parameter Codex
+    does not have. Those reads now run, and Codex's messages for `cat`,
+    `head`, `tail`, `awk`, `sed` and `echo >` name tools it has: `apply_patch`,
+    `rg -n` and `sed -n`. Still blocked: a line that runs `sudo`, `doas`,
+    `su`, `run0`, `runuser` or `setpriv`, however quoted and even after a `#`;
+    a read that also writes a file, `<>` included; and `tail -f` anywhere in
+    the line.
+79. `awk` filtering a pipe, such as `ls -l | awk '{print $5}'`, was blocked.
+    Simple filters on a pipe are now allowed, as `cat`, `grep` and `find`
+    are: printing fields and strings, an `NR` or field condition, a column
+    sum, and `!seen[$0]++`. Other `awk` programs stay blocked, because awk
+    can run commands, read and write files, and load code in ways the guard
+    cannot see in the program text.
+80. For `rm -rf "$tmp"` the `rm` guard suggested `trash '$tmp'`, which names
+    a file literally called `$tmp`; it now suggests `trash "$tmp"`.
+    Suggestions also keep `~` and `~/` paths expandable, keep an operand after
+    `--`, and keep a literal `'$(...)'` quoted so it cannot run. The
     `git stash` suggestions for `git reset --hard`, `git checkout` and
     `git restore` no longer copy the blocked command's arguments into the
-    stash message, where a `$(...)` in them would have run.
+    stash message, where a `$(...)` would have run.
 81. A subagent's tool call could receive its parent session's "CANNOT STOP"
     task list, which it could not act on and which the parent then never
     saw. The list now waits for the parent's next tool call.
@@ -414,35 +413,34 @@ describe what changed between rc1 and rc3.
 84. The `sed` guard missed in-place edits whose `-i` was not the first
     option, such as `sed -E -i 's/a/b/' f` and `sed 's/a/b/' -i f`; it now
     reads every option.
-85. A `/ar:task pause` or resume written by another process, such as the
-    hook's in-process fallback when the daemon is unreachable or a daemon
-    overlapping a restart, was ignored by the running daemon until its cache
-    was evicted; the pause check now reads the stored value.
-86. A daemon state write that failed with a raw `sqlite3` or `OSError`
-    error left the field marked in-memory-only, so later loads kept skipping
-    the stored value; every failure now clears that mark and is reported as a
-    state error.
-87. Each tool call reset the staleness flag with a durable write even when it
-    was already clear, one write transaction per call queued behind every
-    other session's; the reset now writes only when the flag is set. Evicting
-    an in-memory-only value no longer forces the session's whole state to be
-    re-read unless that value hid a stored one.
-88. When every handler slot for an event was held by a handler past its 2-3 s
-    budget, the daemon told waiting sessions it had stalled and to restart it,
-    even when those handlers were finishing slowly on a loaded machine. A slot
-    now counts as stuck only after
-    `daemon_dispatch_stall_grace_seconds` (default 30) beyond its budget, and a
-    session whose earlier handler for the same event is still running past its
-    budget is answered as busy instead of taking a second slot.
-89. A hook that reached the daemon directly from `hooks/hook_entry.py`, without
-    the `autorun` client, did not send its deadline, so the daemon could run a
-    request whose hook had already given up. It now sends it.
-90. On that direct path a daemon that took a request and did not answer
-    reported "autorun CLI timed out" with no next step, and a daemon that closed
-    the connection while restarting reported a failure needing a person. The
-    first now gets the client's busy-or-stuck guidance (retry once, then
-    `autorun --restart-daemon`), the second "retry shortly"; a malformed answer
-    still says retrying will not help.
+85. The daemon ignored a `/ar:task pause` or resume written by another
+    process (the hook's fallback when the daemon is unreachable, or a second
+    daemon during a restart) until the value aged out of its memory. It now
+    reads the pause from disk.
+86. After a state write failed with a `sqlite3` or `OSError` error, the daemon
+    kept returning the field's default in place of its saved value. These
+    failures are now reported as state errors and the saved value is read
+    again.
+87. Every tool call wrote a staleness flag to disk even when it was already
+    clear, and each write queued behind other sessions' writes. The flag is
+    now written only when it changes, and dropping a value held only in
+    memory no longer forces the daemon to re-read the session's saved state
+    unless that value hid a saved one.
+88. When an event's handlers ran past their 2-3 s budget on a loaded machine,
+    the daemon told waiting sessions it had stalled and should be restarted,
+    though those handlers were still finishing. A handler now counts as stuck
+    only `daemon_dispatch_stall_grace_seconds` (default 30) past its budget. A
+    session whose previous handler for that event is still overdue is told the
+    daemon is busy and does not take a second slot.
+89. Hooks that call the daemon directly from `hooks/hook_entry.py` sent no
+    deadline, so the daemon could run a request after its hook had given up.
+    They now send one.
+90. On that direct path, a request the daemon accepted but never answered
+    reported "autorun CLI timed out" with no next step. It now gets the same
+    advice as the client: retry once, then run `autorun --restart-daemon`. A
+    connection the daemon closed while restarting said retrying would not
+    help; it now says to retry. A malformed answer still says retrying will
+    not help.
 
 ### For contributors
 
