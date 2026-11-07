@@ -481,6 +481,35 @@ describe what changed between rc1 and rc3.
     now uses the same home as Python's `Path.home()` and Node's
     `os.homedir()`: `HOME` on Linux and macOS, `USERPROFILE` on Windows.
 
+97. On Windows, Gemini CLI runs hook commands in PowerShell, which printed
+    autorun's POSIX-quoted hook command as a string instead of running it, so
+    no Gemini CLI hook ran. On Windows `autorun --install` now writes the Gemini
+    CLI, Qwen Code and Antigravity hook commands in PowerShell form
+    (`& 'C:\path\python.exe' 'arg'`); for Qwen Code and Antigravity, which
+    use Gemini CLI's extension format, PowerShell is assumed, not observed.
+    Claude Code keeps the POSIX form that Git Bash runs. Codex's
+    `commandWindows` is still not written.
+98. On Windows a virtual environment keeps its interpreter in
+    `.venv\Scripts\python.exe`, but `hooks/hooks.json`, the hook wrapper and
+    `autorun --restart-daemon` looked only in `.venv/bin`. Each Claude Code
+    hook then paid a `uv run` start, and the daemon restarted under whichever
+    Python ran the command. All three now check both locations.
+
+99. On Windows, a user rule's `when:` command ran in `cmd.exe`, and on Debian
+    and Ubuntu in `dash`, so a predicate such as `test -f package.json` or
+    `[[ ... ]]` failed and the rule never applied. `when:` commands now run in
+    bash: Git for Windows' bash on Windows, then the `bash` on `PATH`. Without
+    any bash they run in the system shell as before.
+100. On Windows, writing autorun's state or the daemon's port file failed with
+     "Access is denied" whenever another process had the file open, such as
+     a hook reading the port. autorun now retries the rename for up to one
+     second, the bound pip uses for the same error.
+101. On Windows, autorun read its own JSON files and the output of `uv`,
+     `git` and `autorun --install` in the system code page (usually cp1252),
+     so a path with characters outside it, such as a user name with `ā`,
+     came back garbled or stopped the background dependency install. Every
+     text file and child process is now read as UTF-8.
+
 ### For contributors
 
 1. `installer/fs.py:decide` publishes into an existing directory that has no

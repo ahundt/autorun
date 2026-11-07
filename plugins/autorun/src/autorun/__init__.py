@@ -39,13 +39,13 @@ __build_time__ = "unknown"
 try:
     _meta_path = Path(__file__).parent / "metadata.json"
     if _meta_path.exists():
-        _meta_text = _meta_path.read_text()
+        _meta_text = _meta_path.read_text(encoding="utf-8")
         if _meta_text.strip():
             _meta = json.loads(_meta_text)
             __version__ = _meta.get("version", __version__)
             __commit__ = _meta.get("commit", "unknown")
             __build_time__ = _meta.get("build_time", "unknown")
-except (json.JSONDecodeError, OSError, AttributeError):
+except (ValueError, OSError, AttributeError):
     # Robust fallback for any failure (missing file, invalid JSON, etc.)
     pass
 

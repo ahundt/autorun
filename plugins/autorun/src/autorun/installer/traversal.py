@@ -593,7 +593,7 @@ def demo() -> None:
         (root / "market" / "skills" / "alpha" / "SKILL.md").write_text("v2\n", encoding="utf-8")
         kept = run([harness], ctx, Mode.INSTALL)
         assert any(d.verdict is Verdict.KEEP for d in kept)
-        assert edited.read_text() == "MINE\n"
+        assert edited.read_text(encoding="utf-8") == "MINE\n"
         assert "SKILL.md" in report(kept), report(kept)
 
         # A user's own file beside ours is never removed by uninstall.
@@ -601,7 +601,7 @@ def demo() -> None:
         removed = run([harness], ctx, Mode.UNINSTALL)
         assert (ctx.home / ".fake" / "commands" / "mine.md").is_file(), "shared dir keeps user files"
         assert not (ctx.home / ".fake" / "skills" / "beta").exists(), "unedited skill retired"
-        assert edited.read_text() == "MINE\n", "an edited skill is kept, not retired"
+        assert edited.read_text(encoding="utf-8") == "MINE\n", "an edited skill is kept, not retired"
         assert any(d.verdict is Verdict.RETIRE for d in removed)
 
         # Adding a harness adds no branch to this module — and a second harness

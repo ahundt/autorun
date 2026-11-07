@@ -184,7 +184,7 @@ def demo() -> None:
         # Created beside the user's own text, which survives verbatim.
         memory.write_text(user_text, encoding="utf-8")
         assert splice(memory, "autorun says hello", block) is True
-        text = memory.read_text()
+        text = memory.read_text(encoding="utf-8")
         assert "Keep this paragraph." in text
         assert text.count(block.start) == 1 and text.count(block.end) == 1
 
@@ -193,18 +193,18 @@ def demo() -> None:
 
         # Updating replaces the region in place, never appending a second one.
         assert splice(memory, "autorun says goodbye", block) is True
-        text = memory.read_text()
+        text = memory.read_text(encoding="utf-8")
         assert text.count(block.start) == 1, "exactly one region, always"
         assert "goodbye" in text and "hello" not in text
         assert "Keep this paragraph." in text
 
         # A body quoting the sentinels cannot terminate its own region.
         assert splice(memory, f"see {block.start} and {block.end} markers", block) is True
-        assert memory.read_text().count(block.start) == 1
+        assert memory.read_text(encoding="utf-8").count(block.start) == 1
 
         # Stripping leaves the user's file exactly as they wrote it.
         assert strip(memory, block) is True
-        assert memory.read_text() == user_text
+        assert memory.read_text(encoding="utf-8") == user_text
         assert strip(memory, block) is False, "already gone"
 
         # A file that held only our block is removed rather than left empty.
@@ -216,25 +216,25 @@ def demo() -> None:
         # A malformed region is treated as absent: append, never guess a range.
         broken = Path(tmp) / "broken.md"
         broken.write_text(f"user text\n{block.end}\nmore user text\n{block.start}\n", encoding="utf-8")
-        before = broken.read_text()
+        before = broken.read_text(encoding="utf-8")
         assert bounds(before, block) is None, "inverted markers are not a region"
         splice(broken, "ours", block)
-        assert "more user text" in broken.read_text(), "user text is never swallowed"
+        assert "more user text" in broken.read_text(encoding="utf-8"), "user text is never swallowed"
 
         # A pre-sentinel copy is adopted in place, never appended beside itself.
         legacy = Path(tmp) / "legacy.md"
         legacy.write_text("# Theirs\n\nautorun guidance body\n", encoding="utf-8")
         assert splice(legacy, "autorun guidance body", block) is True
-        text = legacy.read_text()
+        text = legacy.read_text(encoding="utf-8")
         assert text.count("autorun guidance body") == 1, "adopted, not duplicated"
         assert text.count(block.start) == 1 and "# Theirs" in text
         assert strip(legacy, block) is True, "adoption makes it removable"
-        assert "autorun guidance body" not in legacy.read_text()
+        assert "autorun guidance body" not in legacy.read_text(encoding="utf-8")
 
         # Half a region is also not a region.
         half = Path(tmp) / "half.md"
         half.write_text(f"{block.start}\nno end marker\n", encoding="utf-8")
-        assert bounds(half.read_text(), block) is None
+        assert bounds(half.read_text(encoding="utf-8"), block) is None
 
         # Two different blocks coexist in one file without disturbing each other.
         other = Block("cache")
@@ -243,7 +243,7 @@ def demo() -> None:
         splice(both, "first", block)
         splice(both, "second", other)
         assert strip(both, block) is True
-        text = both.read_text()
+        text = both.read_text(encoding="utf-8")
         assert "second" in text and "first" not in text and "Keep this paragraph." in text
 
         # A block from a version we no longer ship is reported, not ignored.

@@ -220,8 +220,8 @@ def demo() -> None:
         changed = substitute_root(written)
         assert changed == ("hooks/hooks.json",), changed
         # As JSON writes it: a Windows path's backslashes arrive escaped.
-        assert json.dumps(str(written))[1:-1] in (written / "hooks" / "hooks.json").read_text()
-        assert "${CLAUDE_PLUGIN_ROOT}" in (written / "README.md").read_text()
+        assert json.dumps(str(written))[1:-1] in (written / "hooks" / "hooks.json").read_text(encoding="utf-8")
+        assert "${CLAUDE_PLUGIN_ROOT}" in (written / "README.md").read_text(encoding="utf-8")
 
         # Idempotent: nothing left to expand, so nothing is rewritten.
         assert substitute_root(written) == ()

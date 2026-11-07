@@ -505,7 +505,7 @@ class TaskLifecycleConfig:
         """Load from config file with defaults."""
         if CONFIG_PATH.exists():
             try:
-                data = json.loads(CONFIG_PATH.read_text())
+                data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
                 if "storage_dir" in data and isinstance(data["storage_dir"], str):
                     data["storage_dir"] = Path(data["storage_dir"])
                 # A lock timeout that is not a positive finite number reaches
@@ -525,7 +525,7 @@ class TaskLifecycleConfig:
                 if isinstance(pause_ttl, bool) or not isinstance(pause_ttl, (int, float)) or not math.isfinite(pause_ttl) or pause_ttl <= 0:
                     raise TypeError(f"task_pause_default_ttl_seconds must be a finite number greater than 0, got {pause_ttl!r}; pass positive seconds")
                 return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
-            except (json.JSONDecodeError, TypeError):
+            except (ValueError, TypeError):
                 pass
         return cls()
 
@@ -534,7 +534,7 @@ class TaskLifecycleConfig:
         CONFIG_PATH.parent.mkdir(exist_ok=True)
         data = asdict(self)
         data["storage_dir"] = str(data["storage_dir"])
-        CONFIG_PATH.write_text(json.dumps(data, indent=2))
+        CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 # === Plan Acceptance Notification Config ===
@@ -555,9 +555,9 @@ class PlanNotifyConfig:
         """Load from config file with defaults."""
         if PLAN_NOTIFY_CONFIG_PATH.exists():
             try:
-                data = json.loads(PLAN_NOTIFY_CONFIG_PATH.read_text())
+                data = json.loads(PLAN_NOTIFY_CONFIG_PATH.read_text(encoding="utf-8"))
                 return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
-            except (json.JSONDecodeError, TypeError):
+            except (ValueError, TypeError):
                 pass
         return cls()
 
@@ -569,7 +569,7 @@ class PlanNotifyConfig:
             "task_update_enforcement": self.task_update_enforcement,
             "dependency_wiring": self.dependency_wiring,
         }
-        PLAN_NOTIFY_CONFIG_PATH.write_text(json.dumps(data, indent=2))
+        PLAN_NOTIFY_CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 # === Ghost-Task Helpers (v0.10.2) ===
@@ -3261,7 +3261,8 @@ class TaskLifecycle:
 
             if output_format == "json":
                 output_file.write_text(
-                    json.dumps({"session_id": session_id, "exported_at": time.time(), "tasks": tasks, "plan_tasks_map": manager.plan_tasks_map}, indent=2)
+                    json.dumps({"session_id": session_id, "exported_at": time.time(), "tasks": tasks, "plan_tasks_map": manager.plan_tasks_map}, indent=2),
+                    encoding="utf-8",
                 )
 
             elif output_format == "csv":
@@ -3296,7 +3297,7 @@ class TaskLifecycle:
                         md_lines.append(f"- **Blocked by**: {', '.join(task['blockedBy'])}")
                     md_lines.append("")
 
-                output_file.write_text("\n".join(md_lines))
+                output_file.write_text("\n".join(md_lines), encoding="utf-8")
 
             print(f"Exported {len(tasks)} tasks to {output_path}")
             return 0
@@ -3588,7 +3589,7 @@ class TaskLifecycle:
             state_file = sessions_dir / "daemon_state.json"
             if state_file.exists():
                 try:
-                    raw = json.loads(state_file.read_text())
+                    raw = json.loads(state_file.read_text(encoding="utf-8"))
                     for json_key in raw:
                         # json_key = "__task_lifecycle__{sid}/{subkey}"
                         if json_key.startswith(json_key_prefix) and "/" in json_key:
@@ -3596,7 +3597,7 @@ class TaskLifecycle:
                             sid = rest.split("/")[0]
                             if sid and fnmatch.fnmatch(sid, pattern):
                                 sids.add(sid)
-                except (json.JSONDecodeError, OSError):
+                except (ValueError, OSError):
                     pass
 
             if not sids:

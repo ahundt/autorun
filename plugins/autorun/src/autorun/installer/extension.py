@@ -542,7 +542,7 @@ def demo() -> None:
         assert (staging / "hooks" / "hooks.json").is_file()
         assert (staging / "commands" / "go.md").is_file()
         assert (staging / "skills" / "commit" / "SKILL.md").is_file()
-        assert json.loads((staging / MANIFEST_NAME).read_text())["name"] == "ar"
+        assert json.loads((staging / MANIFEST_NAME).read_text(encoding="utf-8"))["name"] == "ar"
         assert MANIFEST_NAME == "gemini-extension.json", "the name every family CLI reads"
 
         # Refresh eligibility: positive evidence only.

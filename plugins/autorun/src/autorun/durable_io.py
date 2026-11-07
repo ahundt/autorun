@@ -7,6 +7,7 @@ import os
 import sys
 import stat
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -98,6 +99,31 @@ def atomic_write_json(path: Path, payload: Any, *, sort_keys: bool = False) -> N
     _atomic_publish(path, lambda handle: json.dump(payload, handle, sort_keys=sort_keys))
 
 
+# Windows refuses to rename over a file another handle holds open without
+# delete sharing, which is how Python's own open() reads (WinError 5 or 32);
+# a hook reading the daemon's port file holds it for milliseconds. pip bounds
+# the same retry at one second (src/pip/_internal/utils/filesystem.py).
+REPLACE_RETRY_SECONDS = 1.0
+REPLACE_RETRY_INTERVAL_SECONDS = 0.05
+_RETRY_DENIED_REPLACE = os.name == "nt"
+
+
+def replace(source: Path, destination: Path) -> None:
+    """``os.replace`` that waits out a reader briefly holding ``destination`` on Windows."""
+    if not _RETRY_DENIED_REPLACE:
+        os.replace(source, destination)
+        return
+    deadline = time.monotonic() + REPLACE_RETRY_SECONDS
+    while True:
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(REPLACE_RETRY_INTERVAL_SECONDS)
+
+
 def _atomic_publish(path: Path, emit) -> None:
     """Stage ``emit``'s output beside ``path``, fsync it, then rename it into place.
 
@@ -128,7 +154,7 @@ def _atomic_publish(path: Path, emit) -> None:
             os.chmod(staged, stat.S_IMODE(path.stat().st_mode))
         except FileNotFoundError:
             pass
-        os.replace(staged, path)
+        replace(staged, path)
         sync_directory(path.parent)
     except BaseException:
         staged.unlink(missing_ok=True)

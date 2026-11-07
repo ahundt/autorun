@@ -119,7 +119,7 @@ def start_monitor(session_id, prompt="Continue working", stop_marker=None, max_c
     pf = Path(f"/tmp/ai-monitor-{session_id}.pid")
     if pf.exists():
         try:
-            pid = int(pf.read_text())
+            pid = int(pf.read_text(encoding="utf-8"))
             if psutil.pid_exists(pid):
                 return pid  # Already running
             pf.unlink()
@@ -148,7 +148,7 @@ def stop_monitor(session_id):
     pf = Path(f"/tmp/ai-monitor-{session_id}.pid")
     if pf.exists():
         try:
-            proc = psutil.Process(int(pf.read_text()))
+            proc = psutil.Process(int(pf.read_text(encoding="utf-8")))
             proc.terminate()
             pf.unlink()
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, ValueError):
@@ -159,7 +159,7 @@ def check_monitor(session_id):
     pf = Path(f"/tmp/ai-monitor-{session_id}.pid")
     if pf.exists():
         try:
-            pid = int(pf.read_text())
+            pid = int(pf.read_text(encoding="utf-8"))
             if psutil.pid_exists(pid):
                 return pid
             pf.unlink()
@@ -171,7 +171,7 @@ def check_monitor(session_id):
 def run_monitor(session_id, config):
     """Main monitoring loop"""
     pf = Path(f"/tmp/ai-monitor-{session_id}.pid")
-    pf.write_text(str(os.getpid()))
+    pf.write_text(str(os.getpid()), encoding="utf-8")
 
     try:
         with monitor_state(session_id) as state:

@@ -2035,7 +2035,7 @@ def demo() -> None:
         kept = publish_tree(source, target, plugin="ar")
         assert kept.verdict is Verdict.KEEP, kept
         assert kept.edited == ("SKILL.md",), kept.edited
-        assert (target / "SKILL.md").read_text() == "MY OWN EDIT\n", "the edit survived"
+        assert (target / "SKILL.md").read_text(encoding="utf-8") == "MY OWN EDIT\n", "the edit survived"
         assert "SKILL.md" in kept.describe()
 
         # Flipping the executable bit counts as an edit, not a silent rewrite.
@@ -2099,7 +2099,7 @@ def demo() -> None:
         doc = root / "registry.json"
         with json_document(doc, lambda: {"plugins": {}}) as d:
             d["plugins"]["ar"] = {"enabled": True}
-        assert json.loads(doc.read_text())["plugins"]["ar"]["enabled"] is True
+        assert json.loads(doc.read_text(encoding="utf-8"))["plugins"]["ar"]["enabled"] is True
 
     print("installer.fs: all self-checks passed")
 

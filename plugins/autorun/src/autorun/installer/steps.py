@@ -1228,9 +1228,9 @@ def demo() -> None:
         # INSTALL writes it, UNINSTALL takes exactly it away.
         target.write_text("# Theirs\n\nkeep me\n", encoding="utf-8")
         assert apply_regions([region], Mode.INSTALL)
-        assert "autorun guidance" in target.read_text()
+        assert "autorun guidance" in target.read_text(encoding="utf-8")
         assert apply_regions([region], Mode.UNINSTALL)
-        assert target.read_text() == "# Theirs\n\nkeep me\n", "their file, untouched"
+        assert target.read_text(encoding="utf-8") == "# Theirs\n\nkeep me\n", "their file, untouched"
 
         # A hooks file the user owns keeps their entries through both directions.
         hooks = root / "hooks.json"
@@ -1240,16 +1240,16 @@ def demo() -> None:
         hooks.write_text(json.dumps({"hooks": {"Stop": [theirs]}}), encoding="utf-8")
         entry = Hooks(hooks, {"Stop": ("uv run hook_entry.py --cli codex",)})
         assert apply_hooks([entry], Mode.PREVIEW) == [f"would merge {entry.describe()}"]
-        assert json.loads(hooks.read_text())["hooks"]["Stop"] == [theirs], "preview wrote"
+        assert json.loads(hooks.read_text(encoding="utf-8"))["hooks"]["Stop"] == [theirs], "preview wrote"
 
         apply_hooks([entry], Mode.INSTALL)
-        after = json.loads(hooks.read_text())["hooks"]["Stop"]
+        after = json.loads(hooks.read_text(encoding="utf-8"))["hooks"]["Stop"]
         assert theirs in after and len(after) == 2
         # Right after an install, the preview has nothing left to merge.
         assert apply_hooks([entry], Mode.PREVIEW) == [f"current {entry.describe()}"]
 
         apply_hooks([entry], Mode.UNINSTALL)
-        assert json.loads(hooks.read_text())["hooks"]["Stop"] == [theirs], "ours gone, theirs kept"
+        assert json.loads(hooks.read_text(encoding="utf-8"))["hooks"]["Stop"] == [theirs], "ours gone, theirs kept"
 
     print("installer.steps: all self-checks passed")
 

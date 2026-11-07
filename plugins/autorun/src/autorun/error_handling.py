@@ -92,7 +92,7 @@ def check_uv_environment():
         result = subprocess.run(
             ["uv", "--version"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=10,
         )
         uv_output = result.stdout
@@ -125,7 +125,7 @@ def check_uv_environment():
                                 "import shutil,sys;sys.exit(0 if shutil.which('autorun') else 1)",
                             ],
                             capture_output=True,
-                            text=True,
+                            text=True, encoding="utf-8", errors="replace",
                             timeout=5,
                         )
                         details['autorun_available'] = autorun_result.returncode == 0

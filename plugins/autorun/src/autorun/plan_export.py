@@ -312,8 +312,8 @@ def read_config_data() -> dict:
     for path in (CONFIG_PATH, LEGACY_CONFIG_PATH):
         if path.exists():
             try:
-                return json.loads(path.read_text())
-            except (json.JSONDecodeError, OSError):
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
                 return {}
     return {}
 

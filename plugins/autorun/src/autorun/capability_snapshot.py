@@ -30,6 +30,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "binary": platform.binary,
         "install_flavor": platform.install_flavor,
         "has_hooks": platform.has_hooks,
+        "windows_hook_shell": platform.windows_hook_shell,
         "schema_type": platform.schema_type,
         "hook_protocol": platform.hook_protocol.name,
         "pretool_decision_location": platform.hook_protocol.pretool_decision_location,
@@ -140,7 +141,7 @@ def _git_commit() -> str:
         result = subprocess.run(
             ["git", "rev-parse", "--short=12", "HEAD"],
             cwd=Path(__file__).resolve().parents[3],
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             capture_output=True,
             timeout=2,
         )

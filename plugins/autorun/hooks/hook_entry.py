@@ -1091,10 +1091,14 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, e
     cli_type = cli_type or detect_cli_type()
     # Skip the console-script shim: run the venv's own python as a module.
     cmd = [str(bin_path)]
-    if ".venv/bin/autorun" in str(bin_path):
-        venv_python = bin_path.parent / "python"
-        if venv_python.exists():
-            cmd = [str(venv_python), "-m", "autorun"]
+    # Either venv layout: the substring ".venv/bin/autorun" never matched a
+    # Windows .venv\Scripts\autorun.exe, so that path always paid the shim.
+    if bin_path.parent.name in _VENV_BIN_DIRS and bin_path.parent.parent.name == ".venv":
+        for name in ("python", "python.exe"):
+            venv_python = bin_path.parent / name
+            if venv_python.exists():
+                cmd = [str(venv_python), "-m", "autorun"]
+                break
     try:
         result = subprocess.run(
             cmd,
@@ -1414,7 +1418,7 @@ def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
         installed = subprocess.run(
             _bootstrap_install_argv(tool, plugin_root),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=_BOOTSTRAP_STEP_TIMEOUT_SECONDS,
         )
         if installed.returncode != 0:
@@ -1427,7 +1431,7 @@ def run_bootstrap_worker(tool: str, plugin_root: Path) -> int:
         published = subprocess.run(
             (sys.executable, "-m", "autorun", "--install", "--force"),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=_BOOTSTRAP_STEP_TIMEOUT_SECONDS,
         )
         detail = next(

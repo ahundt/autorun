@@ -103,7 +103,7 @@ def _is_apple_silicon() -> bool:
         result = subprocess.run(
             ["/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=2,
             shell=False,
         )
@@ -164,7 +164,7 @@ def _tmux_paths_from_homebrew() -> List[str]:
             result = subprocess.run(
                 [brew, "--prefix", "tmux"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=2,
                 shell=False,
             )
@@ -209,7 +209,7 @@ def _tmux_version(binary: str) -> str:
         result = subprocess.run(
             [binary, "-V"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=2,
             shell=False,
         )
@@ -226,7 +226,7 @@ def _tmux_socket_is_usable(binary: str, socket_path: str) -> bool:
         result = subprocess.run(
             [binary, "-S", socket_path, "display-message", "-p", "#S"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=2,
             shell=False,
         )
@@ -559,7 +559,7 @@ class TmuxUtilities:
             result = subprocess.run(
                 executed,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=5,
                 shell=False
             )
@@ -841,7 +841,7 @@ class TmuxUtilities:
             child_result = subprocess.run(
                 ['pgrep', '-P', pane_pids],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=2
             )
 
@@ -861,7 +861,7 @@ SCRIPT_INTERPRETERS = frozenset({'node', 'bun', 'deno'})
 
 def _ps_field(pid: str, field: str) -> str:
     result = subprocess.run(['ps', '-p', pid, '-o', f'{field}='],
-                            capture_output=True, text=True, timeout=2)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2)
     return result.stdout.strip() if result.returncode == 0 else ''
 
 
@@ -931,7 +931,7 @@ def _tmux_current_location() -> Optional[Tuple[str, str, str]]:
         result = subprocess.run(
             [resolve_tmux_binary(), '-u', 'display-message', '-p',
              '#{session_name}:#{window_index}:#{pane_index}'],
-            capture_output=True, text=True, timeout=2
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2
         )
     except (subprocess.SubprocessError, OSError):
         return None

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -39,6 +41,46 @@ def process_home() -> Path:
     variables (test_cross_platform_spec.py), so both platforms stay isolated.
     """
     return Path.home()
+
+
+# How long a candidate bash may take to run `exit 0` before it is passed over.
+_SHELL_PROBE_TIMEOUT_SECONDS = 10
+
+
+_found_shell: list[str] = []
+
+
+def posix_shell() -> str | None:
+    """A bash that runs, or None: the shell user-written POSIX commands need.
+
+    ``shell=True`` is ``/bin/sh`` (dash on Debian and Ubuntu) on POSIX and
+    ``cmd.exe`` on Windows, so ``test -f package.json`` fails there. On Windows
+    Git for Windows' bash comes first, as Claude Code uses it for hooks: PATH's
+    ``bash`` is usually the WSL launcher, which exits 1 with no distribution
+    installed and otherwise runs in a different filesystem. A shell found is
+    remembered for the process; none found is probed again next time.
+    """
+    if _found_shell:
+        return _found_shell[0]
+    candidates = []
+    if os.name == "nt":
+        git = shutil.which("git")
+        if git:
+            candidates.append(str(Path(git).resolve().parents[1] / "bin" / "bash.exe"))
+    candidates.append(shutil.which("bash"))
+    for candidate in filter(None, candidates):
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", "exit 0"],
+                capture_output=True,
+                timeout=_SHELL_PROBE_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if probe.returncode == 0:
+            _found_shell.append(candidate)
+            return candidate
+    return None
 
 
 # The register(Platform(...)) declarations below provide Click/Typer-like
@@ -1014,6 +1056,11 @@ class Platform:
 
     # === Hook capability ===
     has_hooks: bool = True
+    #: The shell that runs this harness's hook command string on Windows:
+    #: "posix" (Claude Code uses Git Bash: https://code.claude.com/docs/en/hooks),
+    #: "powershell" (Gemini CLI: https://github.com/akitaonrails/ai-memory/issues/1484),
+    #: or "none" when hooks are argv arrays in-process (the JS bridges).
+    windows_hook_shell: str = "posix"
     schema_type: str = "strict"  # "strict" | "permissive" | "none"
     # Native protocol identity and the smallest per-harness differences used by
     # the shared response builder and manifest translator.
@@ -1384,6 +1431,7 @@ CLAUDE = register(
 GEMINI = register(
     Platform(
         name="gemini",
+        windows_hook_shell="powershell",
         display_name="Legacy Gemini CLI",
         binary="gemini",
         install_by_default=False,
@@ -1479,6 +1527,7 @@ GEMINI = register(
 ANTIGRAVITY = register(
     Platform(
         name="antigravity",
+        windows_hook_shell="powershell",  # [Inference] built from Gemini CLI's hook runner
         display_name="Google Antigravity",
         binary="agy",
         detect_env_vars=(
@@ -1557,6 +1606,7 @@ ANTIGRAVITY = register(
 QWEN = register(
     Platform(
         name="qwen",
+        windows_hook_shell="powershell",  # [Inference] built from Gemini CLI's hook runner
         display_name="Qwen Code",
         binary="qwen",
         detect_env_vars=("QWEN_SESSION_ID", "QWEN_PROJECT_DIR", "QWEN_CODE"),
@@ -1743,6 +1793,7 @@ CODEX = register(
 PI = register(
     Platform(
         name="pi",
+        windows_hook_shell="none",
         display_name="Pi",
         binary="pi",
         detect_env_vars=("PI_CODING_AGENT", "PI_SESSION_ID"),
@@ -1899,6 +1950,7 @@ FORGECODE = register(
 OPENCODE = register(
     Platform(
         name="opencode",
+        windows_hook_shell="none",
         display_name="OpenCode",
         binary="opencode",
         # OPENCODE_CONFIG / OPENCODE_CONFIG_DIR are worth detecting because a

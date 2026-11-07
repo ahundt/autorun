@@ -217,7 +217,9 @@ def test_the_quoted_substitution_checker_accepts_the_fixed_forms():
 
 # --- 2. POSIX-only venv layout literals --------------------------------------
 
-_POSIX_VENV = re.compile(r"\.venv/bin/|['\"]bin['\"]\s*/\s*['\"]autorun")
+_POSIX_VENV = re.compile(
+    r"\.venv/bin/|['\"]bin['\"]\s*/\s*['\"]autorun|['\"]\.venv['\"]\s*/\s*['\"]bin['\"]"
+)
 
 
 def posix_only_venv_paths(source: str) -> list[str]:
@@ -229,13 +231,14 @@ def test_no_module_assumes_a_posix_only_venv_layout():
     offenders = []
     for path in _python_sources():
         text = path.read_text(encoding="utf-8")
-        # The constants that exist to express the difference name both, and
-        # the comments explaining them necessarily spell one out.
+        # Comments explaining the layouts spell one out, and a line that names
+        # both layouts is the shared constant. The exemption is per line: a
+        # whole-file "mentions Scripts somewhere" skip exempted hook_entry.py
+        # and let ".venv/bin/autorun" in it go unseen.
         body = "\n".join(
-            line for line in text.splitlines() if not line.strip().startswith("#")
+            line for line in text.splitlines()
+            if not line.strip().startswith("#") and "Scripts" not in line
         )
-        if "Scripts" in body:
-            continue
         for found in posix_only_venv_paths(body):
             offenders.append(f"{path.relative_to(PLUGIN_ROOT)}: {found}")
     assert not offenders, (
@@ -307,6 +310,61 @@ def test_the_detach_checker_accepts_both_fixed_forms():
     shared = "subprocess.Popen(argv, **ipc.detached_spawn_kwargs())\n"
     assert not spawns_missing_windows_detach(explicit)
     assert not spawns_missing_windows_detach(shared)
+
+
+# --- 3b. text files read or written in the locale encoding -------------------
+
+
+def text_io_without_encoding(source: str, filename: str = "<test>") -> list[int]:
+    """Return line numbers of ``read_text()``/``write_text(x)`` with no encoding.
+
+    Without one, Python uses the locale encoding: cp1252 on most Windows
+    machines, so a file autorun or a user wrote as UTF-8 reads back garbled or
+    raises UnicodeDecodeError there, while every POSIX test passes.
+    """
+    offenders = []
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        keywords = {kw.arg for kw in node.keywords}
+        if keywords & {"encoding", None}:
+            continue
+        # A text-mode subprocess decodes the child's output the same way.
+        if node.func.attr in _SUBPROCESS_CALLS and keywords & {"text", "universal_newlines"}:
+            offenders.append(node.lineno)
+            continue
+        positional = {"read_text": 0, "write_text": 1}.get(node.func.attr)
+        if positional is not None and len(node.args) <= positional:
+            offenders.append(node.lineno)
+    return offenders
+
+
+_SUBPROCESS_CALLS = {"run", "Popen", "check_output", "check_call", "call"}
+
+
+def test_no_text_file_uses_the_locale_encoding():
+    offenders = []
+    for path in _python_sources():
+        for lineno in text_io_without_encoding(path.read_text(encoding="utf-8"), str(path)):
+            offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{lineno}")
+    assert not offenders, (
+        'Pass encoding="utf-8" (and errors="replace" when reading a child '
+        "process's output): the default is the locale encoding, cp1252 on "
+        "most Windows machines:\n" + "\n".join(offenders)
+    )
+
+
+def test_the_encoding_checker_catches_both_defects_and_accepts_the_fix():
+    assert text_io_without_encoding("data = json.loads(path.read_text())\n") == [1]
+    assert text_io_without_encoding("path.write_text(body)\n") == [1]
+    assert not text_io_without_encoding('path.read_text(encoding="utf-8")\n')
+    assert not text_io_without_encoding('path.write_text(body, "utf-8")\n')
+    assert not text_io_without_encoding("path.write_text(body, **kwargs)\n")
+    assert text_io_without_encoding("subprocess.run(argv, capture_output=True, text=True)\n") == [1]
+    assert not text_io_without_encoding(
+        'subprocess.run(argv, text=True, encoding="utf-8", errors="replace")\n'
+    )
+    assert not text_io_without_encoding("Prompt(text=True)\n"), "only subprocess calls"
 
 
 # --- 4. home redirects that move only one variable ---------------------------

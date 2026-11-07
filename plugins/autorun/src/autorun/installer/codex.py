@@ -469,7 +469,7 @@ def demo() -> None:
         hooks.write_text(json.dumps({"hooks": {"PreToolUse": [theirs]}}), encoding="utf-8")
 
         written = merge_hooks(hooks, {"PreToolUse": ["uv run hook_entry.py --cli codex"]})
-        document = json.loads(hooks.read_text())
+        document = json.loads(hooks.read_text(encoding="utf-8"))
         entries = document["hooks"]["PreToolUse"]
 
         assert written == ("PreToolUse",)
@@ -483,7 +483,7 @@ def demo() -> None:
 
         # Re-merging converges instead of accumulating a second copy.
         merge_hooks(hooks, {"PreToolUse": ["uv run hook_entry.py --cli codex --v2"]})
-        entries = json.loads(hooks.read_text())["hooks"]["PreToolUse"]
+        entries = json.loads(hooks.read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
         assert len([e for e in entries if is_ours(e)]) == 1, "exactly one of ours, always"
         assert theirs in entries
         assert "--v2" in json.dumps(entries)
@@ -501,9 +501,9 @@ def demo() -> None:
 
         # An event autorun no longer ships is swept, not left firing forever.
         merge_hooks(hooks, {"SessionEnd": ["old hook_entry.py"]})
-        assert "SessionEnd" in json.loads(hooks.read_text())["hooks"]
+        assert "SessionEnd" in json.loads(hooks.read_text(encoding="utf-8"))["hooks"]
         merge_hooks(hooks, {"PreToolUse": ["uv run hook_entry.py --cli codex"]})
-        assert "SessionEnd" not in json.loads(hooks.read_text())["hooks"], "retired event swept"
+        assert "SessionEnd" not in json.loads(hooks.read_text(encoding="utf-8"))["hooks"], "retired event swept"
 
         # A command the user added inside our wrapper survives its removal.
         mixed = {"hooks": [
@@ -513,12 +513,12 @@ def demo() -> None:
         shared = codex / "mixed.json"
         shared.write_text(json.dumps({"hooks": {"Stop": [mixed]}}), encoding="utf-8")
         merge_hooks(shared, {"Stop": []})
-        kept = json.loads(shared.read_text())["hooks"]["Stop"]
+        kept = json.loads(shared.read_text(encoding="utf-8"))["hooks"]["Stop"]
         assert kept == [{"hooks": [{"type": "command", "command": "/usr/local/bin/also-mine.sh"}]}], kept
 
         # An empty command list removes our entries and leaves the user's.
         merge_hooks(hooks, {"PreToolUse": []})
-        entries = json.loads(hooks.read_text())["hooks"]["PreToolUse"]
+        entries = json.loads(hooks.read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
         assert entries == [theirs], entries
 
         # Rule 1: a file already carrying a rejected key is refused, not extended.
@@ -531,7 +531,7 @@ def demo() -> None:
             assert "version" in str(error) and "re-run" in str(error), error
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("a rejected key must stop the write")
-        assert json.loads(poisoned.read_text()) == {"hooks": {}, "version": 2}, "left as found"
+        assert json.loads(poisoned.read_text(encoding="utf-8")) == {"hooks": {}, "version": 2}, "left as found"
 
         # Rule 3: a non-blank override shadows our guidance; a blank one does not.
         assert shadowing_override(codex) is None
@@ -545,7 +545,7 @@ def demo() -> None:
         entry = marketplace_entry("autorun", "./plugins/autorun")
 
         assert publish_marketplace(market, "personal", entry, display="Personal") is True
-        document = json.loads(market.read_text())
+        document = json.loads(market.read_text(encoding="utf-8"))
         assert document["name"] == "personal"
         assert document["interface"]["displayName"] == "Personal"
         assert [p["name"] for p in document["plugins"]] == ["autorun"]
@@ -567,7 +567,7 @@ def demo() -> None:
         theirs = marketplace_entry("their-tool", "./their-tool")
         publish_marketplace(market, "personal", theirs)
         assert withdraw_from_marketplace(market, entry) is True
-        remaining = json.loads(market.read_text())["plugins"]
+        remaining = json.loads(market.read_text(encoding="utf-8"))["plugins"]
         assert [p["name"] for p in remaining] == ["their-tool"]
         assert withdraw_from_marketplace(market, entry) is False, "already gone"
 
@@ -584,7 +584,7 @@ def demo() -> None:
         broken = dereference_links(staged)
 
         assert not (staged / "skills" / "commit" / "SKILL.md").is_symlink()
-        assert (staged / "skills" / "commit" / "SKILL.md").read_text() == "# real content\n"
+        assert (staged / "skills" / "commit" / "SKILL.md").read_text(encoding="utf-8") == "# real content\n"
         assert (staged / "skills" / "linked-dir" / "SKILL.md").is_file()
         assert not (staged / "skills" / "linked-dir").is_symlink()
         assert broken == ("skills/dangling",), broken

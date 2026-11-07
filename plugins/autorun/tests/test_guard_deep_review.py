@@ -17,6 +17,7 @@ import pytest
 
 from autorun import plugins
 from autorun.core import EventContext, ThreadSafeDB
+from autorun.platforms import posix_shell
 
 
 def _decide(cmd: str, cli: str = "claude", cwd: str | None = None) -> str:
@@ -107,25 +108,6 @@ def test_a_bare_home_operand_stays_expandable():
     assert "trash '~'" not in _reason("rm -rf ~")
 
 
-def _working_bash() -> str | None:
-    """The first bash that runs: PATH's, then Git for Windows' bundled one.
-
-    On Windows PATH's `bash` is usually the WSL launcher, which exits 1 when
-    no distribution is installed (GitHub's runners); Git's bash is real.
-    """
-    candidates = [shutil.which("bash")]
-    git = shutil.which("git")
-    if git:
-        candidates.append(str(Path(git).resolve().parents[1] / "bin" / "bash.exe"))
-    for candidate in filter(None, candidates):
-        try:
-            if subprocess.run([candidate, "-c", "exit 0"], capture_output=True, timeout=30).returncode == 0:
-                return candidate
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-    return None
-
-
 def _stash_suggestion(tmp_path) -> str:
     """The command the guard suggests for a `git reset --hard` whose argument
     carries a command substitution."""
@@ -154,7 +136,7 @@ def test_a_git_stash_suggestion_never_executes_the_users_arguments(tmp_path):
 
 def test_a_git_stash_suggestion_is_valid_bash(tmp_path):
     """The same suggestion through a real shell's parser, where one runs."""
-    shell = _working_bash()
+    shell = posix_shell()
     if shell is None:
         pytest.skip("no bash that runs: install Git for Windows or a WSL distribution")
     bash = subprocess.run([shell, "-n", "-c", _stash_suggestion(tmp_path)], capture_output=True)

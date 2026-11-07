@@ -1338,7 +1338,7 @@ def _discover_transcript_paths(pid: int) -> tuple[str, ...]:
             result = subprocess.run(
                 ["lsof", "-p", str(pid), "-Fn"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=2.0,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError):

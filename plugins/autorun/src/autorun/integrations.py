@@ -68,6 +68,9 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+# A user `when:` command runs inside a hook; past this it counts as not matching.
+WHEN_PREDICATE_TIMEOUT_SECONDS = 2
+
 
 # =============================================================================
 # Integration Dataclass (Immutable for efficient caching)
@@ -652,13 +655,17 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
         # running wherever it was started — one directory for every session on
         # the machine. cwd=None keeps the previous behavior when the event
         # carries no directory.
+        # Run in bash wherever one exists: shell=True is dash or cmd.exe.
+        from .platforms import posix_shell
+
+        bash = posix_shell()
         try:
             result = subprocess.run(
-                when,
-                shell=True,
+                [bash, "-c", when] if bash else when,
+                shell=bash is None,
                 capture_output=True,
-                timeout=2,
-                text=True,
+                timeout=WHEN_PREDICATE_TIMEOUT_SECONDS,
+                text=True, encoding="utf-8", errors="replace",
                 cwd=getattr(ctx, "cwd", None) or None,
             )
             return result.returncode == 0

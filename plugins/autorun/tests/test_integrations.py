@@ -41,6 +41,11 @@ from autorun.config import DEFAULT_INTEGRATIONS
 def clear_cache():
     """Clear integration cache before each test for isolation."""
     invalidate_caches()
+    # Find bash before a test patches subprocess.run: the probe would
+    # otherwise run against the mock.
+    from autorun.platforms import posix_shell
+
+    posix_shell()
     yield
     invalidate_caches()
 
@@ -335,6 +340,22 @@ class TestWhenPredicates:
 
         assert check_when_predicate("test -f package.json", _make_ctx("npm test", project)) is True
         assert check_when_predicate("test -f package.json", _make_ctx("npm test", elsewhere)) is False
+
+    def test_a_user_written_predicate_runs_in_bash_on_every_os(self, tmp_path):
+        """`when:` predicates are bash. shell=True ran them in dash on Debian
+        and Ubuntu and in cmd.exe on Windows, where `[[ ... ]]` and even
+        `test -f` fail, so the rule silently never applied there."""
+        from autorun.platforms import posix_shell
+
+        if posix_shell() is None:
+            pytest.skip("no bash on this machine; the shell=True fallback is all there is")
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "package.json").write_text("{}\n", encoding="utf-8")
+        predicate = '[[ -f package.json && "$(echo ok)" == ok ]]'
+
+        assert check_when_predicate(predicate, _make_ctx("npm test", project)) is True
+        assert check_when_predicate(predicate, _make_ctx("npm test", tmp_path)) is False
 
     @patch("subprocess.run")
     def test_python_predicate_no_changes(self, mock_run):

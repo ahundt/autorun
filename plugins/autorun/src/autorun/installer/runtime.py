@@ -56,6 +56,32 @@ def python_runner() -> tuple[str, ...]:
     return ("uv", "run", "python") if has_uv() else ("python",)
 
 
+def render_hook_command(
+    argv: Sequence[str], env: Mapping[str, str] | None = None, *, shell: str = "posix"
+) -> str:
+    """One argv as a command string for the shell that will run it.
+
+    ``posix`` (sh, bash, Git Bash): ``KEY=value`` prefixes and ``shlex``
+    quoting. ``powershell``: Gemini CLI runs hook commands through PowerShell
+    on Windows (https://github.com/akitaonrails/ai-memory/issues/1484), where a
+    command that starts with a quoted path is a string expression that is
+    printed rather than run, so it needs the ``&`` call operator, single
+    quotes doubled inside single quotes, and ``$env:`` for variables.
+    Checked by running the result in each shell (test_hook_command_shells.py).
+    """
+    env = dict(env or {})
+    if shell == "powershell":
+        def quote(value: str) -> str:
+            return "'" + str(value).replace("'", "''") + "'"
+
+        assignments = "".join(f"$env:{key}={quote(value)}; " for key, value in env.items())
+        return assignments + "& " + " ".join(quote(part) for part in argv)
+    if shell != "posix":
+        raise ValueError(f"no command-string form for shell {shell!r}")
+    assignments = [f"{key}={shlex.quote(value)}" for key, value in env.items()]
+    return " ".join([*assignments, *(shlex.quote(str(part)) for part in argv)])
+
+
 @dataclass(frozen=True, slots=True)
 class DirectCommand:
     """An argv command for an already-installed Python distribution."""
@@ -65,15 +91,15 @@ class DirectCommand:
     def argv(self) -> tuple[str, ...]:
         return self.command
 
-    def shell(self) -> str:
-        return shlex.join(self.command)
+    def shell(self, kind: str = "posix") -> str:
+        return render_hook_command(self.command, shell=kind)
 
     def run(self, *, timeout: int = 30) -> subprocess.CompletedProcess:
         return subprocess.run(
             self.command,
             capture_output=True,
             stdin=subprocess.DEVNULL,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
         )
 
@@ -113,22 +139,21 @@ class UvCommand:
             *self.args,
         )
 
-    def shell(self) -> str:
-        """The same command as one shell string, for a manifest that needs one.
+    def shell(self, kind: str = "posix") -> str:
+        """The same command as one string for the shell ``kind`` that runs it.
 
-        Quoting is ``shlex.quote`` throughout rather than by hand: a project path
-        containing a space silently truncated the command, and the hook then
-        failed in the one way that disables every hook without an error.
+        Quoting is never by hand: a project path containing a space silently
+        truncated the command, and the hook then failed in the one way that
+        disables every hook without an error.
         """
-        assignments = [f"{key}={shlex.quote(value)}" for key, value in self.env.items()]
-        return " ".join([*assignments, *(shlex.quote(part) for part in self.argv())])
+        return render_hook_command(self.argv(), self.env, shell=kind)
 
     def run(self, *, timeout: int = 30) -> subprocess.CompletedProcess:
         return subprocess.run(
             self.argv(),
             capture_output=True,
             stdin=subprocess.DEVNULL,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
             env={**os.environ, **self.env} if self.env else None,
         )
@@ -286,7 +311,7 @@ def _spawn(
         list(argv),
         capture_output=True,
         stdin=subprocess.DEVNULL,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=timeout,
         env={**os.environ, **env} if env else None,
     )

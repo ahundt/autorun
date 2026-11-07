@@ -384,7 +384,7 @@ def demo() -> None:
 
         # An explicit release build stamps it, and a repeat writes nothing.
         assert write_metadata(plugin, first, allowed=True) == tracked
-        assert json.loads(tracked.read_text())["commit"] == "abc"
+        assert json.loads(tracked.read_text(encoding="utf-8"))["commit"] == "abc"
         assert write_metadata(plugin, first, allowed=True) is None, "no mtime churn"
 
         # A plugin with no metadata file yet is stamped without the opt-in,
