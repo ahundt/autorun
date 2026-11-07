@@ -383,12 +383,12 @@ def _log_hook_lifecycle(message: str, **kwargs) -> None:
         pass  # Never fail on logging
 
 
-def output_hook_response(response: dict | str, event: str = "unknown", cli_type: str = "claude", source: str = "daemon") -> int:
+def output_hook_response(response: dict, event: str = "unknown", cli_type: str = "claude", source: str = "daemon") -> int:
     """Unified hook response output handler with two clear pathways (DRY).
 
     Single consolidation point for ALL 4 input paths:
     - Path 1: Normal daemon response (success)
-    - Path 2: JSON decode error (fallback)
+    - Path 2: JSON decode error (tool gates fail closed, others answer as unhandled)
     - Path 3: Buffer overflow error (fail-open)
     - Path 4: Exception (fail-open)
 
@@ -397,7 +397,7 @@ def output_hook_response(response: dict | str, event: str = "unknown", cli_type:
     - Pathway B (Standard): JSON + exit 0
 
     Args:
-        response: Response dict OR raw string (for fallback cases)
+        response: Response dict
         event: Normalized event name (e.g., PreToolUse)
         cli_type: Target CLI identifier from autorun.platforms
         source: Source ("daemon", "daemon-raw", "buffer-error", "exception")
@@ -432,14 +432,6 @@ def output_hook_response(response: dict | str, event: str = "unknown", cli_type:
         ):
             print(json.dumps(empty_response))
         sys.exit(0)
-
-    # ═══════════════════════════════════════════════════════════════
-    # SHARED: Handle raw string fallback (JSON decode error)
-    # ═══════════════════════════════════════════════════════════════
-    if isinstance(response, str):
-        logger.debug(f"Outputting raw response from {source}")
-        print(response)
-        return 0
 
     # ═══════════════════════════════════════════════════════════════
     # SHARED: Enforce strict schema filtering (CRITICAL for Claude Code)
@@ -739,8 +731,11 @@ def run_client() -> int:
                             cli_type=cli_type,
                             source="daemon-invalid-json",
                         )
-                    # Not valid JSON, output as-is
-                    return output_hook_response(resp_text, event=hook_event, cli_type=cli_type, source="daemon-raw")
+                    # Not a reply this harness can read: Gemini CLI, Qwen
+                    # Code and Antigravity require JSON on stdout, so answer
+                    # as if the daemon had nothing to say.
+                    logger.warning("Daemon returned invalid JSON for %s: %.200s", hook_event, resp_text)
+                    return output_hook_response({}, event=hook_event, cli_type=cli_type, source="daemon-invalid-json")
             finally:
                 writer.close()
                 try:

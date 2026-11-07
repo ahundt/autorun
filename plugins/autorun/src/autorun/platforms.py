@@ -1070,6 +1070,11 @@ class Platform:
     # installer registers only the explicit handled subset.
     native_hook_events: frozenset[str] = field(default_factory=frozenset)
     installed_hook_events: frozenset[str] = field(default_factory=frozenset)
+    # Native events the shared Gemini template has no entry for, each mapped
+    # to an installed event whose handler group it reuses: Qwen Code fires
+    # SubagentStop (https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/hooks.md)
+    # and the template, written for Gemini CLI, has no such event.
+    cloned_hook_events: Mapping[str, str] = field(default_factory=dict)
 
     # === Bug workaround applicability ===
     has_exit2_workaround: bool = False  # Claude https://github.com/anthropics/claude-code/issues/4669
@@ -1630,6 +1635,7 @@ QWEN = register(
         has_hooks=True,
         schema_type="permissive",
         hook_protocol=QWEN_HOOKS,
+        cloned_hook_events={"SubagentStop": "Stop"},
         has_exit2_workaround=False,
         drops_additional_context=False,
         config_dir="~/.qwen/",
@@ -1785,6 +1791,8 @@ CODEX = register(
             "SessionEnd": "SessionEnd",
             # https://learn.chatgpt.com/docs/hooks (PermissionRequest)
             "PermissionRequest": "PermissionRequest",
+            # https://developers.openai.com/codex/hooks: block re-runs the subagent.
+            "SubagentStop": "SubagentStop",
         },
     )
 )
