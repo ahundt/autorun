@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
-from conftest import register_test_session, skip_if_windows_service_provider_error
+from conftest import register_test_session
 
 # claude_code_handler — REMOVED: canonical replacement is plugins.app.dispatch(ctx)
 # See: plugins.py UserPromptSubmit command registration via app.command()
@@ -263,7 +263,6 @@ plugins.app.dispatch(ctx)
 print("POLICY_SET")
 """
         ], capture_output=True, text=True, timeout=10, env=env)
-        skip_if_windows_service_provider_error(result1)
 
         assert result1.returncode == 0, f"Subprocess 1 failed: {result1.stderr}"
         assert "POLICY_SET" in result1.stdout
@@ -300,7 +299,6 @@ decision = result["hookSpecificOutput"]["permissionDecision"]
 print(f"DECISION:{{decision}}")
 """
         ], capture_output=True, text=True, timeout=10, env=env)
-        skip_if_windows_service_provider_error(result2)
 
         assert result2.returncode == 0, f"Subprocess 2 failed: {result2.stderr}"
 

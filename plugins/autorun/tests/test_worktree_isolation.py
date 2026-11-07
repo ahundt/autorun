@@ -3,18 +3,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-from conftest import skip_if_windows_service_provider_error
+from conftest import minimal_env
 
 
 def _run_isolated_probe(code: str, tmp_path: Path) -> subprocess.CompletedProcess:
-    env = {
+    env = minimal_env(**{
         "HOME": str(tmp_path / "home"),
         "USERPROFILE": str(tmp_path / "home"),
         "AUTORUN_HOME": str(tmp_path / "autorun-home"),
         "AUTORUN_TEST_STATE_DIR": str(tmp_path / "state"),
         "AUTORUN_USE_DAEMON": "0",
         "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
-    }
+    })
     return subprocess.run(
         [sys.executable, "-c", code],
         cwd=tmp_path,
@@ -37,7 +37,6 @@ print(json.dumps({
 """,
         tmp_path,
     )
-    skip_if_windows_service_provider_error(result)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -60,7 +59,6 @@ print(json.dumps({
 """,
         tmp_path,
     )
-    skip_if_windows_service_provider_error(result)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

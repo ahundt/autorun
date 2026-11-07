@@ -17,11 +17,23 @@
 # guidance, invented numbers, and untested compatibility claims; that is what the
 # "Needs a reader" section at the end of the run exists to say.
 #
-# Requires: bash, awk, grep, find. The code-fence check also needs python3 and
-# reports itself as skipped when python3 is absent.
+# Requires: bash, awk, grep, find. The XML-region and code-fence checks also need
+# Python 3 (python3, or python as Windows names it) and report themselves as
+# skipped without it.
 ##############################################################################
 
 set -e
+
+# Python 3 for the parsing checks. Windows installs name it python, and its
+# python3 may be a store stub that runs nothing, so each name must prove itself.
+PYTHON3=""
+for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+        && "$candidate" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+        PYTHON3=$candidate
+        break
+    fi
+done
 
 # Colors
 RED='\033[0;31m'
@@ -388,11 +400,11 @@ audit_skill() {
 
     if [ -f "$skill_path/SKILL.md" ]; then
         local xml_report
-        if ! command -v python3 >/dev/null 2>&1; then
-            print_info "Semantic XML region check skipped — python3 not found on PATH"
+        if [ -z "$PYTHON3" ]; then
+            print_info "Semantic XML region check skipped — no Python 3 (python3 or python) on PATH"
             xml_report="__skipped__"
         else
-        xml_report=$(python3 - "$skill_path/SKILL.md" <<'PY' 2>/dev/null || true
+        xml_report=$("$PYTHON3" - "$skill_path/SKILL.md" <<'PY' 2>/dev/null || true
 import re, sys, pathlib
 # Output protocol, one line each: FAIL <text> | WARN <text> | OK <text>.
 PRESENTATIONAL = {
@@ -400,7 +412,7 @@ PRESENTATIONAL = {
     "img", "li", "ol", "p", "pre", "small", "span", "strong", "table", "td",
     "th", "tr", "u", "ul",
 }
-lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines()
 body_start = 0
 if lines and lines[0].strip() == "---":
     for i in range(1, len(lines)):
@@ -674,11 +686,11 @@ PY
         #   length, so ```bash written inside ```markdown ends the outer block
         #   early. Nesting requires a longer outer fence (````).
         local fence_report
-        if ! command -v python3 >/dev/null 2>&1; then
-            print_info "Code-fence check skipped — python3 not found on PATH"
+        if [ -z "$PYTHON3" ]; then
+            print_info "Code-fence check skipped — no Python 3 (python3 or python) on PATH"
             fence_report="__skipped__"
         else
-        fence_report=$(python3 - "$skill_path" <<'PY' 2>/dev/null || true
+        fence_report=$("$PYTHON3" - "$skill_path" <<'PY' 2>/dev/null || true
 import re, sys, pathlib
 root = pathlib.Path(sys.argv[1])
 files = [root / "SKILL.md"] + sorted(root.glob("references/**/*.md"))
@@ -690,7 +702,7 @@ for f in files:
     # string and is at least as long as its opener. A fence line carrying an
     # info string is literal text inside a block, never a closer.
     inside, opener = False, None
-    for i, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
+    for i, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         m = re.match(r"^(`{3,})(\s*\S+)?\s*$", line)
         if not m:
             continue

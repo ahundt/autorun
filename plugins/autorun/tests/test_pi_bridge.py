@@ -253,6 +253,56 @@ def test_pi_print_mode_command_is_visible_without_calling_a_model(tmp_path, monk
     assert "extension error" not in result.stderr.lower()
 
 
+class _SyntheticDaemon:
+    """A listener the bridge reaches the way it reaches autorun's daemon.
+
+    Where the OS has AF_UNIX that is a Unix socket. Elsewhere (Windows) it is
+    loopback TCP with ``daemon.port`` and ``daemon.token`` written side by side,
+    as ``ipc.start_server`` publishes them, and every connection must open
+    with the token line before its request.
+    """
+
+    TOKEN = "synthetic-daemon-token"
+    TRANSPORT = "unix" if hasattr(socket, "AF_UNIX") else "tcp"
+
+    def __init__(self, tmp_path: Path, backlog: int):
+        self.transport = self.TRANSPORT
+        runtime = tmp_path / "daemon"
+        runtime.mkdir()
+        self.port_file = str(runtime / "daemon.port")
+        # AF_UNIX paths are limited to ~104 bytes, too short for tmp_path.
+        unix_path = Path("/tmp") / f"arpi-{os.getpid()}-{tmp_path.name[-5:]}.sock"
+        self.socket_path = str(unix_path if self.transport == "unix" else runtime / "absent.sock")
+        if self.transport == "unix":
+            unix_path.unlink(missing_ok=True)
+            self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.server.bind(self.socket_path)
+        else:
+            self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server.bind(("127.0.0.1", 0))
+            (runtime / "daemon.token").write_text(self.TOKEN, encoding="utf-8")
+            Path(self.port_file).write_text(str(self.server.getsockname()[1]), encoding="utf-8")
+        self.server.listen(backlog)
+
+    def accept(self) -> socket.socket:
+        """The next connection, past its token line when there is one."""
+        conn, _ = self.server.accept()
+        if self.transport == "tcp":
+            line = b""
+            while not line.endswith(b"\n"):  # byte at a time: leave the request unread
+                byte = conn.recv(1)
+                if not byte:
+                    break
+                line += byte
+            assert line.strip() == self.TOKEN.encode(), f"bridge sent {line!r} before its request"
+        return conn
+
+    def close(self) -> None:
+        self.server.close()
+        if self.transport == "unix":
+            Path(self.socket_path).unlink(missing_ok=True)
+
+
 def _run_pi_adapter_driver(
     tmp_path: Path,
     responses: list[dict],
@@ -261,19 +311,13 @@ def _run_pi_adapter_driver(
     cli_type: str = "pi",
 ) -> tuple[dict, list[dict]]:
     """Execute the staged TypeScript adapter against a synthetic daemon."""
-    if not hasattr(socket, "AF_UNIX"):
-        pytest.skip("synthetic server uses AF_UNIX")
-    socket_path = Path("/tmp") / f"arpicb-{os.getpid()}-{tmp_path.name[-5:]}.sock"
-    socket_path.unlink(missing_ok=True)
+    daemon = _SyntheticDaemon(tmp_path, backlog=len(responses))
     frames: list[dict] = []
 
     def serve():
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(str(socket_path))
-        server.listen(len(responses))
         try:
             for response in responses:
-                conn, _ = server.accept()
+                conn = daemon.accept()
                 with conn:
                     data = b""
                     while not data.endswith(b"\n"):
@@ -281,16 +325,15 @@ def _run_pi_adapter_driver(
                     frames.append(json.loads(data))
                     conn.sendall((json.dumps(response) + "\n").encode())
         finally:
-            server.close()
-            socket_path.unlink(missing_ok=True)
+            daemon.close()
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
     extension_dir = tmp_path / "extension"
     extension_dir.mkdir()
     source = (PI_TEMPLATE / "extensions" / "autorun" / "index.ts").read_text(encoding="utf-8")
-    source = source.replace("__AUTORUN_SOCKET__", json.dumps(str(socket_path)))
-    source = source.replace("__AUTORUN_PORT_FILE__", json.dumps(str(tmp_path / "none.port")))
+    source = source.replace("__AUTORUN_SOCKET__", json.dumps(daemon.socket_path))
+    source = source.replace("__AUTORUN_PORT_FILE__", json.dumps(daemon.port_file))
     source = source.replace("__AUTORUN_HOOK_ENTRY_COMMAND__", "[]")
     source = source.replace("__AUTORUN_CLI_TYPE__", json.dumps(cli_type))
     (extension_dir / "index.ts").write_text(source, encoding="utf-8")
@@ -1213,19 +1256,12 @@ def test_pi_extension_task_status_enum_matches_the_registry():
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
 def test_shared_daemon_client_sends_pi_identity_and_reads_a_deny(tmp_path):
-    if not hasattr(socket, "AF_UNIX"):
-        pytest.skip("synthetic server uses AF_UNIX")
-
-    socket_path = Path("/tmp") / f"arpi-{os.getpid()}-{tmp_path.name[-5:]}.sock"
-    socket_path.unlink(missing_ok=True)
+    daemon = _SyntheticDaemon(tmp_path, backlog=1)
     frames: list[dict] = []
 
     def serve():
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(str(socket_path))
-        server.listen(1)
         try:
-            conn, _ = server.accept()
+            conn = daemon.accept()
             with conn:
                 data = b""
                 while not data.endswith(b"\n"):
@@ -1240,8 +1276,7 @@ def test_shared_daemon_client_sends_pi_identity_and_reads_a_deny(tmp_path):
                     }) + "\n").encode()
                 )
         finally:
-            server.close()
-            socket_path.unlink(missing_ok=True)
+            daemon.close()
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
@@ -1250,8 +1285,8 @@ def test_shared_daemon_client_sends_pi_identity_and_reads_a_deny(tmp_path):
         f'''import {{ createDaemonBridge }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
 const bridge = createDaemonBridge({{
   cliType: "pi",
-  socketPath: {json.dumps(str(socket_path))},
-  portFile: {json.dumps(str(tmp_path / "none.port"))},
+  socketPath: {json.dumps(daemon.socket_path)},
+  portFile: {json.dumps(daemon.port_file)},
   hookEntryCommand: [],
   timeoutMs: 2000,
 }});
@@ -1290,21 +1325,14 @@ def test_shared_daemon_client_maps_every_bare_ar_spelling_to_the_help_prompt(tmp
     prompt, which the dispatcher answers with help. A regex that requires a
     separator after ``ar`` sends ``/ar`` through as the prompt ``ar:/ar`` and
     the user sees nothing."""
-    if not hasattr(socket, "AF_UNIX"):
-        pytest.skip("synthetic server uses AF_UNIX")
-
     spellings = ["/ar", "ar:", "/ar:", "ar-", "/ar ", "/ar st", "ar:st", "ar-st", "AR:ST"]
-    socket_path = Path("/tmp") / f"arpi-{os.getpid()}-{tmp_path.name[-5:]}.sock"
-    socket_path.unlink(missing_ok=True)
+    daemon = _SyntheticDaemon(tmp_path, backlog=8)
     frames: list[dict] = []
 
     def serve():
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(str(socket_path))
-        server.listen(8)
         try:
             for _ in spellings:
-                conn, _ = server.accept()
+                conn = daemon.accept()
                 with conn:
                     data = b""
                     while not data.endswith(b"\n"):
@@ -1312,8 +1340,7 @@ def test_shared_daemon_client_maps_every_bare_ar_spelling_to_the_help_prompt(tmp
                     frames.append(json.loads(data))
                     conn.sendall(b'{"systemMessage": "ok"}\n')
         finally:
-            server.close()
-            socket_path.unlink(missing_ok=True)
+            daemon.close()
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
@@ -1322,8 +1349,8 @@ def test_shared_daemon_client_maps_every_bare_ar_spelling_to_the_help_prompt(tmp
         f'''import {{ createDaemonBridge }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
 const bridge = createDaemonBridge({{
   cliType: "pi",
-  socketPath: {json.dumps(str(socket_path))},
-  portFile: {json.dumps(str(tmp_path / "none.port"))},
+  socketPath: {json.dumps(daemon.socket_path)},
+  portFile: {json.dumps(daemon.port_file)},
   hookEntryCommand: [],
   timeoutMs: 2000,
 }});
@@ -1562,33 +1589,23 @@ def test_autorun_disable_stands_the_bridge_down_while_the_daemon_denies(tmp_path
     hook_entry.py honours it, but Pi, Prime and OpenCode never run hook_entry
     while the daemon is up: they ask the daemon first, so they stayed denied.
     """
-    if not hasattr(socket, "AF_UNIX"):
-        pytest.skip("synthetic server uses AF_UNIX")
-
-    socket_path = Path("/tmp") / f"arpi-{os.getpid()}-{tmp_path.name[-5:]}.sock"
-    socket_path.unlink(missing_ok=True)
+    daemon = _SyntheticDaemon(tmp_path, backlog=4)
+    daemon.server.settimeout(0.1)
     frames: list[bytes] = []
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(socket_path))
-    server.listen(4)
-    server.settimeout(0.1)
     stop = threading.Event()
 
     def serve():
-        try:
-            while not stop.is_set():
-                try:
-                    conn, _ = server.accept()
-                except OSError:  # socket.timeout included: poll the stop flag
-                    continue
-                with conn:
-                    frames.append(conn.recv(65536))
-                    conn.sendall(
-                        b'{"hookSpecificOutput": {"permissionDecision": "deny", '
-                        b'"permissionDecisionReason": "daemon says no"}}\n'
-                    )
-        finally:
-            socket_path.unlink(missing_ok=True)
+        while not stop.is_set():
+            try:
+                conn = daemon.accept()
+            except OSError:  # socket.timeout included: poll the stop flag
+                continue
+            with conn:
+                frames.append(conn.recv(65536))
+                conn.sendall(
+                    b'{"hookSpecificOutput": {"permissionDecision": "deny", '
+                    b'"permissionDecisionReason": "daemon says no"}}\n'
+                )
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
@@ -1597,8 +1614,8 @@ def test_autorun_disable_stands_the_bridge_down_while_the_daemon_denies(tmp_path
         f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
 const bridge = createDaemonBridge({{
   cliType: "pi",
-  socketPath: {json.dumps(str(socket_path))},
-  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  socketPath: {json.dumps(daemon.socket_path)},
+  portFile: {json.dumps(daemon.port_file)},
   hookEntryCommand: [],
   timeoutMs: 2000,
 }});
@@ -1625,7 +1642,7 @@ console.log(JSON.stringify({{ denial: denialReason(response), stop }}));
     finally:
         stop.set()
         thread.join(timeout=10)
-        server.close()
+        daemon.close()
 
     assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[-400:]!r}"
     payload = json.loads(result.stdout)
@@ -1643,25 +1660,17 @@ def test_a_daemon_that_took_the_request_but_timed_out_is_not_asked_again(tmp_pat
     and could make the tool wait two full timeouts. Only a connection that
     never opened may fall back, and both share one deadline.
     """
-    if not hasattr(socket, "AF_UNIX"):
-        pytest.skip("synthetic server uses AF_UNIX")
-
-    socket_path = Path("/tmp") / f"arpi-{os.getpid()}-{tmp_path.name[-5:]}.sock"
-    socket_path.unlink(missing_ok=True)
     marker = tmp_path / "hook-entry-ran"
     release = threading.Event()
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(socket_path))
-    server.listen(1)
+    daemon = _SyntheticDaemon(tmp_path, backlog=1)
 
     def serve():
         try:
-            conn, _ = server.accept()
+            conn = daemon.accept()
             with conn:
                 release.wait(timeout=10)  # holds the request and never answers
         finally:
-            server.close()
-            socket_path.unlink(missing_ok=True)
+            daemon.close()
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
@@ -1671,8 +1680,8 @@ def test_a_daemon_that_took_the_request_but_timed_out_is_not_asked_again(tmp_pat
         f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
 const bridge = createDaemonBridge({{
   cliType: "pi",
-  socketPath: {json.dumps(str(socket_path))},
-  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  socketPath: {json.dumps(daemon.socket_path)},
+  portFile: {json.dumps(daemon.port_file)},
   hookEntryCommand: {json.dumps(hook_entry)},
   timeoutMs: 500,
 }});

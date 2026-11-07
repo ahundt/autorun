@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from conftest import skip_if_windows_service_provider_error
+from conftest import minimal_env
 
 
 def test_capability_snapshot_contains_all_registered_platforms():
@@ -210,13 +210,13 @@ def test_capability_snapshot_reads_the_source_tree_it_runs_from(tmp_path, monkey
 def test_capability_snapshot_cli_writes_json_without_touching_home(tmp_path):
     output_path = tmp_path / "capabilities.json"
     fake_home = tmp_path / "home"
-    env = {
+    env = minimal_env(**{
         "HOME": str(fake_home),
         "USERPROFILE": str(fake_home),
         "AUTORUN_HOME": str(tmp_path / "autorun-home"),
         "AUTORUN_TEST_STATE_DIR": str(tmp_path / "state"),
         "AUTORUN_USE_DAEMON": "0",
-    }
+    })
 
     result = subprocess.run(
         [
@@ -232,7 +232,6 @@ def test_capability_snapshot_cli_writes_json_without_touching_home(tmp_path):
         capture_output=True,
         timeout=10,
     )
-    skip_if_windows_service_provider_error(result)
 
     assert result.returncode == 0, result.stderr or result.stdout
     data = json.loads(output_path.read_text(encoding="utf-8"))

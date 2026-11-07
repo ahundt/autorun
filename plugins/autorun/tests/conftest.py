@@ -34,10 +34,20 @@ import psutil
 import pytest
 
 
-def skip_if_windows_service_provider_error(result: subprocess.CompletedProcess) -> None:
-    """Skip only hosted-Windows socket-provider failures, not product errors."""
-    if sys.platform == "win32" and "WinError 10106" in (result.stderr or ""):
-        pytest.skip("Windows runner has no usable _overlapped service provider")
+#: Variables a Windows process needs whatever else its environment drops.
+#: Without SYSTEMROOT, Winsock cannot load its service provider and importing
+#: asyncio fails with WinError 10106; the others locate the shell and temp dir.
+OS_REQUIRED_ENV_VARS = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP")
+
+
+def minimal_env(**variables: str) -> dict[str, str]:
+    """A subprocess environment of ``variables`` plus what the OS requires.
+
+    Use it instead of a bare dict for ``env=``: a bare dict works on POSIX and
+    breaks every socket import on Windows.
+    """
+    inherited = {name: os.environ[name] for name in OS_REQUIRED_ENV_VARS if name in os.environ}
+    return {**inherited, **variables}
 
 
 def private_tmux_binary(resolved: str | None) -> str | None:

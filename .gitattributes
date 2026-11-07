@@ -1,0 +1,5 @@
+# Windows checkouts convert to CRLF by default (core.autocrlf=true on the
+# GitHub runners). bash rejects a script with CR line ends, and the skill audit
+# matches Markdown lines such as "---" exactly, so both keep LF everywhere.
+*.sh text eol=lf
+*.md text eol=lf

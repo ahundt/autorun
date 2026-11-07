@@ -1769,7 +1769,6 @@ def test_no_harness_home_is_created_for_the_switch_alone(sandbox):
     assert not (sandbox / ".qwen").exists()
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
 def test_a_symlinked_settings_file_is_written_through_and_keeps_its_mode(tmp_path):
     """Dotfile managers link settings.json into a repository.
 
@@ -1779,6 +1778,8 @@ def test_a_symlinked_settings_file_is_written_through_and_keeps_its_mode(tmp_pat
     import json
     import stat as stat_module
 
+    if not _can_symlink(tmp_path):
+        pytest.skip("this account cannot create symlinks")
     entry = _switch(tmp_path)
     entry.path.parent.mkdir()
     managed = tmp_path / "dotfiles" / "claude-settings.json"
@@ -1795,7 +1796,8 @@ def test_a_symlinked_settings_file_is_written_through_and_keeps_its_mode(tmp_pat
     written = json.loads(managed.read_text(encoding="utf-8"))
     assert written["env"] == {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
     assert "café" in managed.read_text(encoding="utf-8"), "non-ASCII stays as written"
-    assert stat_module.S_IMODE(managed.stat().st_mode) == 0o644
+    if os.name == "posix":  # Windows has no group/other mode bits to keep.
+        assert stat_module.S_IMODE(managed.stat().st_mode) == 0o644
 
     steps.apply_switches([entry], Mode.UNINSTALL)
     assert entry.path.is_symlink()

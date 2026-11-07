@@ -11,7 +11,7 @@ import sys
 import types
 from pathlib import Path
 
-from conftest import skip_if_windows_service_provider_error
+from conftest import minimal_env
 
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -688,12 +688,12 @@ class TestCodeQuality:
         import subprocess
 
         src_dir = Path(__file__).parent.parent / "src"
-        env = {
+        env = minimal_env(**{
             "PYTHONPATH": str(src_dir),
             "AUTORUN_HOME": str(tmp_path / "autorun-home"),
             "AUTORUN_TEST_STATE_DIR": str(tmp_path / "state"),
             "AUTORUN_TEST_RUNTIME_DIR": str(tmp_path / "runtime"),
-        }
+        })
         result = subprocess.run(
             [
                 sys.executable,
@@ -708,7 +708,6 @@ class TestCodeQuality:
             env=env,
             timeout=10,
         )
-        skip_if_windows_service_provider_error(result)
 
         assert result.returncode == 0, result.stderr
 
