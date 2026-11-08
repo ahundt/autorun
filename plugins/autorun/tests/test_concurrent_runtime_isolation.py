@@ -130,6 +130,33 @@ def _lifecycle_paths(runtime: dict[str, Path], *, tcp: bool) -> tuple[Path, ...]
     return paths + (runtime["autorun"] / "daemon.sock",)
 
 
+def _recorded_daemon_pid(runtime: dict[str, Path]) -> int | None:
+    try:
+        return int((runtime["autorun"] / "daemon.lock").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _owns_recorded_daemon(process: subprocess.Popen, runtime: dict[str, Path]) -> bool:
+    """The recorded daemon is the process we started.
+
+    On Windows a venv's ``Scripts\\python.exe`` is a redirector that starts the
+    real interpreter as its child, so the recorded PID is the child of
+    ``process.pid`` there and equal to it elsewhere.
+    """
+    import psutil
+
+    recorded = _recorded_daemon_pid(runtime)
+    if recorded is None:
+        return False
+    if recorded == process.pid:
+        return True
+    try:
+        return psutil.Process(recorded).ppid() == process.pid
+    except psutil.Error:
+        return False
+
+
 def _fingerprint(paths: tuple[Path, ...]) -> dict[str, dict[str, object] | None]:
     result: dict[str, dict[str, object] | None] = {}
     for path in paths:
@@ -541,7 +568,7 @@ def test_two_daemons_and_two_homes_are_independent_under_200_clients(tcp: bool):
             assert after == before
             assert all(processes[name].poll() is None for name in RUNTIME_NAMES)
             for name in RUNTIME_NAMES:
-                assert processes[name].pid == int(runtimes[name]["autorun"].joinpath("daemon.lock").read_text().split()[0])
+                assert _owns_recorded_daemon(processes[name], runtimes[name]), name
         except BaseException as error:
             diagnostics = _failure_diagnostics(runtimes, processes)
             raise AssertionError(
@@ -554,7 +581,7 @@ def test_two_daemons_and_two_homes_are_independent_under_200_clients(tcp: bool):
                     try:
                         _round_trip(
                             runtime,
-                            {"_autorun_shutdown": process.pid},
+                            {"_autorun_shutdown": _recorded_daemon_pid(runtime) or process.pid},
                             tcp=tcp,
                             timeout=5,
                         )
