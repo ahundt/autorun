@@ -15,6 +15,15 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 
 
+def _cache_aware_runner(argv, **_kwargs):
+    """Model installer subprocesses, including cache-venv prefix probes."""
+    call = tuple(str(part) for part in argv)
+    stdout = "ar\n" if call[:3] == ("agy", "plugin", "list") else ""
+    if len(call) >= 4 and call[1:3] == ("-I", "-c") and "sys.prefix" in call[3]:
+        stdout = f"{Path(call[0]).resolve().parent.parent}\n"
+    return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+
 def _absolute_link_extension_runner(installed: Path, calls: list[tuple[str, ...]]):
     """Model the Gemini/Qwen local install contract without either CLI."""
     import shutil
@@ -499,12 +508,7 @@ def test_custom_claude_flavor_uses_the_portable_commands_and_agents_layout(monke
     monkeypatch.setattr(
         entrypoint,
         "_run",
-        lambda argv: subprocess.CompletedProcess(
-            argv,
-            0,
-            "ar\n" if tuple(argv)[:3] == ("agy", "plugin", "list") else "",
-            "",
-        ),
+        _cache_aware_runner,
     )
     monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
 
@@ -530,9 +534,7 @@ def test_uninstall_with_a_custom_harness_removes_what_install_put_there(monkeypa
     monkeypatch.setattr(
         entrypoint,
         "_run",
-        lambda argv, **_kwargs: subprocess.CompletedProcess(
-            argv, 0, "ar\n" if tuple(argv)[:3] == ("agy", "plugin", "list") else "", ""
-        ),
+        _cache_aware_runner,
     )
     monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
     spec = "mine=claude:mine:~/.mine::Mine"
@@ -1199,11 +1201,9 @@ def test_the_walk_never_uninstalls_a_distribution_sharing_one_of_our_scripts(
 
     calls: list[tuple[str, ...]] = []
 
-    def record(argv):
+    def record(argv, **_kwargs):
         calls.append(tuple(str(part) for part in argv))
-        return subprocess.CompletedProcess(
-            argv, 0, "ar\n" if tuple(argv)[:3] == ("agy", "plugin", "list") else "", ""
-        )
+        return _cache_aware_runner(argv, **_kwargs)
 
     # Claim every legacy distribution is present, so nothing is skipped merely
     # for being absent -- the skip under test must be the shared-script rule.

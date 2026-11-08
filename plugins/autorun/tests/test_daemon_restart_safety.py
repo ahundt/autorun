@@ -897,7 +897,7 @@ class TestPsutilProcessLifecycle:
 class TestDaemonMainLifecycleCleanup:
     """Daemon entry-point cleanup must only remove files owned by this process."""
 
-    def test_start_failure_without_owned_lock_preserves_live_daemon_files(self):
+    def test_start_failure_without_owned_lock_preserves_live_daemon_files(self, tmp_path, monkeypatch):
         """A startup loser must not unlink another daemon's socket or PID file.
 
         Uses the real cleanup, which main() and atexit both reach, so the
@@ -905,6 +905,10 @@ class TestDaemonMainLifecycleCleanup:
         import autorun.daemon as daemon_mod
         from autorun import core, ipc
 
+        monkeypatch.setattr(core, "LOCK_PATH", tmp_path / "daemon.lock")
+        for name, filename in (("SOCKET_PATH", "daemon.sock"), ("PORT_FILE", "daemon.port"),
+                               ("TOKEN_FILE", "daemon.token")):
+            monkeypatch.setattr(ipc, name, tmp_path / filename)
         winner = [core.LOCK_PATH, ipc.SOCKET_PATH, ipc.PORT_FILE, ipc.TOKEN_FILE]
         for path in winner:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -946,3 +950,57 @@ class TestDaemonMainLifecycleCleanup:
                 daemon_mod.main()
 
         assert cleanup_calls == ["cleanup"]
+
+    def test_cleanup_preserves_successor_flock_inode(self, tmp_path, monkeypatch):
+        """A successor that acquires the lock during release owns its inode.
+
+        The old daemon must not unlink ``daemon.flock`` after releasing it:
+        doing so removes the replacement daemon's lock path and leaves future
+        clients probing an inode nobody holds.
+        """
+        from filelock import FileLock, Timeout
+
+        from autorun import core, ipc
+        from autorun.core import AutorunDaemon
+
+        lock_path = tmp_path / "daemon.lock"
+        flock_path = tmp_path / "daemon.flock"
+        port_path = tmp_path / "daemon.port"
+        token_path = tmp_path / "daemon.token"
+        monkeypatch.setattr(core, "LOCK_PATH", lock_path)
+        monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", False)
+        monkeypatch.setattr(ipc, "PORT_FILE", port_path)
+        monkeypatch.setattr(ipc, "TOKEN_FILE", token_path)
+
+        owner = FileLock(str(flock_path), timeout=0)
+        successor = FileLock(str(flock_path), timeout=0)
+        owner.acquire()
+        lock_path.write_text("old", encoding="utf-8")
+        port_path.write_text("old", encoding="utf-8")
+        token_path.write_text("old", encoding="utf-8")
+
+        class ReleaseThenAcquireSuccessor:
+            def release(self):
+                owner.release()
+                successor.acquire()
+                lock_path.write_text("successor", encoding="utf-8")
+                port_path.write_text("successor", encoding="utf-8")
+                token_path.write_text("successor", encoding="utf-8")
+
+        daemon = AutorunDaemon.__new__(AutorunDaemon)
+        daemon._daemon_lock = ReleaseThenAcquireSuccessor()
+        try:
+            daemon._cleanup_files()
+            assert flock_path.exists(), "successor's lock inode was unlinked"
+            assert lock_path.read_text(encoding="utf-8") == "successor"
+            assert port_path.read_text(encoding="utf-8") == "successor"
+            assert token_path.read_text(encoding="utf-8") == "successor"
+            # atexit can call cleanup again after a successor has published.
+            daemon._cleanup_files()
+            assert lock_path.read_text(encoding="utf-8") == "successor"
+            assert port_path.read_text(encoding="utf-8") == "successor"
+            assert token_path.read_text(encoding="utf-8") == "successor"
+            with pytest.raises(Timeout):
+                FileLock(str(flock_path), timeout=0).acquire()
+        finally:
+            successor.release()

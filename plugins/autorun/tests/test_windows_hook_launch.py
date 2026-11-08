@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from autorun.core import validate_hook_response
-from autorun.installer import claude, codex, discovery, entrypoint, extension, steps
+from autorun.installer import claude, codex, discovery, entrypoint, extension, runtime, steps
 from autorun.installer.traversal import Context, Mode
 from autorun.platforms import PLATFORMS
 from conftest import minimal_env
@@ -103,6 +103,11 @@ def _written_hook(platform, root, plugin, resolved, route):
         else:
             shutil.copy2(PLUGIN / "pyproject.toml", cached / "pyproject.toml")
             claude.substitute_root(cached)
+            installed = runtime.install_cache_runtime(
+                cached, PLUGIN, python=str(resolved["hook_python"]), run=runtime._spawn
+            )
+            assert installed.ok, installed
+            assert claude.pin_hook_command(cached, claude.cache_hook_command(cached))
     manifest = json.loads(path.read_text(encoding="utf-8"))
     groups = manifest[platform.hook_protocol.hook_manifest_container_key][event]
     hooks = [hook for group in groups for hook in group.get("hooks", [group])]

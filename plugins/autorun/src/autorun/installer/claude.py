@@ -47,6 +47,7 @@ __all__ = [
     "CACHE_SUBDIR", "SUBSTITUTED_NAMES",
     "cache_dir", "cache_fallback", "substitute_root", "installed_versions",
     "CONSOLE_HOOK_COMMAND", "pin_hook_command",
+    "cache_hook_argv", "cache_hook_command",
 ]
 
 #: The hook command build_support.py writes into a wheel's hooks.json: the
@@ -62,6 +63,29 @@ CACHE_SUBDIR = Path("plugins") / "cache"
 #: these are rewritten: substituting through every file would rewrite command
 #: documentation that mentions the variable by name.
 SUBSTITUTED_NAMES = ("hooks.json", "plugin.json", "settings.json")
+
+
+def cache_hook_argv(directory: Path, *, cli: str = "claude") -> tuple[str, ...]:
+    """Run the cached hook with its private, non-editable interpreter."""
+    from .runtime import cache_venv_python
+
+    return (
+        str(cache_venv_python(directory)),
+        "-I",
+        str(directory / "hooks" / "hook_entry.py"),
+        "--cli",
+        cli,
+    )
+
+
+def cache_hook_command(directory: Path, *, cli: str = "claude") -> str:
+    """Render :func:`cache_hook_argv` for Claude's command manifest."""
+    from .runtime import render_hook_command
+
+    return render_hook_command(
+        cache_hook_argv(directory, cli=cli),
+        {"PYTHONPATH": "", "PYTHONHOME": ""},
+    )
 
 
 def cache_dir(
@@ -150,23 +174,36 @@ def pin_hook_command(directory: Path, command: str) -> bool:
     """Give a cached copy's hooks the installer's absolute hook command.
 
     A wheel's hooks.json runs :data:`CONSOLE_HOOK_COMMAND`, which works only
-    where Claude Code's PATH holds uv's tool directory. The desktop app is
-    started by the OS without the user's shell profile, so there every hook
-    failed with "command not found" before hook_entry.py could log it, and
-    autorun enforced nothing. Codex hooks were already written with the
-    absolute interpreter; this gives Claude the same. Only that exact command
-    is replaced, so a checkout's own hooks.json is left as it is. Returns
-    whether the file changed.
+    where Claude Code's PATH holds uv's tool directory. A source checkout's
+    wrapper also names ``hook_entry.py`` and must be replaced after the cache
+    snapshot, or it would continue importing mutable checkout code. The shared
+    bundle ownership predicate proves every command in that manifest is ours;
+    foreign commands remain untouched. Returns whether the file changed.
     """
     path = directory / "hooks" / "hooks.json"
     if not command or not path.is_file():
         return False
-    document = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    from .codex import COMMAND_MARK
+    from .extension import bundle_hooks_are_ours
+
+    owned_bundle = bundle_hooks_are_ours(directory)
     changed = False
     for matchers in (document.get("hooks") or {}).values():
         for matcher in matchers if isinstance(matchers, list) else ():
             for hook in (matcher.get("hooks") or ()) if isinstance(matcher, dict) else ():
-                if isinstance(hook, dict) and hook.get("command") == CONSOLE_HOOK_COMMAND:
+                if (
+                    isinstance(hook, dict)
+                    and isinstance(hook.get("command"), str)
+                    and (
+                        hook["command"] == CONSOLE_HOOK_COMMAND
+                        or (owned_bundle and COMMAND_MARK in hook["command"])
+                    )
+                    and hook["command"] != command
+                ):
                     hook["command"] = command
                     changed = True
     if changed:

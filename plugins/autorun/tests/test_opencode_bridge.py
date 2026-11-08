@@ -89,8 +89,6 @@ class TestInstallerPlacesTheShim:
         # real home on the other.
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setenv("AUTORUN_HOME", f"/tmp/aoc-{tmp_path.name[-8:]}")
-        monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", f"/tmp/aocs-{tmp_path.name[-8:]}")
         monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setattr(entrypoint, "_marketplace_root", lambda: MARKETPLACE_ROOT)

@@ -24,6 +24,29 @@ import os as _os
 import sys as _sys
 import tempfile as _tempfile
 
+# Keep deliberate test controls, never the invoking hook's runtime settings.
+_test_controls = (
+    'AUTORUN_KEEP_TEST_ARTIFACTS', 'AUTORUN_REQUIRE_JS_RUNTIME',
+    'AUTORUN_TMUX_BIN', 'AUTORUN_ORIGINAL_TMUX',
+    'AUTORUN_ALLOW_RETIRED_GEMINI_CLI_BACKEND_TESTS',
+)
+for _name in list(_os.environ):
+    if (_name.startswith('AUTORUN_')
+            and not _name.startswith(('AUTORUN_TEST_', 'AUTORUN_ENABLE_'))
+            and '_E2E_' not in _name
+            and _name not in _test_controls):
+        _os.environ.pop(_name, None)
+for _name in (
+    # UV_PYTHON stays: CI's setup-uv selects each matrix interpreter with it,
+    # and without it the repo's .python-version would steer test 'uv run'.
+    'UV_PROJECT', 'UV_PROJECT_ENVIRONMENT', 'UV_WORKING_DIR',
+    'UV_CONFIG_FILE', 'UV_TOOL_DIR', 'UV_TOOL_BIN_DIR', 'UV_PYTHON_INSTALL_DIR',
+    'XDG_DATA_HOME',
+):
+    _os.environ.pop(_name, None)
+_os.environ.pop('CLAUDE_PLUGIN_ROOT', None)
+del _test_controls
+
 # Isolate state plus daemon socket/PID/logs before tests/conftest.py or the
 # autorun package can import modules whose paths are resolved at import time.
 #
@@ -63,19 +86,28 @@ _os.makedirs(_home)
 if hasattr(__import__('socket'), 'AF_UNIX'):
     _sock = _os.path.realpath(_os.path.join(_home, 'daemon.sock'))
     _limit = 104 if _sys.platform == 'darwin' else 108
-    if len(_sock) >= _limit:
+    _sock_size = len(_sock.encode(_sys.getfilesystemencoding() or 'utf-8'))
+    if _sock_size >= _limit:
         raise RuntimeError(
             'test daemon socket path is %d bytes, limit %d: %s\n'
             'Set TMPDIR to a shorter directory before running pytest.'
-            % (len(_sock), _limit, _sock)
+            % (_sock_size, _limit, _sock)
         )
-    del _sock, _limit
+    del _sock, _limit, _sock_size
 
 _os.environ['AUTORUN_TEST_RUNTIME_DIR'] = _runtime
 _os.environ['AUTORUN_TEST_STATE_DIR'] = _state
 _os.environ['AUTORUN_HOME'] = _home
+# Harness discovery and installers also resolve paths through the process home.
+_process_home = _os.path.join(_runtime, 'home')
+_os.makedirs(_process_home)
+_os.environ['HOME'] = _process_home
+_os.environ['USERPROFILE'] = _process_home
+_pi_home = _os.path.join(_process_home, '.pi', 'agent')
+_os.makedirs(_pi_home)
+_os.environ['PI_CODING_AGENT_DIR'] = _pi_home
 
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'src', 'autorun'))
 import python_check as _pc  # noqa: E402  # auto-exits with helpful message if Python < 3.10
 _sys.path.pop(0)
-del _sys, _os, _tempfile, _runtime, _state, _home, _pc
+del _sys, _os, _tempfile, _runtime, _state, _home, _process_home, _pi_home, _pc

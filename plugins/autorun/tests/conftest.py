@@ -109,7 +109,7 @@ def pytest_configure(config):
     # running pytest inside Claude, Codex, Qwen, Agy, Gemini, or Forge cannot
     # silently change response schemas or session selection. Individual tests
     # opt back into a platform after collection.
-    from autorun.platforms import PLATFORMS
+    from autorun.platforms import CLAUDE_PROJECT_DIR_ENV, PLATFORMS
 
     platform_env_vars = {
         key
@@ -117,16 +117,21 @@ def pytest_configure(config):
         for key in (
             *platform.detect_env_vars,
             *platform.standalone_session_env_vars,
+            *platform.config_dir_env_vars,
+            *platform.version_env_vars,
+            *(platform.task_tool_switch.forwarded_env() if platform.task_tool_switch else ()),
         )
     }
     platform_env_vars.update(
         {
+            CLAUDE_PROJECT_DIR_ENV,
             "AUTORUN_CLI_TYPE",
             "AUTORUN_SESSION_ID",
         }
     )
     for env_var in platform_env_vars:
         os.environ.pop(env_var, None)
+    os.environ["PI_CODING_AGENT_DIR"] = str(Path.home() / ".pi" / "agent")
 
     # TMUX ISOLATION: tmux is one server per user, so a test that creates,
     # renames, or kills sessions in it is editing whatever the developer has
@@ -449,6 +454,14 @@ class DaemonManager:
             return None
 
     @classmethod
+    def _recorded_pid(cls):
+        """The birth-validated daemon record in this worker's exported home."""
+        from autorun import ipc
+
+        home = os.environ.get("AUTORUN_HOME")
+        return ipc.daemon_record_pid(Path(home) / "daemon.lock") if home else None
+
+    @classmethod
     def _is_ours(cls, pid_str: str) -> bool:
         """Whether this worker started the daemon or hosts it in its own root.
 
@@ -462,11 +475,11 @@ class DaemonManager:
         leaked process in a temporary directory; killing one costs another
         worker its test.
         """
-        if pid_str in cls._test_spawned_pids:
-            return True
         home = cls._daemon_home(pid_str)
         runtime = os.environ.get("AUTORUN_TEST_RUNTIME_DIR")
-        if not home or not runtime:
+        if not home:
+            return pid_str in cls._test_spawned_pids and str(cls._recorded_pid()) == pid_str
+        if not runtime:
             return False
         try:
             runtime = os.path.realpath(runtime)
@@ -512,7 +525,6 @@ class DaemonManager:
 
         Returns the PID of the spawned daemon, or None on failure.
         """
-        before = set(cls._get_all_daemon_pids())
         try:
             subprocess.run(
                 [sys.executable, "-m", "autorun", "--restart-daemon"],
@@ -520,11 +532,11 @@ class DaemonManager:
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
-        time.sleep(0.5)
-        after = set(cls._get_all_daemon_pids())
-        new_pids = after - before
-        cls._test_spawned_pids.update(new_pids)
-        return next(iter(new_pids), None)
+        pid = cls._recorded_pid()
+        if pid is not None:
+            cls._test_spawned_pids.add(str(pid))
+            return str(pid)
+        return None
 
     @classmethod
     def verify_daemon_count(cls) -> tuple:
@@ -768,6 +780,11 @@ def unique_session_id():
 
 # --- live-install canary -----------------------------------------------------
 #
+# HOME is redirected before this module loads. These canaries observe the
+# sandbox install; an external audit must fingerprint explicitly permitted live
+# files. Inspecting the developer's installed package here would itself break
+# the suite's no-live-reads isolation contract.
+#
 # AUTORUN_HOME and AUTORUN_TEST_STATE_DIR redirect state, but nothing redirects
 # the *installed copy* of autorun: the plugin cache Claude Code loads, the
 # harness settings that point at it, and the shared marketplace registry. A
@@ -901,8 +918,8 @@ def _check_live_install_unchanged(session) -> None:
     session.exitstatus = 1
 
 
-#: autorun's default state directory in the real home. Read with expanduser
-#: here, before any test redirects HOME, and only ever checked for existence.
+#: The default state directory in the suite's initial (already redirected)
+#: home. Individual tests may redirect HOME again; this anchor stays fixed.
 _REAL_AUTORUN_HOME = os.path.expanduser("~/.autorun")
 
 

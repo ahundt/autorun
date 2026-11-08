@@ -12,6 +12,7 @@ Validates:
 """
 
 import sys
+import os
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -24,8 +25,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 @pytest.fixture
 def short_tmp_path():
     """Short temp path for AF_UNIX sockets (108 char limit on macOS)."""
-    with tempfile.TemporaryDirectory(prefix="ipc") as d:
+    with tempfile.TemporaryDirectory(prefix="ipc", dir="/tmp" if os.name != "nt" else None) as d:
         yield Path(d)
+
+
+@pytest.fixture(autouse=True)
+def private_token_file(tmp_path, monkeypatch):
+    """TCP probes and cleanup must not rotate/remove the worker daemon's token."""
+    from autorun import ipc
+
+    monkeypatch.setattr(ipc, "TOKEN_FILE", tmp_path / "daemon.token")
 
 
 class TestPlatformDetection:
@@ -36,6 +45,15 @@ class TestPlatformDetection:
         import socket as socket_mod
         from autorun.ipc import HAS_UNIX_SOCKETS
         assert HAS_UNIX_SOCKETS == hasattr(socket_mod, "AF_UNIX")
+
+
+@pytest.mark.asyncio
+async def test_short_socket_fixture_keeps_tcp_credentials_private(tmp_path, short_tmp_path, monkeypatch):
+    from autorun import ipc
+
+    assert ipc.TOKEN_FILE.is_relative_to(tmp_path)
+    monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", False)
+    await TestServerClientRoundTrip().test_round_trip(short_tmp_path)
 
 
 class TestPublishedPort:
@@ -373,6 +391,7 @@ class TestLoopbackServerIsolation:
         monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", False)
         monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
         monkeypatch.setattr(ipc, "PORT_FILE", home / "daemon.port")
+        monkeypatch.setattr(ipc, "TOKEN_FILE", home / "daemon.token")
         return ipc, home
 
     async def _serve(self, ipc, home):
@@ -409,6 +428,9 @@ class TestLoopbackServerIsolation:
                     assert first_port != second_port, (
                         f"both homes published port {first_port}"
                     )
+                    first_token = (home_a / "daemon.token").read_text(encoding="utf-8")
+                    second_token = (home_b / "daemon.token").read_text(encoding="utf-8")
+                    assert first_token and second_token and first_token != second_token
                 finally:
                     # close() only stops accepting; wait_closed() is what
                     # releases the port before the next test tries to bind.

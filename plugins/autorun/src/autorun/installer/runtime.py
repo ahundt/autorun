@@ -25,17 +25,22 @@ from __future__ import annotations
 
 import base64
 import json
+from importlib import util as importlib_util
 import os
 import platform
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
+
+from .fs import FileLock, IGNORED_GLOBS, INSTALL_LOCK_NAME
 
 __all__ = [
     "DirectCommand", "UvCommand", "hook_command", "hook_command_fields", "has_uv", "python_runner", "Probe", "probe_runtime", "probe_hook_runtime",
@@ -43,6 +48,7 @@ __all__ = [
     "sync_dependencies_argv", "uv_tool_install_argv",
     "Version", "self_update", "update_argv", "detect_update_method",
     "installed_extension_name", "REPOSITORY", "EXTENSION_NAMES",
+    "cache_venv_python", "ensure_cache_venv", "install_cache_runtime",
 ]
 
 
@@ -345,6 +351,132 @@ def _spawn(
         timeout=timeout,
         env={**os.environ, **env} if env else None,
     )
+
+
+def cache_venv_python(cache: Path) -> Path:
+    """Return the cache-owned interpreter on every supported platform."""
+    directory, executable = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
+    return cache / ".venv" / directory / executable
+
+
+def ensure_cache_venv(
+    cache: Path,
+    *,
+    python: str = "",
+    run: Runner = _spawn,
+) -> Path:
+    """Create the managed cache venv without ever clearing its directory.
+
+    The installer supplies ``run`` so uv/pip remains the one subprocess
+    boundary. A valid cache-owned interpreter is returned untouched; a foreign
+    interpreter is never used as the install target.
+    """
+    expected = cache_venv_python(cache)
+    venv_dir = cache / ".venv"
+    for directory in (cache, venv_dir):
+        try:
+            metadata = directory.lstat()
+        except FileNotFoundError:
+            continue
+        reparse = getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        if stat.S_ISLNK(metadata.st_mode) or reparse:
+            raise RuntimeError(f"cache runtime directory is a symlink or reparse point: {directory}")
+    if not cache.is_dir():
+        raise RuntimeError(f"cache directory is absent: {cache}")
+    if expected.is_file():
+        if expected.is_symlink() and not (venv_dir / "pyvenv.cfg").is_file():
+            raise RuntimeError("cache interpreter is a symlink outside its managed venv")
+        probe = run(
+            (str(expected), "-I", "-c", "import sys; print(sys.prefix)"),
+            env={"PYTHONHOME": "", "PYTHONPATH": ""},
+        )
+        if probe.returncode == 0 and Path(probe.stdout.strip()).resolve() == venv_dir.resolve():
+            return expected
+    if has_uv():
+        argv = ("uv", "venv", "--quiet", "--allow-existing", "--python", python or sys.executable, str(venv_dir))
+    else:
+        argv = (sys.executable, "-m", "venv", str(venv_dir))
+    result = run(argv, env={"PYTHONHOME": "", "PYTHONPATH": "", "UV_VENV_CLEAR": "false"})
+    if result.returncode != 0:
+        detail = _first_line(result.stderr or result.stdout)
+        raise RuntimeError(detail or "cache venv creation failed")
+    probe = run(
+        (str(expected), "-I", "-c", "import sys; print(sys.prefix)"),
+        env={"PYTHONHOME": "", "PYTHONPATH": ""},
+    )
+    if probe.returncode != 0 or Path(probe.stdout.strip()).resolve() != venv_dir.resolve():
+        raise RuntimeError("cache venv interpreter is not owned by its cache")
+    return expected
+
+
+def _stage_cache_project(source: Path, target: Path) -> None:
+    """Stage build inputs so setuptools cannot write into the checkout."""
+    support = None
+    if (source / "build_support.py").is_file():
+        spec = importlib_util.spec_from_file_location(
+            "autorun_cache_build_support", source / "build_support.py"
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("cannot load source build support")
+        support = importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+    target.mkdir()
+    filenames = [child.name for child in source.iterdir() if child.is_file()]
+    if support is not None:
+        filenames = support.tracked_sdist_files(source, filenames)
+    for filename in filenames:
+        shutil.copy2(source / filename, target / filename)
+    ignore = shutil.ignore_patterns(*IGNORED_GLOBS, "*.egg-info")
+    if (source / "src").is_dir():
+        shutil.copytree(source / "src", target / "src", symlinks=False, ignore=ignore)
+    if support is not None:
+        asset_ignore = support._copy_ignore(source, support._tracked_paths(source))
+        for relative, _destination in support.PLUGIN_ASSET_TREES:
+            destination = target / relative
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            shutil.copytree(source / relative, destination, symlinks=False, ignore=asset_ignore)
+        support.materialize_sibling_packages(source, target)
+        support.write_build_metadata(source, target / "src" / "autorun" / "metadata.json")
+
+
+def install_cache_runtime(
+    cache: Path,
+    source: Path,
+    *,
+    python: str = "",
+    run: Runner = _spawn,
+) -> Outcome:
+    """Install a source checkout non-editably into Claude's cache venv.
+
+    The checkout's build inputs are staged beside the cache so the build
+    cannot write into the checkout, and the cache hook then runs a snapshot
+    that later checkout edits cannot change. A wheel-installed CLI does not
+    come here: its tool venv is already a non-editable install.
+    """
+    lock = FileLock(str(cache.parent / INSTALL_LOCK_NAME))
+    lock.acquire()
+    try:
+        cache_python = ensure_cache_venv(cache, python=python, run=run)
+        with tempfile.TemporaryDirectory(prefix=".autorun-cache-project-", dir=str(cache.parent)) as staging:
+            package = Path(staging) / "project"
+            _stage_cache_project(source, package)
+            if has_uv():
+                argv = ("uv", "pip", "install", "--python", str(cache_python), "--reinstall", "--quiet", str(package))
+            else:
+                argv = (str(cache_python), "-m", "pip", "install", "--force-reinstall", "--quiet", str(package))
+            result = run(argv, env={"PYTHONHOME": "", "PYTHONPATH": ""})
+        if result.returncode != 0:
+            return Outcome(
+                "Claude cache runtime",
+                False,
+                _first_line(result.stderr or result.stdout) or "package installation failed",
+            )
+        return Outcome("Claude cache runtime", True, str(cache_python))
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        return Outcome("Claude cache runtime", False, f"{type(error).__name__}: {error}")
+    finally:
+        lock.release()
 
 
 def sync_dependencies_argv(plugin_dir: Path, *, uv_tool_env: bool = False) -> tuple[str, ...]:

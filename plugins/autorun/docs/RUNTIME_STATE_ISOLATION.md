@@ -142,6 +142,23 @@ autorun package import. It sets:
 - `AUTORUN_TEST_RUNTIME_DIR=<temporary root>`
 - `AUTORUN_TEST_STATE_DIR=<temporary root>/sessions`
 - `AUTORUN_HOME=<temporary root>/autorun-home`
+- `HOME` and `USERPROFILE` both point to `<temporary root>/home`, and
+  `PI_CODING_AGENT_DIR` points to its `.pi/agent` directory.
+
+Inherited harness configuration, detection, session and task-tool switches are
+cleared using the platform registry, including its Claude project alias.
+Runtime `AUTORUN_*` overrides, uv project/tool/Python relocation settings and
+`XDG_DATA_HOME` are cleared too; the shared uv cache and explicit test controls
+are retained. Tests opt into
+an override after collection. `isolated_environ.isolation_only()` preserves
+the redirected home as well as the daemon and state paths when clearing the
+rest of the environment.
+
+The install canaries in `tests/conftest.py` therefore observe the sandbox,
+including nested tests of canary failures. They do not inspect the developer's
+live trees. For an audit, take the explicitly permitted live-file fingerprints
+outside pytest before and after the run; a sandbox-only canary cannot prove
+that those files stayed unchanged.
 
 Import-time setup is required because `ipc.py` resolves daemon paths when it is
 imported. Setting only `AUTORUN_TEST_STATE_DIR`, or setting `AUTORUN_HOME` in a
@@ -149,25 +166,25 @@ later fixture, can still point tests at the production socket and PID files.
 `tests/conftest.py` removes the complete temporary root after the suite unless
 debug artifact retention is explicitly enabled.
 
-### The isolated socket path has almost no headroom
+### Keep the isolated socket path short
 
 `AUTORUN_HOME` under the temporary root produces this daemon socket path:
 
 ```
-<TMPDIR>/autorun_test_runtime_XXXXXXXX/autorun-home/daemon.sock
+/tmp/ar_test_XXXXXXXX/autorun-home/daemon.sock
 ```
 
-Everything after `<TMPDIR>` is 55 characters. `sun_path` holds 104 bytes on
-macOS and BSD, 108 on Linux, so a macOS `TMPDIR` longer than 48 characters
-makes the socket unbindable. Measured on macOS 25.5 (2026-08-05): the
-per-user `TMPDIR` is 48 characters, the socket path is 103, and a probe that
-binds progressively longer paths first fails at exactly 104.
+The parent conftest prefers `/tmp` and falls back to the platform temporary
+directory if it is unavailable. Each process, including each xdist worker,
+gets its own root. `sun_path` holds 104 bytes on macOS and BSD, 108 on Linux.
+Before importing autorun, conftest measures the encoded, resolved socket path
+and stops with `test daemon socket path is N bytes, limit L` if it cannot fit.
+Non-ASCII characters can take more than one byte.
 
-That is zero bytes of headroom. Renaming the runtime prefix, adding one
-directory level, or running under a longer `TMPDIR` breaks every
-daemon-backed test at once, so `plugins/autorun/conftest.py` measures the path
-before any import and stops with `test daemon socket path is N bytes, limit L`;
-set a shorter `TMPDIR`.
+The old platform-temp layout left almost no headroom: measured on macOS 25.5
+(2026-08-05), its socket path was 103 bytes and binding first failed at 104.
+A long caller `TMPDIR` can still affect test fixtures that create their own
+sockets; those fixtures need a short temporary directory too.
 
 Outside pytest (a sandboxed install, a hook run by hand) the failure does not
 announce itself as a path problem. With a 124-byte
@@ -182,7 +199,7 @@ persisted state then fails with an empty result while the harness reports a
 clean run. Check the path length before hunting for a persistence bug:
 
 ```bash
-python3 -c "import os;p=os.environ['AUTORUN_HOME']+'/daemon.sock';print(len(p),p)"
+uv run python -c "import os;p=os.path.realpath(os.environ['AUTORUN_HOME']+'/daemon.sock');print(len(os.fsencode(p)),p)"
 ```
 
 Tests that replace persistence must patch the owner lookup:
@@ -207,7 +224,7 @@ runtime variables:
 ```bash
 SB=$(mktemp -d /tmp/arsb.XXXXXX)  # short (socket headroom above) and unique per run
 mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"
-env HOME="$SB/home" \
+env -i PATH="$PATH" HOME="$SB/home" \
     USERPROFILE="$SB/home" \
     PI_CODING_AGENT_DIR="$SB/home/.pi/agent" \
     AUTORUN_HOME="$SB/ar-home" \
@@ -221,7 +238,10 @@ use `monkeypatch.setenv("HOME", ...)`. Keep the sandbox path short for the same
 `sun_path` reason as above: a scratch directory nested a few levels deep already
 exceeds the budget. Sharing `UV_CACHE_DIR` with the real cache avoids
 re-downloading the dependency set into the sandbox; it is a read-mostly cache,
-not install state.
+not install state. `env -i` is required: an inherited `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR`, `QWEN_HOME`, or another harness relocation variable can
+otherwise bypass the redirected home. Add any deliberate sandbox-specific
+override after `env -i`; never forward one from the live session.
 
 The install output names each harness's outcome. A harness the sandbox lacks
 can be skipped, so create its config directory in the sandbox first when it is

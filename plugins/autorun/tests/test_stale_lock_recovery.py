@@ -16,6 +16,7 @@ import json
 import time
 import uuid
 import multiprocessing
+from multiprocessing.managers import SyncManager
 
 import pytest
 
@@ -105,6 +106,21 @@ def reset_singletons():
 
 
 @pytest.fixture
+def manager():
+    """Use loopback TCP for manager proxies under long scratch paths.
+
+    ``multiprocessing.Manager()`` defaults to an AF_UNIX endpoint in the
+    process temporary directory.  The audit runner's intentionally long
+    scratch root can exceed macOS's socket-path limit before any contention
+    assertion runs.  A kernel-assigned loopback port keeps the same proxy
+    semantics without shortening the test's state paths; ``SyncManager``
+    owns startup and shutdown through its context manager.
+    """
+    with SyncManager(address=("127.0.0.1", 0)) as server:
+        yield server
+
+
+@pytest.fixture
 def state_setup(tmp_path):
     """Setup isolated state directory for each test."""
     state_dir = tmp_path / f"sessions_{uuid.uuid4().hex[:8]}"
@@ -128,7 +144,7 @@ def state_setup(tmp_path):
 class TestCrossProcessContention:
     """Verify real cross-process mutual exclusion via filelock."""
 
-    def test_second_process_times_out_while_first_holds(self, state_setup):
+    def test_second_process_times_out_while_first_holds(self, state_setup, manager):
         """
         Process 1 holds session_state until process 2 finishes its timed attempt.
         Process 2 must get SessionTimeoutError, not succeed.
@@ -140,7 +156,6 @@ class TestCrossProcessContention:
         lock_held = multiprocessing.Event()
         release_holder = multiprocessing.Event()
         lock_released = multiprocessing.Event()
-        manager = multiprocessing.Manager()
         second_result = manager.dict({"value": None})
 
         p1 = multiprocessing.Process(
@@ -164,7 +179,7 @@ class TestCrossProcessContention:
             f"Second process should timeout while lock is held, got: {second_result['value']}"
         )
 
-    def test_second_process_acquires_after_first_releases(self, state_setup):
+    def test_second_process_acquires_after_first_releases(self, state_setup, manager):
         """
         After process 1 releases the lock, process 2 should succeed.
         Tests sequential access — no starvation.
@@ -175,7 +190,6 @@ class TestCrossProcessContention:
 
         first_acquired = multiprocessing.Event()
         release_holder = multiprocessing.Event()
-        manager = multiprocessing.Manager()
         second_result = manager.dict({"value": None})
 
         p1 = multiprocessing.Process(
@@ -200,7 +214,7 @@ class TestCrossProcessContention:
             f"{second_result['value']}"
         )
 
-    def test_cross_process_writes_are_isolated(self, state_setup):
+    def test_cross_process_writes_are_isolated(self, state_setup, manager):
         """
         Two processes each write a unique key. Both writes must survive.
         Verifies atomic JSON write prevents data loss.
@@ -209,7 +223,6 @@ class TestCrossProcessContention:
         session_id = setup["session_id"]
         state_dir = str(setup["state_dir"])
 
-        manager = multiprocessing.Manager()
         result1 = manager.dict({"success": False, "value": None})
         result2 = manager.dict({"success": False, "value": None})
 

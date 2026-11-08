@@ -585,6 +585,18 @@ describe what changed between rc1 and rc3.
      `cmd.exe` cannot reinterpret path quoting. The plugin's POSIX command now
      reads `"$CLAUDE_PLUGIN_ROOT"`, which Codex exports, so a plugin root with
      spaces or apostrophes survives.
+118. If a replacement daemon acquired `daemon.flock` during the old daemon's
+     cleanup, the old daemon could unlink the replacement's lock file. Cleanup
+     no longer unlinks that path after releasing the lock.
+119. Installing from a source checkout left Claude's cached hooks running
+     whatever the cache's `.venv` already held, such as a stale editable
+     install that followed checkout edits. Installation now puts a
+     non-editable copy of the checkout in that `.venv`, built from staged
+     inputs so no build artifacts land in the checkout, and points the cached
+     hook commands at its interpreter with Python path overrides cleared.
+     Existing managed files are kept; a foreign interpreter or a cache
+     directory that is a symlink is refused. Wheel installs still run hooks
+     from the tool's own non-editable interpreter.
 
 ### For contributors
 
@@ -655,6 +667,28 @@ describe what changed between rc1 and rc3.
    Windows launchers. Antigravity is listed as unverified: neither its
    documentation nor any public source states how it starts a hook on
    Windows.
+10. Pytest now redirects `HOME`, `USERPROFILE`, and Pi's config directory
+    before importing autorun, and clears inherited harness relocation,
+    detection, session, version, task-tool, and autorun runtime overrides.
+    Explicit E2E test controls remain available. Clearing the environment in
+    a test preserves those redirected homes.
+    The documented shell sandbox starts with `env -i` and shares uv's cache,
+    so a live session's `CODEX_HOME` or other override cannot escape it.
+    Daemon tracking reads the worker's birth-validated PID record instead of
+    claiming every process that appeared during a global scan. A recorded PID
+    with a different runtime is spared; an unreadable environment requires a
+    current matching record. Pi, Prime, and OpenCode installer fixtures reuse
+    the worker's runtime instead of naming shared `/tmp` directories.
+    The socket-path guard measures encoded bytes, including non-ASCII paths.
+    Multiprocess tests use loopback manager proxies so a long scratch path
+    cannot prevent the lock assertions from running, and shut each manager down
+    after use. A concurrent two-runtime test exercises both daemon transports,
+    200 simultaneous sessions, and every registered hook route.
+    IPC tests keep token creation and cleanup private, and lifecycle probes
+    publish stand-in artifacts in their own fixture directories.
+    The inherited Claude project alias and uv project, tool and Python paths
+    are cleared before they can redirect a test into a developer installation;
+    the shared uv cache stays available.
 
 ## [1.0.0rc3] - 2026-10-06
 

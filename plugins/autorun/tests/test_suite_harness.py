@@ -396,6 +396,7 @@ def daemon_sweep(monkeypatch, tmp_path):
     monkeypatch.setattr(manager, "_test_spawned_pids", set())
     monkeypatch.setattr(manager, "_get_all_daemon_pids", classmethod(lambda cls: []))
     monkeypatch.setattr(manager, "_daemon_home", classmethod(lambda cls, pid: None))
+    monkeypatch.setattr(manager, "_recorded_pid", classmethod(lambda cls: None))
 
     killed = []
     monkeypatch.setattr(
@@ -410,6 +411,7 @@ def daemon_sweep(monkeypatch, tmp_path):
             manager, "_daemon_home", classmethod(lambda cls, pid: homes.get(pid))
         )
         monkeypatch.setattr(manager, "_test_spawned_pids", set(spawned))
+        monkeypatch.setattr(manager, "_recorded_pid", classmethod(lambda cls: next(iter(spawned), None)))
         return manager
 
     arrange.mine = str(mine / "autorun-home")

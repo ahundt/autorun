@@ -15,6 +15,9 @@ import os
 #: The variables conftest.py exports so no test reaches live state. The one
 #: list: test_runtime_isolation_canaries.py checks the same names.
 REQUIRED_ISOLATION_VARS = (
+    "HOME",
+    "USERPROFILE",
+    "PI_CODING_AGENT_DIR",
     "AUTORUN_HOME",
     "AUTORUN_TEST_STATE_DIR",
     "AUTORUN_TEST_RUNTIME_DIR",

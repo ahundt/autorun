@@ -126,8 +126,6 @@ def _install_pi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(home / ".pi" / "agent"))
-    monkeypatch.setenv("AUTORUN_HOME", f"/tmp/api-{tmp_path.name[-8:]}")
-    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", f"/tmp/apis-{tmp_path.name[-8:]}")
     monkeypatch.setattr(entrypoint, "_marketplace_root", lambda: MARKETPLACE_ROOT)
     monkeypatch.setattr(
         entrypoint.shutil,
@@ -1454,8 +1452,6 @@ def _install_prime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv(
         "PRIME_AGENT_CODING_AGENT_DIR", str(home / ".prime" / "agent")
     )
-    monkeypatch.setenv("AUTORUN_HOME", f"/tmp/aprh-{tmp_path.name[-8:]}")
-    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", f"/tmp/aprs-{tmp_path.name[-8:]}")
     monkeypatch.setattr(entrypoint, "_marketplace_root", lambda: MARKETPLACE_ROOT)
     monkeypatch.setattr(
         entrypoint.shutil,

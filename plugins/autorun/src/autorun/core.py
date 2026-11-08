@@ -3747,7 +3747,8 @@ class AutorunDaemon:
         by name, and once the lock is released a replacement daemon may have
         written its own. async_stop and atexit both call this, and an executor
         thread can keep the process alive between them, so the second call
-        must find nothing it owns.
+        must find nothing it owns. Never unlink the flock path after release:
+        it can already name a successor's newly acquired lock inode.
         """
         if self._daemon_lock is None:
             return
@@ -3761,11 +3762,6 @@ class AutorunDaemon:
         except Exception:
             pass
         self._daemon_lock = None
-        flock_path = ipc.daemon_flock_path(LOCK_PATH)
-        try:
-            flock_path.unlink(missing_ok=True)
-        except OSError as e:
-            logger.warning(f"Failed to remove lock file {flock_path}: {e}")
 
     def _acquire_daemon_lock(self) -> bool:
         """

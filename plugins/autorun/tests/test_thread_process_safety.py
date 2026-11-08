@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Thread and process safety tests for the session state backend."""
 
-import multiprocessing
 import os
 import sys
 import threading
 import time
 import uuid
+from multiprocessing.managers import SyncManager
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 # Add src to path
@@ -208,7 +208,7 @@ def test_multiprocess_safety():
     session_id = _session_id("process")
     results = []
 
-    with multiprocessing.Manager() as manager:
+    with SyncManager(address=("127.0.0.1", 0)) as manager:
         result_queue = manager.Queue()
         with ProcessPoolExecutor(max_workers=4) as executor:
             futures = [

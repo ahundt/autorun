@@ -44,6 +44,7 @@ from typing import Iterable, Mapping, Sequence
 from . import claude, codex, discovery, extension, memory, registration, skills, status, steps, teardown
 from ..platforms import PLATFORMS, ExtensionSkills, PluginPackageSkills
 from .fs import Verdict, edit_target, owns, preserved_paths, read_marker, record_tree
+from . import runtime
 from .runtime import Outcome, Runner, _spawn
 from .traversal import Context, Mode, retirements, run, targets
 
@@ -724,9 +725,27 @@ def _registrations(
                                     cached = filled
                             if cached is not None:
                                 claude.substitute_root(cached)
-                                claude.pin_hook_command(
-                                    cached, str(ctx.settings.get("_claude_hook_command") or "")
-                                )
+                                manifest = cached / "hooks" / "hooks.json"
+                                if manifest.is_file():
+                                    # A checkout's cached Claude copy gets its
+                                    # own non-editable venv. Hookless assets
+                                    # (the PDF plugin) need no runtime or pin.
+                                    if (source / "pyproject.toml").is_file():
+                                        cache_runtime = runtime.install_cache_runtime(
+                                            cached,
+                                            source,
+                                            python=str(ctx.settings.get("hook_python") or ""),
+                                            run=run,
+                                        )
+                                        if not cache_runtime.ok:
+                                            raise RuntimeError(cache_runtime.detail)
+                                        claude.pin_hook_command(cached, claude.cache_hook_command(cached))
+                                    else:
+                                        # A wheel-installed CLI's tool venv is
+                                        # already non-editable; pin to it.
+                                        claude.pin_hook_command(
+                                            cached, str(ctx.settings.get("_claude_hook_command") or "")
+                                        )
                         except Exception as error:
                             cache_failure = Outcome(
                                 f"{name}: cache fallback",

@@ -28,7 +28,7 @@ sessions looping and burned ~12% of a week's tokens (2026-08-15).
 
 ```bash
 SB=$(mktemp -d /tmp/arsb.XXXXXX); mkdir -p "$SB/home" "$SB/ar-home" "$SB/state"   # short and unique per run
-env HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" \
+env -i PATH="$PATH" HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" \
     AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" \
     UV_CACHE_DIR="$(uv cache dir)" \
     uv run --project plugins/autorun python -m autorun --install --force
@@ -42,7 +42,7 @@ installer-specific traps: [`plugins/autorun/src/autorun/installer/AGENTS.md`](pl
 
 Each one-liner below acts on the live machine unless it follows this prefix.
 
-- **Isolated-run prefix** (append the command): `SB=$(mktemp -d /tmp/arsb.XXXXXX) && mkdir -p "$SB/home" "$SB/ar-home" "$SB/state" "$SB/uv-cache" && env HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" UV_CACHE_DIR="$SB/uv-cache"`
+- **Isolated-run prefix** (append the command): `SB=$(mktemp -d /tmp/arsb.XXXXXX) && mkdir -p "$SB/home" "$SB/ar-home" "$SB/state" && env -i PATH="$PATH" HOME="$SB/home" USERPROFILE="$SB/home" PI_CODING_AGENT_DIR="$SB/home/.pi/agent" AUTORUN_HOME="$SB/ar-home" AUTORUN_TEST_STATE_DIR="$SB/state" UV_CACHE_DIR="$(uv cache dir)"`
 - **Launch the checkout CLI:** `uv run --project plugins/autorun python -m autorun --status`; restart only its daemon with `uv run --project plugins/autorun python -m autorun --restart-daemon`.
 - **Install a local development CLI:** `uv tool install --force --editable plugins/autorun && autorun --install`; the editable install is for the developer CLI/daemon, not the live hook venv.
 - **Install a published release:** `uv tool install --force autorun-ai && autorun --install` (use the git or marketplace commands below when the release is not on PyPI). The distribution is `autorun-ai`; the command, the import package and the marketplace plugin are all still `autorun`.
