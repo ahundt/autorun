@@ -135,9 +135,12 @@ def _fingerprint(paths: tuple[Path, ...]) -> dict[str, dict[str, object] | None]
     for path in paths:
         try:
             metadata = path.stat()
+            # The flock file's identity is its inode, and Windows refuses to
+            # read a byte range another process holds locked, so it is
+            # compared by stat alone, like the socket.
             digest = (
                 hashlib.sha256(path.read_bytes()).hexdigest()
-                if stat.S_ISREG(metadata.st_mode)
+                if stat.S_ISREG(metadata.st_mode) and path.name != "daemon.flock"
                 else None
             )
             result[str(path)] = {
