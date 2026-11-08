@@ -74,16 +74,48 @@ def test_the_installer_writes_each_harness_its_own_windows_shell_form(monkeypatc
     keeps the POSIX form Git Bash runs; off Windows everything is POSIX."""
     import os
 
-    from autorun.installer.entrypoint import _windows_hook_shell
+    from autorun.installer.runtime import hook_command_shell
     from autorun.platforms import PLATFORMS
 
     monkeypatch.setattr(os, "name", "nt")
-    on_windows = {name: _windows_hook_shell(PLATFORMS[name]) for name in ("gemini", "qwen", "antigravity", "claude")}
+    on_windows = {name: hook_command_shell(PLATFORMS[name]) for name in ("gemini", "qwen", "antigravity", "claude")}
     monkeypatch.undo()
     assert on_windows == {"gemini": "powershell", "qwen": "powershell",
                           "antigravity": "powershell", "claude": "posix"}
     if os.name != "nt":
-        assert _windows_hook_shell(PLATFORMS["gemini"]) == "posix"
+        assert hook_command_shell(PLATFORMS["gemini"]) == "posix"
+
+
+@pytest.mark.parametrize("windows", [True, False])
+@pytest.mark.parametrize("name", ["qwen", "gemini", "antigravity"])
+def test_hook_shell_override_matches_the_rendered_command(monkeypatch, windows, name):
+    from dataclasses import replace
+    import os
+
+    import autorun
+    from autorun.installer.runtime import hook_command_shell
+    from autorun.installer.extension import translated_hooks
+    from autorun.platforms import PLATFORMS
+
+    template = Path(autorun.__file__).parent / "gemini_template"
+    # Custom flavors must inherit the same contract without a name branch.
+    platform = replace(PLATFORMS[name], name="custom-review-harness", install_flavor=name)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "name", "nt" if windows else "posix")
+        shell = hook_command_shell(platform)
+        command = render_hook_command([sys.executable, "hook_entry.py"], shell=shell)
+        manifest = translated_hooks(template, platform, hook_command=command)
+    entries = [
+        hook for groups in manifest[platform.hook_protocol.hook_manifest_container_key].values()
+        for group in groups for hook in group.get("hooks", [group])
+    ]
+    assert entries
+    for hook in entries:
+        assert hook["command"].startswith("& ") == windows
+        if windows and name == "qwen":
+            assert hook.get("shell") == "powershell", hook
+        else:
+            assert "shell" not in hook, hook
 
 
 @pytest.mark.parametrize("layout", [".venv/bin/python", ".venv/Scripts/python.exe"])

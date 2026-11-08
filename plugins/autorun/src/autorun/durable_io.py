@@ -110,13 +110,23 @@ _RETRY_DENIED_REPLACE = os.name == "nt"
 
 def replace(source: Path, destination: Path) -> None:
     """``os.replace`` that waits out a reader briefly holding ``destination`` on Windows."""
+    _retry_permission_error(os.replace, source, destination)
+
+
+def unlink(path: Path, *, missing_ok: bool = False) -> None:
+    """Unlink a file, waiting out a Windows reader within the replace retry budget."""
+    _retry_permission_error(path.unlink, missing_ok=missing_ok)
+
+
+def _retry_permission_error(operation, *args, **kwargs) -> None:
+    """Share the bounded Windows file-sharing retry for rename and unlink."""
     if not _RETRY_DENIED_REPLACE:
-        os.replace(source, destination)
+        operation(*args, **kwargs)
         return
     deadline = time.monotonic() + REPLACE_RETRY_SECONDS
     while True:
         try:
-            os.replace(source, destination)
+            operation(*args, **kwargs)
             return
         except PermissionError:
             if time.monotonic() >= deadline:

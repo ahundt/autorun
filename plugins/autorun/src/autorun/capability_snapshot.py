@@ -31,6 +31,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "install_flavor": platform.install_flavor,
         "has_hooks": platform.has_hooks,
         "windows_hook_shell": platform.windows_hook_shell,
+        "windows_hook_shell_override": platform.windows_hook_shell_override,
         "schema_type": platform.schema_type,
         "hook_protocol": platform.hook_protocol.name,
         "pretool_decision_location": platform.hook_protocol.pretool_decision_location,

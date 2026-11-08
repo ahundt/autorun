@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
-from . import discovery
+from . import discovery, runtime
 from .fs import autorun_state_dir, compare, owned_trees, owns, read_marker, scan_tree
 from .traversal import Context, Intent
 
@@ -438,10 +438,17 @@ def translated_hooks(
         getattr(platform, "install_flavor", "")
         or getattr(platform, "name", "gemini")
     )
+    shell = runtime.hook_command_shell(platform)
 
     def rewrite(value):
         if isinstance(value, dict):
-            return {key: rewrite(item) for key, item in value.items()}
+            result = {key: rewrite(item) for key, item in value.items()}
+            if (
+                "command" in result and shell == "powershell"
+                and getattr(platform, "windows_hook_shell_override", False)
+            ):
+                result["shell"] = shell
+            return result
         if isinstance(value, list):
             return [rewrite(item) for item in value]
         if isinstance(value, str) and "hook_entry.py" in value:

@@ -84,19 +84,6 @@ _PLUGIN_DISTRIBUTIONS = {
 }
 
 
-def _windows_hook_shell(harness: object) -> str:
-    """The shell form for ``harness``'s hook command string on this OS.
-
-    Off Windows every harness runs it with a POSIX shell; on Windows, the one
-    its registry entry declares (Platform.windows_hook_shell).
-    """
-    import os
-
-    platform = getattr(harness, "platform", harness)
-    shell = getattr(platform, "windows_hook_shell", "posix")
-    return shell if os.name == "nt" and shell in {"posix", "powershell"} else "posix"
-
-
 def _marketplace_root() -> Path:
     """Current source root, or a stable placeholder for receipt-only removal."""
     found = discovery.marketplace_root()
@@ -377,7 +364,7 @@ def _runtime_settings(
                 ),
                 python=python,
                 no_sync=no_sync,
-            ).shell(_windows_hook_shell(harness))
+            ).shell(runtime.hook_command_shell(harness))
             for harness in harnesses
             if getattr(
                 getattr(harness, "platform", harness),

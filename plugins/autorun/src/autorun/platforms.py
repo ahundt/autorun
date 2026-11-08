@@ -1061,6 +1061,9 @@ class Platform:
     #: "powershell" (Gemini CLI: https://github.com/akitaonrails/ai-memory/issues/1484),
     #: or "none" when hooks are argv arrays in-process (the JS bridges).
     windows_hook_shell: str = "posix"
+    #: Whether Windows command entries must explicitly select that shell.
+    #: False for runners that select it themselves or have no shell field.
+    windows_hook_shell_override: bool = False
     schema_type: str = "strict"  # "strict" | "permissive" | "none"
     # Native protocol identity and the smallest per-harness differences used by
     # the shared response builder and manifest translator.
@@ -1439,6 +1442,9 @@ CLAUDE = register(
 GEMINI = register(
     Platform(
         name="gemini",
+        # Installed @google/gemini-cli/bundle/chunk-AWR3APYV.js:
+        # getShellConfiguration:245754-245781 selects PowerShell on Windows;
+        # executeCommandHook:357022 uses it without a hookConfig.shell override.
         windows_hook_shell="powershell",
         display_name="Legacy Gemini CLI",
         binary="gemini",
@@ -1535,7 +1541,11 @@ GEMINI = register(
 ANTIGRAVITY = register(
     Platform(
         name="antigravity",
-        windows_hook_shell="powershell",  # [Inference] built from Gemini CLI's hook runner
+        # Installed Agy is native Go, not Gemini's JS runner. /opt/homebrew/bin/agy
+        # retains command_hook_executor.go:43 (sh -c on macOS) and the
+        # hooks.pb.go:1512-1544 CommandHook schema, which has no shell field.
+        # The Windows branch is compiled out of this macOS binary.
+        windows_hook_shell="powershell",
         tool_input_aliases={
             "CommandLine": "command",
             "TargetFile": "file_path",
@@ -1621,7 +1631,10 @@ ANTIGRAVITY = register(
 QWEN = register(
     Platform(
         name="qwen",
-        windows_hook_shell="powershell",  # [Inference] built from Gemini CLI's hook runner
+        # Qwen 0.21.15 chunks/chunk-L7RG5PVT.js:45431-45466 defaults to
+        # cmd.exe/Git Bash; getShellConfigForHook:129811-129828 honors shell.
+        windows_hook_shell="powershell",
+        windows_hook_shell_override=True,
         display_name="Qwen Code",
         binary="qwen",
         detect_env_vars=("QWEN_SESSION_ID", "QWEN_PROJECT_DIR", "QWEN_CODE"),

@@ -35,11 +35,11 @@ def _shell_child() -> subprocess.Popen:
     # the shell; wait until psutil sees the shell's name.
     import psutil
 
-    from autorun.client import LAUNCHER_SHELLS
+    from autorun.client import HOOK_LAUNCHERS
     from autorun.tmux_utils import is_named_process
 
     deadline = time.monotonic() + _WAIT_SECONDS
-    while not is_named_process(psutil.Process(child.pid).name(), (), LAUNCHER_SHELLS):
+    while not is_named_process(psutil.Process(child.pid).name(), (), HOOK_LAUNCHERS):
         assert time.monotonic() < deadline, "the shell never started"
         time.sleep(0.01)
     return child
@@ -56,6 +56,38 @@ def test_a_launcher_shell_resolves_to_the_process_that_started_it():
 
 def test_a_harness_process_is_kept():
     assert launcher_pid(os.getpid()) == os.getpid()
+
+
+def test_uv_run_retains_the_live_harness_pid(tmp_path):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import psutil
+
+    from autorun.installer.runtime import UvCommand
+    from autorun.plan_export import _plan_session_still_running
+
+    if shutil.which("uv") is None:
+        pytest.skip("uv is required for the real launcher chain")
+    script = tmp_path / "hook.py"
+    script.write_text(
+        'import os, json, sys\n'
+        'print(json.dumps({"_pid": os.getppid()}), flush=True)\n'
+        'sys.stdin.readline()\n', encoding="utf-8",
+    )
+    command = UvCommand(project=Path(__file__).parents[1], script=script)
+    child = subprocess.Popen(command.argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        payload = json.loads(child.stdout.readline())
+        reported_name = psutil.Process(payload["_pid"]).name()
+        resolve_launcher_pid(payload)
+    finally:
+        child.communicate("\n", timeout=_WAIT_SECONDS)
+    assert child.returncode == 0
+    assert payload["_pid"] == os.getpid(), reported_name
+    ctx = SimpleNamespace(source="startup", session_id="another-session", harness_pid=1)
+    assert _plan_session_still_running({"harness_pid": payload["_pid"]}, ctx)
 
 
 def test_a_vanished_pid_is_kept_as_reported():

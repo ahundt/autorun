@@ -13,6 +13,7 @@ import asyncio
 import os
 import stat
 import sys
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -38,6 +39,7 @@ async def _echo(reader, writer):
 async def _exchange(reader, writer, line: bytes) -> bytes:
     writer.write(line)
     await writer.drain()
+    writer.write_eof()
     try:
         return await asyncio.wait_for(reader.read(), timeout=5)
     finally:
@@ -56,6 +58,92 @@ def test_a_client_without_the_token_gets_nothing(tcp_ipc):
             await server.wait_closed()
 
     assert asyncio.run(body()) == b""
+
+
+def test_token_authentication_reads_only_the_fixed_preamble():
+    from autorun import ipc
+    from autorun.core import READ_BUFFER_LIMIT
+
+    async def body():
+        token = b"a" * (ipc.TOKEN_BYTES * 2)
+        reader = asyncio.StreamReader(limit=READ_BUFFER_LIMIT)
+        preamble_size = len(token) + len(b"\n")
+        extra = 4096
+        # No newline: reject after the preamble length, without waiting for the
+        # request reader's 1 GiB limit or the authentication timeout, and
+        # without consuming a byte past the preamble.
+        reader.feed_data(b"x" * (preamble_size + extra))
+        reader.feed_eof()
+        writer, handler = Mock(), AsyncMock()
+        await asyncio.wait_for(ipc._require_token(handler, token)(reader, writer), timeout=1)
+        assert len(await reader.read()) == extra
+        writer.close.assert_called_once()
+        handler.assert_not_awaited()
+
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("kind", ["probe", "short", "leading-space", "crlf"])
+def test_incomplete_or_malformed_token_is_closed_cleanly(kind):
+    from autorun import ipc
+
+    async def body():
+        token = b"a" * (ipc.TOKEN_BYTES * 2)
+        preamble = {
+            "probe": b"", "short": b"short\n",
+            "leading-space": b" " + token + b"\n", "crlf": token + b"\r\n",
+        }[kind]
+        reader = asyncio.StreamReader()
+        reader.feed_data(preamble)
+        reader.feed_eof()
+        writer, handler = Mock(), AsyncMock()
+        await ipc._require_token(handler, token)(reader, writer)
+        writer.close.assert_called_once()
+        handler.assert_not_awaited()
+
+    asyncio.run(body())
+
+
+def test_token_timeout_closes_the_connection(monkeypatch):
+    from autorun import ipc
+
+    async def body():
+        writer, handler = Mock(), AsyncMock()
+        monkeypatch.setattr(ipc, "TOKEN_READ_TIMEOUT_SECONDS", 0)
+        await ipc._require_token(handler, b"token")(asyncio.StreamReader(), writer)
+        writer.close.assert_called_once()
+        handler.assert_not_awaited()
+
+    asyncio.run(body())
+
+
+def test_token_rotation_retries_a_windows_reader(tcp_ipc, monkeypatch):
+    from pathlib import Path
+
+    from autorun import durable_io
+
+    tcp_ipc.TOKEN_FILE.write_text("stale", encoding="utf-8")
+    real_unlink = Path.unlink
+    calls = []
+
+    def held_token(path, *args, **kwargs):
+        if path == tcp_ipc.TOKEN_FILE:
+            calls.append(path)
+            if len(calls) <= 2:
+                raise PermissionError(13, "Access is denied")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", held_token)
+    monkeypatch.setattr(durable_io, "_RETRY_DENIED_REPLACE", True)
+
+    async def body():
+        server = await tcp_ipc.start_server(_echo)
+        server.close()
+        await server.wait_closed()
+
+    asyncio.run(body())
+    assert len(calls) == 3
+    assert tcp_ipc.TOKEN_FILE.read_text(encoding="utf-8") != "stale"
 
 
 def test_ipc_connect_presents_the_token_and_is_served(tcp_ipc):

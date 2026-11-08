@@ -32,7 +32,7 @@ import socket
 import subprocess
 from pathlib import Path
 
-from .durable_io import atomic_write_text
+from .durable_io import atomic_write_text, unlink
 
 def _get_autorun_config_dir() -> Path:
     """Get autorun config/data directory (~/.autorun/).
@@ -205,7 +205,7 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
         # atomic_write_text stages with mkstemp (owner-only, 0600) but keeps an
         # existing file's mode, so an earlier token is removed first.
         token = secrets.token_hex(TOKEN_BYTES)
-        TOKEN_FILE.unlink(missing_ok=True)
+        unlink(TOKEN_FILE, missing_ok=True)
         atomic_write_text(TOKEN_FILE, token)
         server = await asyncio.start_server(
             _require_token(client_handler, token.encode("ascii")),
@@ -227,15 +227,30 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
 
 
 def _require_token(client_handler, token: bytes):
-    """Serve a TCP connection only after its first line equals ``token``."""
+    """Serve TCP only after a token preamble, before reading requests.
+
+    At most len(token)+1 bytes are read, so an unauthenticated peer cannot
+    make the daemon buffer more; reading stops at the first newline so a short
+    wrong line is rejected at once instead of waiting out the timeout.
+    """
+    preamble_size = len(token) + len(b"\n")
+
+    async def read_preamble(reader) -> bytes:
+        line = b""
+        while len(line) < preamble_size and not line.endswith(b"\n"):
+            chunk = await reader.read(preamble_size - len(line))
+            if not chunk:
+                break
+            line += chunk
+        return line
 
     async def authenticated(reader, writer):
         try:
-            line = await asyncio.wait_for(reader.readline(), TOKEN_READ_TIMEOUT_SECONDS)
+            line = await asyncio.wait_for(read_preamble(reader), TOKEN_READ_TIMEOUT_SECONDS)
         except (asyncio.TimeoutError, TimeoutError, ConnectionError, ValueError):
             line = b""
         # A connect-only liveness probe sends nothing and lands here too.
-        if not hmac.compare_digest(line.strip(), token):
+        if not hmac.compare_digest(line, token + b"\n"):
             writer.close()
             return
         await client_handler(reader, writer)

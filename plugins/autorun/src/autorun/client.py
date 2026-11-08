@@ -534,19 +534,20 @@ def get_stable_process_identity() -> StableProcessIdentity:
         return StableProcessIdentity(fallback_pid, None)
 
 
-#: Shells a harness may start a hook command through. Each exits with its hook,
+#: Launchers a harness may start a hook command through. Each exits with its hook,
 #: so its PID says nothing about whether the session is still running.
-LAUNCHER_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "fish", "pwsh", "powershell", "cmd"})
+HOOK_LAUNCHERS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "fish", "pwsh", "powershell", "cmd", "uv"})
 
 
 def launcher_pid(pid: int) -> int:
-    """The first ancestor of ``pid`` that is not a launcher shell, or ``pid``.
+    """The first ancestor of ``pid`` that is not a hook launcher, or ``pid``.
 
     hooks/hook_entry.py reports its parent. Claude Code's POSIX command
     `exec`s the interpreter, so that parent is the harness; Gemini CLI runs
     hooks through PowerShell on Windows and Claude Code through Git Bash, and
     there the parent is a shell that exits with the hook, which made a live
-    session look ended to plan export (_plan_session_still_running).
+    session look ended to plan export (_plan_session_still_running). ``uv run``
+    likewise stays between the interpreter and harness until the hook exits.
     """
     try:
         import psutil
@@ -555,7 +556,7 @@ def launcher_pid(pid: int) -> int:
 
         process = psutil.Process(pid)
         for _ in range(_STABLE_PID_PARENT_SCAN_DEPTH):
-            if not is_named_process(process.name(), (), LAUNCHER_SHELLS):
+            if not is_named_process(process.name(), (), HOOK_LAUNCHERS):
                 return process.pid
             parent = process.parent()
             if parent is None:
@@ -567,7 +568,7 @@ def launcher_pid(pid: int) -> int:
 
 
 def resolve_launcher_pid(payload: dict) -> None:
-    """Point a hook payload's ``_pid`` past launcher shells, in place.
+    """Point a hook payload's ``_pid`` past hook launchers, in place.
 
     A payload carrying ``_pid_started_at_units`` came from
     get_stable_process_identity, which already walked to the harness.

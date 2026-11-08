@@ -640,7 +640,7 @@ def test_receipt_owned_legacy_gemini_refreshes_without_binary(
     from autorun.platforms import PLATFORMS
 
     if shell is not None:
-        monkeypatch.setattr(entrypoint, "_windows_hook_shell", lambda _harness: shell)
+        monkeypatch.setattr(runtime, "hook_command_shell", lambda _harness: shell)
 
     plugin = discovery.plugin_dir(REPO, "ar")
     assert plugin is not None
@@ -693,7 +693,7 @@ def test_receipt_owned_legacy_gemini_refreshes_without_binary(
         project=plugin,
         script=plugin / "hooks" / "hook_entry.py",
         args=("--cli", "gemini"),
-    ).shell(entrypoint._windows_hook_shell(PLATFORMS["gemini"]))
+    ).shell(runtime.hook_command_shell(PLATFORMS["gemini"]))
     assert all(command == expected for command in commands)
     assert not any(call and call[0] == "gemini" for call in calls)
 

@@ -56,6 +56,13 @@ def python_runner() -> tuple[str, ...]:
     return ("uv", "run", "python") if has_uv() else ("python",)
 
 
+def hook_command_shell(harness: object) -> str:
+    """The registry's Windows hook shell, or POSIX on other operating systems."""
+    platform = getattr(harness, "platform", harness)
+    shell = getattr(platform, "windows_hook_shell", "posix")
+    return shell if os.name == "nt" and shell in {"posix", "powershell"} else "posix"
+
+
 def render_hook_command(
     argv: Sequence[str], env: Mapping[str, str] | None = None, *, shell: str = "posix"
 ) -> str:

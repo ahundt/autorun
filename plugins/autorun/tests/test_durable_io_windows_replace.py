@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import threading
+from unittest.mock import Mock
 
 import pytest
 
@@ -81,6 +82,27 @@ def test_posix_does_not_retry_a_denied_rename(tmp_path, monkeypatch):
         durable_io.atomic_write_text(tmp_path / "state.json", "x")
 
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("windows", [True, False])
+def test_unlink_propagates_a_persistent_permission_error_within_the_retry_budget(tmp_path, monkeypatch, windows):
+    from pathlib import Path
+
+    target = tmp_path / "daemon.token"
+    target.write_text("old token", encoding="utf-8")
+    denied = Mock(side_effect=PermissionError(13, "Access is denied"))
+    monkeypatch.setattr(Path, "unlink", denied)
+    monkeypatch.setattr(durable_io, "_RETRY_DENIED_REPLACE", windows)
+    clock = Mock(side_effect=[0, 0, durable_io.REPLACE_RETRY_SECONDS])
+    sleep = Mock()
+    with monkeypatch.context() as timing:
+        timing.setattr(durable_io.time, "monotonic", clock)
+        timing.setattr(durable_io.time, "sleep", sleep)
+        with pytest.raises(PermissionError):
+            durable_io.unlink(target, missing_ok=True)
+    assert denied.call_count == (2 if windows else 1)
+    assert sleep.call_count == (1 if windows else 0)
+    assert target.read_text(encoding="utf-8") == "old token"
 
 
 def test_a_config_file_saved_in_another_encoding_falls_back_to_defaults(tmp_path, monkeypatch):
