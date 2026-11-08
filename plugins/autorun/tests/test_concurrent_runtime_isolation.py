@@ -386,7 +386,8 @@ def _run_hook(
     # recovery routes. A successful result therefore proves this subprocess
     # reached the live-like daemon over the selected transport, rather than
     # silently succeeding through a CLI/direct-import fallback.
-    transport_patch = "delattr(socket, 'AF_UNIX'); " if tcp else ""
+    # Windows Python may have no AF_UNIX at all; TCP is then already forced.
+    transport_patch = "hasattr(socket, 'AF_UNIX') and delattr(socket, 'AF_UNIX'); " if tcp else ""
     runner = (
         "import runpy, socket, sys; "
         + transport_patch
