@@ -3741,29 +3741,31 @@ class AutorunDaemon:
 
     def _cleanup_files(self):
         """
-        Cleanup socket/port and lock files.
+        Remove the socket/port, token and PID files, then release the lock.
 
-        Safe to call multiple times.
+        Only while this daemon holds the lifecycle lock: the files are shared
+        by name, and once the lock is released a replacement daemon may have
+        written its own. async_stop and atexit both call this, and an executor
+        thread can keep the process alive between them, so the second call
+        must find nothing it owns.
         """
-        # Remove IPC socket/port file
+        if self._daemon_lock is None:
+            return
         ipc.cleanup_socket()
-
-        # Release daemon lock
-        if self._daemon_lock:
-            try:
-                self._daemon_lock.release()
-            except Exception:
-                pass
-            self._daemon_lock = None
-
-        # Remove lock and flock files
-        for lock_file in [LOCK_PATH, ipc.daemon_flock_path(LOCK_PATH)]:
-            try:
-                if lock_file.exists():
-                    lock_file.unlink()
-                    logger.debug(f"Removed lock: {lock_file}")
-            except OSError as e:
-                logger.warning(f"Failed to remove lock file {lock_file}: {e}")
+        try:
+            LOCK_PATH.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning(f"Failed to remove PID file {LOCK_PATH}: {e}")
+        try:
+            self._daemon_lock.release()
+        except Exception:
+            pass
+        self._daemon_lock = None
+        flock_path = ipc.daemon_flock_path(LOCK_PATH)
+        try:
+            flock_path.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning(f"Failed to remove lock file {flock_path}: {e}")
 
     def _acquire_daemon_lock(self) -> bool:
         """

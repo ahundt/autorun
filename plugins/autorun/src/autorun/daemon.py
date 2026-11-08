@@ -14,14 +14,6 @@ from .core import AutorunDaemon, app, logger
 from .logging_utils import configure_file_logging
 
 
-def _owns_lifecycle_files(daemon: AutorunDaemon) -> bool:
-    """Return True when this daemon instance owns socket/lock cleanup."""
-    return bool(
-        getattr(daemon, "running", False)
-        or getattr(daemon, "_daemon_lock", None) is not None
-    )
-
-
 def main() -> None:
     """Load handlers and run one daemon until shutdown."""
     configure_file_logging("autorun")
@@ -58,15 +50,12 @@ def main() -> None:
         logger.error(f"Daemon error: {error}", exc_info=True)
         raise SystemExit(1) from error
     finally:
-        # Only the process that acquired the lifecycle lock may remove the
-        # shared socket and PID files. A concurrent startup loser owns neither.
-        if _owns_lifecycle_files(daemon):
-            try:
-                daemon._cleanup_files()
-            except OSError as error:
-                logger.warning(f"Final cleanup error: {error}")
-        else:
-            logger.debug("Skipping final cleanup; daemon lifecycle files not owned")
+        # A no-op unless this process still holds the lifecycle lock, so a
+        # concurrent startup loser leaves the winner's files alone.
+        try:
+            daemon._cleanup_files()
+        except OSError as error:
+            logger.warning(f"Final cleanup error: {error}")
 
     logger.info("Daemon exited")
 

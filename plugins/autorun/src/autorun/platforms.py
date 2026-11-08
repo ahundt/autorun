@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -50,7 +51,7 @@ _SHELL_PROBE_TIMEOUT_SECONDS = 10
 _found_shell: list[str] = []
 
 
-def posix_shell() -> str | None:
+def posix_shell(timeout: float = _SHELL_PROBE_TIMEOUT_SECONDS) -> str | None:
     """A bash that runs, or None: the shell user-written POSIX commands need.
 
     ``shell=True`` is ``/bin/sh`` (dash on Debian and Ubuntu) on POSIX and
@@ -59,9 +60,11 @@ def posix_shell() -> str | None:
     ``bash`` is usually the WSL launcher, which exits 1 with no distribution
     installed and otherwise runs in a different filesystem. A shell found is
     remembered for the process; none found is probed again next time.
+    ``timeout`` bounds all candidates' probes together.
     """
     if _found_shell:
         return _found_shell[0]
+    deadline = time.monotonic() + timeout
     candidates = []
     if os.name == "nt":
         git = shutil.which("git")
@@ -69,11 +72,14 @@ def posix_shell() -> str | None:
             candidates.append(str(Path(git).resolve().parents[1] / "bin" / "bash.exe"))
     candidates.append(shutil.which("bash"))
     for candidate in filter(None, candidates):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
             probe = subprocess.run(
                 [candidate, "-c", "exit 0"],
                 capture_output=True,
-                timeout=_SHELL_PROBE_TIMEOUT_SECONDS,
+                timeout=remaining,
             )
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -1064,6 +1070,9 @@ class Platform:
     #: Whether Windows command entries must explicitly select that shell.
     #: False for runners that select it themselves or have no shell field.
     windows_hook_shell_override: bool = False
+    #: Windows-only command field, when the runner selects a separate command
+    #: before handing it to COMSPEC /C (Codex rust-v0.166.0 discovery.rs:616).
+    windows_hook_command_key: str = ""
     schema_type: str = "strict"  # "strict" | "permissive" | "none"
     # Native protocol identity and the smallest per-harness differences used by
     # the shared response builder and manifest translator.
@@ -1723,6 +1732,8 @@ QWEN = register(
 CODEX = register(
     Platform(
         name="codex",
+        windows_hook_shell="powershell",
+        windows_hook_command_key="commandWindows",
         display_name="Codex CLI",
         binary="codex",
         detect_env_vars=(

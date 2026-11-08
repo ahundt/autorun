@@ -90,6 +90,39 @@ def test_uv_run_retains_the_live_harness_pid(tmp_path):
     assert _plan_session_still_running({"harness_pid": payload["_pid"]}, ctx)
 
 
+def test_a_windows_venv_redirector_resolves_to_the_harness(tmp_path, monkeypatch):
+    """Runs the Windows branch on every OS: the venv python.exe that uv starts
+    is a redirector process between the base interpreter and uv."""
+    from autorun import client
+
+    venv = tmp_path / ".venv"
+    (venv / "Scripts").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = C:\\Python313\n", encoding="utf-8")
+
+    class Process:
+        def __init__(self, pid, name, exe, parent):
+            self.pid, self._name, self._exe, self._parent = pid, name, exe, parent
+
+        def name(self):
+            return self._name
+
+        def exe(self):
+            return self._exe
+
+        def parent(self):
+            return self._parent
+
+    harness = Process(10, "node.exe", "C:\\node\\node.exe", None)
+    uv = Process(11, "uv.exe", "C:\\uv\\uv.exe", harness)
+    redirector = Process(12, "python.exe", str(venv / "Scripts" / "python.exe"), uv)
+    processes = {p.pid: p for p in (harness, uv, redirector)}
+    import psutil
+
+    monkeypatch.setattr(psutil, "Process", lambda pid: processes[pid])
+    monkeypatch.setattr(client.sys, "platform", "win32")
+    assert launcher_pid(redirector.pid) == harness.pid
+
+
 def test_a_vanished_pid_is_kept_as_reported():
     shell = _shell_child()
     shell.kill()

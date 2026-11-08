@@ -641,6 +641,9 @@ def test_receipt_owned_legacy_gemini_refreshes_without_binary(
 
     if shell is not None:
         monkeypatch.setattr(runtime, "hook_command_shell", lambda _harness: shell)
+    # setup-uv exports UV_PYTHON on CI, an alias of the hook_python setting,
+    # which adds --python to every rendered command.
+    monkeypatch.delenv("UV_PYTHON", raising=False)
 
     plugin = discovery.plugin_dir(REPO, "ar")
     assert plugin is not None
@@ -1294,13 +1297,56 @@ def test_codex_plugin_hook_command_follows_the_hook_command_layout(monkeypatch, 
 
     entrypoint._runtime_settings(tmp_path, resolved, (), ())
 
-    command = resolved["_codex_plugin_hook_command"]
+    command = resolved["_codex_plugin_hook_command"]["command"]
     if layout == "checkout":
-        assert command.startswith("uv run") and "--project ${CLAUDE_PLUGIN_ROOT}" in command, command
+        assert command.startswith("uv run") and '--project "$CLAUDE_PLUGIN_ROOT"' in command, command
     else:
         assert "uv run" not in command, command
         assert shlex.split(command)[:2] == [sys.executable, str(plugin / "hooks" / "hook_entry.py")]
-        assert command == resolved["_codex_hook_command"]
+        assert command == resolved["_codex_hook_command"]["command"]
+
+
+@pytest.mark.parametrize("layout", ["checkout", "wheel"])
+def test_codex_writes_windows_override_in_user_and_plugin_hooks(monkeypatch, isolated, tmp_path, layout):
+    """Both install routes need the override Codex selects before COMSPEC /C."""
+    import base64
+    from dataclasses import replace
+
+    from autorun.installer import codex, discovery, entrypoint, steps
+    from autorun.installer.traversal import Context, Mode
+    from autorun.platforms import CODEX
+
+    plugin = tmp_path / "plugin with space & apostrophe's"
+    (plugin / "hooks").mkdir(parents=True)
+    (plugin / "hooks" / "hook_entry.py").touch()
+    (plugin / ".codex-plugin").mkdir()
+    (plugin / ".codex-plugin" / "plugin.json").write_text('{"name":"ar"}', encoding="utf-8")
+    (plugin / ".claude-plugin").mkdir()
+    (plugin / ".claude-plugin" / "plugin.json").write_text('{"name":"ar"}', encoding="utf-8")
+    if layout == "checkout":
+        (plugin / "pyproject.toml").touch()
+    monkeypatch.setattr(discovery, "plugin_dir", lambda _root, _name: plugin)
+    platform = replace(CODEX, name="custom-codex", install_flavor="codex")
+    resolved = {"codex_hook_source": "both"}
+    entrypoint._runtime_settings(tmp_path, resolved, (platform,), (), require_guidance=False)
+    ctx = Context(tmp_path, plugin_dirs=(plugin,), settings=resolved)
+    entries = steps.hooks_for(platform, ctx)
+    steps.apply_hooks(entries, Mode.INSTALL)
+    assert steps.apply_hooks(entries, Mode.PREVIEW) == [f"current {entries[0].describe()}"]
+    staged = codex.stage_plugin(
+        plugin, tmp_path / "staged", include_hooks=True, include_skills=False,
+        hook_command=resolved["_codex_plugin_hook_command"], hook_events=("PreToolUse",),
+    )
+    for path in (entries[0].path, staged / "hooks" / "hooks.json"):
+        hook = json.loads(path.read_text())["hooks"]["PreToolUse"][0]["hooks"][0]
+        assert hook["command"]
+        windows = hook["commandWindows"]
+        prefix = "powershell.exe -NoProfile -NonInteractive -EncodedCommand "
+        assert windows.startswith(prefix)
+        script = base64.b64decode(windows[len(prefix):]).decode("utf-16-le")
+        assert "& " in script and "--cli" in script and "codex" in script
+        assert str(plugin).replace("'", "''") in script
+        assert "${CLAUDE_PLUGIN_ROOT}" not in script
 
 
 def _bootstrap_only(monkeypatch, entrypoint, plugin: Path, python: Path, calls: list):

@@ -35,12 +35,14 @@ def running_daemon(request, monkeypatch):
             "from autorun.daemon import main; main()"
         )
         with (home / "output.log").open("w") as output:
-            proc = subprocess.Popen([sys.executable, "-c", code], env=env,
+            # cwd: `python -c` puts it first on sys.path, and CI runs pytest from
+            # plugins/autorun, whose autorun.py would shadow the package.
+            proc = subprocess.Popen([sys.executable, "-c", code], env=env, cwd=home,
                                     stdout=output, stderr=output)
             try:
                 deadline = time.monotonic() + 10
                 while not ipc.answers_round_trip(timeout=0.1):
-                    assert proc.poll() is None, (home / "daemon.log").read_text()
+                    assert proc.poll() is None, (home / "output.log").read_text()
                     assert time.monotonic() < deadline, (home / "output.log").read_text()
                     time.sleep(0.01)
                 yield ipc, home, proc

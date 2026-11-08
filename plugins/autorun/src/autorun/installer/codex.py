@@ -168,7 +168,7 @@ def _is_command(hook: object, mark: str) -> bool:
 HOOK_TIMEOUT_SECONDS = 10
 
 
-def wrap(commands: Sequence[str], *, timeout: int = HOOK_TIMEOUT_SECONDS) -> dict:
+def wrap(commands: Sequence[str | Mapping[str, str]], *, timeout: int = HOOK_TIMEOUT_SECONDS) -> dict:
     """Build the entry shape Codex accepts.
 
     A bare ``{"type": "command"}`` at the top of an event list is silently
@@ -176,7 +176,7 @@ def wrap(commands: Sequence[str], *, timeout: int = HOOK_TIMEOUT_SECONDS) -> dic
     """
     return {
         "hooks": [
-            {"type": "command", "command": command, "timeout": timeout}
+            {"type": "command", **({"command": command} if isinstance(command, str) else command), "timeout": timeout}
             for command in commands
         ]
     }
@@ -184,7 +184,7 @@ def wrap(commands: Sequence[str], *, timeout: int = HOOK_TIMEOUT_SECONDS) -> dic
 
 def merge_hooks(
     path: Path,
-    ours: Mapping[str, Sequence[str]],
+    ours: Mapping[str, Sequence[str | Mapping[str, str]]],
     *,
     description: str = "",
     mark: str = COMMAND_MARK,
@@ -213,7 +213,7 @@ def merge_hooks(
 
 def hooks_current(
     path: Path,
-    ours: Mapping[str, Sequence[str]],
+    ours: Mapping[str, Sequence[str | Mapping[str, str]]],
     *,
     description: str = "",
     mark: str = COMMAND_MARK,
@@ -237,7 +237,7 @@ def hooks_current(
 
 def _merge_into(
     document: dict,
-    ours: Mapping[str, Sequence[str]],
+    ours: Mapping[str, Sequence[str | Mapping[str, str]]],
     *,
     description: str,
     mark: str,
@@ -379,7 +379,7 @@ def stage_plugin(
     include_hooks: bool = False,
     include_skills: bool = True,
     skill_names: Iterable[str] | None = None,
-    hook_command: str = "",
+    hook_command: str | Mapping[str, str] = "",
     hook_events: Sequence[str] = (),
 ) -> Path:
     """Build the local Codex plugin tree without touching its live target.

@@ -625,3 +625,27 @@ def test_installer_subprocesses_never_inherit_an_open_stdin():
     assert direct.stdout.strip() == "0", direct
     if via_uv is not None:
         assert via_uv.stdout.strip() == "0", via_uv
+
+
+def test_spawn_resolves_a_windows_cmd_shim(monkeypatch):
+    """npm installs claude/gemini/qwen as .cmd shims on Windows, and
+    CreateProcess runs a bare name only as an .exe, so registration commands
+    raised FileNotFoundError on every Windows machine with a Node-based CLI."""
+    from autorun.installer import runtime
+
+    seen = []
+    monkeypatch.setattr(runtime.sys, "platform", "win32")
+    monkeypatch.setattr(
+        runtime.shutil, "which",
+        lambda name: r"C:\npm\claude.cmd" if name == "claude" else None,
+    )
+    monkeypatch.setattr(
+        runtime.subprocess, "run",
+        lambda argv, **_kw: seen.append(argv) or subprocess.CompletedProcess(argv, 0),
+    )
+    runtime._spawn(("claude", "plugin", "uninstall", "ar@autorun"))
+    runtime._spawn(("missing", "x"))
+    assert seen == [
+        [r"C:\npm\claude.cmd", "plugin", "uninstall", "ar@autorun"],
+        ["missing", "x"],
+    ]

@@ -22,6 +22,12 @@ class BuildPyWithPluginAssets(_build_py):
 
     def run(self) -> None:
         super().run()
+        # A wheel built straight from a checkout (git or path install) never
+        # passes through the sdist, and a core.symlinks=false clone holds the
+        # link as a text file that package discovery skips.
+        _BUILD_SUPPORT.materialize_sibling_packages(
+            PLUGIN_ROOT, Path(self.build_lib), package_dir=Path("src")
+        )
         package_root = Path(self.build_lib) / "autorun"
         _BUILD_SUPPORT.copy_plugin_assets(PLUGIN_ROOT, package_root)
         _BUILD_SUPPORT.write_build_metadata(

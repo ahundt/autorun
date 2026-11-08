@@ -354,7 +354,7 @@ class Hooks:
     """Autorun's entries in a hooks file the user owns."""
 
     path: Path
-    events: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    events: Mapping[str, Sequence[str | Mapping[str, str]]] = field(default_factory=dict)
 
     def describe(self) -> str:
         return f"{self.path} ({', '.join(sorted(self.events)) or 'none'})"
@@ -667,7 +667,7 @@ def hooks_for(
     ):
         return ()
     base = discovery.config_dir(platform, home=ctx.home)
-    command = str(ctx.settings.get("_codex_hook_command", "") or "")
+    command = ctx.settings.get("_codex_hook_command", "") or ""
     if base is None or (not command and not removing):
         return ()
     events = {name: (() if removing else (command,)) for name in _CODEX_EVENTS}
@@ -954,7 +954,7 @@ def prepared(
                         include_hooks=str(ctx.settings.get("codex_hook_source", "user"))
                         in ("plugin", "both"),
                         skill_names=planned.native,
-                        hook_command=str(
+                        hook_command=(
                             ctx.settings.get("_codex_plugin_hook_command", "") or ""
                         ),
                         hook_events=_CODEX_EVENTS,

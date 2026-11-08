@@ -307,6 +307,9 @@ def _runtime_settings(
         python=python,
         no_sync=no_sync,
     )
+    from ..platforms import CODEX
+
+    command_fields = runtime.hook_command_fields(command, CODEX)
     # The bundled plugin hook makes hook_command's choice: a checkout runs uv
     # against the installed plugin root; a wheel's root has no pyproject.toml,
     # so `uv run --project` there would lack autorun's dependencies, and the
@@ -320,7 +323,10 @@ def _runtime_settings(
             no_sync=no_sync,
         )
         .shell()
-        .replace("'${CLAUDE_PLUGIN_ROOT}'", "${CLAUDE_PLUGIN_ROOT}")
+        # Codex substitutes ${...} before shell parsing. Let the shell expand
+        # a quoted variable instead, so spaces/apostrophes in the root survive.
+        .replace("'${CLAUDE_PLUGIN_ROOT}'", '"$CLAUDE_PLUGIN_ROOT"')
+        .replace("'${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py'", '"$CLAUDE_PLUGIN_ROOT/hooks/hook_entry.py"')
         if isinstance(command, runtime.UvCommand)
         else command.shell()
     )
@@ -340,8 +346,8 @@ def _runtime_settings(
             ).argv()
             for name in steps.pi_family_names()
         },
-        _codex_hook_command=command.shell(),
-        _codex_plugin_hook_command=plugin_command,
+        _codex_hook_command=command_fields,
+        _codex_plugin_hook_command={**command_fields, "command": plugin_command},
         # Claude's cached copy of a wheel install runs "autorun --cli claude",
         # which needs the uv tool directory on PATH; the desktop app starts
         # without it, and every hook then failed before it could log anything.

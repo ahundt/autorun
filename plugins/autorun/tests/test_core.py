@@ -2217,6 +2217,23 @@ class TestAutorunDaemon:
         # Should not raise
         daemon._cleanup_files()
 
+    def test_late_cleanup_spares_a_replacement_daemons_files(self, monkeypatch):
+        """async_stop cleans up, then atexit runs cleanup again. A process kept
+        alive by an executor thread reaches atexit after a replacement daemon
+        has published its own port, token and PID files; deleting them leaves
+        the replacement unreachable."""
+        from autorun import core, ipc
+
+        monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", False)
+        daemon = AutorunDaemon(AutorunApp())
+        daemon._cleanup_files()
+        replacement = [ipc.PORT_FILE, ipc.TOKEN_FILE, core.LOCK_PATH]
+        for path in replacement:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("replacement", encoding="utf-8")
+        daemon._cleanup_files()
+        assert [path.exists() for path in replacement] == [True, True, True]
+
     def test_stop_signals_shutdown_event(self):
         """stop() should set shutdown event if it exists."""
         daemon = AutorunDaemon(AutorunApp())

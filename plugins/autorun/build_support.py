@@ -42,16 +42,20 @@ PLUGIN_ASSET_TREES = (
 SIBLING_PACKAGE_LINKS = (Path("src") / "pdf_extraction",)
 
 
-def materialize_sibling_packages(plugin_root: Path, base_dir: Path) -> list[Path]:
+def materialize_sibling_packages(
+    plugin_root: Path, base_dir: Path, *, package_dir: Path = Path()
+) -> list[Path]:
     """Replace symlinked package trees in a staged tree with their real files.
 
+    ``package_dir`` is stripped from each link's path to place it under
+    ``base_dir``: the sdist keeps ``src/``, a wheel's build_lib does not.
     Returns the destinations written, so a caller can assert the work happened
     rather than trusting a silent no-op.
     """
     written: list[Path] = []
     for relative in SIBLING_PACKAGE_LINKS:
         link = plugin_root / relative
-        destination = base_dir / relative
+        destination = base_dir / relative.relative_to(package_dir)
         if destination.parent.resolve() == link.parent.resolve():
             raise ValueError("Cannot materialize packages into the source tree")
         # Read the target without resolving a possibly file-typed Windows link;

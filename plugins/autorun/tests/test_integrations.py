@@ -20,6 +20,7 @@ Tests for unified integrations system (superset of hookify).
 
 import os
 import subprocess as _subprocess
+import sys
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -3158,3 +3159,26 @@ class TestTimeMachineConsentGuard:
         assert config["when"] == "_tmutil_mutates_backup_safety"
         assert "explicit user permission" in config["suggestion"]
         assert "ar:ok 'tmutil thinlocalsnapshots'" in config["suggestion"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the slow candidate is a POSIX script")
+def test_shell_discovery_counts_against_the_when_predicate_timeout(tmp_path, monkeypatch):
+    """A cold bash candidate (a WSL launcher on Windows) used to get its own
+    10 s probe before the predicate's budget started, so the enclosing hook
+    expired first."""
+    import time
+
+    from autorun import integrations, platforms
+
+    budget = 0.5
+    slow_bash = tmp_path / "slow-bash"
+    slow_bash.write_text(f"#!/bin/sh\nsleep {budget * 10}\n", encoding="utf-8")
+    slow_bash.chmod(0o755)
+    monkeypatch.setattr(platforms, "_found_shell", [])
+    monkeypatch.setattr(platforms.shutil, "which", lambda _name: str(slow_bash))
+    monkeypatch.setattr(integrations, "WHEN_PREDICATE_TIMEOUT_SECONDS", budget)
+    start = time.monotonic()
+    integrations.check_when_predicate("exit 0", MagicMock(cwd=str(tmp_path)))
+    # One budget for discovery and predicate together; the second budget is
+    # slack for process spawn and teardown, not for a second probe.
+    assert time.monotonic() - start < budget * 2

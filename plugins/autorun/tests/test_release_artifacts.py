@@ -296,13 +296,40 @@ def test_documented_vcs_subdirectory_installs_autorun_entrypoint(release_bundle)
             "install",
             "--python",
             python,
-            f"git+file://{checkout}#subdirectory=plugins/autorun",
+            # as_uri(): an f-string gives git+file://C:\... on Windows, which
+            # uv reads as host "c" and git refuses.
+            f"git+{checkout.as_uri()}#subdirectory=plugins/autorun",
         ],
         cwd=root,
         env=env,
     )
     autorun = python.parent / ("autorun.exe" if os.name == "nt" else "autorun")
     assert "1.0.0rc4" in _run([autorun, "--version"], cwd=root, env=env).stdout.split()
+
+
+def test_wheel_built_directly_from_a_text_link_checkout_carries_pdf_extraction(
+    release_bundle,
+):
+    """A Windows clone with core.symlinks=false stores src/pdf_extraction as a
+    text file naming its target. A git or local-path install builds the wheel
+    straight from that tree, never through the sdist that materializes it."""
+    root, checkout, _commit, env, _builds = release_bundle
+    tree = root / "text-link-checkout"
+    shutil.copytree(checkout / "plugins", tree / "plugins", symlinks=True)
+    link = tree / "plugins" / "autorun" / "src" / "pdf_extraction"
+    target = os.readlink(link)
+    link.unlink()
+    link.write_text(target, encoding="utf-8")
+    output = root / "direct-wheel"
+    _run(
+        ["uv", "build", "--wheel", "--out-dir", output, tree / "plugins" / "autorun"],
+        cwd=root,
+        env=env,
+    )
+    wheel, = output.glob("*.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        assert "pdf_extraction/cli.py" in archive.namelist()
+    assert link.read_text(encoding="utf-8") == target, "the build edited the checkout"
 
 
 def test_pdf_help_and_backend_inventory_are_lightweight(release_bundle):

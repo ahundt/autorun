@@ -656,15 +656,22 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
         # the machine. cwd=None keeps the previous behavior when the event
         # carries no directory.
         # Run in bash wherever one exists: shell=True is dash or cmd.exe.
+        # Finding bash spends the same budget: a cold candidate (the WSL
+        # launcher) otherwise outlasts the hook before the predicate starts.
         from .platforms import posix_shell
 
-        bash = posix_shell()
+        deadline = time.monotonic() + WHEN_PREDICATE_TIMEOUT_SECONDS
+        bash = posix_shell(timeout=WHEN_PREDICATE_TIMEOUT_SECONDS)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning(f"When predicate '{when}' timed out finding bash")
+            return False
         try:
             result = subprocess.run(
                 [bash, "-c", when] if bash else when,
                 shell=bash is None,
                 capture_output=True,
-                timeout=WHEN_PREDICATE_TIMEOUT_SECONDS,
+                timeout=remaining,
                 text=True, encoding="utf-8", errors="replace",
                 cwd=getattr(ctx, "cwd", None) or None,
             )

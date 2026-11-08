@@ -539,6 +539,19 @@ def get_stable_process_identity() -> StableProcessIdentity:
 HOOK_LAUNCHERS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "fish", "pwsh", "powershell", "cmd", "uv"})
 
 
+def _is_windows_venv_redirector(process) -> bool:
+    """A venv's Scripts\\python.exe on Windows is a redirector: it starts the
+    base interpreter as a child and waits, so the hook's parent is a process
+    that exits with the hook. On POSIX the venv interpreter is a symlink and
+    no such process exists."""
+    if sys.platform != "win32":
+        return False
+    try:
+        return (Path(process.exe()).parent.parent / "pyvenv.cfg").is_file()
+    except Exception:
+        return False
+
+
 def launcher_pid(pid: int) -> int:
     """The first ancestor of ``pid`` that is not a hook launcher, or ``pid``.
 
@@ -556,7 +569,10 @@ def launcher_pid(pid: int) -> int:
 
         process = psutil.Process(pid)
         for _ in range(_STABLE_PID_PARENT_SCAN_DEPTH):
-            if not is_named_process(process.name(), (), HOOK_LAUNCHERS):
+            if not (
+                is_named_process(process.name(), (), HOOK_LAUNCHERS)
+                or _is_windows_venv_redirector(process)
+            ):
                 return process.pid
             parent = process.parent()
             if parent is None:

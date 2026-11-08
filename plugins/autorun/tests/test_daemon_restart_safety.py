@@ -897,32 +897,32 @@ class TestPsutilProcessLifecycle:
 class TestDaemonMainLifecycleCleanup:
     """Daemon entry-point cleanup must only remove files owned by this process."""
 
-    def test_start_failure_without_owned_lock_preserves_live_daemon_files(self, tmp_path):
-        """A startup loser must not unlink another daemon's socket or PID file."""
+    def test_start_failure_without_owned_lock_preserves_live_daemon_files(self):
+        """A startup loser must not unlink another daemon's socket or PID file.
+
+        Uses the real cleanup, which main() and atexit both reach, so the
+        ownership check is tested where it lives rather than in one caller."""
         import autorun.daemon as daemon_mod
+        from autorun import core, ipc
 
-        lock_path = tmp_path / "daemon.lock"
-        lock_path.write_text("12345", encoding="utf-8")
-        cleanup_calls = []
+        winner = [core.LOCK_PATH, ipc.SOCKET_PATH, ipc.PORT_FILE, ipc.TOKEN_FILE]
+        for path in winner:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("12345", encoding="utf-8")
+        loser = core.AutorunDaemon(core.AutorunApp())
 
-        class FakeDaemon:
-            running = False
-            _daemon_lock = None
+        async def lose():
+            raise RuntimeError("Another daemon is already running")
 
-            async def start(self):
-                raise RuntimeError("Another daemon is already running")
-
-            def _cleanup_files(self):
-                cleanup_calls.append("cleanup")
-
-        with mock.patch.object(daemon_mod, "AutorunDaemon", return_value=FakeDaemon()):
-            with mock.patch.object(daemon_mod, "ipc", mock.MagicMock(), create=True) as ipc_mod:
+        loser.start = lose
+        try:
+            with mock.patch.object(daemon_mod, "AutorunDaemon", return_value=loser):
                 with pytest.raises(SystemExit):
                     daemon_mod.main()
-
-        ipc_mod.cleanup_socket.assert_not_called()
-        assert cleanup_calls == []
-        assert lock_path.read_text(encoding="utf-8") == "12345"
+            assert [path.read_text(encoding="utf-8") for path in winner] == ["12345"] * len(winner)
+        finally:
+            for path in winner:
+                path.unlink(missing_ok=True)
 
     def test_start_failure_with_owned_lock_cleans_owned_files(self):
         """A daemon that acquired the flock still cleans up after startup failure."""

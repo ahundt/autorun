@@ -23,6 +23,7 @@ and is called by install and status only, never on a hook path.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import platform
@@ -37,7 +38,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 __all__ = [
-    "DirectCommand", "UvCommand", "hook_command", "has_uv", "python_runner", "Probe", "probe_runtime", "probe_hook_runtime",
+    "DirectCommand", "UvCommand", "hook_command", "hook_command_fields", "has_uv", "python_runner", "Probe", "probe_runtime", "probe_hook_runtime",
     "CLI_SCRIPTS", "Outcome", "Runner", "bootstrap", "restart_daemon",
     "sync_dependencies_argv", "uv_tool_install_argv",
     "Version", "self_update", "update_argv", "detect_update_method",
@@ -61,6 +62,23 @@ def hook_command_shell(harness: object) -> str:
     platform = getattr(harness, "platform", harness)
     shell = getattr(platform, "windows_hook_shell", "posix")
     return shell if os.name == "nt" and shell in {"posix", "powershell"} else "posix"
+
+
+def hook_command_fields(command: UvCommand | DirectCommand, harness: object) -> dict[str, str]:
+    """Portable hook fields, including a registry-declared Windows override.
+
+    Codex runs its override through COMSPEC /C. Encoding the PowerShell script
+    avoids a second shell interpreting its quotes, ampersands or path spaces.
+    Absolute paths also avoid plugin-root expansion inside the encoded script.
+    """
+    platform = getattr(harness, "platform", harness)
+    fields = {"command": command.shell()}
+    key = getattr(platform, "windows_hook_command_key", "")
+    if key:
+        script = command.shell(platform.windows_hook_shell) + "; exit $LASTEXITCODE"
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        fields[key] = f"powershell.exe -NoProfile -NonInteractive -EncodedCommand {encoded}"
+    return fields
 
 
 def render_hook_command(
@@ -314,8 +332,13 @@ def _spawn(
     # step or a script whose stdin pipe stays open hung on the hook probe for
     # the full timeout and then reported a healthy hook as BROKEN. A harness
     # CLI that wants to prompt gets EOF and fails at once instead of waiting.
+    argv = list(argv)
+    if sys.platform == "win32" and argv:
+        # CreateProcess finds only .exe by bare name; npm installs harness
+        # CLIs (claude, gemini, qwen) as .cmd shims, which PATHEXT lookup finds.
+        argv[0] = shutil.which(argv[0]) or argv[0]
     return subprocess.run(
-        list(argv),
+        argv,
         capture_output=True,
         stdin=subprocess.DEVNULL,
         text=True, encoding="utf-8", errors="replace",
