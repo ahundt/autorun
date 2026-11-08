@@ -13,6 +13,94 @@ TDD Methodology:
 """
 from pathlib import Path
 
+import pytest
+
+
+class TestSiblingPackageBuild:
+    @pytest.mark.parametrize("source_kind", ["symlink", "text", "directory"])
+    @pytest.mark.parametrize("staged_kind", ["absent", "symlink", "file", "directory"])
+    def test_materialization_preserves_source_with_windows_link_semantics(
+        self, tmp_path, monkeypatch, source_kind, staged_kind
+    ):
+        import os
+
+        import build_support
+
+        plugin = tmp_path / "plugins" / "autorun"
+        relative, = build_support.SIBLING_PACKAGE_LINKS
+        link = plugin / relative
+        link.parent.mkdir(parents=True)
+        sibling = tmp_path / "plugins" / "pdf-extractor" / "src" / link.name
+        sibling.mkdir(parents=True)
+        (sibling / "cli.py").write_text("canonical\n")
+        target = os.path.relpath(sibling, link.parent)
+        if source_kind == "symlink":
+            link.symlink_to(target, target_is_directory=True)
+        elif source_kind == "text":
+            link.write_text(target)
+        else:
+            link.mkdir()
+            (link / "cli.py").write_text("canonical\n")
+
+        stage = tmp_path / "sdist"
+        destination = stage / relative
+        destination.parent.mkdir(parents=True)
+        if staged_kind == "symlink":
+            destination.symlink_to(sibling, target_is_directory=True)
+        elif staged_kind == "file":
+            destination.write_text(target)
+        elif staged_kind == "directory":
+            destination.mkdir()
+            (destination / "stale.py").touch()
+
+        is_dir, unlink, rmdir = Path.is_dir, Path.unlink, Path.rmdir
+
+        def windows_is_dir(path, *args, **kwargs):
+            # Following a file-typed Windows link to a directory can fail.
+            if path == link and source_kind == "symlink":
+                raise PermissionError(5, "Access is denied", str(path))
+            return is_dir(path, *args, **kwargs)
+
+        def windows_unlink(path, *args, **kwargs):
+            if path == destination and path.is_symlink():
+                raise PermissionError(5, "Access is denied", str(path))
+            return unlink(path, *args, **kwargs)
+
+        def windows_rmdir(path, *args, **kwargs):
+            if path == destination and path.is_symlink():
+                return unlink(path)
+            return rmdir(path, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "is_dir", windows_is_dir)
+            patch.setattr(Path, "unlink", windows_unlink)
+            patch.setattr(Path, "rmdir", windows_rmdir)
+            assert build_support.materialize_sibling_packages(plugin, stage) == [destination]
+
+        assert not destination.is_symlink()
+        assert (destination / "cli.py").read_text() == "canonical\n"
+        assert not (destination / "stale.py").exists()
+        assert (sibling / "cli.py").read_text() == "canonical\n"
+        if source_kind == "symlink":
+            assert link.is_symlink() and os.readlink(link) == target
+        elif source_kind == "text":
+            assert link.is_file() and link.read_text() == target
+        else:
+            assert (link / "cli.py").read_text() == "canonical\n"
+
+    def test_materialization_rejects_the_source_as_the_staging_tree(self, tmp_path):
+        import build_support
+
+        plugin = tmp_path / "plugin"
+        relative, = build_support.SIBLING_PACKAGE_LINKS
+        package = plugin / relative
+        package.mkdir(parents=True)
+        (package / "cli.py").write_text("source\n")
+
+        with pytest.raises(ValueError, match="source"):
+            build_support.materialize_sibling_packages(plugin, plugin)
+        assert (package / "cli.py").read_text() == "source\n"
+
 
 class TestGetPluginRoot:
     """Test get_plugin_root() locates plugin directory."""

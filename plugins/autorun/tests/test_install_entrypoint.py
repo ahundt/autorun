@@ -631,11 +631,16 @@ def test_public_gemini_install_is_noninteractive_without_mutating_parent_env(
 
 
 @pytest.mark.parametrize("legacy_empty_marker", [False, True])
+@pytest.mark.parametrize("shell", [None, "posix", "powershell"])
 def test_receipt_owned_legacy_gemini_refreshes_without_binary(
-    monkeypatch, isolated, legacy_empty_marker
+    monkeypatch, isolated, legacy_empty_marker, shell
 ):
     """Port the pre-redesign receipt adoption and missing-CLI refresh contract."""
-    from autorun.installer import discovery, entrypoint, fs, steps
+    from autorun.installer import discovery, entrypoint, fs, runtime, steps
+    from autorun.platforms import PLATFORMS
+
+    if shell is not None:
+        monkeypatch.setattr(entrypoint, "_windows_hook_shell", lambda _harness: shell)
 
     plugin = discovery.plugin_dir(REPO, "ar")
     assert plugin is not None
@@ -684,9 +689,12 @@ def test_receipt_owned_legacy_gemini_refreshes_without_binary(
         for hook in group.get("hooks", [])
     ]
     assert commands
-    assert all("uv run" in command for command in commands)
-    assert all(str(plugin) in command for command in commands)
-    assert all("autorun --cli" not in command for command in commands)
+    expected = runtime.UvCommand(
+        project=plugin,
+        script=plugin / "hooks" / "hook_entry.py",
+        args=("--cli", "gemini"),
+    ).shell(entrypoint._windows_hook_shell(PLATFORMS["gemini"]))
+    assert all(command == expected for command in commands)
     assert not any(call and call[0] == "gemini" for call in calls)
 
 

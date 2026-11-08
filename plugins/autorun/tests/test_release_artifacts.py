@@ -78,7 +78,7 @@ def _prospective_checkout(destination: Path) -> str:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         if source.is_symlink():
-            target.symlink_to(os.readlink(source))
+            target.symlink_to(os.readlink(source), target_is_directory=source.is_dir())
         else:
             shutil.copy2(source, target)
 
@@ -102,6 +102,34 @@ def _prospective_checkout(destination: Path) -> str:
 
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_prospective_checkout_declares_directory_links_before_targets_exist(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source"
+    (source / "z-package").mkdir(parents=True)
+    (source / "z-package" / "cli.py").write_text("source\n")
+    (source / "a-link").symlink_to("z-package", target_is_directory=True)
+    destination = tmp_path / "checkout"
+    destination.mkdir()
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", source)
+    monkeypatch.setattr(
+        sys.modules[__name__], "_run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            (), 0, "a-link\0z-package/cli.py\0", ""
+        ),
+    )
+    symlink_to = Path.symlink_to
+
+    def windows_symlink_to(path, target, target_is_directory=False):
+        assert target_is_directory, "Windows requires a directory link before its target exists"
+        return symlink_to(path, target, target_is_directory=target_is_directory)
+
+    monkeypatch.setattr(Path, "symlink_to", windows_symlink_to)
+    _prospective_checkout(destination)
+    assert (destination / "a-link").is_symlink()
+    assert (destination / "a-link" / "cli.py").read_text() == "source\n"
 
 
 @pytest.fixture(scope="module")
@@ -142,6 +170,7 @@ def release_bundle(tmp_path_factory):
             env=env,
         )
         builds.append(output)
+        _run(["git", "diff", "--exit-code", "HEAD"], cwd=checkout)
     return root, checkout, commit, env, builds
 
 

@@ -51,15 +51,32 @@ def materialize_sibling_packages(plugin_root: Path, base_dir: Path) -> list[Path
     written: list[Path] = []
     for relative in SIBLING_PACKAGE_LINKS:
         link = plugin_root / relative
-        if not link.is_dir():
-            continue
         destination = base_dir / relative
-        if destination.is_symlink() or destination.is_file():
+        if destination.parent.resolve() == link.parent.resolve():
+            raise ValueError("Cannot materialize packages into the source tree")
+        # Read the target without resolving a possibly file-typed Windows link;
+        # core.symlinks=false checkouts store the same target in a plain file.
+        if link.is_symlink():
+            source = link.parent / os.readlink(link)
+        elif link.is_file():
+            source = link.parent / link.read_text(encoding="utf-8").strip()
+        else:
+            source = link
+        if not source.is_dir():
+            continue
+        if destination.is_symlink():
+            try:
+                destination.unlink()
+            except PermissionError:
+                if not destination.is_dir():
+                    raise
+                destination.rmdir()
+        elif destination.is_file():
             destination.unlink()
         elif destination.is_dir():
             shutil.rmtree(destination)
         shutil.copytree(
-            link.resolve(),
+            source,
             destination,
             dirs_exist_ok=True,
             ignore=shutil.ignore_patterns(
