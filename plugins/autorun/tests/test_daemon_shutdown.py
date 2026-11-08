@@ -45,6 +45,9 @@ def running_daemon(request, monkeypatch):
                     assert proc.poll() is None, (home / "output.log").read_text()
                     assert time.monotonic() < deadline, (home / "output.log").read_text()
                     time.sleep(0.01)
+                # The PID restart_daemon reads. On Windows proc.pid is the
+                # venv's python.exe redirector, a parent of the daemon.
+                proc.daemon_pid = ipc.daemon_record_pid(home / "daemon.lock")
                 yield ipc, home, proc
             finally:
                 if proc.poll() is None:
@@ -61,7 +64,7 @@ def test_shutdown_request_exits_and_removes_lifecycle_files(running_daemon):
     paths = [home / "daemon.lock", home / "daemon.flock"]
     paths += [ipc.SOCKET_PATH] if ipc.HAS_UNIX_SOCKETS else [ipc.PORT_FILE, ipc.TOKEN_FILE]
     assert all(path.exists() for path in paths)
-    request = {"_autorun_shutdown": proc.pid}
+    request = {"_autorun_shutdown": proc.daemon_pid}
 
     async def shutdown():
         reader, writer = await ipc.connect()
@@ -87,7 +90,7 @@ def test_tcp_shutdown_requires_the_existing_token(running_daemon, token):
     async def unauthenticated_shutdown():
         reader, writer = await asyncio.open_connection("127.0.0.1", ipc._read_port())
         try:
-            writer.write(token + json.dumps({"_autorun_shutdown": proc.pid}).encode() + b"\n")
+            writer.write(token + json.dumps({"_autorun_shutdown": proc.daemon_pid}).encode() + b"\n")
             await writer.drain()
             assert await asyncio.wait_for(reader.read(), timeout=5) == b""
         finally:
@@ -117,7 +120,7 @@ def test_stop_daemon_exits_without_terminate_or_kill(running_daemon, monkeypatch
                               side_effect=AssertionError("graceful stop must not kill")), \
             mock.patch.object(restart_daemon, "cleanup_stale_files",
                               side_effect=AssertionError("daemon must clean up itself")):
-        restart_daemon._stop_daemon(proc.pid)
+        restart_daemon._stop_daemon(proc.daemon_pid)
     assert proc.wait(timeout=5) == 0
     assert not ipc.is_responding()
     assert not (home / "daemon.lock").exists()
