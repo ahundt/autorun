@@ -49,9 +49,10 @@ uv run --project plugins/autorun python -m autorun --install pdf-extractor --for
 
 The PyPI package carries only the `ar` plugin, so the `pdf-extractor` install
 runs from a clone. Limit it to one agent with `--claude`, `--gemini`, `--qwen`,
-`--antigravity`, `--codex`, `--pi`, or `--prime`. Claude Code and Antigravity
-load the skill from the plugin; the other agents read
-`~/.agents/skills/pdf-extractor/`. In Codex, use `$pdf-extractor` or
+`--antigravity`, `--codex`, `--pi`, or `--prime`. Claude, Codex, Gemini,
+Qwen, Antigravity, Pi, and Prime load the skill from their installed plugin,
+extension, or package. ForgeCode and OpenCode use their own global skill roots;
+the default does not write `~/.agents/skills`. In Codex, use `$pdf-extractor` or
 `/skills`; `/pdf-extractor:extract` is not a Codex command.
 
 ## Usage

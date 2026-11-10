@@ -40,8 +40,8 @@ the `pdf` extra.
 | Qwen Code | native hooks | yes | native extension |
 | Antigravity | native hooks | the events Antigravity offers | native extension |
 | OpenCode | in-process tool veto | no Stop event; its todo list is mirrored into task status | command files and skills |
-| Pi | in-process tool veto | `agent_settled` continuation and task tools | native extension and shared skills |
-| Prime Agent | the Pi extension | as Pi | as Pi |
+| Pi | in-process tool veto | `agent_settled` continuation and task tools | one local package containing the extension and skills |
+| Prime Agent | the Pi extension | as Pi | one local package containing the extension and skills |
 | ForgeCode | advice only | no | command files and skills |
 | Legacy Gemini CLI | native hooks | yes | native extension |
 

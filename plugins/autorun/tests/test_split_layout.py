@@ -95,6 +95,19 @@ def test_claude_plugin_json_has_no_explicit_hooks_field():
     )
 
 
+def test_each_plugin_has_a_portable_root_manifest():
+    for root, name in (
+        (PLUGIN_ROOT, "ar"),
+        (PLUGIN_ROOT.parent / "pdf-extractor", "pdf-extractor"),
+    ):
+        manifest = json.loads((root / "plugin.json").read_text(encoding="utf-8"))
+        assert manifest["$schema"] == (
+            "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+        )
+        assert manifest["name"] == name
+        assert (root / "skills").is_dir()
+
+
 def test_gemini_hooks_template_under_src_not_in_claude_plugin_root():
     """The Gemini extension is assembled from a template under
     plugins/autorun/src/autorun/gemini_template/ so Claude's bug #24115

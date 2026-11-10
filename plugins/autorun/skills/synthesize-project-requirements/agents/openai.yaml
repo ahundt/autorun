@@ -1,0 +1,4 @@
+interface:
+  display_name: "Synthesize Project Requirements"
+  short_description: "Turn notes and sessions into project requirements"
+  default_prompt: "Use $synthesize-project-requirements to produce an evidence-backed requirements and gotchas note for this project."

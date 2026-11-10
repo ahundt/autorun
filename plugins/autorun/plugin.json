@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ar",
+  "version": "1.0.0rc4",
+  "description": "Lifecycle safety hooks and reusable automation skills for AI coding assistants",
+  "author": {
+    "name": "Andrew Hundt",
+    "email": "ATHundt@gmail.com",
+    "url": "https://github.com/ahundt/autorun"
+  },
+  "homepage": "https://github.com/ahundt/autorun#readme",
+  "repository": "https://github.com/ahundt/autorun",
+  "license": "Apache-2.0"
+}

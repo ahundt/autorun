@@ -425,7 +425,8 @@ SKILL_PLACEMENT = Setting(
     name="skill_placement",
     parse=mapping_of(one_of("auto", "native", "both"), harness_names),
     default={"": "auto"},
-    help="Where installed skills are written, globally or per harness "
+    help="Where installed skills are written: auto/native use each harness's "
+         "owned package or skills root; both also writes ~/.agents/skills "
          "(MODE or HARNESS=MODE, repeatable)",
     repeatable=True,
 )

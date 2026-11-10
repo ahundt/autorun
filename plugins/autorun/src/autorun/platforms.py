@@ -254,6 +254,29 @@ class PluginPackageSkills(SkillRoute):
 
 
 @dataclass(frozen=True, slots=True)
+class ConfigPackageSkills(SkillRoute):
+    """Skills carried by one package per plugin inside a harness config dir."""
+
+    packages_subdir: str = "packages"
+    skills_subdir: str = "skills"
+
+    def plugin_destinations(
+        self, config_dir: Path | None, plugin: str
+    ) -> tuple[Path, ...]:
+        return () if config_dir is None else (
+            config_dir / self.packages_subdir / plugin / self.skills_subdir,
+        )
+
+    def describe(self) -> str:
+        return f"config-dir {self.packages_subdir}/<plugin> package"
+
+
+def is_packaged_skill_route(route: object) -> bool:
+    """Whether skills are staged as part of a larger extension/package tree."""
+    return isinstance(route, (ExtensionSkills, PluginPackageSkills, ConfigPackageSkills))
+
+
+@dataclass(frozen=True, slots=True)
 class CombinedSkillRoutes(SkillRoute):
     """A harness that loads skills from more than one native location.
 
@@ -1862,7 +1885,10 @@ PI = register(
         memory_template="pi_template/AGENTS.md",
         memory_sentinel_slug="pi-agents-md",
         loads_shared_agents_skills=True,
-        native_skills=ConfigDirSkills("skills"),
+        # Autorun stages a Pi package at packages/ar containing both the
+        # extension and skills; additional selected plugins use sibling
+        # package directories through the same installer step.
+        native_skills=ConfigPackageSkills(),
         command_display_prefix="/ar ",
         command_invocation_hint="Type /ar <command>; the installed extension dispatches it directly.",
         skill_invocation_format="/skill:{name}",
@@ -1981,9 +2007,10 @@ FORGECODE = register(
         # "agents" tier between project (.forge/skills) and global, and
         # forge_domain's Env::agents_skills_path() resolves it as
         # home.join(".agents/skills") (string present in the shipped binary).
-        # ForgeCode ships no extension or plugin package, so without this the
-        # shared root is its only route and `auto` would point at nothing.
+        # ForgeCode has no package mechanism, so its documented harness-owned
+        # global root is the native publication route.
         loads_shared_agents_skills=True,
+        native_skills=HomeDirSkills("forge/skills"),
         # tool_names empty: not relevant without hooks (advisory AGENTS.md only)
     )
 )
@@ -2028,9 +2055,11 @@ OPENCODE = register(
         memory_filename="AGENTS.md",
         memory_template="opencode_template/AGENTS.md",
         memory_sentinel_slug="opencode-agents-md",
-        # OpenCode reads ~/.agents/skills natively (opencode.ai/docs/skills),
-        # so skills arrive through the shared route with no per-harness link.
+        # OpenCode also reads ~/.agents/skills, but distributed autorun skills
+        # default to OpenCode's own global root instead of claiming the user's
+        # cross-client authoring namespace.
         loads_shared_agents_skills=True,
+        native_skills=ConfigDirSkills("skills"),
         # Commands are Claude-format markdown ($ARGUMENTS, $1..$N, !`cmd`,
         # @path) copied from the portable bundle; the files are named
         # ar-<cmd>.md, so typed invocation stays /ar-<cmd>, and every other

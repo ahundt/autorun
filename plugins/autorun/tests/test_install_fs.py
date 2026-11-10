@@ -684,6 +684,25 @@ def test_force_never_overrides_a_recorded_user_edit(tmp_path, source):
     assert not (tmp_path / "b").exists()
 
 
+def test_content_converged_with_source_refreshes_its_stale_receipt(tmp_path, source):
+    """A target matching today's source is current, even when its receipt is not.
+
+    This occurs when a preserved installed edit is later incorporated upstream.
+    Keeping it forever as "you edited" leaves ownership stale and blocks future
+    updates despite there being no remaining content conflict.
+    """
+    target = tmp_path / "dest" / "demo"
+    publish_tree(source, target, plugin="ar")
+    (source / "SKILL.md").write_text("version two\n", encoding="utf-8")
+    (target / "SKILL.md").write_text("version two\n", encoding="utf-8")
+
+    decision = publish_tree(source, target, plugin="ar")
+
+    assert decision.verdict is Verdict.PUBLISH, decision.describe()
+    assert decision.reason == "refreshing ownership receipt"
+    assert decide(target, source, plugin="ar").verdict is Verdict.SKIP
+
+
 def test_a_hashless_legacy_tree_no_longer_shipped_is_kept_and_says_how_to_retire(
     tmp_path, source
 ):

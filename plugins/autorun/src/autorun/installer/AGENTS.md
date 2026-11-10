@@ -132,8 +132,9 @@ that need it. No disk access: stage generated content to a temp dir and point th
   what makes `settings.autorun_config()` safe to call mid-install. Adding a
   dependency, or a module-scope call that raises anything else, breaks this.
 - **Read routes and write routes differ.** Antigravity reads
-  `~/.gemini/config/skills` and writes its plugins dir; ForgeCode reads
-  `~/forge/skills` and writes nowhere. The bridge targets read routes.
+  `~/.gemini/config/skills` and writes its plugins dir. ForgeCode reads both
+  `~/.agents/skills` and `~/forge/skills`; autorun writes only the latter by
+  default. The bridge targets read routes.
 - **A native copy the harness made is proven ours by receipt plus content,
   never by name.** Gemini and Qwen record the source path in
   `.<cli>-extension-install.json`. Agy records only `{"name": "ar", "source":

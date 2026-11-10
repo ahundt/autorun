@@ -28,6 +28,8 @@ PLUGIN_ASSET_TREES = (
     ),
 )
 
+PLUGIN_ASSET_FILES = (Path("plugin.json"),)
+
 
 #: Packages whose source lives in a sibling plugin directory and reaches this
 #: distribution through a symlink under ``src/``. ``pdf_extraction`` belongs to
@@ -139,6 +141,7 @@ def tracked_sdist_files(plugin_root: Path, files: list[str]) -> list[str]:
         filename
         for filename in files
         if Path(filename) in tracked
+        or Path(filename) in PLUGIN_ASSET_FILES
         or Path(filename).name == "LICENSE"
         or any(part.endswith(".egg-info") for part in Path(filename).parts)
     ]
@@ -174,7 +177,8 @@ def _copy_ignore(plugin_root: Path, tracked: set[Path] | None):
 
 def copy_plugin_assets(plugin_root: Path, package_root: Path) -> None:
     """Copy tracked plugin trees into the staged autorun package directory."""
-    ignore = _copy_ignore(plugin_root, _tracked_paths(plugin_root))
+    tracked = _tracked_paths(plugin_root)
+    ignore = _copy_ignore(plugin_root, tracked)
     for source_rel, destination_rel in PLUGIN_ASSET_TREES:
         shutil.copytree(
             plugin_root / source_rel,
@@ -182,6 +186,10 @@ def copy_plugin_assets(plugin_root: Path, package_root: Path) -> None:
             dirs_exist_ok=True,
             ignore=ignore,
         )
+    for relative in PLUGIN_ASSET_FILES:
+        source = plugin_root / relative
+        if source.is_file():
+            shutil.copy2(source, package_root / relative)
     # ``build_py`` may have copied this .py from sdist package-data before the
     # tracked asset pass runs. The installed extension always stages the
     # canonical ``autorun/hooks/hook_entry.py``; remove the source-only legacy

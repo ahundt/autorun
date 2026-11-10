@@ -1,0 +1,4 @@
+interface:
+  display_name: "Durable Goal Prompts"
+  short_description: "Write goals that stay valid as project state changes"
+  default_prompt: "Use $write-durable-goal-prompts to write a durable goal for this work."

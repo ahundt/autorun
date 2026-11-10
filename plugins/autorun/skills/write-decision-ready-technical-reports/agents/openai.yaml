@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write Decision-Ready Technical Reports"
+  short_description: "Make technical status and choices clear"
+  default_prompt: "Use $write-decision-ready-technical-reports to turn this evidence or plan into a concise, verifiable decision brief."

@@ -147,12 +147,14 @@ def test_pi_install_is_owned_idempotent_and_preserves_other_extensions(tmp_path,
 
     home = _install_pi(tmp_path, monkeypatch)
     extension_root = home / ".pi" / "agent" / "extensions"
-    installed = extension_root / "ar"
+    extension_root.mkdir(parents=True)
+    installed = home / ".pi" / "agent" / "packages" / "ar"
+    extension = installed / "extensions" / "autorun"
     stranger = extension_root / "mine.ts"
     stranger.write_text("export default () => {}\n", encoding="utf-8")
 
-    assert (installed / "index.ts").is_file()
-    assert (installed / "daemon-client.mjs").is_file()
+    assert (extension / "index.ts").is_file()
+    assert (extension / "daemon-client.mjs").is_file()
     assert (installed / ".autorun-owned").is_file()
 
     obsolete = installed / "obsolete-owned-runtime.ts"
@@ -175,16 +177,17 @@ def test_pi_uninstall_preserves_a_user_modified_owned_extension(tmp_path, monkey
     from autorun.installer import entrypoint
 
     home = _install_pi(tmp_path, monkeypatch)
-    installed = home / ".pi" / "agent" / "extensions" / "ar"
+    installed = home / ".pi" / "agent" / "packages" / "ar"
     sibling = installed.parent / "sibling.ts"
     sibling.write_text("export default () => {}\n", encoding="utf-8")
-    (installed / "index.ts").write_text(
+    index = installed / "extensions" / "autorun" / "index.ts"
+    index.write_text(
         "// user customization\n", encoding="utf-8"
     )
 
     assert entrypoint.uninstall_plugins("ar") == 0
     assert installed.is_dir(), "uninstall must preserve a user-modified owned tree"
-    assert (installed / "index.ts").read_text(encoding="utf-8") == (
+    assert index.read_text(encoding="utf-8") == (
         "// user customization\n"
     )
     assert sibling.is_file()
@@ -192,14 +195,17 @@ def test_pi_uninstall_preserves_a_user_modified_owned_extension(tmp_path, monkey
 
 def test_pi_development_install_uses_redirected_runtime_roots(tmp_path, monkeypatch):
     live_home = Path.home()
-    live_extension = live_home / ".pi" / "agent" / "extensions" / "ar"
+    live_extension = live_home / ".pi" / "agent" / "packages" / "ar"
     before = {
         path.relative_to(live_extension): path.read_bytes()
         for path in live_extension.rglob("*")
         if path.is_file()
     } if live_extension.is_dir() else None
     home = _install_pi(tmp_path, monkeypatch)
-    installed = home / ".pi" / "agent" / "extensions" / "ar" / "index.ts"
+    installed = (
+        home / ".pi" / "agent" / "packages" / "ar" /
+        "extensions" / "autorun" / "index.ts"
+    )
     text = installed.read_text(encoding="utf-8")
 
     autorun_home = Path(os.environ["AUTORUN_HOME"])
@@ -1435,7 +1441,9 @@ def test_staged_pi_family_extensions_carry_their_own_cli_type(tmp_path):
             command=("hook_entry.py", "--cli", cli_type),
             cli_type=cli_type,
         )
-        text = (staged["ar"] / "index.ts").read_text(encoding="utf-8")
+        text = (staged["ar"] / "extensions" / "autorun" / "index.ts").read_text(
+            encoding="utf-8"
+        )
         assert f'cliType: "{cli_type}"' in text
         assert f'"--cli", "{cli_type}"' in text
         assert "__AUTORUN_CLI_TYPE__" not in text
@@ -1473,10 +1481,11 @@ def test_prime_install_lands_in_the_prime_home_with_prime_cli_type(tmp_path, mon
     from autorun.installer import entrypoint
 
     home = _install_prime(tmp_path, monkeypatch)
-    installed = home / ".prime" / "agent" / "extensions" / "ar"
-    assert (installed / "daemon-client.mjs").is_file()
+    installed = home / ".prime" / "agent" / "packages" / "ar"
+    extension = installed / "extensions" / "autorun"
+    assert (extension / "daemon-client.mjs").is_file()
     assert (installed / ".autorun-owned").is_file()
-    text = (installed / "index.ts").read_text(encoding="utf-8")
+    text = (extension / "index.ts").read_text(encoding="utf-8")
     assert 'cliType: "prime"' in text
     assert '"--cli", "prime"' in text
     # Nothing may land in Pi's home from a prime-only install.

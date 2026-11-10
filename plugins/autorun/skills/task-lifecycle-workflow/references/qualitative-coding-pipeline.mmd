@@ -1,0 +1,56 @@
+flowchart TD
+  subgraph evidence_retrieval[EVIDENCE RETRIEVAL AND PROVENANCE]
+    search_messages[work: search human-authored messages]
+    consume_result_pages[work: consume bounded result pages]
+    pagination_complete{decision: requested range fully paged?}
+    verify_message_provenance{decision: verified human-root candidates remain?}
+    read_sequence_context[work: read sequence context]
+    deduplicate_copies[work: deduplicate mirrors and resumptions]
+  end
+  subgraph evidence_coding[EVIDENCE CODING AND GENERALIZATION]
+    code_evidence_excerpts[work: code evidence excerpts]
+    compare_negative_cases[check: compare negative cases and tensions]
+    context_sufficient{decision: evidence sufficient for bounded generalization?}
+    query_refinement_bound_available{decision: query-refinement bound remains?}
+    generalize_requirement[work: generalize candidate requirement]
+  end
+  subgraph control_promotion[CONTROL PROMOTION AND TRACE]
+    promotion_check{decision: changes routing, dependency, gate, recovery, or invariant?}
+    retain_private_evidence[state: retain as private evidence only]
+    map_workflow_control[work: map admitted requirement to workflow control]
+    verify_evidence_trace{decision: control traces to evidence and source?}
+    trace_revision_bound_available{decision: trace-revision bound remains?}
+    admitted_workflow_control[state: admit verified workflow control]
+    active_contract_change{decision: admitted control changes active contract?}
+    user_history_return[event: return verified claims and trace to evidence synthesis]
+    contract_change_return[event: return contract-change event to outer router]
+    bounded_evidence_return[event: return verified evidence if any, limits, and no promoted control]
+  end
+
+  search_messages -->|query and scope| consume_result_pages
+  consume_result_pages -->|page, next offset, and limit| pagination_complete
+  pagination_complete -->|no: next page available within budget| consume_result_pages
+  pagination_complete -->|no: budget exhausted or pagination cannot advance; offset and limit; new candidates unverified, prior verified evidence retained| retain_private_evidence
+  pagination_complete -->|yes: complete requested range and offsets| verify_message_provenance
+  verify_message_provenance -->|yes: verified messages and recorded exclusions| read_sequence_context
+  verify_message_provenance -->|no: no admissible human-root evidence| retain_private_evidence
+  read_sequence_context -->|contextualized messages| deduplicate_copies
+  deduplicate_copies -->|independent evidence units| code_evidence_excerpts
+  code_evidence_excerpts -->|coded meanings| compare_negative_cases
+  compare_negative_cases -->|evidence gaps and tensions| context_sufficient
+  context_sufficient -->|no: evidence gap and proposed refined query| query_refinement_bound_available
+  query_refinement_bound_available -->|yes: refine query and retain verified evidence| search_messages
+  query_refinement_bound_available -->|no: exhausted bound and safe verified subset| retain_private_evidence
+  context_sufficient -->|yes: reconciled evidence and tensions| generalize_requirement
+  generalize_requirement -->|candidate control| promotion_check
+  promotion_check -->|no: no operational change| retain_private_evidence
+  promotion_check -->|yes: operational change| map_workflow_control
+  map_workflow_control -->|node, edge, gate, recovery, or invariant| verify_evidence_trace
+  verify_evidence_trace -->|fail: untraceable control and proposed revision| trace_revision_bound_available
+  trace_revision_bound_available -->|yes: revise candidate and rerun promotion| generalize_requirement
+  trace_revision_bound_available -->|no: exhausted bound and unpromoted control| retain_private_evidence
+  verify_evidence_trace -->|pass: trace coordinates and control mapping| admitted_workflow_control
+  admitted_workflow_control -->|verified control and affected requirement IDs| active_contract_change
+  active_contract_change -->|no: claims inform current evidence synthesis| user_history_return
+  active_contract_change -->|yes: control invalidates active descendants| contract_change_return
+  retain_private_evidence -->|verified evidence if any, limitations, and no operational control| bounded_evidence_return

@@ -1,0 +1,59 @@
+flowchart TD
+  subgraph fault_detection[FAULT DETECTION]
+    observed_output[event: worker result or mutation]
+    fault_assessment{decision: contradiction, drift, unsafe change, or corrupt state?}
+  end
+  subgraph containment[CONTAINMENT]
+    pause_affected_node[state: pause or stop affected node]
+    trusted_state_checkpoint[state: record last trusted checkpoint]
+    quarantine_untrusted_output[state: quarantine output as untrusted]
+  end
+  subgraph restoration[TRUSTED-STATE RESTORATION]
+    restoration_evidence_available{decision: trusted restoration evidence available?}
+    recovery_blocked[state: blocked; record checkpoint and missing recovery input]
+    recovery_resume_event[event: trusted recovery input or permission received]
+    restore_trusted_state[work: restore or reconstruct shared state]
+    restoration_check[check: verify fingerprint or invariant]
+  end
+  subgraph repair_choice[REPAIR CHOICE]
+    repair_scope_assessment{decision: fault bounded and remaining state trustworthy?}
+    bounded_repair[work: repair in place]
+    fresh_worker_restart[work: fresh worker with smaller recovery packet]
+    repaired_outcome_check[check: independent repaired-outcome evidence]
+    repair_retry_bound_available{decision: repaired-outcome retry bound remains?}
+    failure_postmortem[work: post-mortem verified failure and recovery]
+    postmortem_action_check[check: prevention actions mapped or disposition recorded]
+    postmortem_repair_bound_available{decision: action-mapping repair bound remains?}
+    recovery_blocked_return[event: return recovery blocker and next action to outer router]
+    verified_integration[join: reproduce evidence and integrate]
+    recovery_complete_return[event: return verified recovery to outer router]
+  end
+
+  observed_output -->|result and affected paths| fault_assessment
+  fault_assessment -->|no defect found| verified_integration
+  fault_assessment -->|defect confirmed| pause_affected_node
+  pause_affected_node -->|paused node and affected IDs| trusted_state_checkpoint
+  trusted_state_checkpoint -->|checkpoint ID and last trusted artifact| quarantine_untrusted_output
+  quarantine_untrusted_output -->|quarantined and forbidden paths| restoration_evidence_available
+  restoration_evidence_available -->|no: trusted input unavailable| recovery_blocked
+  restoration_evidence_available -->|yes: trusted artifact identified| restore_trusted_state
+  restore_trusted_state -->|restored artifact| restoration_check
+  restoration_check -->|fail: trusted state unverified| recovery_blocked
+  recovery_blocked -->|blocked status, checkpoint, and next action| recovery_blocked_return
+  recovery_blocked -->|event: outer router supplies trusted input or permission; resume from checkpoint| recovery_resume_event
+  recovery_resume_event -->|resume with checkpoint and affected IDs| restoration_evidence_available
+  restoration_check -->|verified trusted state| repair_scope_assessment
+  repair_scope_assessment -->|yes: bounded fault| bounded_repair
+  repair_scope_assessment -->|no: state or claims unreliable| fresh_worker_restart
+  bounded_repair -->|repaired artifact and targeted acceptance check results| repaired_outcome_check
+  fresh_worker_restart -->|fresh artifact, acceptance check results, and evidence| repaired_outcome_check
+  repaired_outcome_check -->|fail: repair criterion and next check| repair_retry_bound_available
+  repair_retry_bound_available -->|yes: restore and verify trusted state before retry| restoration_evidence_available
+  repair_retry_bound_available -->|no: exhausted bound and failed criterion| recovery_blocked_return
+  repaired_outcome_check -->|pass: verified failure and recovery evidence| failure_postmortem
+  failure_postmortem -->|root cause, contributing factors, and recurrence controls| postmortem_action_check
+  postmortem_action_check -->|fail: unmapped prevention action and next check| postmortem_repair_bound_available
+  postmortem_repair_bound_available -->|yes: revise causal record or action mapping| failure_postmortem
+  postmortem_repair_bound_available -->|no: exhausted bound and unresolved actions| recovery_blocked_return
+  postmortem_action_check -->|actions mapped or explicitly closed| verified_integration
+  verified_integration -->|trusted artifact, proof, and affected IDs| recovery_complete_return

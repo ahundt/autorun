@@ -1414,8 +1414,8 @@ def test_a_kept_target_is_reported_once_per_uninstall_not_once_per_phase(
     )
 
     install(**where)
-    edited = tmp_path / ".agents" / "skills" / "commit" / "SKILL.md"
-    assert edited.is_file(), "the shared skill route did not publish"
+    edited = tmp_path / "plugins" / "ar" / "skills" / "commit" / "SKILL.md"
+    assert edited.is_file(), "the Codex plugin skill route did not publish"
     edited.write_text("the user edited this\n", encoding="utf-8")
 
     result = uninstall(**where)

@@ -1,0 +1,103 @@
+flowchart TD
+  subgraph event_inputs[EVENT INPUTS]
+    event_received[event: user message, result, finding, failure, resume, or subgraph return]
+  end
+  subgraph oversight_control[INDEPENDENT OVERSIGHT AND RESOLUTION]
+    continuity_trackkeeper[role: continuity trackkeeper<br/>audit orchestrator, workers, ledger, and evidence<br/>no worker commands]
+    material_finding_decision{decision: actionable control finding?}
+    orchestrator_investigates_finding[work: orchestrator reproduces evidence, tests assumptions, and inspects precedent]
+    orchestrator_disposition{decision: orchestrator disposition}
+    orchestrator_applies_finding[work: orchestrator updates contract or graph and sends correction packet]
+    correction_acknowledgement_check{check: affected workers acknowledge current revision?}
+    trackkeeper_recheck[check: trackkeeper returns recheck evidence and clearance recommendation]
+    orchestrator_records_recheck{decision: orchestrator records and routes recheck result}
+    finding_severity_route{decision: unresolved finding severity and gate scope}
+    affected_action_gate[gate: block affected side effects, dependent dispatch, joins, readiness, or release until clearance]
+    critical_side_effect_gate[gate: pause named safety, permission, integrity, or destructive side effect]
+    orchestrator_autonomous_resolution[work: orchestrator compares outcome and precedent; applies reversible default, replan, recovery, or one-shot adjudication]
+    user_input_requirement{decision: After checking existing authorization, is user-only authority or information missing, or does a consequential choice lack a safe default?}
+  end
+  subgraph control_plane[CONTROL PLANE]
+    classify_event[work: classify event and affected requirements]
+    update_contract[state: update contract; stale affected descendants]
+    choose_restart_stage{decision: earliest affected stage}
+  end
+  subgraph work_lifecycle[WORK LIFECYCLE]
+    discover_evidence[work: discover evidence]
+    select_mechanism[work: compare and select mechanism]
+    plan_dependencies[work: plan dependencies and critical path]
+    execute_nodes[work: execute eligible nodes and required joins]
+    verify_outcome[check: verify requirement outcomes]
+    recover_trusted_state[work: run trusted-state recovery subgraph]
+  end
+  subgraph completion_control[COMPLETION CONTROL]
+    readiness_gate{gate: ready?}
+    close_epoch[state: close epoch; next event re-enters router]
+    await_release_authorization[state: ready; await release authorization]
+    release_gate{gate: authorized release checks pass?}
+    outcome_postmortem[work: proportionate post-mortem of verified outcome]
+    outcome_action_check{check: lessons and actions mapped or disposition recorded}
+    blocked_wait_state[state: blocked or user-paused; retain checkpoint and next action]
+    done_terminal[terminal: DONE]
+  end
+
+  event_received -->|event payload| continuity_trackkeeper
+  continuity_trackkeeper -->|audit result and affected IDs| material_finding_decision
+  material_finding_decision -->|no: record check; continue silently| classify_event
+  material_finding_decision -->|yes: structured control finding| orchestrator_investigates_finding
+  orchestrator_investigates_finding -->|direct evidence and tested assumptions| orchestrator_disposition
+  orchestrator_disposition -->|accepted: finding event and affected IDs| orchestrator_applies_finding
+  orchestrator_applies_finding -->|current contract or graph revision and correction packet| correction_acknowledgement_check
+  correction_acknowledgement_check -->|pass or no affected worker| trackkeeper_recheck
+  correction_acknowledgement_check -->|fail: block until worker acknowledges or is replaced| affected_action_gate
+  orchestrator_disposition -->|rejected with evidence, duplicate, or stale| trackkeeper_recheck
+  orchestrator_disposition -->|unresolved and disposition evidence| trackkeeper_recheck
+  trackkeeper_recheck -->|recheck evidence and recommendation| orchestrator_records_recheck
+  orchestrator_records_recheck -->|cleared| classify_event
+  orchestrator_records_recheck -->|unresolved finding and recorded gate scope| finding_severity_route
+  finding_severity_route -->|low or medium: advisory only when contract allows and acknowledgement/replacement is not missing| classify_event
+  finding_severity_route -->|high, contract-gated, or acknowledgement/replacement missing: block affected dependent action| affected_action_gate
+  finding_severity_route -->|critical: pause affected side effect before execution| critical_side_effect_gate
+  affected_action_gate -->|affected scope and failed clearance check| orchestrator_autonomous_resolution
+  critical_side_effect_gate -->|affected side effect and failed clearance check| orchestrator_autonomous_resolution
+  orchestrator_autonomous_resolution -->|resolved: finding_id and clearance evidence, including correction acknowledgement or worker replacement| trackkeeper_recheck
+  orchestrator_autonomous_resolution -->|unresolved: investigation and attempted resolution| user_input_requirement
+  user_input_requirement -->|no: autonomous resolution, replan, recovery, or adjudication event| event_received
+  user_input_requirement -->|yes: user-only authority or information missing after authorization checks, or consequential choice lacks safe default| blocked_wait_state
+  classify_event -->|event class and impact set| update_contract
+  update_contract -->|current contract revision| choose_restart_stage
+  choose_restart_stage -->|route: evidence or premise changed| discover_evidence
+  choose_restart_stage -->|route: mechanism invalid| select_mechanism
+  choose_restart_stage -->|route: dependency or scope changed, including scoped stop or prohibition; preserve independent work| plan_dependencies
+  choose_restart_stage -->|route: pending work only| execute_nodes
+  choose_restart_stage -->|route: proof stale or missing| verify_outcome
+  choose_restart_stage -->|route: state or output untrusted, or resume blocked recovery from checkpoint| recover_trusted_state
+  choose_restart_stage -->|route: whole-workflow user stop, or loud blocker with no eligible independent work| blocked_wait_state
+  choose_restart_stage -->|route: gate reevaluation only| readiness_gate
+  discover_evidence -->|sourced claims and limitations| select_mechanism
+  select_mechanism -->|selected mechanism and routed criteria| plan_dependencies
+  plan_dependencies -->|adjudicated dependency plan| execute_nodes
+  execute_nodes -->|joined artifacts and node checks| verify_outcome
+  verify_outcome -->|work-cycle return: epoch evidence, limits, and findings| readiness_gate
+  readiness_gate -->|fail: criterion or contract changed| close_epoch
+  readiness_gate -->|pass: release out of scope or already verified for this artifact and target| outcome_postmortem
+  readiness_gate -->|pass: release pending; permission missing| await_release_authorization
+  readiness_gate -->|pass: release pending and authorized| release_gate
+  release_gate -->|pass: release evidence complete| outcome_postmortem
+  release_gate -->|fail: release criterion| close_epoch
+  outcome_postmortem -->|outcome delta, surprises, evidence gaps, and reusable lessons| outcome_action_check
+  outcome_action_check -->|required corrective work remains or disposition incomplete: start new epoch| close_epoch
+  outcome_action_check -->|required work complete; other actions mapped, deferred, or explicitly closed| done_terminal
+  close_epoch -->|new epoch event: failed criterion or changed contract| event_received
+  await_release_authorization -->|event: authorization, correction, or stop| event_received
+  recover_trusted_state -->|verified recovery event: start new epoch| event_received
+  recover_trusted_state -->|recovery_blocked_return: failed criterion and next action| event_received
+  blocked_wait_state -->|event: explicit user resume, required input, authority, or recovery action supplied| event_received
+  continuity_trackkeeper -.->|read-only observe orchestrator decision| classify_event
+  continuity_trackkeeper -.->|read-only observe state mutation| update_contract
+  continuity_trackkeeper -.->|read-only observe plan and dispatch packet| plan_dependencies
+  continuity_trackkeeper -.->|read-only observe worker lifecycle and join| execute_nodes
+  continuity_trackkeeper -.->|read-only observe evidence claim| verify_outcome
+  continuity_trackkeeper -.->|read-only observe completion claim| readiness_gate
+  continuity_trackkeeper -.->|read-only observe release decision| release_gate
+  continuity_trackkeeper -.->|read-only observe outcome post-mortem| outcome_postmortem

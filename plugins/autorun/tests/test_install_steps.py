@@ -514,11 +514,7 @@ def test_a_plugin_with_a_root_manifest_and_no_template_is_still_staged_as_an_ext
         assert "hooks" not in document
         assert not (bundle / "hooks").exists()
         assert not (bundle / "hooks.json").exists()
-        if harness == "antigravity":
-            # Agy reads skills from inside the plugin; the others read the shared root.
-            assert (bundle / "skills" / "pdf-extractor" / "SKILL.md").is_file()
-        else:
-            assert not (bundle / "skills").exists()
+        assert (bundle / "skills" / "pdf-extractor" / "SKILL.md").is_file()
 
 
 def test_qwen_staging_rewrites_hook_identity_without_deprecated_toml(walk, sandbox):
@@ -558,7 +554,7 @@ def test_extension_staging_failure_makes_the_install_result_broken(sandbox, monk
     assert any("staging" in finding.check for finding in result.findings)
 
 
-def test_unsatisfiable_skill_placement_is_broken_before_any_write(sandbox):
+def test_forgecode_native_placement_writes_its_documented_root(sandbox):
     from autorun.installer.orchestrate import install
 
     result = install(
@@ -571,10 +567,9 @@ def test_unsatisfiable_skill_placement_is_broken_before_any_write(sandbox):
         state_dir=sandbox / ".state",
     )
 
-    assert result.ok is False
-    assert result.decisions == ()
-    assert any("cannot be satisfied" in finding.detail for finding in result.findings)
-    assert not (sandbox / ".forge").exists()
+    assert result.ok is True
+    assert (sandbox / "forge" / "skills" / "commit" / "SKILL.md").is_file()
+    assert not (sandbox / ".agents" / "skills").exists()
 
 
 def test_duplicate_skill_names_are_broken_before_any_write(sandbox, tmp_path):
@@ -602,10 +597,8 @@ def test_duplicate_skill_names_are_broken_before_any_write(sandbox, tmp_path):
     assert list(sandbox.iterdir()) == []
 
 
-def test_default_claude_forge_opencode_install_has_one_visible_copy_per_skill(sandbox):
-    """Claude's plugin package already carries its skills. Publishing them a
-    second time under ~/.claude/skills makes OpenCode race that copy against
-    the shared ~/.agents/skills copy while building its name-keyed catalog."""
+def test_default_claude_forge_opencode_install_uses_owned_routes(sandbox):
+    """Each harness uses its package or native root; none claims ~/.agents."""
     from autorun.installer.orchestrate import install
 
     result = install(
@@ -620,12 +613,13 @@ def test_default_claude_forge_opencode_install_has_one_visible_copy_per_skill(sa
         state_dir=sandbox / ".state",
     )
 
-    visible = (
-        sandbox / ".claude" / "skills" / "commit" / "SKILL.md",
-        sandbox / ".agents" / "skills" / "commit" / "SKILL.md",
-    )
     assert result.ok is True
-    assert sum(path.is_file() for path in visible) == 1, visible
+    assert (sandbox / "forge" / "skills" / "commit" / "SKILL.md").is_file()
+    assert (
+        sandbox / ".config" / "opencode" / "skills" / "commit" / "SKILL.md"
+    ).is_file()
+    assert not (sandbox / ".agents" / "skills").exists()
+    assert not (sandbox / ".claude" / "skills").exists()
 
 
 @pytest.mark.parametrize("edited", [False, True])
@@ -685,7 +679,7 @@ def test_a_loadable_user_skill_is_not_duplicated_into_the_extension(sandbox):
     native = sandbox / ".qwen" / "extensions" / "ar" / "skills"
     assert result.ok is True
     assert not (native / "commit").exists(), "a native copy would list the name twice"
-    assert not (native / "philosophy").exists(), "unblocked names stay on the shared route"
+    assert (native / "philosophy" / "SKILL.md").is_file()
     assert (user_skill / "SKILL.md").read_text(encoding="utf-8") == USER_COPY
 
 
@@ -712,7 +706,7 @@ def test_blocked_shared_skill_falls_back_inside_only_the_extension(sandbox):
     native = sandbox / ".qwen" / "extensions" / "ar" / "skills"
     assert result.ok is True
     assert (native / "commit" / "SKILL.md").is_file()
-    assert not (native / "philosophy").exists(), "only the blocked name falls back"
+    assert (native / "philosophy" / "SKILL.md").is_file()
     assert (stray / "notes.txt").read_text(encoding="utf-8") == "not a skill"
 
 
@@ -746,15 +740,8 @@ def test_targeted_install_preserves_other_harnesses_staged_sources(sandbox):
     )
 
 
-def test_targeted_install_preserves_shared_skills_other_harnesses_read(sandbox):
-    """A Claude-only run must not retire the shared ``~/.agents/skills`` trees.
-
-    Claude reads only its own plugin skills, so a Claude-only walk claims
-    nothing under the shared root — but Codex, Qwen, Pi, Prime, ForgeCode and
-    OpenCode load their skills from exactly there. Retiring them as "no longer
-    shipped" would be the staging-sweep bug again, one directory over.
-    """
-    from autorun.installer import discovery
+def test_targeted_install_preserves_other_harnesses_native_skills(sandbox):
+    """A Claude-only run must not retire another harness's owned skill route."""
     from autorun.installer.orchestrate import install
 
     common = dict(
@@ -766,27 +753,16 @@ def test_targeted_install_preserves_shared_skills_other_harnesses_read(sandbox):
         state_dir=sandbox / ".state",
     )
     assert install(harnesses=(PLATFORMS["qwen"],), **common).ok is True
-    shared_commit = discovery.shared_root(home=sandbox) / "commit"
-    assert (shared_commit / "SKILL.md").is_file(), "qwen publishes to the shared root"
+    qwen_commit = sandbox / ".qwen" / "extensions" / "ar" / "skills" / "commit"
+    assert (qwen_commit / "SKILL.md").is_file()
 
     second = install(harnesses=(PLATFORMS["claude"],), **common)
     assert second.ok is True
-    assert (shared_commit / "SKILL.md").is_file(), (
-        "a Claude-only install retired the shared skills other harnesses read"
-    )
+    assert (qwen_commit / "SKILL.md").is_file()
 
 
-def test_shared_root_skill_is_decided_once_across_shared_reading_harnesses(sandbox):
-    """One shared-root target, one decision, however many harnesses read it.
-
-    Pi and Prime both route skills to ``~/.agents/skills``. Before the walk
-    deduplicated identical intents, a preview listed every shared skill once
-    per reading harness (108 lines for 18 skills across six harnesses on a
-    default install) and an install hashed each published tree once per
-    harness only to conclude "already current". The write was already single;
-    the decision list and the I/O were not.
-    """
-    from autorun.installer import discovery
+def test_pi_and_prime_auto_use_separate_native_roots(sandbox):
+    """Package/native-first auto does not claim the shared authoring root."""
     from autorun.installer.orchestrate import preview
 
     result = preview(
@@ -798,12 +774,122 @@ def test_shared_root_skill_is_decided_once_across_shared_reading_harnesses(sandb
         state_dir=sandbox / ".state",
         harnesses=(PLATFORMS["pi"], PLATFORMS["prime"]),
     )
-    shared = discovery.shared_root(home=sandbox)
-    targets = [d.target for d in result.decisions if d.target.parent == shared]
-    assert targets, "the shared route produced no decisions"
-    assert len(targets) == len(set(targets)), sorted(
-        str(t) for t in targets if targets.count(t) > 1
+    targets = {d.target for d in result.decisions}
+    assert sandbox / ".pi" / "agent" / "packages" / "ar" in targets
+    assert sandbox / ".prime" / "agent" / "packages" / "ar" in targets
+    assert not any("/.agents/skills/" in str(target) for target in targets)
+
+
+@pytest.mark.parametrize(
+    ("name", "relative"),
+    [("pi", ".pi/agent"), ("prime", ".prime/agent")],
+)
+def test_pi_family_installs_one_package_with_extension_and_skills(
+    sandbox, name, relative
+):
+    import json
+
+    from autorun.installer.orchestrate import install, uninstall
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS[name],),
+        teardown_enabled=False,
     )
+    result = install(**common)
+    base = sandbox / relative
+    package = base / "packages" / "ar"
+    settings = json.loads((base / "settings.json").read_text(encoding="utf-8"))
+
+    assert result.ok is True
+    assert json.loads((package / "package.json").read_text())["name"] == "autorun-ar"
+    assert (package / "extensions" / "autorun" / "index.ts").is_file()
+    assert (package / "skills" / "commit" / "SKILL.md").is_file()
+    assert settings["packages"] == [str(package)]
+    assert not (base / "extensions" / "ar").exists()
+    assert not (base / "skills" / "commit").exists()
+
+    assert uninstall(**common).ok is True
+    assert not package.exists()
+    assert not (base / "settings.json").exists()
+
+
+def test_pi_reinstall_has_no_false_unowned_skill_warning(sandbox):
+    from autorun.installer.orchestrate import install
+
+    common = dict(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS["pi"],),
+        teardown_enabled=False,
+    )
+    assert install(**common).ok is True
+
+    second = install(**common)
+
+    assert second.ok is True
+    assert not [f for f in second.findings if f.check == "skill placement"]
+
+
+def test_pi_preview_reports_the_staged_package_settings_edit(sandbox):
+    import json
+
+    from autorun.installer.orchestrate import preview
+
+    base = sandbox / ".pi" / "agent"
+    base.mkdir(parents=True)
+    package = base / "packages" / "ar"
+
+    result = preview(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS["pi"],),
+    )
+
+    expected = (
+        f"would add {base / 'settings.json'} [packages] "
+        f"{json.dumps(str(package))}"
+    )
+    assert expected in result.notes
+
+
+def test_pi_auto_migrates_owned_legacy_shared_skills_into_package(sandbox):
+    from autorun.installer.fs import publish_tree
+    from autorun.installer.orchestrate import install
+
+    shared = sandbox / ".agents" / "skills" / "commit"
+    publish_tree(REPO / "plugins" / "autorun" / "skills" / "commit", shared, plugin="ar")
+
+    result = install(
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        available=(),
+        state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS["pi"],),
+        teardown_enabled=False,
+    )
+
+    assert result.ok is True
+    assert not shared.exists()
+    assert (
+        sandbox / ".pi" / "agent" / "packages" / "ar" / "skills" / "commit" / "SKILL.md"
+    ).is_file()
+    assert not [f for f in result.findings if f.check == "skill placement"]
 
 
 def test_force_republishes_a_hashless_legacy_shared_skill_and_keeps_a_backup(sandbox):
@@ -819,7 +905,6 @@ def test_force_republishes_a_hashless_legacy_shared_skill_and_keeps_a_backup(san
     """
     import json
 
-    from autorun.installer import discovery
     from autorun.installer.fs import OWNED_MARKER_NAME, read_marker
     from autorun.installer.orchestrate import install, preview
 
@@ -833,28 +918,28 @@ def test_force_republishes_a_hashless_legacy_shared_skill_and_keeps_a_backup(san
         harnesses=(PLATFORMS["pi"],),
     )
     assert install(**common).ok is True
-    shared = discovery.shared_root(home=sandbox)
-    commit = shared / "commit"
-    (commit / OWNED_MARKER_NAME).write_text(
+    native = sandbox / ".pi" / "agent" / "packages"
+    package = native / "ar"
+    (package / OWNED_MARKER_NAME).write_text(
         json.dumps({"plugin": "ar", "files": []}), encoding="utf-8"
     )
-    (commit / "SKILL.md").write_text("an older release\n", encoding="utf-8")
+    (package / "package.json").write_text("an older release\n", encoding="utf-8")
 
-    kept = [d for d in preview(**common).decisions if d.target == commit]
+    kept = [d for d in preview(**common).decisions if d.target == package]
     assert kept and kept[0].verdict.value == "keep" and "--force" in kept[0].reason, kept
     assert install(**common).ok is True
-    assert (commit / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
+    assert (package / "package.json").read_text(encoding="utf-8") == "an older release\n"
 
     forced = install(force=True, **common)
     assert forced.ok is True
-    assert (commit / "SKILL.md").read_text(encoding="utf-8") != "an older release\n"
-    assert read_marker(commit).files, "republished with hashes"
+    assert (package / "package.json").read_text(encoding="utf-8") != "an older release\n"
+    assert read_marker(package).files, "republished with hashes"
     backups = autorun_state_dir(sandbox) / "installer" / "backups"
     parked = sorted(backups.iterdir())
-    assert len(parked) == 1 and parked[0].name.startswith("commit-"), parked
-    assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
+    assert len(parked) == 1 and parked[0].name.startswith("ar-"), parked
+    assert (parked[0] / "package.json").read_text(encoding="utf-8") == "an older release\n"
     assert not (parked[0] / OWNED_MARKER_NAME).exists(), "a backup is not an owned tree"
-    assert not any(p.name.endswith(".autorun-backup") for p in shared.iterdir())
+    assert not any(p.name.endswith(".autorun-backup") for p in native.iterdir())
     # The backup root is not swept: a second install leaves it alone.
     assert install(**common).ok is True
     assert sorted(backups.iterdir()) == parked
@@ -873,7 +958,6 @@ def test_force_uninstall_retires_a_hashless_legacy_shared_skill_and_keeps_a_back
     """
     import json
 
-    from autorun.installer import discovery
     from autorun.installer.fs import OWNED_MARKER_NAME
     from autorun.installer.orchestrate import install, uninstall
 
@@ -888,27 +972,26 @@ def test_force_uninstall_retires_a_hashless_legacy_shared_skill_and_keeps_a_back
         teardown_enabled=False,
     )
     assert install(**common).ok is True
-    shared = discovery.shared_root(home=sandbox)
-    commit = shared / "commit"
-    (commit / OWNED_MARKER_NAME).write_text(
+    package = sandbox / ".pi" / "agent" / "packages" / "ar"
+    (package / OWNED_MARKER_NAME).write_text(
         json.dumps({"plugin": "ar", "files": []}), encoding="utf-8"
     )
-    (commit / "SKILL.md").write_text("an older release\n", encoding="utf-8")
+    (package / "package.json").write_text("an older release\n", encoding="utf-8")
 
     plain = uninstall(**common)
-    kept = [d for d in plain.decisions if d.target == commit]
+    kept = [d for d in plain.decisions if d.target == package]
     assert kept and kept[0].verdict.value == "keep", kept
     assert "--force" in kept[0].reason and "you edited" not in kept[0].reason, kept[0].reason
-    assert (commit / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
+    assert (package / "package.json").read_text(encoding="utf-8") == "an older release\n"
 
     forced = uninstall(force=True, **common)
-    retired = [d for d in forced.decisions if d.target == commit]
+    retired = [d for d in forced.decisions if d.target == package]
     assert retired and retired[0].verdict.value == "retire", retired
-    assert not commit.exists()
+    assert not package.exists()
     backups = autorun_state_dir(sandbox) / "installer" / "backups"
     parked = sorted(backups.iterdir())
-    assert len(parked) == 1 and parked[0].name.startswith("commit-"), parked
-    assert (parked[0] / "SKILL.md").read_text(encoding="utf-8") == "an older release\n"
+    assert len(parked) == 1 and parked[0].name.startswith("ar-"), parked
+    assert (parked[0] / "package.json").read_text(encoding="utf-8") == "an older release\n"
     assert not (parked[0] / OWNED_MARKER_NAME).exists(), "a backup is not an owned tree"
 
 
@@ -960,7 +1043,6 @@ def test_a_retired_write_root_is_swept_for_hashless_legacy_trees(sandbox, plugin
 
 def test_install_with_no_harness_selected_retires_nothing(sandbox):
     """An empty selection is a no-op, never a sweep of every owned tree."""
-    from autorun.installer import discovery
     from autorun.installer.orchestrate import install
 
     common = dict(
@@ -972,12 +1054,12 @@ def test_install_with_no_harness_selected_retires_nothing(sandbox):
         state_dir=sandbox / ".state",
     )
     assert install(harnesses=(PLATFORMS["qwen"],), **common).ok is True
-    shared_commit = discovery.shared_root(home=sandbox) / "commit"
+    native_commit = sandbox / ".qwen" / "extensions" / "ar" / "skills" / "commit"
     staged = autorun_state_dir(sandbox) / "installer" / "extension-sources" / "qwen" / "ar"
-    assert (shared_commit / "SKILL.md").is_file() and staged.is_dir()
+    assert (native_commit / "SKILL.md").is_file() and staged.is_dir()
 
     install(harnesses=(), **common)
-    assert (shared_commit / "SKILL.md").is_file(), "empty selection retired shared skills"
+    assert (native_commit / "SKILL.md").is_file(), "empty selection retired native skills"
     assert staged.is_dir(), "empty selection retired a staged extension source"
 
 
@@ -1041,9 +1123,9 @@ def test_codex_personal_package_and_marketplace_resolve_to_the_same_tree(sandbox
     assert entry["source"] == {"source": "local", "path": "./plugins/ar"}
     assert sandbox / entry["source"]["path"] == source
     assert (source / ".codex-plugin" / "plugin.json").is_file()
-    assert not (source / "skills" / "commit").exists(), "auto uses the shared route"
+    assert (source / "skills" / "commit" / "SKILL.md").is_file()
     assert (source / ".codex-plugin" / "skills" / "ar" / "SKILL.md").is_file()
-    assert (sandbox / ".agents" / "skills" / "commit" / "SKILL.md").is_file()
+    assert not (sandbox / ".agents" / "skills").exists()
 
 
 def test_codex_plugin_hook_mode_packages_hooks_without_user_hooks(sandbox):
@@ -1548,6 +1630,84 @@ def test_a_switch_is_set_when_absent_and_removed_only_by_its_own_uninstall(tmp_p
 
     assert steps.apply_switches([entry], Mode.UNINSTALL) == [f"removed {entry.describe()}"]
     assert json.loads(entry.path.read_text()) == {"theme": "dark", "env": {"MINE": "x"}}
+
+
+def test_a_list_item_preserves_user_packages_and_removes_only_its_own(tmp_path):
+    import json
+
+    entry = steps.Switch(
+        tmp_path / "harness" / "settings.json",
+        ("packages",),
+        "/managed/autorun",
+        tmp_path / "state" / "installer" / "switches.json",
+        merge_list=True,
+    )
+    entry.path.parent.mkdir()
+    entry.path.write_text(
+        json.dumps({"packages": ["npm:user-package"], "theme": "dark"}),
+        encoding="utf-8",
+    )
+
+    steps.apply_switches([entry], Mode.INSTALL)
+    assert json.loads(entry.path.read_text()) == {
+        "packages": ["npm:user-package", "/managed/autorun"],
+        "theme": "dark",
+    }
+
+    steps.apply_switches([entry], Mode.UNINSTALL)
+    assert json.loads(entry.path.read_text()) == {
+        "packages": ["npm:user-package"],
+        "theme": "dark",
+    }
+
+
+def test_a_list_item_uninstall_does_not_recreate_a_deleted_settings_file(tmp_path):
+    entry = steps.Switch(
+        tmp_path / "harness" / "settings.json",
+        ("packages",),
+        "/managed/autorun",
+        tmp_path / "state" / "installer" / "switches.json",
+        merge_list=True,
+    )
+    entry.path.parent.mkdir()
+    steps.apply_switches([entry], Mode.INSTALL)
+    entry.path.unlink()
+
+    assert steps.apply_switches([entry], Mode.UNINSTALL) == []
+    assert not entry.path.exists()
+
+
+def test_a_failed_list_item_write_leaves_no_ownership_record(tmp_path, monkeypatch):
+    import contextlib
+    import json
+
+    entry = steps.Switch(
+        tmp_path / "harness" / "settings.json",
+        ("packages",),
+        "/managed/autorun",
+        tmp_path / "state" / "installer" / "switches.json",
+        merge_list=True,
+    )
+    entry.path.parent.mkdir()
+    real = steps.settings_document
+
+    @contextlib.contextmanager
+    def unwritable(path):
+        with real(path) as document:
+            yield document
+            raise PermissionError(f"read-only: {path}")
+
+    monkeypatch.setattr(steps, "settings_document", unwritable)
+    [note] = steps.apply_switches([entry], Mode.INSTALL)
+    assert note.startswith(f"skipped {entry.describe()}"), note
+    monkeypatch.setattr(steps, "settings_document", real)
+
+    entry.path.write_text(
+        json.dumps({"packages": ["/managed/autorun"]}), encoding="utf-8"
+    )
+    assert steps.apply_switches([entry], Mode.INSTALL) == []
+    assert steps.apply_switches([entry], Mode.UNINSTALL) == []
+    assert json.loads(entry.path.read_text()) == {"packages": ["/managed/autorun"]}
 
 
 def test_a_switch_creates_the_settings_file_and_prunes_only_what_it_added(tmp_path):

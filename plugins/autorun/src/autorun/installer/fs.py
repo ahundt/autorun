@@ -621,6 +621,8 @@ def decide(
             )
     edited, missing, extra = compare(target, manifest)
     if changed := tuple(sorted((*edited, *missing, *extra))):
+        if source is not None and scan_tree(target) == scan_tree(source):
+            return Decision(Verdict.PUBLISH, target, "refreshing ownership receipt")
         return Decision(Verdict.KEEP, target, "you edited files we installed", changed)
     if source is None:
         return Decision(Verdict.RETIRE, target, "no longer shipped")

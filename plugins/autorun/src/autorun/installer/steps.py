@@ -45,7 +45,7 @@ from typing import Iterable, Iterator, Mapping, MutableMapping, Sequence
 
 from filelock import FileLock
 
-from ..platforms import ExtensionSkills, PluginPackageSkills
+from ..platforms import is_packaged_skill_route
 from . import codex, discovery, extension, memory, settings, skills
 from .discovery import redirected_home
 from .fs import (
@@ -86,10 +86,23 @@ def skills_step(harness: object, ctx: Context) -> Iterable[Intent]:
         ctx,
         _plugins(ctx),
         placement=placement,
-        packaged_native=isinstance(
-            getattr(platform, "native_skills", None),
-            (ExtensionSkills, PluginPackageSkills),
+        packaged_native=is_packaged_skill_route(
+            getattr(platform, "native_skills", None)
         ),
+    )
+    return intents
+
+
+def pi_shared_skills_step(harness: object, ctx: Context) -> Iterable[Intent]:
+    """Publish only an explicitly requested shared copy for Pi-family hosts."""
+    platform = getattr(harness, "platform", harness)
+    intents, _ = skills.skill_plan(
+        platform,
+        ctx,
+        _plugins(ctx),
+        placement=_placement(ctx, getattr(harness, "name", "")),
+        include_native=False,
+        packaged_native=True,
     )
     return intents
 
@@ -249,7 +262,7 @@ BRIDGE_TEMPLATE_SUBDIR = Path("bridge_template")
 
 
 def pi_extension_step(harness: object, ctx: Context) -> Iterable[Intent]:
-    """Publish the Pi-family TypeScript adapter as one owned extension tree.
+    """Publish each Pi-family plugin as one package with extension and skills.
 
     The staged trees are keyed by harness name because each family member
     (Pi, Prime Agent) gets the shared template with its own ``cliType`` and
@@ -268,7 +281,7 @@ def pi_extension_step(harness: object, ctx: Context) -> Iterable[Intent]:
         return
     for plugin, source in staged.items():
         yield Intent(
-            target=base / "extensions" / plugin,
+            target=base / "packages" / plugin,
             source=source,
             plugin=plugin,
         )
@@ -311,10 +324,10 @@ STEPS: Mapping[str, tuple[Step, ...]] = {
     "antigravity": (skills_step, bridge_step, extension_step),
     "forgecode": (skills_step, commands_step),
     "opencode": (skills_step, commands_step, opencode_shim_step),
-    "pi": (skills_step, pi_extension_step),
+    "pi": (pi_shared_skills_step, pi_extension_step),
     # Prime Agent is Pi rebranded (see platforms.PRIME); same steps, and the
     # staged adapter carries its own cliType.
-    "prime": (skills_step, pi_extension_step),
+    "prime": (pi_shared_skills_step, pi_extension_step),
 }
 
 
@@ -391,6 +404,7 @@ class Switch:
     key: tuple[str, ...]
     value: object
     record: Path
+    merge_list: bool = False
 
     def describe(self) -> str:
         return f"{self.path} [{'.'.join(self.key)}]"
@@ -399,7 +413,8 @@ class Switch:
     def record_key(self) -> str:
         # Resolved and case-normalized, so a symlinked file or a Windows drive
         # letter written differently at uninstall still finds its record.
-        return f"{os.path.normcase(str(self.path.resolve()))}::{'.'.join(self.key)}"
+        suffix = f"::{json.dumps(self.value, sort_keys=True)}" if self.merge_list else ""
+        return f"{os.path.normcase(str(self.path.resolve()))}::{'.'.join(self.key)}{suffix}"
 
     @property
     def shown_value(self) -> str:
@@ -422,16 +437,30 @@ def switches_for(
     platform = getattr(harness, "platform", harness)
     switch = getattr(platform, "task_tool_switch", None)
     base = discovery.config_dir(platform, home=ctx.home)
-    if switch is None or base is None or not base.is_dir():
+    if base is None or not base.is_dir():
         return ()
-    return (
-        Switch(
+    entries = []
+    if switch is not None:
+        entries.append(Switch(
             base / switch.settings_file,
             tuple(switch.settings_path),
             switch.value,
             autorun_state_dir(ctx.home) / "installer" / "switches.json",
-        ),
-    )
+        ))
+    staged_pi = ctx.settings.get("_staged_pi")
+    family = getattr(platform, "name", "")
+    staged = staged_pi.get(family, {}) if isinstance(staged_pi, Mapping) else {}
+    if family in pi_family_names() and isinstance(staged, Mapping):
+        for plugin in staged:
+            package = base / "packages" / plugin
+            entries.append(Switch(
+                base / "settings.json",
+                ("packages",),
+                str(package),
+                autorun_state_dir(ctx.home) / "installer" / "switches.json",
+                merge_list=True,
+            ))
+    return tuple(entries)
 
 
 _ABSENT = object()
@@ -519,6 +548,8 @@ def apply_switches(entries: Iterable[Switch], mode: Mode) -> list[str]:
 
 
 def _apply_switch(entry: Switch, mode: Mode) -> str:
+    if entry.merge_list:
+        return _apply_list_item(entry, mode)
     if mode is Mode.PREVIEW:
         edit_target(entry.path)  # a dangling link is refused, as install refuses it
         found = _lookup(read_settings(entry.path), entry.key)
@@ -595,6 +626,75 @@ def _apply_switch(entry: Switch, mode: Mode) -> str:
         # The settings write failed after the record landed. The caller's note
         # tells the user to set the value themselves; a record left behind would
         # later claim that value as autorun's, and uninstall would remove it.
+        if wrote_record:
+            with json_document(entry.record) as record:
+                record.pop(entry.record_key, None)
+        raise
+
+
+def _apply_list_item(entry: Switch, mode: Mode) -> str:
+    """Add or remove one owned value in a user-owned JSON list."""
+    if mode is Mode.PREVIEW:
+        found = _lookup(read_settings(entry.path), entry.key)
+        if found is _ABSENT or (
+            isinstance(found, list) and entry.value not in found
+        ):
+            return f"would add {entry.describe()} {entry.shown_value}"
+        if isinstance(found, list):
+            return f"current {entry.describe()} {entry.shown_value}"
+        raise ValueError(f"{'.'.join(entry.key)} is not a list")
+    if mode is Mode.UNINSTALL:
+        if not entry.record.is_file():
+            return ""
+        if entry.path.is_symlink() and not entry.path.exists():
+            return (
+                f"skipped {entry.describe()}: it links to a file that does not "
+                "exist; uninstall again once the link resolves"
+            )
+        if not entry.path.exists():
+            with json_document(entry.record) as record:
+                record.pop(entry.record_key, None)
+            return ""
+        with settings_document(entry.path) as document, json_document(entry.record) as record:
+            recorded = record.pop(entry.record_key, _ABSENT)
+            if recorded is _ABSENT:
+                return ""
+            found = _lookup(document, entry.key)
+            if not isinstance(found, list) or entry.value not in found:
+                return f"kept user-changed {entry.describe()}"
+            found.remove(entry.value)
+            created_key = bool(recorded.get("created_key")) if isinstance(recorded, Mapping) else False
+            created_file = bool(recorded.get("created_file")) if isinstance(recorded, Mapping) else False
+            if created_key and not found:
+                _remove(document, entry.key)
+            emptied = not document
+        if created_file and emptied and not entry.path.is_symlink():
+            entry.path.unlink(missing_ok=True)
+        return f"removed {entry.describe()} {entry.shown_value}"
+
+    entry.record.parent.mkdir(parents=True, exist_ok=True)
+    created_file = not (entry.path.exists() or entry.path.is_symlink())
+    wrote_record = False
+    try:
+        with settings_document(entry.path) as document, json_document(entry.record) as record:
+            found = _lookup(document, entry.key)
+            created_key = found is _ABSENT
+            if created_key:
+                _assign(document, entry.key, [])
+                found = _lookup(document, entry.key)
+            if not isinstance(found, list):
+                raise ValueError(f"{'.'.join(entry.key)} is not a list")
+            if entry.value in found:
+                return ""
+            found.append(entry.value)
+            record[entry.record_key] = {
+                "value": entry.value,
+                "created_file": created_file,
+                "created_key": created_key,
+            }
+            wrote_record = True
+        return f"added {entry.describe()} {entry.shown_value}"
+    except (OSError, ValueError):
         if wrote_record:
             with json_document(entry.record) as record:
                 record.pop(entry.record_key, None)
@@ -977,8 +1077,21 @@ def prepared(
             command=ctx.settings.get("_hook_command", ()),
         )
         pi_hook_commands = ctx.settings.get("_pi_hook_commands", {})
-        pi_extensions = {
-            name: stage_pi_extension(
+        from ..platforms import PLATFORMS
+
+        pi_extensions = {}
+        for name in pi_family_names():
+            selected = {}
+            for plugin, plugin_dir in plugins.items():
+                _, planned = skills.skill_plan(
+                    PLATFORMS[name],
+                    ctx,
+                    {plugin: plugin_dir},
+                    placement=_placement(ctx, name),
+                    packaged_native=True,
+                )
+                selected[plugin] = planned.native
+            pi_extensions[name] = stage_pi_extension(
                 Path(tmp) / f"_{name}", plugins,
                 socket=str(ctx.settings.get("_daemon_socket", "") or ""),
                 port_file=str(ctx.settings.get("_daemon_port_file", "") or ""),
@@ -988,9 +1101,8 @@ def prepared(
                     else ()
                 ),
                 cli_type=name,
+                skill_names=selected,
             )
-            for name in pi_family_names()
-        }
         yield _with(
             ctx,
             _staged_extensions=staged,
@@ -1045,28 +1157,52 @@ def stage_pi_extension(
     port_file: str,
     command: object,
     cli_type: str,
+    skill_names: Mapping[str, Iterable[str]] | None = None,
 ) -> Mapping[str, Path]:
-    """Stage the Pi-family adapter and the shared daemon transport it imports.
+    """Stage one Pi package per plugin, including its adapter and skills.
 
     One template serves every family member; ``cli_type`` is the staged
     harness identity ("pi" or "prime") and also rides in ``command`` as the
     fallback hook's ``--cli`` argument.
     """
+    import json
+    import shutil
+
     staged: dict[str, Path] = {}
     for plugin, plugin_dir in plugins.items():
         runtime_root = discovery.plugin_runtime_root(plugin_dir)
         directory = staging / plugin
-        if _stage_inprocess_adapter(
+        has_extension = _stage_inprocess_adapter(
             runtime_root / PI_TEMPLATE_SUBDIR / "index.ts",
             runtime_root / BRIDGE_TEMPLATE_SUBDIR / "daemon-client.mjs",
-            directory,
+            directory / "extensions" / "autorun",
             entry_name="index.ts",
             socket=socket,
             port_file=port_file,
             command=command,
             cli_type=cli_type,
-        ):
-            staged[plugin] = directory
+        )
+        selected = tuple((skill_names or {}).get(plugin, ()))
+        for name in selected:
+            source = plugin_dir / "skills" / name
+            if source.is_dir():
+                shutil.copytree(source, directory / "skills" / name)
+        if not has_extension and not selected:
+            continue
+        manifest = {
+            "name": f"autorun-{plugin}",
+            "version": _version(plugin_dir),
+            "private": True,
+            "pi": {
+                "extensions": ["./extensions/autorun/index.ts"] if has_extension else [],
+                "skills": ["./skills"] if selected else [],
+            },
+        }
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "package.json").write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        staged[plugin] = directory
     return staged
 
 

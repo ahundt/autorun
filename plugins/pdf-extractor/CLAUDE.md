@@ -60,8 +60,9 @@ gives.
 it runs in a sandbox unless the user asked for the live machine (root
 [AGENTS.md](../../AGENTS.md)). Limit it with `--claude`, `--gemini`, `--qwen`,
 `--antigravity`, `--codex`, `--pi`, or `--prime`, the selection flags
-`autorun --help` lists. Under the default skill placement, Claude Code and
-Antigravity use the plugin's own skill; the other agents read
+`autorun --help` lists. Under the default skill placement, plugin-capable
+harnesses use the plugin, extension, or package copy; ForgeCode and OpenCode
+use their own global skill roots. The default does not write
 `~/.agents/skills/pdf-extractor/`.
 
 ## Troubleshooting

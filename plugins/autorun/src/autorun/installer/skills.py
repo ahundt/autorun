@@ -126,22 +126,19 @@ def shippable_skills(plugin_dir: Path) -> dict[str, Path]:
 def routes_for(platform: object, placement: str = "auto") -> tuple[bool, bool]:
     """Return ``(publish_shared, publish_native)`` for one harness.
 
-    ``auto`` yields exactly one route: the shared root when the harness's own
-    documentation describes reading it, otherwise that harness's native
-    packaging. ``native`` and ``both`` are user overrides.
-
-    A harness that reads the shared root has no native route under ``auto``,
-    which is the invariant a registry test now pins after Qwen was found
-    declaring both and receiving every skill twice.
+    ``auto`` yields exactly one route: the harness's package or native root
+    when one exists, otherwise the shared interoperability root. ``native``
+    and ``both`` are user overrides.
     """
     from .settings import SKILL_PLACEMENT
 
     if SKILL_PLACEMENT.parse(placement) != {"": placement}:
         raise ValueError(f"invalid skill placement: {placement!r}")
     reads_shared = bool(getattr(platform, "loads_shared_agents_skills", False))
+    has_native = _declared_native_route(platform)
     return (
-        reads_shared and placement in {"auto", "both"},
-        placement in {"native", "both"} or not reads_shared,
+        reads_shared and (placement == "both" or (placement == "auto" and not has_native)),
+        placement in {"native", "both"} or (placement == "auto" and has_native),
     )
 
 
@@ -190,7 +187,9 @@ class Placement:
         return ", ".join(parts) or "nothing to publish"
 
 
-def _native_roots(platform: object, ctx: Context) -> tuple[Path, ...]:
+def _native_roots(
+    platform: object, ctx: Context, plugin: str | None = None
+) -> tuple[Path, ...]:
     """Where this harness's native route writes, from the registry.
 
     The config directory comes from :func:`discovery.config_dir`, not from a
@@ -204,7 +203,14 @@ def _native_roots(platform: object, ctx: Context) -> tuple[Path, ...]:
     A route may name several destinations — ``CombinedSkillRoutes`` exists for
     exactly that — so the result is a tuple, not one path.
     """
-    from .discovery import skill_destinations
+    from ..platforms import ConfigPackageSkills
+    from .discovery import config_dir, skill_destinations
+
+    route = getattr(platform, "native_skills", None)
+    if isinstance(route, ConfigPackageSkills):
+        return route.plugin_destinations(
+            config_dir(platform, home=ctx.home), plugin
+        ) if plugin is not None else ()
 
     try:
         return skill_destinations(platform, home=ctx.home)
@@ -219,13 +225,12 @@ def unsatisfiable(
 ) -> tuple[str, ...]:
     """One message per harness this placement cannot serve, before any write.
 
-    ``--skill-placement native`` gives ForgeCode and OpenCode zero skills, because
-    neither has a native route at all. Discovering that afterwards means the
-    install reported success and delivered nothing; refusing up front is the
-    difference between a typo and a silent no-op.
+    A custom harness may declare neither a native route nor shared discovery.
+    Discovering that afterwards means the install reported success and delivered
+    nothing; refusing up front is the difference between a typo and a silent no-op.
 
-    ``auto`` is always satisfiable and never appears here: it resolves to
-    whichever route the harness actually has.
+    ``auto`` resolves to whichever route the harness actually has. A custom
+    harness declaring neither route is refused instead of succeeding silently.
     """
     messages = []
     for platform in platforms:
@@ -315,13 +320,13 @@ def skill_plan(
     """
     shared_dir = shared_root_override if shared_root_override is not None else shared_root()
     want_shared, want_native = routes_for(platform, placement)
-    natives = _native_roots(platform, ctx)
     intents: list[Intent] = []
     shared: list[str] = []
     native: list[str] = []
     refused: list[str] = []
 
     for plugin, plugin_dir in plugins.items():
+        natives = _native_roots(platform, ctx, plugin)
         shipped = shippable_skills(plugin_dir)
         blocked_shared = blocked_names(shipped, shared_dir, plugin) if want_shared else frozenset(shipped)
 
@@ -340,9 +345,9 @@ def skill_plan(
             # not read the shared root, leaves the name unreachable and keeps
             # the fallback.
             visible_via_shared = (
-                want_shared
-                and not reached_shared
+                not reached_shared
                 and bool(getattr(platform, "loads_shared_agents_skills", False))
+                and not owns(read_marker(shared_dir / name), plugin)
                 and is_loadable(shared_dir / name)
             )
             # The native route runs when the user asked for it, and as the
@@ -351,7 +356,10 @@ def skill_plan(
             # identical to `auto`, though `both` exists precisely to place a
             # skill on both routes.
             reached_native = False
-            if want_native or (not reached_shared and not visible_via_shared):
+            native_requested = want_native and (
+                placement != "auto" or not visible_via_shared
+            )
+            if native_requested or (not reached_shared and not visible_via_shared):
                 if packaged_native:
                     reached_native = True
                 elif include_native:
@@ -383,10 +391,10 @@ def conflicting_paths(
     roots held the copy in the way; these are the paths to move aside.
     """
     shared_dir = shared_root_override if shared_root_override is not None else shared_root()
-    roots = (shared_dir, *_native_roots(platform, ctx))
     found: list[Path] = []
     for entry in refused:
         plugin, _, name = entry.rpartition(":")
+        roots = (shared_dir, *_native_roots(platform, ctx, plugin))
         for root in roots:
             # Only what blocked_names itself refuses, found the way it looks
             # (case-folded): not autorun's own marked copy on another route,
@@ -560,38 +568,42 @@ def demo() -> None:
                               skill_search_routes=(Route("read-skills"),))
 
         # auto yields exactly one route per harness.
-        assert routes_for(reader) == (True, False)
+        assert routes_for(reader) == (False, True)
         assert routes_for(writer) == (False, True)
         assert routes_for(reader, "both") == (True, True)
         assert routes_for(writer, "native") == (False, True)
 
         got = list(skill_intents(reader, ctx, {"ar": plugin}, shared_root_override=shared))
-        assert {i.target.parent for i in got} == {shared}, "shared reader publishes shared only"
+        assert {i.target.parent for i in got} == {root / "home" / ".fake" / "skills"}, \
+            "a declared native route wins auto"
         assert len(got) == 2
 
         native = list(skill_intents(writer, ctx, {"ar": plugin}, shared_root_override=shared))
         assert all("shared" not in str(i.target) for i in native), "non-reader gets native only"
         assert len(native) == 2
 
-        # A user-authored name on the shared root blocks only that name, and it
-        # falls back to the native route rather than dragging the plugin with it.
-        shared.mkdir(parents=True)
-        (shared / "commit").mkdir()
-        (shared / "commit" / "SKILL.md").write_text("mine\n", encoding="utf-8")
-        assert blocked_names(shippable_skills(plugin), shared, "ar") == {"commit"}
+        # A user-authored name on the chosen native root blocks only that name.
+        native_root = root / "home" / ".fake" / "skills"
+        (native_root / "commit").mkdir(parents=True)
+        (native_root / "commit" / "SKILL.md").write_text("mine\n", encoding="utf-8")
+        assert blocked_names(shippable_skills(plugin), native_root, "ar") == {"commit"}
 
-        mixed = list(skill_intents(reader, ctx, {"ar": plugin}, shared_root_override=shared))
-        by_name = {i.target.name: i.target for i in mixed}
-        assert by_name["philosophy"].parent == shared, "unblocked name keeps the shared route"
-        assert by_name["commit"].parent != shared, "only the blocked name falls back"
-        assert len(mixed) == 2, "no skill is lost and none is published twice"
+        mixed, placement = skill_plan(
+            reader, ctx, {"ar": plugin}, shared_root_override=shared
+        )
+        assert {i.target.name for i in mixed} == {"philosophy"}
+        assert placement.refused == ("ar:commit",), "only the blocked name is refused"
 
         # Case-folded, so macOS cannot silently alias one onto the other.
-        (shared / "Philosophy").mkdir()
-        (shared / "Philosophy" / "SKILL.md").write_text("theirs\n", encoding="utf-8")
-        assert "philosophy" in blocked_names(shippable_skills(plugin), shared, "ar")
+        (native_root / "Philosophy").mkdir()
+        (native_root / "Philosophy" / "SKILL.md").write_text("theirs\n", encoding="utf-8")
+        assert "philosophy" in blocked_names(shippable_skills(plugin), native_root, "ar")
 
         # The bridge links by default and never targets a symlinked skills dir.
+        (shared / "shared-skill").mkdir(parents=True)
+        (shared / "shared-skill" / "SKILL.md").write_text(
+            "# shared\n", encoding="utf-8"
+        )
         bridged = list(bridge_intents(writer, ctx, shared_root_override=shared))
         assert bridged and all(i.settings["bridge"] == "link" for i in bridged)
         assert not list(bridge_intents(reader, ctx, shared_root_override=shared)), "a reader needs no bridge"

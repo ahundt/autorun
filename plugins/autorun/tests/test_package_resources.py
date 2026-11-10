@@ -232,6 +232,7 @@ class TestGetPluginRoot:
 
         source = tmp_path / "plugin"
         source.mkdir()
+        (source / "plugin.json").write_text('{"name":"ar"}')
         tracked = Path("skills/example/SKILL.md")
         output = b"skills/example/SKILL.md\0"
         monkeypatch.setattr(
@@ -244,6 +245,7 @@ class TestGetPluginRoot:
             source,
             [
                 str(tracked),
+                "plugin.json",
                 "skills/example/private.pdf",
                 "src/autorun.egg-info/PKG-INFO",
                 "LICENSE",
@@ -252,9 +254,24 @@ class TestGetPluginRoot:
 
         assert kept == [
             str(tracked),
+            "plugin.json",
             "src/autorun.egg-info/PKG-INFO",
             "LICENSE",
         ]
+
+    def test_wheel_copies_the_declared_root_plugin_manifest(self, tmp_path, monkeypatch):
+        import build_support
+
+        source = tmp_path / "plugin"
+        for tree, _destination in build_support.PLUGIN_ASSET_TREES:
+            (source / tree).mkdir(parents=True, exist_ok=True)
+        (source / "plugin.json").write_text('{"name":"ar"}')
+        monkeypatch.setattr(build_support, "_tracked_paths", lambda _root: set())
+
+        destination = tmp_path / "wheel" / "autorun"
+        build_support.copy_plugin_assets(source, destination)
+
+        assert (destination / "plugin.json").read_text() == '{"name":"ar"}'
 
     def test_build_metadata_is_reproducible_and_marks_dirty_checkout(
         self, tmp_path, monkeypatch

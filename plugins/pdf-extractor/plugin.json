@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "pdf-extractor",
+  "version": "1.0.0rc4",
+  "description": "PDF data extraction with multi-backend support",
+  "author": {
+    "name": "Andrew Hundt",
+    "email": "ATHundt@gmail.com"
+  },
+  "repository": "https://github.com/ahundt/autorun",
+  "license": "Apache-2.0"
+}

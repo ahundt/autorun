@@ -223,7 +223,16 @@ adds these, among others:
 | `mermaid-diagrams` | render Mermaid diagrams |
 | `parallel-subagent` | investigate an ambiguous failure with parallel approaches |
 | `pdf-extractor` | extract text and data from PDFs, trying backends in turn |
+| `synthesize-project-requirements` | recover cumulative requirements, corrections, and gotchas into an evidence-backed handoff |
+| `task-lifecycle-workflow` | coordinate long, correction-heavy work from evidence through readiness and recovery |
 | `tmux-automation` | test terminal programs in isolated tmux sessions |
+| `write-decision-ready-technical-reports` | turn investigations and plans into an actionable technical decision brief |
+| `write-durable-goal-prompts` | write long-running goals that stay valid as project state changes |
+
+Use `plannew`, `planrefine`, `planupdate`, or `planprocess` for one explicit
+planning operation. `task-lifecycle-workflow` is the larger coordinator for
+long, correction-heavy work that needs evidence joins, recovery, cold review,
+and a readiness or release gate; it does not replace the focused plan commands.
 
 `autorun --capability-snapshot` prints the full inventory as JSON. Use each
 agent's own skill picker: `/skills` or `$skill-name` in Codex, `/skill:<name>`
@@ -244,9 +253,13 @@ autorun --install --skill-placement native --skill-placement codex=both
 
 | Mode | Effect |
 |---|---|
-| `auto` | One route per agent: the shared `~/.agents/skills` folder for agents documented to read it (Codex, legacy Gemini, Qwen Code, Pi, Prime Agent, ForgeCode, and OpenCode), otherwise the agent's own plugin or extension skills folder. |
-| `native` | The agent's own folder only; nothing goes to the shared folder. ForgeCode and OpenCode have no folder autorun can write, so they get no skills in this mode. |
+| `auto` | One owned route per agent: plugin, extension, or package skills when supported; otherwise the agent's own global skills folder. Autorun does not write `~/.agents/skills` in this mode. |
+| `native` | The same harness-owned route, explicitly. ForgeCode uses `~/forge/skills`; OpenCode uses its XDG-aware `skills/` directory. |
 | `both` | Shared **and** native where the agent reads both. The only mode that can list a skill twice, and the two copies can drift apart. |
+
+The shared copy in `both` applies to Codex, legacy Gemini, Qwen Code, Pi,
+Prime Agent, ForgeCode, and OpenCode because those harnesses also read
+`~/.agents/skills`.
 
 A bare mode applies to every selected agent; `HARNESS=MODE` overrides one, and
 the flag repeats. Valid harness names are `antigravity`, `claude`, `codex`,
@@ -259,10 +272,18 @@ used. A bad variable value is ignored, while a bad flag stops the install.
 `autorun --install-dry-run` prints the resolved mode, where it came from, and
 each agent's target folders.
 
-Under `auto`, Claude Code and Antigravity load skills from autorun's own plugin
-and every other agent reads `~/.agents/skills/`, so `$pdf-extractor` works in
-Codex without the Claude plugin cache. With `native`, Pi uses
-`~/.pi/agent/skills/`.
+Under `auto`, Claude and Codex use their plugin packages; Gemini, Qwen, and
+Antigravity use their extension/plugin bundles; Pi and Prime use one local
+package containing the adapter and skills; ForgeCode uses `~/forge/skills`;
+and OpenCode uses `~/.config/opencode/skills` (or its `XDG_CONFIG_HOME`
+equivalent). The user's cross-client `~/.agents/skills` authoring directory is
+left alone.
+
+An upgrade preserves an unowned or edited legacy copy. Autorun refreshes a
+stale ownership receipt when the installed content now exactly matches current
+source, but it never copies a divergent installed edit back into the repository
+or overwrites it with `--force`. Use `--install-dry-run` to review every keep,
+publish, and retirement decision before applying an upgrade.
 
 #### Sharing skills with Claude Code
 

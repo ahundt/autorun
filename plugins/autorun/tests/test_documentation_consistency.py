@@ -777,6 +777,7 @@ RELEASE_IDENTITY_FIELDS = (
     ("plugins/autorun/.claude-plugin/plugin.json", "version"),
     ("plugins/autorun/.claude-plugin/marketplace.json", "plugins"),
     ("plugins/autorun/.codex-plugin/plugin.json", "version"),
+    ("plugins/autorun/plugin.json", "version"),
     ("plugins/autorun/src/autorun/__init__.py", "__version__"),
     ("plugins/autorun/src/autorun/metadata.json", "version"),
     ("plugins/autorun/src/autorun/gemini_template/gemini-extension.json", "version"),
@@ -784,6 +785,7 @@ RELEASE_IDENTITY_FIELDS = (
     # inside the autorun-ai distribution as `pdf_extraction`.
     ("plugins/pdf-extractor/src/pdf_extraction/__init__.py", "__version__"),
     ("plugins/pdf-extractor/.claude-plugin/plugin.json", "version"),
+    ("plugins/pdf-extractor/plugin.json", "version"),
     ("plugins/pdf-extractor/gemini-extension.json", "version"),
 )
 

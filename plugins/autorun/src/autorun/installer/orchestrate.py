@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from . import claude, codex, discovery, extension, memory, registration, skills, status, steps, teardown
-from ..platforms import PLATFORMS, ExtensionSkills, PluginPackageSkills
+from ..platforms import PLATFORMS, is_packaged_skill_route
 from .fs import Verdict, edit_target, owns, preserved_paths, read_marker, record_tree
 from . import runtime
 from .runtime import Outcome, Runner, _spawn
@@ -234,9 +234,8 @@ def perform(
                 ctx,
                 named,
                 placement=placement,
-                packaged_native=isinstance(
-                    getattr(platform, "native_skills", None),
-                    (ExtensionSkills, PluginPackageSkills),
+                packaged_native=is_packaged_skill_route(
+                    getattr(platform, "native_skills", None)
                 ),
             )
             if planned.refused:
@@ -359,17 +358,19 @@ def perform(
             claimed.extend(
                 steps.extension_materialization_targets(selected, staged)
             )
-            # Every skill a selected plugin ships is claimed at the shared
-            # root even when no selected harness routes there (a Claude-only
-            # run publishes nothing to ~/.agents/skills). The sweep below
-            # would otherwise read those trees as "no longer shipped" and
-            # retire the copies every other harness reads.
-            shared_root = discovery.shared_root(home=staged.home)
-            claimed.extend(
-                shared_root / name
-                for plugin_dir in named.values()
-                for name in skills.shippable_skills(plugin_dir)
-            )
+            if any(
+                skills.routes_for(
+                    getattr(harness, "platform", harness),
+                    steps._placement(staged, getattr(harness, "name", "")),
+                )[0]
+                for harness in selected
+            ):
+                shared_root = discovery.shared_root(home=staged.home)
+                claimed.extend(
+                    shared_root / name
+                    for plugin_dir in named.values()
+                    for name in skills.shippable_skills(plugin_dir)
+                )
         # The walk's own decisions are claimed in *every* mode. Uninstall passed
         # nothing, on the reasoning that a removal must not let anything be
         # spared — but a target the walk removed is gone before the sweep looks,

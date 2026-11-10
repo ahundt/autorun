@@ -3,6 +3,7 @@ include CLAUDE.md
 include README.md
 include build_support.py
 include setup.py
+include plugin.json
 
 # Plugin metadata and configuration
 recursive-include .claude-plugin *

@@ -1,0 +1,92 @@
+flowchart TD
+  subgraph contract_state[CONTRACT AND BASELINE]
+    active_contract[state: contract revision, outcome, scope, permissions]
+    current_state_baseline[state: current artifact and environment baseline]
+  end
+  subgraph evidence_branches[EVIDENCE BRANCHES - PARALLEL WHEN INDEPENDENT]
+    local_history_evidence[work: repository, behavior, and Git history evidence]
+    user_history_evidence[work: human-message provenance, context, and qualitative codes]
+    external_source_evidence[work: current primary-source evidence]
+  end
+  subgraph decision_and_plan[DECISION AND PLAN]
+    evidence_synthesis[join: atomic claims, conflicts, gaps, freshness, correlation]
+    mechanism_selection[decision: compare mechanisms and route criteria]
+    dependency_mapping[work: dependency map and critical path]
+    complete_plan[work: shortest complete plan]
+    premortem_routing{decision: pre-mortem required?}
+    premortem_analysis[check: pre-mortem failure modes, detection, prevention, and rollback]
+    plan_review_routing{decision: Is independent review required for this route?}
+    independent_plan_review[check: independent plan critic]
+    review_adjudication[decision: orchestrator reproduces and adjudicates findings]
+  end
+  subgraph execution_branches[EXECUTION BRANCHES]
+    eligible_node_dispatch[work: activate eligible nodes after dependency, result, and current acceptance checks]
+    independent_artifact_node[work: independent artifact node]
+    independent_evidence_node[work: independent evidence node]
+    coupled_work_owner[work: one causal owner for coupled nodes]
+    required_branch_join[join: required branches and synthesis preparer; orchestrator acceptance]
+  end
+  subgraph outcome_checks[OUTCOME CHECKS - PARALLEL WHEN INDEPENDENT]
+    behavior_regression_check[check: behavior and regression]
+    domain_evidence_check[check: direct domain-native evidence]
+    routed_risk_check[check: routed risk and newcomer use]
+    epoch_readiness_gate{gate: epoch ready?}
+  end
+  subgraph rework_and_exit_control[REWORK AND EXIT CONTROL]
+    targeted_rework_routing{decision: earliest affected stage for next epoch}
+    trusted_state_recovery_event[event: route untrusted state to recovery subgraph]
+    blocked_workflow_state[state: blocked; report missing input, authority, or exhausted safety bound]
+    epoch_ready_state[state: epoch evidence ready for outer readiness gate]
+    outer_readiness_return[event: return epoch evidence to outer readiness gate]
+    outer_recovery_return[event: return checkpoint and affected IDs to outer recovery route]
+    outer_blocked_return[event: return loud blocker and recovery action to outer router]
+  end
+
+  active_contract -->|contract revision| current_state_baseline
+  current_state_baseline -->|stable input revision| local_history_evidence
+  current_state_baseline -->|stable input revision; history branch earned| user_history_evidence
+  current_state_baseline -->|research question and date| external_source_evidence
+  local_history_evidence -->|claims, coordinates, limits| evidence_synthesis
+  user_history_evidence -->|coded claims, provenance, limits| evidence_synthesis
+  external_source_evidence -->|claims, links, limits| evidence_synthesis
+  evidence_synthesis -->|reconciled evidence set| mechanism_selection
+  evidence_synthesis -->|gap blocks decision; record missing evidence| targeted_rework_routing
+  mechanism_selection -->|selected mechanism and criteria| dependency_mapping
+  mechanism_selection -->|no viable mechanism; record failed criterion| targeted_rework_routing
+  dependency_mapping -->|ordered nodes and critical path| complete_plan
+  complete_plan -->|plan and routed risk signals| premortem_routing
+  premortem_routing -->|no: low risk, reversible, no repeated failure| plan_review_routing
+  premortem_routing -->|yes: risky design or repeated failure| premortem_analysis
+  premortem_analysis -->|failure controls and plan corrections| plan_review_routing
+  plan_review_routing -->|yes: Full, or Standard when review affects the decision| independent_plan_review
+  plan_review_routing -->|no: orchestrator self-checks plan and reports findings| review_adjudication
+  independent_plan_review -->|located findings and evidence| review_adjudication
+  review_adjudication -->|pass: adjudicated plan and node packets| eligible_node_dispatch
+  review_adjudication -->|rework: accepted finding and affected IDs| targeted_rework_routing
+  eligible_node_dispatch -->|independent artifact node packet| independent_artifact_node
+  eligible_node_dispatch -->|independent evidence node packet| independent_evidence_node
+  eligible_node_dispatch -->|serialized coupled-work packet| coupled_work_owner
+  independent_artifact_node -->|artifact, acceptance check results, and evidence| required_branch_join
+  independent_evidence_node -->|claims, acceptance check results, and evidence| required_branch_join
+  coupled_work_owner -->|artifact, acceptance check results, and evidence| required_branch_join
+  required_branch_join -->|fail: missing or unacceptable branch and recovery action| targeted_rework_routing
+  required_branch_join -->|integrated artifact and evidence| behavior_regression_check
+  required_branch_join -->|integrated artifact and evidence| domain_evidence_check
+  required_branch_join -->|integrated artifact and routed criteria| routed_risk_check
+  behavior_regression_check -->|behavior proof| epoch_readiness_gate
+  domain_evidence_check -->|direct outcome proof| epoch_readiness_gate
+  routed_risk_check -->|risk and newcomer findings| epoch_readiness_gate
+  epoch_readiness_gate -->|pass: all required epoch evidence accepted| epoch_ready_state
+  epoch_readiness_gate -->|fail: criterion, affected IDs, and next check| targeted_rework_routing
+  targeted_rework_routing -->|evidence or input invalid: stale affected branches| current_state_baseline
+  targeted_rework_routing -->|mechanism invalid, or retry bound exhausted with method-change budget remaining| mechanism_selection
+  targeted_rework_routing -->|plan or dependency invalid| dependency_mapping
+  targeted_rework_routing -->|implementation or branch repair within retry bound| eligible_node_dispatch
+  targeted_rework_routing -->|behavior proof only stale| behavior_regression_check
+  targeted_rework_routing -->|domain proof only stale| domain_evidence_check
+  targeted_rework_routing -->|routed risk proof only stale| routed_risk_check
+  targeted_rework_routing -->|state or output untrusted| trusted_state_recovery_event
+  targeted_rework_routing -->|user-only authority or information missing after authorization checks, or consequential choice lacks safe default, or retry and method-change bounds exhausted| blocked_workflow_state
+  epoch_ready_state -->|epoch ID, accepted evidence, limits, and findings| outer_readiness_return
+  trusted_state_recovery_event -->|checkpoint, quarantined paths, and restoration check| outer_recovery_return
+  blocked_workflow_state -->|failed criterion, missing input or authority, and next action| outer_blocked_return

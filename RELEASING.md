@@ -788,12 +788,14 @@ provenance is written by the release builder and is not hand-edited.
 | File | Field/Pattern | Notes |
 |------|---------------|-------|
 | `plugins/autorun/pyproject.toml` | `version = "X.Y.Z"` | |
+| `plugins/autorun/plugin.json` | `"version": "X.Y.Z"` | Portable Agent Plugins manifest |
 | `plugins/autorun/.claude-plugin/plugin.json` | `"version": "X.Y.Z"` | |
 | `plugins/autorun/.claude-plugin/marketplace.json` | `"version": "X.Y.Z"` | |
 | `plugins/autorun/src/autorun/__init__.py` | `__version__ = "X.Y.Z"` | |
 | `plugins/autorun/src/autorun/metadata.json` | `"version": "X.Y.Z"` | Bump `version` only. The release builder fills `commit` and `build_time`, but `build_support.build_metadata` keeps any `version` already here and reads `pyproject.toml` only when it is missing or `"unknown"`, so a stale value ships in the wheel |
 | `plugins/autorun/src/autorun/gemini_template/gemini-extension.json` | `"version": "X.Y.Z"` | Lives under `gemini_template/`, outside Claude's marketplace scan path — see the bug #24115 / #14449 workaround in `installer/extension.py` |
 | `plugins/autorun/.codex-plugin/plugin.json` | `"version": "X.Y.Z"` | Codex package manifest |
+| `plugins/pdf-extractor/plugin.json` | `"version": "X.Y.Z"` | Portable Agent Plugins manifest |
 
 ### pdf-extractor Plugin (3+ files)
 

@@ -1,3 +1,4 @@
+import re
 import subprocess
 from pathlib import Path
 
@@ -19,7 +20,17 @@ CLAUDE_SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
 # flow - none of which exists where the plugin is installed, so shipping them
 # gives users a skill whose every instruction points at absent paths. Users get
 # plugins/autorun/TROUBLESHOOTING.md, which is written for an installed copy.
-REPO_INTERNAL_SKILLS = ("autorun-maintainer",)
+REPO_INTERNAL_SKILLS = (
+    "autorun-maintainer",
+    "maintain-durable-systems",
+    "engineer-agent-skills",
+)
+NEW_PUBLIC_SKILLS = (
+    "write-decision-ready-technical-reports",
+    "synthesize-project-requirements",
+    "write-durable-goal-prompts",
+    "task-lifecycle-workflow",
+)
 # Git for Windows' bash on Windows (PATH's bash there is the WSL launcher).
 AUDIT_SHELL = posix_shell()
 POSIX_AUDIT_AVAILABLE = AUDIT_SHELL is not None
@@ -77,6 +88,42 @@ def test_packaged_skill_frontmatter_name_matches_its_directory(skill_dir):
     assert declared in ("", skill_dir.name), (
         f"{skill_dir.name}/SKILL.md declares name {declared!r}"
     )
+
+
+@pytest.mark.parametrize("name", NEW_PUBLIC_SKILLS)
+def test_new_public_skills_declare_license_and_exclude_private_corpus(name):
+    text = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "\nlicense: Apache-2.0\n" in text
+    assert re.search(r"/Users/[^/\s]+/", text) is None
+    assert "46 distinct goals" not in text
+    assert "canal-goal" not in text
+
+
+def test_requirements_synthesis_has_an_explicit_no_history_fallback():
+    text = (
+        SKILLS_ROOT / "synthesize-project-requirements" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "If AI Session Search is unavailable" in text
+    assert "do not silently read raw provider transcripts" in text
+
+
+def test_public_durable_goal_has_no_fixed_host_limit_or_required_history_mining():
+    text = (SKILLS_ROOT / "write-durable-goal-prompts" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "4000" not in text and "4,000" not in text
+    assert "Do not mine private history by default" in text
+
+
+def test_task_lifecycle_core_stays_below_the_release_word_gate():
+    text = (SKILLS_ROOT / "task-lifecycle-workflow" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert len(text.split()) < 5000
 
 
 @pytest.mark.parametrize("skill_dir", _packaged_skill_dirs(), ids=_skill_ids())
@@ -173,7 +220,7 @@ def _semantic_regions(text: str) -> tuple[list[str], list[str]]:
 OTHER_SHIPPED_SKILLS = (
     PLUGIN_ROOT / ".codex-plugin" / "skills" / "ar",
     REPO_ROOT / "plugins" / "pdf-extractor" / "skills" / "pdf-extractor",
-    AGENTS_SKILLS_ROOT / "autorun-maintainer",
+    *(AGENTS_SKILLS_ROOT / name for name in REPO_INTERNAL_SKILLS),
 )
 
 

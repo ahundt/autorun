@@ -107,18 +107,22 @@ def test_a_plugin_with_no_skills_directory_ships_nothing(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "reads_shared, placement, expected",
+    "reads_shared, has_native, placement, expected",
     [
-        (True, "auto", (True, False)),
-        (False, "auto", (False, True)),
-        (True, "native", (False, True)),
-        (False, "native", (False, True)),
-        (True, "both", (True, True)),
-        (False, "both", (False, True)),
+        (True, True, "auto", (False, True)),
+        (True, False, "auto", (True, False)),
+        (False, True, "auto", (False, True)),
+        (False, False, "auto", (False, False)),
+        (True, True, "native", (False, True)),
+        (False, True, "native", (False, True)),
+        (True, True, "both", (True, True)),
+        (False, True, "both", (False, True)),
     ],
 )
-def test_auto_yields_exactly_one_route(reads_shared, placement, expected):
-    platform = FakePlatform("x", reads_shared)
+def test_auto_yields_exactly_one_route(reads_shared, has_native, placement, expected):
+    platform = FakePlatform(
+        "x", reads_shared, native_skills=Route("skills") if has_native else None
+    )
 
     assert routes_for(platform, placement) == expected
 
@@ -142,6 +146,18 @@ def test_codex_native_route_is_inside_the_plugin_skills_directory(ctx):
     )
 
 
+def test_forgecode_and_opencode_write_their_documented_native_roots(ctx):
+    from autorun.installer.discovery import skill_destinations
+    from autorun.platforms import PLATFORMS
+
+    assert skill_destinations(PLATFORMS["forgecode"], home=ctx.home) == (
+        ctx.home / "forge" / "skills",
+    )
+    assert skill_destinations(PLATFORMS["opencode"], home=ctx.home) == (
+        ctx.home / ".config" / "opencode" / "skills",
+    )
+
+
 # ─── A blocked name is a fact about the name ─────────────────────────────────
 
 
@@ -160,8 +176,8 @@ def test_a_blocking_non_skill_falls_back_natively_for_only_that_name(plugin, sha
     intents = list(skill_intents(reader, ctx, {"ar": plugin}, shared_root_override=shared))
     by_name = {i.target.name: i.target for i in intents}
 
-    assert by_name["philosophy"].parent == shared, "unblocked name keeps the shared route"
-    assert by_name["commit"].parent != shared, "only the blocked name falls back"
+    assert by_name["philosophy"].parent != shared, "auto prefers the native route"
+    assert by_name["commit"].parent != shared, "a non-skill collision does not block native"
     assert len(intents) == 2, "no skill lost, none published twice"
 
 
@@ -181,7 +197,7 @@ def test_a_visible_user_skill_suppresses_the_native_fallback_for_shared_readers(
     intents, placement = skill_plan(reader, ctx, {"ar": plugin}, shared_root_override=shared)
     by_name = {i.target.name: i.target for i in intents}
 
-    assert by_name["philosophy"].parent == shared, "unblocked name keeps the shared route"
+    assert by_name["philosophy"].parent != shared, "auto prefers the native route"
     assert "commit" not in by_name, "a native copy would list the name twice"
     assert placement.refused == ("ar:commit",), "the withheld copy is reported, not silent"
 
@@ -277,7 +293,7 @@ def test_auto_still_places_a_skill_once(plugin, shared, ctx):
     )
 
     assert len(intents) == len(shippable_skills(plugin))
-    assert {i.target.parent for i in intents} == {shared}
+    assert {i.target.parent for i in intents} == {ctx.home / ".fake" / "skills"}
 
 
 def test_collision_detection_is_case_folded(plugin, shared):
@@ -300,6 +316,28 @@ def test_a_directory_we_own_is_not_blocked(plugin, shared, ctx):
     publish_tree(plugin / "skills" / "commit", shared / "commit", plugin="ar")
 
     assert blocked_names(shippable_skills(plugin), shared, "ar") == frozenset()
+
+
+def test_an_owned_shared_skill_does_not_suppress_packaged_auto_migration(
+    plugin, shared, ctx
+):
+    """A legacy autorun copy is migration input, not the user's competing skill."""
+    from autorun.installer.fs import publish_tree
+
+    shared.mkdir(parents=True)
+    publish_tree(plugin / "skills" / "commit", shared / "commit", plugin="ar")
+    reader = FakePlatform("reader", True, native_skills=Route("skills"))
+
+    _, placement = skill_plan(
+        reader,
+        ctx,
+        {"ar": plugin},
+        shared_root_override=shared,
+        packaged_native=True,
+    )
+
+    assert "commit" in placement.native
+    assert placement.refused == ()
 
 
 def test_a_tree_marked_with_our_old_plugin_name_is_not_blocked(plugin, shared):
@@ -382,19 +420,15 @@ def test_the_bridge_refuses_a_symlinked_skills_directory(tmp_path, shared, monke
 # ─── Refusals that happen before anything is written ────────────────────────
 
 
-def test_native_placement_is_refused_for_a_harness_with_no_native_route():
-    """`--skill-placement native` gave ForgeCode and OpenCode zero skills and
-    reported success. Refusing up front is the difference between a typo and a
-    silent no-op."""
+def test_every_registered_harness_has_a_native_route():
+    """`native` must be satisfiable now that ForgeCode and OpenCode use their
+    documented harness-owned global skill roots."""
     from autorun.installer.skills import unsatisfiable
     from autorun.platforms import PLATFORMS
 
     refused = unsatisfiable(PLATFORMS.values(), "native")
 
-    assert refused, "at least one harness has no native route"
-    assert all("no native skill route" in message for message in refused)
-    assert any("auto" in message and "both" in message for message in refused), \
-        "a refusal names what to do instead"
+    assert refused == ()
 
 
 @pytest.mark.parametrize("placement", ["auto", "both"])

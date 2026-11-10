@@ -740,7 +740,9 @@ def test_declaring_both_a_shared_read_and_a_native_route_is_allowed():
 
     # Recorded so a change here is deliberate. Each of these reads the shared
     # root and can also place a native copy when asked or when blocked.
-    assert both == {"codex", "gemini", "pi", "prime", "qwen"}, both
+    assert both == {
+        "codex", "forgecode", "gemini", "opencode", "pi", "prime", "qwen"
+    }, both
 
 
 def test_skill_placement_routes_cover_every_platform_and_mode():
@@ -754,7 +756,8 @@ def test_skill_placement_routes_cover_every_platform_and_mode():
         assert shared_auto != native_auto, (
             f"{platform.name}: auto must resolve to exactly one route"
         )
-        assert shared_auto is platform.loads_shared_agents_skills
+        assert native_auto is not isinstance(platform.native_skills, NoNativeSkillRoute)
+        assert shared_auto is not native_auto
 
         shared_native, native_native = routes_for(platform, "native")
         assert (shared_native, native_native) == (False, True)
@@ -781,10 +784,7 @@ def test_a_placement_that_would_install_nothing_is_refused_with_a_remedy():
 
     problems = unsatisfiable(PLATFORMS.values(), "native")
     flagged = {p.split(":", 1)[0] for p in problems}
-    expected = {
-        name for name, platform in PLATFORMS.items()
-        if isinstance(platform.native_skills, NoNativeSkillRoute)
-    }
+    expected = set()
     assert flagged == expected, f"expected {expected}, refused {flagged}"
     for problem in problems:
         assert "Use 'auto'" in problem and "--skill-placement" in problem, (

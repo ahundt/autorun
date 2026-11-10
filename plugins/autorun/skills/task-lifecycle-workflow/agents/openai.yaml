@@ -1,0 +1,4 @@
+interface:
+  display_name: "Task Lifecycle Workflow"
+  short_description: "Complete and verify tasks end to end with a definition of done."
+  default_prompt: "Use $task-lifecycle-workflow to preserve the motivating goal and cumulative requirements, route corrections, order the critical path, delegate only independent work with complete role packets, assign a read-only trackkeeper on Full routes when supported, route pre-mortems and post-mortems, critically assess and synthesize results, resolve findings autonomously, recover trusted state, and stop at the authorized evidence gate."
