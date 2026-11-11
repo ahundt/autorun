@@ -1379,28 +1379,33 @@ def user_config_path():
     return base / USER_CONFIG_FILENAME
 
 
+def read_user_config() -> dict:
+    """The user config file as written, or ``{}`` when absent or unreadable.
+
+    The one reader of the file. Absent is the normal state before a first
+    install and on every machine that never wrote one, so it is not an error.
+    Each consumer validates the keys it owns: :func:`apply_user_config` the
+    runtime CONFIG keys, ``installer.settings`` the install settings.
+    """
+    import json
+
+    try:
+        loaded = json.loads(user_config_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def apply_user_config(target: dict) -> dict:
     """Overlay the user config file onto ``target`` and return it.
 
     Only keys already declared in the defaults are accepted, and only when the
     supplied value matches the declared type -- bools are excluded from the
     int check because ``isinstance(True, int)`` is true and a flag written as
-    ``1`` should not silently satisfy a numeric setting.
+    ``1`` should not silently satisfy a numeric setting. Install settings are
+    not declared here; ``installer.settings`` reads and validates those.
     """
-    import json
-
-    try:
-        raw = user_config_path().read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return target
-    try:
-        loaded = json.loads(raw)
-    except ValueError:
-        return target
-    if not isinstance(loaded, dict):
-        return target
-
-    for key, value in loaded.items():
+    for key, value in read_user_config().items():
         if key not in _DEFAULT_CONFIG:
             continue
         declared = _DEFAULT_CONFIG[key]

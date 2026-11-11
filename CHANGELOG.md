@@ -598,6 +598,16 @@ describe what changed between rc1 and rc3.
      directory that is a symlink is refused. Wheel installs still run hooks
      from the tool's own non-editable interpreter.
 
+120. Install settings written in `autorun.config.json`, such as
+     `codex_hook_source`, `skill_placement`, `shared_skills_bridge` and
+     `hook_python`, were ignored: the file only applied keys the runtime
+     declares, so every install setting resolved to its default. Because
+     `autorun --update` and the hook bootstrap reinstall with no flags, a
+     choice made with a flag was reverted by the next update. The installer
+     now reads those keys from the file, below flags and `AUTORUN_*`
+     variables; an invalid value falls back to the default, and an absent
+     file, as before a first install, changes nothing.
+
 ### For contributors
 
 1. `installer/fs.py:decide` publishes into an existing directory that has no

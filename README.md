@@ -665,6 +665,12 @@ Accepted values: `--codex-hook-source: user|plugin|both|none`;
 `--format: text|json|table` for `task status`;
 `--format: json|csv|markdown` for `task export`.
 
+To keep an install choice across `autorun --update` and automatic
+reinstalls, which run with no flags, put it in `autorun.config.json` under the
+flag's name with underscores: `{"codex_hook_source": "both", "skill_placement":
+{"codex": "native"}}`. A flag or `AUTORUN_<NAME>` variable still wins, and an
+invalid value is ignored in favor of the default.
+
 ## Troubleshooting
 
 | Symptom | Fix |

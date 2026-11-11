@@ -44,14 +44,25 @@ __all__ = [
 
 
 def autorun_config() -> Mapping[str, object]:
-    """autorun's ``CONFIG``, the one place a persisted setting may live.
+    """autorun's ``CONFIG``, then the user config file, as one live view.
 
+    ``CONFIG`` alone never held an install setting: ``apply_user_config``
+    overlays only runtime keys, so every install key in
+    ``autorun.config.json`` was dropped and its config tier read nothing. That
+    mattered most where nobody types flags: ``--update`` and the hook bootstrap
+    both reinstall with no arguments, and reverted each flag-made choice.
+
+    ``CONFIG`` comes first so a programmatic entry still wins; it holds no
+    install key otherwise. Writes go to ``CONFIG``. The file is read per call,
+    and an absent file -- the state before a first install -- adds nothing.
     Imported inside the call because ``config.py`` pulls in the rest of the
     package; the installer must stay importable on its own.
     """
-    from ..config import CONFIG
+    from collections import ChainMap
 
-    return CONFIG
+    from ..config import CONFIG, read_user_config
+
+    return ChainMap(CONFIG, read_user_config())
 
 
 def workaround_enabled(key: str) -> bool:
