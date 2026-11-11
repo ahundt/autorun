@@ -2429,10 +2429,11 @@ class StateRetention:
     supported for JSON because it scans the legacy flat-key representation;
     its docstring carries the forward link here and its own retirement gate.
 
-    The CLI exposes report-only maintenance; deletion remains an explicit
-    library policy with archive-before-delete semantics. This keeps routine
-    inspection safe while making bounded retention available to a caller that
-    deliberately supplies age limits, an archive directory, and ``delete``.
+    ``autorun task gc`` drives ``sweep_sessions`` on SQLite
+    (``TaskLifecycle._sqlite_gc``): ``--dry-run`` reports, otherwise it
+    archives and then deletes after confirmation. ``autorun
+    --state-maintenance`` stays report-only. Deletion always needs an age
+    limit, an archive directory, and ``delete`` set by the caller.
     """
 
     _MAX_ARCHIVE_DESTINATION_ATTEMPTS = 10_000

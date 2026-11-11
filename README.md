@@ -622,7 +622,9 @@ autorun task gc --dry-run --ttl DAYS --pattern GLOB   # preview cleanup by age a
 autorun task gc --no-archive --no-confirm             # delete without archive or prompt
 ```
 
-`--pattern` defaults to `*` and `--ttl` to `task_ttl_days`.
+`--pattern` defaults to `*` and `--ttl` to `task_ttl_days`. On the SQLite backend `task gc` expires whole
+sessions with no unfinished tasks, archives them before deleting, and refuses
+`--pattern` and `--no-archive`, which it cannot honor.
 
 **Custom agents.** `--custom-harness` takes
 `name=flavor:binary:config_dir[::display]`. Flavors are `claude`, `gemini`,

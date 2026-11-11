@@ -3450,8 +3450,9 @@ class TaskLifecycle:
         JSON-ONLY COMPATIBILITY PATH - NOT DEPRECATED while JSON remains a
         supported fresh-install and rollback backend. Replacement for SQLite:
         StateRetention in ``session_manager.py``; its docstring links back to
-        this method. SQLite is refused before discovery or deletion because
-        this implementation scans legacy flat JSON keys.
+        this method. On SQLite this method hands the request to
+        ``_sqlite_gc`` (StateRetention.sweep_sessions) before any JSON
+        discovery, because the code below scans legacy flat JSON keys.
 
         Retire when JSON authority is no longer supported and every destructive
         caller uses ``StateRetention`` with explicit age, archive, confirmation,
@@ -3526,20 +3527,6 @@ class TaskLifecycle:
 
         try:
             config = config or cls._get_config()
-            # The legacy collector scans and rewrites daemon_state.json
-            # prefixes directly. On SQLite that would falsely report no data
-            # and, if partially adapted, could bypass row/event retention
-            # invariants. Refuse explicitly until this file's
-            # TaskLifecycle.cli_gc archive/confirmation/delete workflow is
-            # implemented through session_manager.py:StateRetention, the
-            # SQLite archive-before-delete authority.
-            if get_session_manager().task_repository() is not None:
-                print(
-                    "Task GC is not available for the SQLite backend. "
-                    "Use 'autorun --state-maintenance' for a report-only "
-                    "retention assessment; no SQLite rows were deleted."
-                )
-                return 1
             ttl = ttl_days if ttl_days is not None else config.task_ttl_days
             ttl_seconds = ttl * _SECONDS_PER_DAY
             mgr = get_session_manager()
@@ -3560,6 +3547,16 @@ class TaskLifecycle:
                         return 1
             current = current_session_id or ""
             archive_dir = config.storage_dir / "archive"
+
+            # The code below scans and rewrites daemon_state.json prefixes
+            # directly; on SQLite it would find nothing. StateRetention is the
+            # SQLite archive-before-delete authority.
+            if get_session_manager().task_repository() is not None:
+                return cls._sqlite_gc(
+                    archive=archive, dry_run=dry_run, pattern=pattern,
+                    ttl_seconds=ttl_seconds, archive_dir=archive_dir,
+                    confirm=confirm, current=current,
+                )
 
             # Show prominent warning banner (unless dry-run)
             if not dry_run:
@@ -3815,6 +3812,89 @@ class TaskLifecycle:
 
             traceback.print_exc()  # CLI only - defaults to stderr but not in hook path
             return 1
+
+    @staticmethod
+    def _sqlite_gc(*, archive: bool, dry_run: bool, pattern: str,
+                   ttl_seconds: float, archive_dir: Path, confirm: bool,
+                   current: str) -> int:
+        """``autorun task gc`` on SQLite: StateRetention.sweep_sessions.
+
+        The sweep expires whole sessions in its sweepable namespaces, keeps
+        any with unfinished tasks, and writes its archive before it deletes.
+        ``--pattern`` and ``--no-archive`` have no counterpart there, so they
+        are refused rather than silently ignored. Both spellings of the
+        current session (the harness id and its task-lifecycle key) are
+        protected.
+        """
+        import os
+
+        from .session_manager import (
+            RetentionPolicy,
+            SQLiteStore,
+            StateRetention,
+            _state_dir_key,
+        )
+
+        if pattern != "*":
+            print(
+                f"Task GC on the SQLite backend cannot honor --pattern {pattern!r}: "
+                "it sweeps every expired session. Nothing was deleted."
+            )
+            return 1
+        if not archive:
+            print(
+                "Task GC on the SQLite backend cannot honor --no-archive: it "
+                "archives every session before deleting it. Nothing was deleted."
+            )
+            return 1
+
+        store = SQLiteStore(os.path.join(_state_dir_key(), "daemon_state.sqlite3"))
+        store.initialize()
+        protected = (
+            {current, f"{TASK_LIFECYCLE_SESSION_PREFIX}{current}"} if current else set()
+        )
+
+        def sweep(delete: bool) -> dict:
+            return StateRetention(store, RetentionPolicy(
+                session_max_age_seconds=ttl_seconds,
+                archive_dir=archive_dir,
+                delete=delete,
+                protected_sessions=protected,
+            )).sweep_sessions()
+
+        eligible = sweep(False)["eligible"]
+        days = ttl_seconds / _SECONDS_PER_DAY
+        print(f"{len(eligible)} finished session(s) older than {days:g} days"
+              + (":" if eligible else "."))
+        for session_id in eligible:
+            print(f"  {session_id}")
+        if dry_run:
+            print("Dry run: nothing archived or deleted.")
+            return 0
+        if not eligible:
+            return 0
+
+        if confirm:
+            if not can_prompt():
+                print("⚠️  ERROR: Cannot prompt for confirmation in non-interactive mode")
+                print("Use --dry-run to preview, or --no-confirm to proceed")
+                return 2
+            response = input(
+                f"Archive to {archive_dir}/ and delete {len(eligible)} session(s)? "
+                "Type 'yes' to proceed: "
+            )
+            if response.lower() != "yes":
+                print("Cancelled. No changes made.")
+                return 2
+
+        report = sweep(True)
+        if report["archive"]:
+            print(f"Archived to: {report['archive']}")
+        print(f"Deleted: {len(report['deleted'])} session(s)")
+        if report["changed_after_archive"]:
+            print("Kept, because they changed after archiving: "
+                  + ", ".join(report["changed_after_archive"]))
+        return 0
 
     @classmethod
     def _get_config(cls) -> TaskLifecycleConfig:

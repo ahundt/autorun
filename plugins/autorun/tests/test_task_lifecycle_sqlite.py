@@ -692,17 +692,18 @@ def test_cli_clear_all_failure_rolls_back_every_parent_and_receipt(sqlite_lifecy
     assert store.open_connection_count() == 0
 
 
-def test_legacy_gc_refuses_sqlite_instead_of_claiming_no_data(
+def test_gc_on_sqlite_reads_the_store_instead_of_claiming_no_data(
     sqlite_lifecycle, capsys
 ):
+    """The JSON scan finds nothing on SQLite; gc must not report that as fact."""
     lifecycle = sqlite_lifecycle
     lifecycle.create_task("keep-me", {"subject": "Keep me"}, "created")
 
-    assert TaskLifecycle.cli_gc(dry_run=True, confirm=False) == 1
+    assert TaskLifecycle.cli_gc(dry_run=True, confirm=False) == 0
 
     message = capsys.readouterr().out
-    assert "not available for the SQLite backend" in message
-    assert "--state-maintenance" in message
+    assert "No task lifecycle sessions matching" not in message
+    assert "finished session(s) older than" in message
     assert set(lifecycle.tasks) == {"keep-me"}
 
 
@@ -971,3 +972,91 @@ def test_next_task_id_consumes_a_number_even_when_its_create_is_never_recorded(s
     # a higher numeric id recorded from elsewhere still moves the sequence past it
     lifecycle.create_task("40", {"subject": "Imported"}, "created")
     assert lifecycle.next_task_id() == "41"
+
+
+# ── autorun task gc on the SQLite backend ────────────────────────────────────
+
+_DAY = 86400.0
+_SESSION_ENV_KEYS = (
+    "AUTORUN_SESSION_ID", "AUTORUN_CLI_TYPE", "CLAUDE_SESSION_ID",
+    "CODEX_SESSION_ID", "CODEX_THREAD_ID", "QWEN_SESSION_ID",
+    "ANTIGRAVITY_SESSION_ID", "AGY_SESSION_ID", "GEMINI_SESSION_ID",
+    "_FORGE_CONVERSATION_ID",
+)
+
+
+@pytest.fixture
+def sqlite_gc(tmp_path, monkeypatch):
+    """A SQLite store with one expired finished session and the CLI aimed at it."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+    for key in _SESSION_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("CODEX_THREAD_ID", "current-thread")
+    config = TaskLifecycleConfig(storage_dir=tmp_path / "task-logs")
+    monkeypatch.setattr(TaskLifecycle, "_get_config", classmethod(lambda cls: config))
+    sm._reset_for_testing()
+
+    store = sm.get_session_manager()._store
+    for session_id in ("__task_lifecycle__expired", "__task_lifecycle__current-thread"):
+        TaskRepository(store).put_task(session_id, "1", {
+            "id": "1", "status": "completed", "updated_at": time.time() - 30 * _DAY,
+        })
+        with store.operation_scope(30.0) as owner:
+            with store.write_transaction(owner) as conn:
+                conn.execute(
+                    "UPDATE sessions SET last_modified = ? WHERE session = ?",
+                    (time.time() - 30 * _DAY, session_id),
+                )
+    yield store, config.storage_dir / "archive"
+    sm._reset_for_testing()
+
+
+def _has_task(store, session_id: str) -> bool:
+    return TaskRepository(store).get_task(session_id, "1") is not sm.MISSING
+
+
+def test_task_gc_dry_run_on_sqlite_lists_the_expired_session_and_deletes_nothing(
+    sqlite_gc, capsys,
+):
+    from autorun.__main__ import main
+
+    store, archive_dir = sqlite_gc
+    assert main(["task", "gc", "--dry-run", "--ttl", "7"]) == 0
+
+    out = capsys.readouterr().out
+    assert "__task_lifecycle__expired" in out
+    assert _has_task(store, "__task_lifecycle__expired")
+    assert not archive_dir.exists()
+
+
+def test_task_gc_on_sqlite_archives_then_deletes_and_spares_the_current_session(
+    sqlite_gc,
+):
+    from autorun.__main__ import main
+
+    store, archive_dir = sqlite_gc
+    assert main(["task", "gc", "--no-confirm", "--ttl", "7"]) == 0
+
+    assert not _has_task(store, "__task_lifecycle__expired")
+    assert _has_task(store, "__task_lifecycle__current-thread"), (
+        "the session running the command was swept"
+    )
+    archives = list(archive_dir.glob("*.json"))
+    assert len(archives) == 1
+    archived = json.loads(archives[0].read_text(encoding="utf-8"))
+    assert "__task_lifecycle__expired" in archived["sessions"]
+
+
+@pytest.mark.parametrize("flags", [["--no-archive"], ["--pattern", "test-*"]])
+def test_task_gc_on_sqlite_refuses_flags_the_sweep_cannot_honor(
+    sqlite_gc, capsys, flags,
+):
+    from autorun.__main__ import main
+
+    store, archive_dir = sqlite_gc
+    assert main(["task", "gc", "--no-confirm", "--ttl", "7", *flags]) == 1
+
+    assert flags[0] in capsys.readouterr().out
+    assert _has_task(store, "__task_lifecycle__expired")
+    assert not archive_dir.exists()
