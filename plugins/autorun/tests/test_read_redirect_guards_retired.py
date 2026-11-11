@@ -12,6 +12,7 @@ import re
 import pytest
 
 from autorun import plugins
+from autorun.integrations import _WHEN_PREDICATES
 from autorun.config import CONFIG
 from autorun.core import EventContext, ThreadSafeDB, format_suggestion
 from autorun.platforms import PLATFORMS, hook_platforms
@@ -63,6 +64,12 @@ def test_read_commands_are_allowed_on_every_hook_platform(cli_type, command):
 @pytest.mark.parametrize("command", DESTRUCTIVE_COMMANDS)
 def test_destructive_commands_are_still_denied_on_every_hook_platform(cli_type, command):
     assert _decision(cli_type, command) == "deny"
+
+
+def test_not_in_pipe_predicate_stays_registered():
+    # A user's own integration file can name it to restore one of the removed
+    # guards, e.g. {"cat": {"action": "block", "when": "_not_in_pipe"}}.
+    assert "_not_in_pipe" in _WHEN_PREDICATES
 
 
 POLICY_MESSAGES = {
