@@ -2414,11 +2414,9 @@ class RetentionPolicy:
     TERMINAL_TASK_STATUSES = _CANONICAL_PRUNABLE_TASK_STATUSES
 
     def __init__(self, session_max_age_seconds: "float | None" = None,
-                 task_max_age_seconds: "float | None" = None,
                  archive_dir=None, delete: bool = False,
                  protected_sessions=()):
         self.session_max_age_seconds = session_max_age_seconds
-        self.task_max_age_seconds = task_max_age_seconds
         self.archive_dir = Path(archive_dir) if archive_dir else None
         self.delete = delete
         self.protected_sessions = frozenset(protected_sessions)
@@ -2538,59 +2536,6 @@ class StateRetention:
             ).fetchone()
         return row is not None
 
-    # --- tasks -------------------------------------------------------------
-
-    def prune_tasks(self, session_id: str) -> dict:
-        """Remove finished tasks past their age, leaving the session behind.
-
-        A session outlives its tasks: its metadata and counters are still the
-        record of what happened there.
-        """
-        _validate_session_id(session_id)
-        max_age = self.policy.task_max_age_seconds
-        report = {"eligible": [], "deleted": [], "changed_after_archive": [],
-                  "archive": "",
-                  "report_only": not self.policy.delete}
-        if max_age is None:
-            return report
-
-        repo = TaskRepository(self.store)
-        eligible = repo.list_terminal_before(
-            session_id,
-            statuses=self.policy.TERMINAL_TASK_STATUSES,
-            cutoff=time.time() - max_age,
-        )
-        report["eligible"] = [task["id"] for task in eligible]
-        if not eligible or not self.policy.delete:
-            return report
-
-        archive_path, archived_event_counts = self._archive_tasks(
-            session_id, eligible
-        )
-        report["archive"] = str(archive_path)
-        deleted = []
-        with self.store.operation_scope(DEFAULT_SESSION_TIMEOUT) as owner:
-            with self.store.write_transaction(owner) as conn:
-                for task in eligible:
-                    status, updated_at, payload_json = repo._storage_identity(
-                        task["id"], task
-                    )
-                    cursor = conn.execute(
-                        "DELETE FROM tasks WHERE session = ? AND task_id = ? "
-                        "AND status = ? AND updated_at = ? AND payload_json = ? "
-                        "AND (SELECT COUNT(*) FROM task_events "
-                        "WHERE session = ? AND task_id = ?) = ?",
-                        (session_id, task["id"], status, updated_at, payload_json,
-                         session_id, task["id"], archived_event_counts[task["id"]]),
-                    )
-                    if cursor.rowcount:
-                        deleted.append(task["id"])
-        report["deleted"] = deleted
-        report["changed_after_archive"] = [
-            task_id for task_id in report["eligible"] if task_id not in deleted
-        ]
-        return report
-
     # --- archive -----------------------------------------------------------
 
     def _archive_sessions(self, session_ids) -> Path:
@@ -2604,26 +2549,6 @@ class StateRetention:
                 "events": repo.events(session_id),
             }
         return self._publish_archive(payload, prefix="sessions")
-
-    def _archive_tasks(self, session_id: str,
-                       tasks) -> tuple[Path, dict[str, int]]:
-        repo = TaskRepository(self.store)
-        events = {
-            task["id"]: repo.events(session_id, task_id=task["id"])
-            for task in tasks
-        }
-        payload = {
-            "kind": "tasks",
-            "captured_at": _artifact_timestamp(),
-            "session": session_id,
-            "tasks": {task["id"]: task for task in tasks},
-            "events": events,
-        }
-        return (
-            self._publish_archive(payload, prefix=f"tasks-{session_id}"),
-            {task_id: len(task_events)
-             for task_id, task_events in events.items()},
-        )
 
     def _publish_archive(self, payload: dict, prefix: str) -> Path:
         """Write the archive and make it durable before anything is deleted.
