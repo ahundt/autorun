@@ -437,41 +437,6 @@ DEFAULT_INTEGRATIONS = {
         "when": "_awk_does_more_than_filter_stdin",
         "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno awk",
     },
-    "grep": {
-        "action": "block",
-        "suggestion": "Command blocked: grep\nUse the {grep} tool instead of bash grep command.\n\n**Why:**\n- {grep} tool is optimized for your AI coding assistant\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: {grep} tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok grep\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno grep",
-        "platform_overrides": {"codex": {"suggestion": _CODEX_GREP_SUGGESTION}},
-        "when": "_not_in_pipe",
-    },
-    "find": {
-        "action": "block",
-        "suggestion": "Use the {glob} tool instead of find command.\n\n**Why:**\n- {glob} tool is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: {glob} tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: {glob} tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok find\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno find",
-        "platform_overrides": {"codex": {"suggestion": _CODEX_FIND_SUGGESTION}},
-        "when": "_not_in_pipe",
-    },
-    "cat": {
-        "action": "block",
-        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["cat"]}},
-        "suggestion": "Command blocked: cat\nUse the {read} tool instead of cat command.\n\n**Why:**\n- {read} tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: {read} tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok cat\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno cat",
-        "when": "_not_in_pipe",
-    },
-    "head": {
-        "action": "block",
-        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["head"]}},
-        "suggestion": "Command blocked: head\nUse the {read} tool with limit parameter instead of head.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok head\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno head",
-        "when": "_not_in_pipe",
-    },
-    "tail": {
-        "action": "block",
-        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["tail"]}},
-        "suggestion": "Command blocked: tail\nUse the {read} tool with offset parameter instead of tail.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: {read} tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok tail\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno tail",
-        "when": "_not_in_pipe",
-    },
-    "echo >": {
-        "action": "block",
-        "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["echo >"]}},
-        "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok 'echo >'\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno 'echo >'",
-    },
     # Git history rewriting tools — permanently alter commit history (v0.10)
     # These require explicit /ar:ok permission since history rewriting is irreversible
     # and affects all collaborators when pushed.
