@@ -524,7 +524,6 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 | `/ar:restart-daemon` | restart the daemon for this install |
 | `/ar:gemini` | when to hand a task to Gemini: images, PDFs, video, search |
 | `/ar:test` | check that autorun's commands are loaded |
-| `/ar:marketplace-test` | run the test suites of your installed marketplace plugins |
 
 `/ar:tabs` shows each session as `awaiting input`, `working`, `plan approval`,
 `tool permission`, `idle`, or `error`. Answer with selections such as `A, B:git
