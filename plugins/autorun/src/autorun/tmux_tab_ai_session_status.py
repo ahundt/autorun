@@ -21,6 +21,7 @@ import sys
 from typing import Dict, List
 
 from .tmux_utils import (
+    PROMPT_TYPE_UNKNOWN,
     discover_claude_sessions,
     execute_session_selections,
     get_tmux_utilities,
@@ -86,6 +87,7 @@ def get_default_actions(status: str) -> List[str]:
         'error':     ['interrupt', 'retry'],
         'completed': ['new task', 'close'],
         'blocked':   ['unblock', 'skip'],
+        'unknown':   ['let it work', 'status'],
     }.get(status, ['continue', 'status'])
 
 
@@ -102,6 +104,7 @@ def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
     present, otherwise detected from content.
 
     Status detection (in priority order):
+      'unknown'   — the harness's prompts cannot be read (prompt_type 'unknown')
       'active'    — Claude is generating
       'error'     — 'error', 'failed', or 'exception' in content
       'idle'      — awaiting input
@@ -118,9 +121,12 @@ def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
                      else tmux_detect_claude_active(content))
         prompt_type = (session['prompt_type'] if 'prompt_type' in session
                        else tmux_detect_prompt_type(content))
-        session['awaiting'] = prompt_type is not None and not is_active
+        session['awaiting'] = prompt_type not in (None, PROMPT_TYPE_UNKNOWN) and not is_active
 
-        if is_active:
+        if prompt_type == PROMPT_TYPE_UNKNOWN:
+            # autorun cannot read this harness's prompts: neither idle nor busy.
+            session['status'] = 'unknown'
+        elif is_active:
             session['status'] = 'active'
         elif 'error' in content_lower or 'failed' in content_lower or 'exception' in content_lower:
             session['status'] = 'error'
@@ -244,7 +250,7 @@ def format_output(sessions: List[Dict]) -> str:
         "  'A,C' or 'AC'              Execute default action for selected",
         "  'A:git status, B:pwd'      Execute custom commands",
         "  'all:continue'             Execute on all sessions",
-        "  'awaiting:continue'        Execute on sessions awaiting input",
+        "  'awaiting-input:continue'  Execute on sessions awaiting input",
         f"{'-' * term_width}",
     ]
     return '\n'.join(lines)

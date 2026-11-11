@@ -30,6 +30,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "binary": platform.binary,
         "install_flavor": platform.install_flavor,
         "has_hooks": platform.has_hooks,
+        "tmux_prompt_state_readable": platform.tmux_prompt_state_readable,
         "windows_hook_shell": platform.windows_hook_shell,
         "windows_hook_shell_override": platform.windows_hook_shell_override,
         "windows_hook_command_key": platform.windows_hook_command_key,

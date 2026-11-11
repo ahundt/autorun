@@ -1077,6 +1077,12 @@ class Platform:
     # harnesses with only a model-facing skill tool are asked in words.
     skill_invocation_format: str = "/{name}"
 
+    #: tmux_utils.tmux_detect_prompt_type recognizes this harness's prompts in
+    #: a tmux capture. When False a pane running it reports the prompt state
+    #: 'unknown' and is skipped by awaiting selections, since awaiting input
+    #: cannot be told from mid-turn.
+    tmux_prompt_state_readable: bool = False
+
     # === Hook capability ===
     has_hooks: bool = True
     #: The shell that runs this harness's hook command string on Windows:
@@ -1382,6 +1388,7 @@ CLAUDE = register(
         # environment: Claude is the default, but its own transcript path
         # outranks a variable inherited from a parent harness.
         detect_path_hints=(".claude", "/claude/"),
+        tmux_prompt_state_readable=True,
         has_hooks=True,
         schema_type="strict",
         hook_protocol=CLAUDE_HOOKS,

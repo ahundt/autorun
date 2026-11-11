@@ -1254,17 +1254,17 @@ def tmux_list_windows(
                 win['content'] = _tmux_capture_pane(
                     tmux, win_session, win_index, content_lines
                 )
+                # Which registered AI harness the pane runs (None: not an AI pane)
+                win['harness'] = tmux.pane_harness(win_session, win_index)
+                win['is_claude_session'] = win['harness'] is not None
                 # Detect prompt type for filtering (e.g., windows.filter(prompt_type='input'))
-                win['prompt_type'] = tmux_detect_prompt_type(win['content'])
+                win['prompt_type'] = pane_prompt_type(win['content'], win['harness'])
                 # Detect if Claude is actively working
                 win['is_active'] = tmux_detect_claude_active(win['content'])
                 # Detect Claude Code CLI mode (plan/bypass/default/accept_edits)
                 win['claude_mode'] = tmux_detect_claude_mode(win['content'])
                 # Detect if thinking mode is enabled
                 win['is_thinking'] = tmux_detect_claude_thinking_mode(win['content'])
-                # Which registered AI harness the pane runs (None: not an AI pane)
-                win['harness'] = tmux.pane_harness(win_session, win_index)
-                win['is_claude_session'] = win['harness'] is not None
 
             windows.append(win)
 
@@ -1346,6 +1346,9 @@ PROMPT_TYPE_HAPPY_MODE_SWITCH = 'happy_mode_switch'
 PROMPT_TYPE_HAPPY_REMOTE = 'happy_remote'
 PROMPT_TYPE_CLARIFICATION = 'clarification'
 PROMPT_TYPE_ERROR = 'error_prompt'
+#: A pane runs a harness whose prompts tmux_detect_prompt_type cannot read
+#: (Platform.tmux_prompt_state_readable is False).
+PROMPT_TYPE_UNKNOWN = 'unknown'
 
 
 def _prompt_lines(content: str) -> List[str]:
@@ -1370,6 +1373,19 @@ def _input_prompt_line(last_lines: List[str]) -> Optional[str]:
         if line == '>' or (line.startswith('❯') and not _CHOICE_CURSOR.match(line)):
             return line
     return None
+
+
+def pane_prompt_type(content: str, harness: Optional[str]) -> Optional[str]:
+    """tmux_detect_prompt_type for a pane, or PROMPT_TYPE_UNKNOWN when the
+    pane runs a harness whose prompts it cannot read (see
+    Platform.tmux_prompt_state_readable). A pane running no harness keeps
+    the detector."""
+    from .platforms import PLATFORMS
+
+    platform = PLATFORMS.get(harness) if harness else None
+    if platform is not None and not platform.tmux_prompt_state_readable:
+        return PROMPT_TYPE_UNKNOWN
+    return tmux_detect_prompt_type(content)
 
 
 def tmux_detect_prompt_type(content: str) -> Optional[str]:
@@ -2406,7 +2422,8 @@ def execute_session_selections(selection_str: str, sessions: list,
                              labels are refused per session
       'A:git status, B:pwd'  Execute custom commands per session
       'all:continue'         Execute on every session in the list
-      'awaiting:continue'    Execute only on sessions where awaiting=True
+      'awaiting:continue'    Execute only on sessions where awaiting=True and the
+                             prompt state is known ('awaiting-input' is the same)
 
     A group of letters must name distinct existing sessions, and a command
     takes exactly one letter. If any group fails that ('awaiting', 'all',
@@ -2427,6 +2444,9 @@ def execute_session_selections(selection_str: str, sessions: list,
     if tmux is None:
         tmux = get_tmux_utilities()
 
+    if selection_str.strip().lower().startswith('awaiting-input'):
+        selection_str = 'awaiting' + selection_str.strip()[len('awaiting-input'):]
+
     if command and selection_str.strip().lower() in ('all', 'awaiting'):
         selection_str = f'{selection_str.strip()}:{command}'
 
@@ -2440,8 +2460,10 @@ def execute_session_selections(selection_str: str, sessions: list,
             if not cmd:
                 return [{'target': selection_str, 'command': '', 'success': False,
                          'error': f"'{selection_str}'{empty}"}]
+            # An unknown prompt state may be mid-turn; awaiting never types there.
             return [send_to_session(tmux, s, cmd) for s in sessions
-                    if group == 'all' or s.get('awaiting')]
+                    if group == 'all'
+                    or (s.get('awaiting') and s.get('prompt_type') != PROMPT_TYPE_UNKNOWN)]
 
     plan = []  # (letter, session, command or None for the default action)
     errors = []

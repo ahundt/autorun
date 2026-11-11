@@ -633,3 +633,55 @@ class TestTabsUsesThePromptDetector:
 
         assert (session['prompt_type'], session['is_active']) == ('input', False)
         assert analyze_sessions_heuristic([session])[0]['awaiting'] is True
+
+
+class TestPromptStateOfHarnessesAutorunCannotRead:
+    """tmux_detect_prompt_type reads Claude Code's prompts only, so for any
+    other harness "awaiting input" could not be told from "working". Such a
+    pane's prompt state is 'unknown', and an awaiting selection skips it, so
+    a batch send never types into a harness in mid-turn."""
+
+    IDLE = TestTabsUsesThePromptDetector.IDLE
+
+    @pytest.mark.parametrize('name', sorted(PLATFORMS))
+    def test_prompt_state_is_read_only_where_the_registry_says_it_can_be(self, name):
+        from autorun.tmux_utils import pane_prompt_type
+
+        readable = PLATFORMS[name].tmux_prompt_state_readable
+        assert pane_prompt_type(self.IDLE, name) == ('input' if readable else 'unknown')
+
+    def test_only_claude_code_prompts_are_readable(self):
+        assert {n for n, p in PLATFORMS.items() if p.tmux_prompt_state_readable} == {'claude'}
+
+    def test_a_pane_running_no_harness_keeps_the_detector(self):
+        from autorun.tmux_utils import pane_prompt_type
+
+        assert pane_prompt_type(self.IDLE, None) == 'input'
+
+    def test_an_unknown_prompt_state_is_not_awaiting(self):
+        session = {'tmux_target': 's:0', 'content': self.IDLE, 'prompt_type': 'unknown', 'is_active': False}
+        result = analyze_sessions_heuristic([session])[0]
+        assert (result['awaiting'], result['status']) == (False, 'unknown')
+        assert 'continue' not in result['actions']
+
+    @pytest.mark.parametrize('word', ['awaiting', 'awaiting-input', 'AWAITING-INPUT'])
+    def test_an_awaiting_selection_skips_a_pane_whose_state_is_unknown(self, word):
+        tmux = MagicMock()
+        tmux.send_keys.return_value = True
+        sessions = [
+            {'tmux_target': 'claude:0', 'awaiting': True, 'prompt_type': 'input'},
+            {'tmux_target': 'pi:1', 'awaiting': True, 'prompt_type': 'unknown'},
+        ]
+        with patch('time.sleep'):
+            results = execute_session_selections(f'{word}:continue', sessions, tmux)
+
+        assert [r['target'] for r in results] == ['claude:0']
+
+    def test_bare_awaiting_input_takes_the_command(self):
+        tmux = MagicMock()
+        tmux.send_keys.return_value = True
+        sessions = [{'tmux_target': 'claude:0', 'awaiting': True, 'prompt_type': 'input'}]
+        with patch('time.sleep'):
+            results = execute_session_selections('awaiting-input', sessions, tmux, command='go on')
+
+        assert [(r['target'], r['command']) for r in results] == [('claude:0', 'go on')]
