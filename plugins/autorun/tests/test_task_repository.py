@@ -19,7 +19,6 @@ of the same event changing nothing — matter as much as the task rows do.
 from __future__ import annotations
 
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -141,13 +140,6 @@ class TestRecordRoundTrip:
 class TestTaskScope:
     def test_reading_one_task_does_not_decode_the_others(self, crowded):
         assert crowded.get_task(SESSION, "readable")["id"] == "readable"
-
-    def test_mutating_one_task_does_not_decode_the_others(self, crowded):
-        crowded.mutate_task(
-            SESSION, "readable",
-            lambda task: {**task, "status": "completed"},
-        )
-        assert crowded.get_task(SESSION, "readable")["status"] == "completed"
 
     def test_listing_incomplete_tasks_does_not_decode_terminal_ones(self, repo, store):
         """Stop asks only whether anything is unfinished.
@@ -351,41 +343,6 @@ class TestEvents:
         assert repo.events(SESSION, task_id="1") == []
 
 
-class TestAuditProjection:
-    def test_a_new_event_is_waiting_to_be_written_to_the_audit_file(self, repo):
-        repo.put_task(SESSION, "1", _record("1"))
-        repo.append_event(SESSION, "1", event_id="e1", idempotency_key="k1",
-                          event_type="output", payload={})
-
-        pending = repo.pending_projection(limit=10)
-        assert [e["event_id"] for e in pending] == ["e1"]
-
-    def test_marking_it_written_takes_it_off_the_list(self, repo):
-        repo.put_task(SESSION, "1", _record("1"))
-        repo.append_event(SESSION, "1", event_id="e1", idempotency_key="k1",
-                          event_type="output", payload={})
-        repo.mark_projected(SESSION, "e1")
-
-        assert repo.pending_projection(limit=10) == []
-
-    def test_an_event_stays_pending_until_it_is_marked(self, repo):
-        """A crash between writing the line and marking it may duplicate.
-
-        Duplicating a line is recoverable — the event carries an ID, so the
-        repeat is identifiable. Losing the event is not, so the row survives
-        until the write is known to have happened.
-        """
-        repo.put_task(SESSION, "1", _record("1"))
-        repo.append_event(SESSION, "1", event_id="e1", idempotency_key="k1",
-                          event_type="output", payload={})
-
-        assert repo.pending_projection(limit=10)
-        assert repo.pending_projection(limit=10)
-        assert repo.get_task(SESSION, "1")["id"] == "1", (
-            "The authoritative row must be unaffected by projection state."
-        )
-
-
 # ── Atomicity ────────────────────────────────────────────────────────────────
 
 class TestAtomicity:
@@ -426,70 +383,3 @@ class TestAtomicity:
         )
         assert repo.events(SESSION, task_id="1") == []
         assert store.read_field(SESSION, "session_metadata") is MISSING
-
-    def test_a_read_modify_write_of_one_task_is_atomic_across_threads(self, repo):
-        """Several hooks in one turn update the same task at once."""
-        repo.put_task(SESSION, "1", _record("1", metadata={"hits": 0}))
-
-        errors = []
-        barrier = threading.Barrier(4)
-
-        def bump():
-            try:
-                barrier.wait(timeout=10)
-                repo.mutate_task(
-                    SESSION, "1",
-                    lambda task: {
-                        **task,
-                        "metadata": {**task["metadata"],
-                                     "hits": task["metadata"]["hits"] + 1},
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001 - reported by the assertion
-                errors.append(exc)
-
-        threads = [threading.Thread(target=bump) for _ in range(4)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=30)
-
-        assert not errors, f"a concurrent task update failed outright: {errors}"
-        assert repo.get_task(SESSION, "1")["metadata"]["hits"] == 4, (
-            "An update was lost. Each writer read, incremented, and wrote, so "
-            "any interleaving means the read and the write were not one step."
-        )
-
-    def test_concurrent_updates_to_different_tasks_all_land(self, repo):
-        for task_id in ("1", "2", "3", "4"):
-            repo.put_task(SESSION, task_id, _record(task_id, status="in_progress"))
-
-        errors = []
-        barrier = threading.Barrier(4)
-
-        def complete(task_id):
-            try:
-                barrier.wait(timeout=10)
-                repo.mutate_task(SESSION, task_id,
-                                 lambda task: {**task, "status": "completed"})
-            except Exception as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        threads = [threading.Thread(target=complete, args=(t,))
-                   for t in ("1", "2", "3", "4")]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=30)
-
-        assert not errors, errors
-        stuck = {
-            task_id: repo.get_task(SESSION, task_id)["status"]
-            for task_id in ("1", "2", "3", "4")
-            if repo.get_task(SESSION, task_id)["status"] != "completed"
-        }
-        assert not stuck, f"tasks left behind by concurrent completion: {stuck}"
-
-    def test_mutating_an_unknown_task_reports_it_rather_than_inventing_one(self, repo):
-        with pytest.raises(KeyError):
-            repo.mutate_task(SESSION, "nope", lambda task: task)

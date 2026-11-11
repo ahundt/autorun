@@ -288,8 +288,8 @@ class TestTaskCostVersusTaskCount:
                         })
 
             def update(repo=repo, session_id=session_id):
-                repo.mutate_task(session_id, "0",
-                                 lambda task: {**task, "status": "completed"})
+                task = repo.get_task(session_id, "0")
+                repo.put_task(session_id, "0", {**task, "status": "completed"})
 
             operations.append((task_count, update))
 

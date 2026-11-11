@@ -2133,32 +2133,6 @@ class TaskRepository:
             with self._store.write_transaction(owner) as conn:
                 self._write_task(conn, session_id, task_id, record)
 
-    def mutate_task(self, session_id: str, task_id: str, updater,
-                    timeout: float = DEFAULT_SESSION_TIMEOUT) -> dict:
-        """Read one task, apply ``updater``, write the result — as one step.
-
-        Several hooks from a single assistant turn update tasks at the same
-        instant. Reading and writing separately lets one of them overwrite
-        another's change, which is how a completed task ends up recorded as
-        still pending.
-        """
-        _validate_session_id(session_id)
-        with self._store.operation_scope(timeout) as owner:
-            with self._store.write_transaction(owner) as conn:
-                row = conn.execute(
-                    "SELECT status, updated_at, payload_json FROM tasks "
-                    "WHERE session = ? AND task_id = ?",
-                    (session_id, task_id),
-                ).fetchone()
-                if row is None:
-                    raise KeyError(
-                        f"No task {task_id!r} in session {session_id!r}"
-                    )
-                current = self._record_from_row(session_id, task_id, row)
-                updated = updater(current)
-                self._write_task(conn, session_id, task_id, updated)
-                return copy.deepcopy(updated)
-
     def delete_task(self, session_id: str, task_id: str,
                     timeout: float = DEFAULT_SESSION_TIMEOUT) -> None:
         """Remove one task. Its events go with it, by foreign key."""
@@ -2338,36 +2312,6 @@ class TaskRepository:
         with self._store.operation_scope(timeout) as owner:
             rows = owner.connection.execute(sql, params).fetchall()
         return [self._event_from_row(session_id, row) for row in rows]
-
-    def pending_projection(self, *, limit: int = 100,
-                           timeout: float = DEFAULT_SESSION_TIMEOUT) -> list:
-        """Events not yet written to the human-readable audit file.
-
-        The row is authoritative and stays pending until the append is known
-        to have happened. A crash in between may repeat a line — repeats
-        carry an event ID and are identifiable — but cannot lose the event.
-        """
-        with self._store.operation_scope(timeout) as owner:
-            rows = owner.connection.execute(
-                "SELECT session, task_id, event_id, idempotency_key, event_type, "
-                "created_at, payload_json, projected_at FROM task_events "
-                "WHERE projected_at IS NULL "
-                "ORDER BY created_at, event_id LIMIT ?",
-                (int(limit),),
-            ).fetchall()
-        return [self._event_from_row(row[0], row[1:]) for row in rows]
-
-    def mark_projected(self, session_id: str, event_id: str,
-                       timeout: float = DEFAULT_SESSION_TIMEOUT) -> None:
-        """Record that an event reached the audit file."""
-        _validate_session_id(session_id)
-        with self._store.operation_scope(timeout) as owner:
-            with self._store.write_transaction(owner) as conn:
-                conn.execute(
-                    "UPDATE task_events SET projected_at = ? "
-                    "WHERE session = ? AND event_id = ?",
-                    (time.time(), session_id, event_id),
-                )
 
     # --- internals ---------------------------------------------------------
 
