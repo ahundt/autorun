@@ -157,6 +157,5 @@ daemon every running session shares.
 
 ## Entry points
 
-`commands/autorun` (plugin command executable, JSON stdin/stdout) ·
 `hooks/hook_entry.py` via `hooks/hooks.json` · CLI `autorun` →
 `src/autorun/__main__.py:main` · `src/autorun/config.py` (all CONFIG values).
