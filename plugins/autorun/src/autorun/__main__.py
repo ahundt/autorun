@@ -88,13 +88,6 @@ def _agents_skills_choices() -> tuple[str, ...]:
     return SHARED_SKILLS_BRIDGE.choices
 
 
-def _skill_placement_choices() -> tuple[str, ...]:
-    """Return skill-placement choices without duplicating install data."""
-    from .installer.settings import SKILL_PLACEMENT
-
-    return SKILL_PLACEMENT.choices
-
-
 def _skill_placement_help() -> str:
     """Return shared parser help for --skill-placement."""
     from .installer.settings import SKILL_PLACEMENT

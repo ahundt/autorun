@@ -2190,7 +2190,7 @@ class TaskRepository:
             for row in rows
         }
 
-    def list_incomplete(self, session_id: str, terminal_statuses=None,
+    def list_incomplete(self, session_id: str,
                         timeout: float = DEFAULT_SESSION_TIMEOUT) -> list:
         """Tasks whose canonical policy says they block Stop.
 
