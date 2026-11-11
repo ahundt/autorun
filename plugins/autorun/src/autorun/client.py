@@ -83,18 +83,27 @@ DAEMON_START_RETRY_SECONDS = 0.1
 DAEMON_START_ATTEMPTS = 64
 
 
-def _hook_platform_process_markers() -> frozenset[str]:
-    """Return executable names of hook-capable CLI parents."""
-    try:
-        from .platforms import hook_platforms
+#: Process names that run a registered harness but are not its ``name`` or
+#: ``binary``: Claude Code's installed process name and the ``happy`` wrapper.
+_HARNESS_PROCESS_ALIASES = {"claude-code": "claude", "happy": "claude", "happy-dev": "claude"}
 
-        markers = {marker.lower() for platform in hook_platforms() for marker in (platform.name, platform.binary) if marker}
-        # Common installed process name for Claude Code; kept as compatibility data
-        # beside the registry-derived names instead of a separate branch.
-        markers.add("claude-code")
-        return frozenset(markers)
+
+def harness_process_names() -> dict[str, str]:
+    """Map each executable name of a registered harness to its platform name.
+
+    Every platform counts, hook-capable or not (ForgeCode has no hooks but
+    still runs in a terminal), so the hook's parent scan and tmux discovery
+    share one table derived from ``platforms.PLATFORMS``.
+    """
+    try:
+        from .platforms import PLATFORMS
+
+        names = {marker.lower(): platform.name for platform in PLATFORMS.values()
+                 for marker in (platform.name, platform.binary) if marker}
     except Exception:
-        return frozenset({"claude-code", "forgecode", "claude", "gemini", "qwen", "codex", "forge"})
+        names = {name: name for name in ("claude", "gemini", "qwen", "codex")}
+        names.update(forgecode="forgecode", forge="forgecode")
+    return {**_HARNESS_PROCESS_ALIASES, **names}
 
 
 def is_tool_gate_event(event: str) -> bool:
@@ -504,7 +513,7 @@ def get_stable_process_identity() -> StableProcessIdentity:
     from .tmux_utils import is_named_process
 
     try:
-        markers = _hook_platform_process_markers()
+        markers = harness_process_names()
         current = psutil.Process()
         stable = None
         for _ in range(_STABLE_PID_PARENT_SCAN_DEPTH):

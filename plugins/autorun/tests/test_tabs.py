@@ -14,6 +14,7 @@ Tests:
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
+from autorun.platforms import PLATFORMS
 from autorun.tmux_utils import (
     TmuxUtilities,
     discover_claude_sessions,
@@ -164,6 +165,57 @@ class TestIsClaudeSessionMatchesTheProcessNotItsArguments:
             {'111': ['333']},
             {'333': ('/usr/local/bin/node', 'node /usr/local/bin/claude --resume')},
         ) is True
+
+
+class TestDiscoveryFindsEveryRegisteredHarness:
+    """Discovery matched only {'claude', 'happy', 'happy-dev'}, so on a live
+    server with 10 Pi, 6 Codex and 2 Claude Code panes it found 2 of 18. The
+    process names now come from the platform registry, and each pane records
+    which harness it runs."""
+
+    def _harness(self, procs):
+        tmux = TmuxUtilities(session_name="test-session")
+        with patch.object(tmux, 'execute_tmux_command',
+                          return_value={'returncode': 0, 'stdout': '111\n'}), \
+                patch('autorun.tmux_utils.subprocess.run',
+                      side_effect=_fake_process_table({'111': ['333']}, {'333': procs})):
+            return tmux.pane_harness('test-session', '0'), tmux.is_claude_session('test-session', '0')
+
+    @pytest.mark.parametrize('name', sorted(PLATFORMS))
+    def test_each_registered_binary_is_found_and_labelled(self, name):
+        binary = PLATFORMS[name].binary
+        assert self._harness((f'/usr/local/bin/{binary}', f'{binary} --resume x')) == (name, True)
+
+    @pytest.mark.parametrize('comm,args,harness', [
+        # Process shapes from the live tmux server on 2026-11-11 (paths are placeholders).
+        ('/opt/homebrew/bin/node', 'node /Users/u/.npm-global/bin/pi', 'pi'),
+        ('pi', 'pi', 'pi'),
+        ('codex', 'codex --yolo resume 019ff3de-1728-76f3-ac72-b0b2691bdb4f', 'codex'),
+        ('prime-agent', 'prime-agent', 'prime'),
+        ('agy', 'agy', 'antigravity'),
+        # Claude Code's native install runs a binary named for its version.
+        ('/Users/u/.local/share/claude/versions/2.1.37', 'claude --dangerously-skip-permissions', 'claude'),
+        ('/usr/local/bin/happy', 'happy', 'claude'),
+        ('/usr/local/bin/happy-dev', 'happy-dev', 'claude'),
+    ])
+    def test_recorded_process_table(self, comm, args, harness):
+        assert self._harness((comm, args)) == (harness, True)
+
+    def test_a_shell_is_no_harness(self):
+        assert self._harness(('/bin/zsh', '-zsh')) == (None, False)
+
+    def test_discovery_carries_the_harness(self):
+        from unittest.mock import create_autospec
+
+        from autorun import tmux_utils
+
+        listing = create_autospec(tmux_utils.tmux_list_windows, return_value=[
+            {'session': 'main', 'w': 1, 'content': '', 'title': 't', 'harness': 'pi'},
+        ])
+        tmux = Mock()
+        tmux.is_claude_session.return_value = True
+        with patch.object(tmux_utils, 'tmux_list_windows', listing):
+            assert discover_claude_sessions(tmux)[0]['harness'] == 'pi'
 
 
 @pytest.mark.tmux

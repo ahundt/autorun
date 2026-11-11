@@ -749,33 +749,36 @@ class TmuxUtilities:
         return info
 
     def is_claude_session(self, session: str, window: str) -> bool:
+        """True when a pane of the window runs any registered AI harness
+        (see pane_harness); the name predates the other harnesses."""
+        return self.pane_harness(session, window) is not None
+
+    def pane_harness(self, session: str, window: str) -> Optional[str]:
         """
-        Detect if a tmux window is running Claude Code by checking process tree.
+        Return the platform name of the AI harness a tmux window runs, or None.
 
         Uses existing execute_tmux_command infrastructure to get pane PID,
-        then examines child processes for Claude CLI indicators.
+        then examines child processes for a registered harness executable.
 
         Args:
             session: Tmux session name
             window: Window index within session
 
         Returns:
-            True if window contains active Claude Code session
+            The ``platforms.PLATFORMS`` key of the first harness found, or None
 
         Implementation:
             1. Query tmux for the PID of every pane in the window
             2. Use pgrep -P to find child processes of those shells
-            3. Check each child's executable name (see _is_claude_process):
-               - 'claude' (official CLI)
-               - 'happy' (Claude CLI wrapper)
-               - 'happy-dev' (development build)
+            3. Match each child's executable name against
+               client.harness_process_names() (see _process_harness)
 
         Best Practices:
             - Leverages existing execute_tmux_command for consistency
             - Timeout protection for subprocess calls (2s)
             - Robust error handling for missing processes
             - Case-insensitive matching for process names
-            - Fails safely (returns False on any error)
+            - Fails safely (returns None on any error)
         """
         try:
             # Get pane PID using existing execute_tmux_command
@@ -786,7 +789,7 @@ class TmuxUtilities:
             )
 
             if not result or result['returncode'] != 0 or not result['stdout'].strip():
-                return False
+                return None
 
             # One pid per pane; pgrep -P takes a comma-separated list and
             # rejects the newline-separated one list-panes prints.
@@ -800,16 +803,15 @@ class TmuxUtilities:
             )
 
             if child_result.returncode != 0:
-                return False
+                return None
 
-            return any(_is_claude_process(pid) for pid in child_result.stdout.split())
+            return next(filter(None, map(_process_harness, child_result.stdout.split())), None)
 
         except (subprocess.TimeoutExpired, Exception):
-            # Fail safely - don't report as Claude session if detection fails
-            return False
+            # Fail safely - don't report a harness if detection fails
+            return None
 
 
-CLAUDE_EXECUTABLES = frozenset({'claude', 'happy', 'happy-dev'})
 SCRIPT_INTERPRETERS = frozenset({'node', 'bun', 'deno'})
 
 
@@ -820,7 +822,12 @@ def _ps_field(pid: str, field: str) -> str:
 
 
 def is_named_process(comm: str, argv, names) -> bool:
-    """True when a process IS one of ``names``, not when its arguments mention one.
+    """True when a process IS one of ``names`` (see _named_process)."""
+    return _named_process(comm, argv, names) is not None
+
+
+def _named_process(comm: str, argv, names) -> Optional[str]:
+    """The entry of ``names`` a process IS, not one its arguments mention; or None.
 
     Matches the executable basename (``comm``, or argv[0]) and, for a script
     interpreter such as node, the script basename in argv[1]. A substring
@@ -832,20 +839,24 @@ def is_named_process(comm: str, argv, names) -> bool:
 
     comm = base(comm)
     argv = [base(a) for a in list(argv)[:2]]
-    if comm in names or (argv and argv[0] in names):
-        return True
+    for name in (comm, *argv[:1]):
+        if name in names:
+            return name
     interpreted = comm in SCRIPT_INTERPRETERS or (argv and argv[0] in SCRIPT_INTERPRETERS)
-    return bool(interpreted and len(argv) > 1 and argv[1] in names)
+    return argv[1] if interpreted and len(argv) > 1 and argv[1] in names else None
 
 
-def _is_claude_process(pid: str) -> bool:
-    """True when the process IS claude/happy (see is_named_process)."""
+def _process_harness(pid: str) -> Optional[str]:
+    """Platform name of the harness the process IS (see is_named_process), or None."""
+    from .client import harness_process_names
+
+    names = harness_process_names()
     comm = _ps_field(pid, 'comm')
-    if is_named_process(comm, (), CLAUDE_EXECUTABLES):
-        return True
     # Known limit: args is split on whitespace, so an argv[1] script path
     # containing a space is not matched (comm still covers argv[0]).
-    return is_named_process(comm, _ps_field(pid, 'args').split(), CLAUDE_EXECUTABLES)
+    matched = (_named_process(comm, (), names)
+               or _named_process(comm, _ps_field(pid, 'args').split(), names))
+    return names.get(matched) if matched else None
 
 
 # Global instance for consistent usage
@@ -1251,8 +1262,9 @@ def tmux_list_windows(
                 win['claude_mode'] = tmux_detect_claude_mode(win['content'])
                 # Detect if thinking mode is enabled
                 win['is_thinking'] = tmux_detect_claude_thinking_mode(win['content'])
-                # Check if this is a Claude Code session (process tree contains claude/happy)
-                win['is_claude_session'] = tmux.is_claude_session(win_session, win_index)
+                # Which registered AI harness the pane runs (None: not an AI pane)
+                win['harness'] = tmux.pane_harness(win_session, win_index)
+                win['is_claude_session'] = win['harness'] is not None
 
             windows.append(win)
 
@@ -2329,6 +2341,7 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
                 'branch': win.get('branch'),
                 'prompt_type': win.get('prompt_type'),
                 'is_active': win.get('is_active', False),
+                'harness': win.get('harness'),
             })
     return sessions
 
