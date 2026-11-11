@@ -1180,7 +1180,9 @@ After every step and substep you must say "Wait," and execute this sequential th
         "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files related to your functionality with {glob} and {grep}, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation.",
     },
     # ─── Command Mappings ─────────────────────────────────────────────────────
-    # Values must match keys in COMMAND_HANDLERS (case-sensitive)
+    # Values are internal ids in plugins._INTERNAL_COMMANDS (case-sensitive);
+    # plugins._register_command_mappings registers each spelling. An id with
+    # no handler there is skipped, so its spelling does nothing.
     # Commands support /ar: prefix with short and long forms
     "command_mappings": {
         # ─── New Short Forms (/ar: prefix) ────────────────────────────────────
