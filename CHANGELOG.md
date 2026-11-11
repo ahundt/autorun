@@ -52,6 +52,18 @@ describe what changed between rc1 and rc3.
 5. Rule files (`.claude/autorun.*.local.md`) are now read from the session's
    directory and each parent up to the repository root, nearest first, then
    `~/.claude/`. Outside a repository only the session's directory is read.
+6. Skills now install into each harness's own plugin, extension, or package
+   folder instead of the shared `~/.agents/skills`, so they no longer mix with
+   skills you keep there. Pi and Prime get one package under
+   `~/.pi/agent/packages/ar` (and `~/.prime/agent/packages/ar`), listed in
+   their `settings.json` `packages`. Upgrading moves the copies autorun put
+   in `~/.agents/skills` to the new folders; a copy you edited stays where it
+   is, and the install output names it. `--skill-placement both` still also
+   writes `~/.agents/skills`.
+7. Four skills ship with autorun: `task-lifecycle-workflow`,
+   `synthesize-project-requirements`, `write-durable-goal-prompts`, and
+   `write-decision-ready-technical-reports`. If you keep a skill with one of
+   these names in `~/.agents/skills`, agents that read that folder list both.
 
 ### Removed
 
