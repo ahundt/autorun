@@ -81,41 +81,6 @@ PATTERN_DISPLAY_MAX_LEN = 50  # regex/command patterns in error messages (securi
 #   name: Debug identifier (defaults to pattern)
 #   platform_overrides: Per-cli replacements for action, suggestion, redirect
 # =============================================================================
-_CODEX_GREP_SUGGESTION = (
-    "Command blocked: grep\n"
-    "Use `rg -n` through the shell tool instead of bash grep command.\n\n"
-    "**Why:**\n"
-    "- Codex exposes shell search, not Claude's dedicated text-search tool\n"
-    "- `rg` is fast for repository text search\n"
-    "- Output stays easy to scan with file names and line numbers\n\n"
-    "**Example:**\n"
-    "Instead of: grep -r 'pattern' .\n"
-    "Use: `rg -n 'pattern' .`\n\n"
-    "**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n"
-    "**Commands:**\n"
-    "- Allow (default 1 use): /ar:ok grep\n"
-    "Scope: [N|5m|permanent] (default 1 use)\n"
-    "- Block globally: /ar:globalno grep"
-)
-
-_CODEX_FIND_SUGGESTION = (
-    "Use `rg --files` through the shell tool instead of find command.\n\n"
-    "**Why:**\n"
-    "- Codex exposes shell file listing, not Claude's dedicated file-search tool\n"
-    "- `rg --files` is fast for repository file discovery\n"
-    "- `-g` handles glob filters with simple syntax\n\n"
-    "**Example:**\n"
-    "Instead of: find . -name '*.py'\n"
-    "Use: `rg --files -g '*.py'`\n\n"
-    "Instead of: find . -type f -name '*test*'\n"
-    "Use: `rg --files -g '*test*'`\n\n"
-    "**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n"
-    "**Commands:**\n"
-    "- Allow (default 1 use): /ar:ok find\n"
-    "Scope: [N|5m|permanent] (default 1 use)\n"
-    "- Block globally: /ar:globalno find"
-)
-
 def _codex_suggestion(command: str, body: str) -> str:
     """Codex block text: what to do instead, then the allow/block commands.
 
@@ -131,23 +96,7 @@ def _codex_suggestion(command: str, body: str) -> str:
     )
 
 
-# Codex reads files through the shell, so plugins.py exempts a plain cat/head/
-# tail (Platform.native_shell_read_commands). Only these forms still reach the block.
-_CODEX_SHELL_READ_BODY = (
-    "Codex reads files through the shell, so a plain `{command}` read is allowed. "
-    "This one was blocked because it writes a file (`>` or `>>`), follows a file "
-    "(`tail -f`), or reads as another user (`sudo`, `doas`).\n\n"
-    "**Instead:**\n"
-    "- Create or change a file: apply_patch\n"
-    "- Read the end of a growing log: `tail -n 200 <file>`, once\n"
-    "- Read a file only another user can read: ask the user"
-)
-
 _CODEX_PLATFORM_SUGGESTIONS = {
-    **{
-        command: _codex_suggestion(command, _CODEX_SHELL_READ_BODY.format(command=command))
-        for command in ("cat", "head", "tail")
-    },
     "awk": _codex_suggestion(
         "awk",
         "Use `rg -n '<pattern>' <file>` to find lines, `sed -n '<start>,<end>p' <file>` "
@@ -156,7 +105,6 @@ _CODEX_PLATFORM_SUGGESTIONS = {
     "sed": _codex_suggestion(
         "sed", "Use apply_patch to change files; `sed -n` that only prints is allowed."
     ),
-    "echo >": _codex_suggestion("'echo >'", "Use apply_patch to create or change files."),
 }
 
 

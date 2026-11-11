@@ -79,12 +79,6 @@ from .scoped_allow import (
     parse_scope_tokens,
 )
 from .command_detection import (
-    PRIVILEGE_ESCALATING_WRAPPERS,
-    mentions_privilege_escalation,
-    shell_segments,
-    shell_words,
-    strip_transparent_command_wrappers,
-    _get_basename,
     command_matches_pattern,
     command_tokens_for,
     extract_commands,
@@ -128,50 +122,6 @@ def _task_cli_hint(ctx: EventContext) -> str | None:
     return getattr(ctx, "cli_type", None)
 
 
-def _has_shell_output_redirection(command: str) -> bool:
-    """Return True when a shell command redirects output to a file/descriptor."""
-    tokens = shell_words(command)
-    if tokens is None:
-        return True  # cannot read the line: do not exempt it
-
-    for token in tokens:
-        if "<>" in token:
-            return True  # opens the file for writing too
-        if token in {">", ">>", ">|", "&>", "&>>", ">&"}:
-            return True
-        if re.fullmatch(r"\d*(?:>|>>|>\|)", token):
-            return True
-        if ">" in token and not token.startswith("<"):
-            return True
-    return False
-
-
-def _tail_follow_requested(tokens: tuple[str, ...]) -> bool:
-    """Return True for tail follow modes that can keep a hook command running."""
-    skip_next = False
-    for token in tokens[1:]:
-        if skip_next:
-            skip_next = False
-            continue
-        if token in {"--", ""}:
-            break
-        if token == "--follow" or token.startswith("--follow="):
-            return True
-        if token in {"-n", "--lines", "-c", "--bytes", "-s", "--sleep-interval", "--pid"}:
-            skip_next = True
-            continue
-        if token.startswith("--lines=") or token.startswith("--bytes=") or token.startswith("--sleep-interval=") or token.startswith("--pid="):
-            continue
-        if token.startswith("--"):
-            continue
-        if token.startswith("-") and token != "-":
-            opts = token[1:]
-            if "f" in opts or "F" in opts:
-                return True
-            continue
-    return False
-
-
 def _shell_join(words: list[str]) -> str:
     """shlex.join, except words that must still expand the way the user meant.
 
@@ -197,43 +147,6 @@ def _shell_join(words: list[str]) -> str:
         return shlex.quote(word)
 
     return " ".join(quote(word) for word in words)
-
-
-def _default_integration_allows_native_shell_read(ctx: EventContext, pattern: str, command: str, source: str) -> bool:
-    """Allow default read-command redirects to yield to platform-native shell reads.
-
-    User integration files and explicit /ar:no blocks are not skipped here: this
-    only adapts the built-in "use a dedicated read tool" default to platforms
-    whose actual model-facing read path is the shell.
-    """
-    if source != "default":
-        return False
-    platform = platform_for(ctx.cli_type)
-    if pattern not in platform.native_shell_read_commands:
-        return False
-    # Judged over the whole line: the matched segment alone missed a privileged
-    # read in another segment or inside `$(...)` (`cat f; sudo cat x`).
-    if mentions_privilege_escalation(command):
-        return False
-    # Same wrapper grammar the block matched with (any entry of the shared
-    # transparent-wrapper table, or VAR=value), minus privilege escalation.
-    # allow_prefixes=False here let the block see `rtk cat f` while the
-    # exemption did not, so every wrapped Codex read was denied (2026-11-06).
-    tokens = command_tokens_for(
-        command, pattern, excluded_wrappers=PRIVILEGE_ESCALATING_WRAPPERS
-    )
-    if not tokens:
-        return False
-    if _has_shell_output_redirection(command):
-        return False
-    # Every tail on the line: `tail -n 5 log; tail -f log` follows in its second.
-    if pattern == "tail" and any(
-        _tail_follow_requested(tuple(argv))
-        for argv in (strip_transparent_command_wrappers(tokens) for _segment, tokens in shell_segments(command))
-        if argv and _get_basename(argv[0]) == "tail"
-    ):
-        return False
-    return True
 
 
 # ============================================================================
@@ -1500,8 +1413,6 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                         except Exception as e:
                             logger.warning(f"When predicate '{intg.when}' failed: {e}")
                             continue
-                        if _default_integration_allows_native_shell_read(ctx, pattern, cmd, intg.source):
-                            break
                         action = intg.action_for_cli(ctx.cli_type)
                         decision = "warn" if action == "warn" else "deny"
                         key = pattern  # dedup by pattern string only (see TIER 2 comment above)

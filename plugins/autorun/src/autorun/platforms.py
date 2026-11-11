@@ -989,12 +989,6 @@ class Platform:
     # === Tool name resolution (logical key → API tool_name) ===
     tool_names: Mapping[str, str] = field(default_factory=dict)
 
-    # === Native shell affordances ===
-    # Some harnesses expose no dedicated file-read model tool. For those,
-    # autorun allows bounded read-only shell inspection commands while still
-    # blocking shell writes and unbounded follow-style reads.
-    native_shell_read_commands: frozenset[str] = field(default_factory=frozenset)
-
     # === Native task/checklist tools ===
     # Different harnesses expose task progress differently:
     # - Claude has first-class TaskCreate/TaskUpdate/TaskList tools.
@@ -1790,7 +1784,6 @@ CODEX = register(
         app_bundle_ids=("com.openai.codex",),
         app_paths=("/Applications/Codex.app",),
         tool_names=_CODEX_TOOLS,
-        native_shell_read_commands=frozenset({"cat", "head", "tail"}),
         task_management_style="plan_checklist",
         task_plan_tools=frozenset({"update_plan"}),
         # Codex 0.152.0+ registers update_plan only with this setting

@@ -61,7 +61,6 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "harness_cli_to_autorun_events": dict(platform.harness_cli_to_autorun_events),
         "autorun_to_harness_cli_events": dict(platform.autorun_to_harness_cli_events),
         "tool_names": dict(platform.tool_names),
-        "native_shell_read_commands": sorted(platform.native_shell_read_commands),
         "task_management_style": platform.task_management_style,
         "task_create_tools": sorted(platform.task_create_tools),
         "task_update_tools": sorted(platform.task_update_tools),
