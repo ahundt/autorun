@@ -685,3 +685,61 @@ class TestPromptStateOfHarnessesAutorunCannotRead:
             results = execute_session_selections('awaiting-input', sessions, tmux, command='go on')
 
         assert [(r['target'], r['command']) for r in results] == [('claude:0', 'go on')]
+
+
+@pytest.mark.tmux
+class TestSendIsVerifiedOnThePrivateServer:
+    """send_text_and_enter returned the exit status of its two send-keys
+    calls, so text left sitting on the input line was reported as sent. It
+    now reads the pane's cursor line after Enter: text still there is
+    reported as 'typed, not submitted', a failure, and is never resent."""
+
+    @pytest.fixture
+    def pane(self):
+        import os
+        import shutil
+        import subprocess
+        import uuid
+
+        if not os.environ.get("AUTORUN_TEST_TMUX_SOCKET") or not shutil.which("tmux"):
+            pytest.skip("needs the suite's private tmux server")
+        name = f"autorun-verify-{uuid.uuid4().hex[:8]}"
+        subprocess.run(["tmux", "new-session", "-d", "-s", name, "-x", "80", "-y", "24", "/bin/sh"],
+                       check=True, capture_output=True)
+        try:
+            yield name
+        finally:
+            subprocess.run(["tmux", "kill-session", "-t", name], check=False, capture_output=True)
+
+    def _wait_for_prompt(self, tmux, name):
+        import time
+
+        for _ in range(50):
+            out = tmux.execute_tmux_command(['capture-pane', '-p'], name, '0')
+            if out and out['stdout'].strip():
+                return
+            time.sleep(0.1)
+
+    def test_text_left_on_the_input_line_is_reported_and_not_resent(self, pane):
+        tmux = TmuxUtilities(session_name=pane)
+        self._wait_for_prompt(tmux, pane)
+        real_send = tmux.send_keys
+        sent = []
+
+        def lose_enter(keys, *args, **kwargs):
+            sent.append(keys)
+            return True if keys == 'C-m' else real_send(keys, *args, **kwargs)
+
+        tmux.send_keys = lose_enter
+        result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, ': autorun-marker-1')
+
+        assert (result['success'], result['error']) == (False, 'typed, not submitted')
+        assert sent == [': autorun-marker-1', 'C-m']
+
+    def test_submitted_text_is_reported_as_sent(self, pane):
+        tmux = TmuxUtilities(session_name=pane)
+        self._wait_for_prompt(tmux, pane)
+
+        result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, ': autorun-marker-2')
+
+        assert (result['success'], result['error']) == (True, None)

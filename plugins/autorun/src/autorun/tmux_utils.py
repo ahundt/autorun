@@ -1617,6 +1617,34 @@ def tmux_detect_claude_thinking_mode(content: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class TypedNotSubmitted(RuntimeError):
+    """The text reached the pane but still sits on its input line after Enter."""
+
+    def __init__(self):
+        super().__init__('typed, not submitted')
+
+
+def _text_on_cursor_line(tmux: 'TmuxUtilities', text: str, session, window, pane) -> Optional[bool]:
+    """Whether the pane's cursor line (its input line) still ends with text.
+
+    None when the pane cannot be read, so nothing is claimed either way.
+    """
+    # display-message takes its target before the format, so name it here.
+    target = f"{session or tmux.session_name}" + (f":{window}" if window else "") + (f".{pane}" if pane else "")
+    cursor = tmux.execute_tmux_command(['display-message', '-p', '-t', target, '#{cursor_y}'])
+    screen = tmux.execute_tmux_command(['capture-pane', '-p'], session, window, pane)
+    if not (cursor and screen and cursor.get('returncode') == 0 and screen.get('returncode') == 0):
+        return None
+    row = str(cursor.get('stdout', '')).strip()
+    lines = str(screen.get('stdout', '')).split('\n')
+    if not row.isdigit() or int(row) >= len(lines):
+        return None
+    line, sent = lines[int(row)].rstrip(' │'), text.rstrip()
+    # A long text wraps, so only its tail is on the cursor line.
+    n = min(len(line), len(sent), 20)
+    return n > 0 and line[-n:] == sent[-n:]
+
+
 def send_text_and_enter(
     tmux: 'TmuxUtilities',
     text: str,
@@ -1640,8 +1668,15 @@ def send_text_and_enter(
         pane: Target pane
         delay_ms: Delay between text and Enter in milliseconds (default 100ms)
 
+    After Enter it reads the pane's cursor line, polling up to 10 times
+    delay_ms apart; echoed text elsewhere on screen is not proof either way.
+
     Returns:
         True if both sends succeeded, False otherwise
+
+    Raises:
+        TypedNotSubmitted: the text still sits on the input line. Nothing is
+            resent: a second Enter could submit a half-edited line.
 
     Example:
         >>> tmux = get_tmux_utilities(detect_current_tmux_session())
@@ -1656,7 +1691,13 @@ def send_text_and_enter(
     # Brief delay for terminal to process text
     time.sleep(delay_ms / 1000.0)
     # Send Enter as separate command (CRITICAL: must be separate)
-    return tmux.send_keys('C-m', session, window, pane)
+    if not tmux.send_keys('C-m', session, window, pane):
+        return False
+    for _ in range(10):
+        time.sleep(delay_ms / 1000.0)
+        if not _text_on_cursor_line(tmux, text, session, window, pane):
+            return True
+    raise TypedNotSubmitted()
 
 
 def check_safe_to_send(content: str) -> tuple[bool, str]:
@@ -1774,7 +1815,10 @@ def send_message_to_claude(
             return False, reason
 
     # Safe to send (or force=True)
-    success = send_text_and_enter(tmux, message, session, window, pane, delay_ms)
+    try:
+        success = send_text_and_enter(tmux, message, session, window, pane, delay_ms)
+    except TypedNotSubmitted as e:
+        return False, str(e)
     return (True, "sent") if success else (False, "send_failed")
 
 
