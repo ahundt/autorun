@@ -96,26 +96,6 @@ class TestTmuxUtilitiesEnhanced:
             assert 'window' in env_info
             assert 'pane' in env_info
 
-    def test_control_sequence_parsing(self):
-        """Test control sequence parsing for byobu compatibility"""
-        from autorun.tmux_utils import TmuxControlState
-        tmux = get_tmux_utilities()
-
-        # Test normal text - method returns tuple of (text, state)
-        text, state = tmux.parse_control_sequences("normal text")
-        assert text == "normal text"
-        assert state == TmuxControlState.NORMAL
-
-        # Test escape sequences (single ^ removes the ^, state returns to NORMAL)
-        text, state = tmux.parse_control_sequences("^C")
-        assert text == "C"
-        assert state == TmuxControlState.NORMAL
-
-        # Test literal caret (^^ becomes ^)
-        text, state = tmux.parse_control_sequences("^^test")
-        assert text == "^test"
-        assert state == TmuxControlState.NORMAL
-
     def test_error_handling_and_recovery(self):
         """Test error handling and recovery mechanisms"""
         tmux = get_tmux_utilities('test-recovery')

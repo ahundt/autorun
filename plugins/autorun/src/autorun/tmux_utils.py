@@ -574,54 +574,6 @@ class TmuxUtilities:
         except Exception:
             return None
 
-    def parse_control_sequences(self, text: str) -> Tuple[str, TmuxControlState]:
-        """
-        Parse control sequences according to requirements:
-        - ^ escapes to normal tmux mode
-        - ^^ for literal ^
-
-        Args:
-            text: Text to parse for control sequences
-
-        Returns:
-            Tuple of (processed_text, new_state)
-        """
-        result = []
-        i = 0
-        local_state = self.control_state  # Use local state to avoid modifying instance state
-
-        while i < len(text):
-            char = text[i]
-
-            if local_state == TmuxControlState.NORMAL:
-                if char == '^':
-                    if i + 1 < len(text) and text[i + 1] == '^':
-                        # Literal ^
-                        result.append('^')
-                        i += 2
-                    else:
-                        # Escape to normal tmux - don't add the ^ character
-                        local_state = TmuxControlState.ESCAPE
-                        i += 1
-                else:
-                    result.append(char)
-                    i += 1
-
-            elif local_state == TmuxControlState.ESCAPE:
-                # In escape mode - pass through to tmux directly
-                result.append(char)
-                i += 1
-                # Reset after one character
-                local_state = TmuxControlState.NORMAL
-
-            else:
-                result.append(char)
-                i += 1
-
-        # Update instance state for next call
-        self.control_state = local_state
-        return ''.join(result), local_state
-
     def execute_win_op(self, operation: str, args: Optional[List[str]] = None,
                       session: Optional[str] = None, window: Optional[str] = None,
                       pane: Optional[str] = None) -> bool:

@@ -35,32 +35,6 @@ def test_default_session_naming():
         f"DualChannelInjector default session incorrect: {dual_injector.session_id}"
 
 
-def test_control_sequence_parsing():
-    """Test requirement: Control sequence syntax (^ escape, ^^ literal)"""
-    tmux_utils = TmuxUtilities("test_session")
-
-    # Test basic parsing without control sequences
-    result, state = tmux_utils.parse_control_sequences("normal text")
-    assert result == "normal text", f"Basic parsing failed: {result}"
-    assert state == TmuxControlState.NORMAL
-
-    # Test literal ^^
-    result, state = tmux_utils.parse_control_sequences("text^^more")
-    assert result == "text^more", f"Literal ^^ parsing failed: {result}"
-    assert state == TmuxControlState.NORMAL
-
-    # Test escape sequence ^
-    result, state = tmux_utils.parse_control_sequences("text^command")
-    assert result == "textcommand", f"Escape ^ parsing failed: {result}"
-    assert state == TmuxControlState.NORMAL
-
-    # Test complex sequence
-    tmux_utils.control_state = TmuxControlState.NORMAL  # Reset state
-    result, state = tmux_utils.parse_control_sequences("start^^middle^end")
-    assert result == "start^middleend", f"Complex sequence parsing failed: {result}"
-    assert state == TmuxControlState.NORMAL
-
-
 def test_win_ops_completeness():
     """Test requirement: Complete WIN_OPS dispatch dictionary"""
 
