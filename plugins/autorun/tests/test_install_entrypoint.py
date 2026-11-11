@@ -154,6 +154,32 @@ def _agy_copy_runner(
     return run
 
 
+@pytest.fixture(scope="session")
+def marketplace_copy(tmp_path_factory):
+    """The checkout's tracked files, copied once per worker, outside git.
+
+    An install walk over the live checkout reads its git state (``rev-parse``
+    and ``status --porcelain`` for the build commit, ``ls-files`` for the
+    asset copy) while parallel workers run in the same tree. A copy with no
+    ``.git`` makes the walk depend on nothing another test can change.
+    """
+    import shutil
+
+    listed = subprocess.run(
+        ["git", "-C", str(REPO), "ls-files", "-z"],
+        capture_output=True, check=True,
+    ).stdout.decode("utf-8").split("\0")
+    root = tmp_path_factory.mktemp("marketplace")
+    for name in filter(None, listed):
+        source = REPO / name
+        if not (source.exists() or source.is_symlink()):
+            continue  # deleted in the working tree
+        destination = root / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination, follow_symlinks=False)
+    return root
+
+
 @pytest.fixture
 def isolated(monkeypatch, tmp_path):
     home = tmp_path / "home"
@@ -1173,7 +1199,7 @@ def test_partial_uninstall_of_pdf_preserves_every_autorun_artifact(monkeypatch, 
 
 
 def test_the_walk_never_uninstalls_a_distribution_sharing_one_of_our_scripts(
-    monkeypatch, isolated, capsys
+    monkeypatch, isolated, capsys, marketplace_copy
 ):
     """Stated as the violation: an upgrade leaves the user with no command.
 
@@ -1210,6 +1236,9 @@ def test_the_walk_never_uninstalls_a_distribution_sharing_one_of_our_scripts(
     monkeypatch.setattr(entrypoint, "_uv_tool_installed", lambda _package: True)
     monkeypatch.setattr(entrypoint, "_run", record)
     monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
+    # Hermetic: no git calls against the shared checkout, no shared tree.
+    monkeypatch.setenv("AUTORUN_BUILD_COMMIT", "test-commit")
+    monkeypatch.setattr(entrypoint, "_marketplace_root", lambda: marketplace_copy)
 
     assert entrypoint.install_plugins("ar", conductor=False) == 0
 
