@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# Copyright 2025 Andrew Hundt <ATHundt@gmail.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""The cache guard checks a prompt before it re-sends an expired cache.
+
+A prompt sent after the last response's cache lifetime has passed re-writes
+the whole context at the cache-write price. The check that catches it,
+``expired``, trips when the time since the last response exceeds the
+lifetime that response wrote (3,600 s for ``ephemeral_1h_input_tokens``, 300 s
+for ``ephemeral_5m_input_tokens``) and the context (input + cache read +
+cache write) is at or above ``expired_min_tokens`` (default 100,000). At
+prompt time it is the only check that runs; ``ratio``, ``read`` and ``age``
+stay at tool time. ``/ar:cache on`` blocks, ``/ar:cache warn`` only tells,
+``/ar:cache off`` stops both, and resending the same text passes.
+
+Every case dispatches through ``app.dispatch`` with the fixture transcripts
+in ``tests/fixtures/cache_expiry/``, whose timestamps are fixed against the
+clock below. The clock replaces ``autorun.cache_guard.time``, the same seam
+``tests/test_cache_guard.py`` drives, so the state locks underneath keep real
+time.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sys
+import time
+import uuid
+from pathlib import Path
+
+import pytest
+
+from autorun import plugins as _plugins  # noqa: F401  (registers command handlers and chains)
+from autorun.config import CONFIG
+from autorun.core import EventContext, ThreadSafeDB, app
+from autorun.platforms import PLATFORMS
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "cache_expiry"
+NOW = 1_794_398_400.0  # 2026-11-11T12:00:00Z; every fixture timestamp is relative to it
+
+EXPIRED_1H = FIXTURES / "claude_1h_lifetime_idle_2h_250k_tokens.jsonl"
+FRESH_1H = FIXTURES / "claude_1h_lifetime_idle_30m_250k_tokens.jsonl"
+EXPIRED_5M = FIXTURES / "claude_5m_lifetime_idle_10m_250k_tokens.jsonl"
+SMALL_EXPIRED_1H = FIXTURES / "claude_1h_lifetime_idle_2h_20k_tokens.jsonl"
+PI_NO_LIFETIME = FIXTURES / "pi_no_lifetime_idle_2h_250k_tokens.jsonl"
+CODEX_ROLLOUT = FIXTURES / "codex_rollout_no_usable_record.jsonl"
+NO_USAGE = FIXTURES / "claude_no_usage_record.jsonl"
+UNREADABLE = FIXTURES / "unreadable_transcript.jsonl"
+
+EXPIRED_NOTICE = "cache expired"  # section 5.4.2 item 4: "this session's prompt cache expired ..."
+RESEND_LINE = "Send the same prompt again"
+TOOL_TIME_HINTS = ("Tripped axes", "/ar:cache ok 3", "/ar:cache set ratio", "/ar:cache set read", "/ar:cache set age")
+
+
+class _FrozenClock:
+    def __init__(self, now: float):
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(tmp_path, monkeypatch):
+    """Per-test session state and a cache-guard clock the test advances."""
+    from autorun import cache_guard, session_manager
+
+    state = tmp_path / "sessions"
+    state.mkdir()
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(state))
+    session_manager._reset_for_testing()
+    frozen = _FrozenClock(NOW)
+    monkeypatch.setattr(cache_guard, "time", frozen)
+    yield frozen
+    session_manager._reset_for_testing()
+
+
+class Session:
+    def __init__(self, cli_type: str = "claude", transcript: Path | None = None):
+        self.id = f"k2-{cli_type}-{uuid.uuid4().hex[:10]}"
+        self.cli_type = cli_type
+        self.transcript = str(transcript) if transcript else None
+        self.store = ThreadSafeDB()
+
+    def prompt(self, text: str, **fields) -> dict:
+        return app.dispatch(
+            EventContext(
+                session_id=self.id,
+                event="UserPromptSubmit",
+                prompt=text,
+                cli_type=self.cli_type,
+                transcript_path=self.transcript,
+                store=self.store,
+                **fields,
+            )
+        )
+
+    def command(self, text: str) -> dict:
+        """A command the user types; it must never be blocked itself."""
+        response = self.prompt(text)
+        assert not blocked(response), f"the user's command {text!r} was blocked: {response}"
+        return response
+
+    def tool(self, command: str = "git status") -> dict:
+        return app.dispatch(
+            EventContext(
+                session_id=self.id,
+                event="PreToolUse",
+                tool_name=PLATFORMS[self.cli_type].tool_names["bash"],
+                tool_input={"command": command},
+                cli_type=self.cli_type,
+                transcript_path=self.transcript,
+                store=self.store,
+            )
+        )
+
+
+def blocked(response: dict | None) -> bool:
+    response = response or {}
+    hook_output = response.get("hookSpecificOutput") or {}
+    return (
+        response.get("decision") in {"block", "deny"}
+        or hook_output.get("permissionDecision") == "deny"
+        or response.get("continue") is False
+    )
+
+
+def text_of(response: dict | None) -> str:
+    return json.dumps(response or {}, ensure_ascii=False)
+
+
+def armed(transcript: Path, cli_type: str = "claude", mode: str = "on") -> Session:
+    session = Session(cli_type, transcript)
+    session.command(f"ar:cache {mode}")
+    return session
+
+
+# ─── which transcripts block ──────────────────────────────────────────────
+
+
+def test_prompt_time_blocks_exactly_the_expired_large_contexts(clock, tmp_path):
+    runs = {
+        "claude 1h lifetime, idle 2h, 250k": ("claude", EXPIRED_1H),
+        "claude 1h lifetime, idle 30m, 250k": ("claude", FRESH_1H),
+        "claude 5m lifetime, idle 10m, 250k": ("claude", EXPIRED_5M),
+        "claude 1h lifetime, idle 2h, 20k": ("claude", SMALL_EXPIRED_1H),
+        "pi, no lifetime, no age set": ("pi", PI_NO_LIFETIME),
+        "codex rollout, no usable record": ("codex", CODEX_ROLLOUT),
+        "claude, no usage record": ("claude", NO_USAGE),
+        "claude, unreadable bytes": ("claude", UNREADABLE),
+    }
+    if sys.platform != "win32" and os.geteuid() != 0:
+        locked = tmp_path / "locked.jsonl"
+        shutil.copy2(EXPIRED_1H, locked)
+        locked.chmod(0)
+        runs["claude, file that cannot be opened"] = ("claude", locked)
+    for platform_name in sorted(set(PLATFORMS) - {"claude", "codex", "pi"}):
+        runs[f"{platform_name}, no transcript"] = (platform_name, None)
+
+    outcomes = {}
+    for label, (cli_type, transcript) in runs.items():
+        response = armed(transcript, cli_type).prompt("Continue with the refactor.")
+        outcomes[label] = "block" if blocked(response) else "pass"
+
+    expected = {label: "pass" for label in runs}
+    expected["claude 1h lifetime, idle 2h, 250k"] = "block"
+    expected["claude 5m lifetime, idle 10m, 250k"] = "block"
+    assert outcomes == expected
+
+
+def test_resending_the_blocked_text_passes_and_other_text_still_blocks(clock):
+    session = armed(EXPIRED_1H)
+    first = session.prompt("Continue with the refactor.")
+    assert blocked(first), f"an expired 250k-token cache did not block: {first}"
+    again = session.prompt("Continue with the refactor.")
+    assert not blocked(again), f"resending the same text was blocked again: {again}"
+    other = session.prompt("Now update the changelog.")
+    assert blocked(other), f"the resend pass became a pass for every prompt: {other}"
+
+
+def test_a_prompt_the_user_did_not_type_is_never_blocked(clock):
+    control = armed(EXPIRED_1H).prompt("Continue with the refactor.")
+    assert blocked(control), f"control: the user's own prompt was not blocked: {control}"
+
+    cases = {
+        "subagent": ({"agent_id": "subagent-1"}, "Continue with the refactor."),
+        "task notification": ({}, "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"),
+        "agent message": ({}, '<agent-message from="worker">Finished the review.</agent-message>'),
+        "cross-session message": ({}, '<cross-session-message from="other">Rebased.</cross-session-message>'),
+        "model": ({"prompt_author": "model"}, "Continue with the refactor."),
+        "automation": ({"prompt_author": "automation"}, "Continue with the refactor."),
+    }
+    passed_through = {}
+    for label, (fields, text) in cases.items():
+        passed_through[label] = not blocked(armed(EXPIRED_1H).prompt(text, **fields))
+    assert passed_through == {label: True for label in cases}
+
+
+def test_user_thresholds_stay_at_tool_time(clock):
+    """``ratio``, ``read`` and ``age`` set by the user never block a prompt."""
+    thresholds = ("ar:cache set age 10m", "ar:cache set ratio 0.999", "ar:cache set read 300k")
+
+    control = armed(EXPIRED_1H)
+    for command in thresholds:
+        control.command(command)
+    blocked_by_expiry = control.prompt("Continue with the refactor.")
+    assert blocked(blocked_by_expiry), f"control: the expired cache did not block: {blocked_by_expiry}"
+    assert "Tripped axes" not in text_of(blocked_by_expiry), "the prompt block reports tool-time axes"
+
+    session = armed(FRESH_1H)
+    for command in thresholds:
+        session.command(command)
+    at_prompt = session.prompt("Continue with the refactor.")
+    assert not blocked(at_prompt), f"a user threshold blocked a prompt on an unexpired cache: {at_prompt}"
+    at_tool = session.tool()
+    assert blocked(at_tool), f"the same thresholds stopped working at tool time: {at_tool}"
+
+
+# ─── modes and the message ────────────────────────────────────────────────
+
+
+def test_warn_mode_tells_and_never_blocks(clock):
+    response = armed(EXPIRED_1H, mode="warn").prompt("Continue with the refactor.")
+    assert not blocked(response), f"warn mode blocked: {response}"
+    assert EXPIRED_NOTICE in text_of(response), f"warn mode said nothing: {response}"
+
+
+def test_the_prompt_time_message_names_its_switches_and_no_tool_time_hint(clock):
+    response = armed(EXPIRED_1H).prompt("Continue with the refactor.")
+    assert blocked(response), response
+    text = text_of(response)
+    for wanted in (EXPIRED_NOTICE, "/ar:cache warn", "/ar:cache set expired-min-tokens", RESEND_LINE):
+        assert wanted in text, f"the block message lacks {wanted!r}: {text}"
+    leaked = [hint for hint in TOOL_TIME_HINTS if hint in text]
+    assert leaked == [], f"the prompt-time message carries tool-time hints {leaked}: {text}"
+
+
+def test_a_command_typed_while_expired_gets_through(clock):
+    session = armed(EXPIRED_1H)
+    assert blocked(session.prompt("Continue with the refactor.")), "control: the expired cache did not block"
+    reply = session.command("ar:cache off")
+    assert "disabled" in text_of(reply), f"/ar:cache off did not run: {reply}"
+    after = session.prompt("Now update the changelog.")
+    assert not blocked(after), f"/ar:cache off did not switch the prompt check off: {after}"
+
+
+# ─── timed toggles ────────────────────────────────────────────────────────
+
+
+def _default_action() -> str:
+    action = CONFIG.get("cache_guard_expired_prompt_action")
+    assert action in {"block", "warn"}, f"CONFIG cache_guard_expired_prompt_action is {action!r}"
+    return action
+
+
+def test_off_for_an_hour_with_nothing_stored_returns_to_the_config_default(clock):
+    default = _default_action()
+    session = Session("claude", EXPIRED_1H)  # nothing stored, here or globally
+    session.command("ar:cache off 1h")
+    during = session.prompt("Continue with the refactor.")
+    assert not blocked(during) and EXPIRED_NOTICE not in text_of(during), f"off 1h did not silence it: {during}"
+
+    clock.now = NOW + 3601
+    after = session.prompt("Now update the changelog.")
+    assert blocked(after) == (default == "block"), f"after the hour, default {default!r} gave {after}"
+    assert EXPIRED_NOTICE in text_of(after), f"after the hour the check is still silent: {after}"
+
+
+def test_warn_then_off_for_an_hour_returns_to_warn(clock):
+    session = armed(EXPIRED_1H, mode="warn")
+    session.command("ar:cache off 1h")
+    during = session.prompt("Continue with the refactor.")
+    assert EXPIRED_NOTICE not in text_of(during), f"off 1h did not silence warn: {during}"
+
+    clock.now = NOW + 3601
+    after = session.prompt("Now update the changelog.")
+    assert not blocked(after), f"off 1h expired into block instead of the stored warn: {after}"
+    assert EXPIRED_NOTICE in text_of(after), f"off 1h expired into off instead of warn: {after}"
+
+
+# ─── the context-size floor ───────────────────────────────────────────────
+
+
+def test_expired_min_tokens_sets_the_smallest_context_checked(clock):
+    small = armed(SMALL_EXPIRED_1H)
+    reply = small.command("ar:cache set expired-min-tokens 0")
+    assert "expired-min-tokens" in text_of(reply) and "unknown" not in text_of(reply), reply
+    assert blocked(small.prompt("Continue with the refactor.")), "a floor of 0 did not check a 20k context"
+
+    large = armed(EXPIRED_1H)
+    large.command("ar:cache set expired-min-tokens 300k")
+    assert not blocked(large.prompt("Continue with the refactor.")), "a 300k floor still checked a 250k context"
+
+    unknown = Session("claude").command("ar:cache set no-such-key 5")
+    assert "expired-min-tokens" in text_of(unknown), f"the unknown-key reply does not list the valid keys: {unknown}"
+
+
+# ─── Pi and Prime Agent: no lifetime, so only a user-set age speaks ───────
+
+
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
+def test_pi_record_without_lifetime_warns_only_when_age_is_set(clock, cli_type):
+    silent = armed(PI_NO_LIFETIME, cli_type).prompt("Continue with the refactor.")
+    assert EXPIRED_NOTICE not in text_of(silent), f"spoke with no lifetime and no age: {silent}"
+
+    session = armed(PI_NO_LIFETIME, cli_type)
+    session.command("ar:cache set age 1h")
+    response = session.prompt("Continue with the refactor.")
+    assert not blocked(response), f"{cli_type} cannot block a prompt, but the response blocks: {response}"
+    assert EXPIRED_NOTICE in text_of(response), f"{cli_type} with age 1h and a 2h-old record said nothing: {response}"
+
+
+# ─── cost bound ───────────────────────────────────────────────────────────
+
+
+def test_the_check_takes_under_50_ms_on_a_100_mb_transcript(clock, tmp_path):
+    from autorun.cache_guard import CacheGuard
+
+    big = tmp_path / "big.jsonl"
+    filler = json.dumps({"type": "user", "timestamp": "2026-11-11T09:00:00.000Z", "message": {"role": "user", "content": "x" * 10_000}}) + "\n"
+    chunk = filler * 100  # about 1 MB
+    with open(big, "w", encoding="utf-8") as handle:
+        for _ in range(100):
+            handle.write(chunk)
+        handle.write(EXPIRED_1H.read_text(encoding="utf-8"))
+    assert big.stat().st_size >= 100 * 1_000_000
+
+    def context(transcript):
+        session = armed(transcript)
+        return EventContext(
+            session_id=session.id,
+            event="UserPromptSubmit",
+            prompt="Continue with the refactor.",
+            cli_type="claude",
+            transcript_path=str(transcript),
+            store=session.store,
+        )
+
+    warm = context(EXPIRED_1H)
+    check = getattr(CacheGuard.from_ctx(warm), "check_prompt_after_expiry", None)
+    assert check is not None, "CacheGuard.check_prompt_after_expiry is not defined"
+    check(warm)  # imports and first lock outside the measurement
+
+    ctx = context(big)
+    guard = CacheGuard.from_ctx(ctx)
+    started = time.perf_counter()
+    result = guard.check_prompt_after_expiry(ctx)
+    elapsed = time.perf_counter() - started
+    assert blocked(result), f"the 100 MB transcript ending in an expired record did not block: {result}"
+    assert elapsed < 0.050, f"the prompt-time check took {elapsed * 1000:.1f} ms on a 100 MB transcript"
