@@ -162,7 +162,10 @@ def _tmux_paths_from_homebrew() -> List[str]:
     for brew in _candidate_homebrew_binaries():
         try:
             result = subprocess.run(
-                [brew, "--prefix", "tmux"],
+                # No formula: `brew --prefix tmux` resolves the formula and took
+                # 3.9-6.3 s under an empty HOME against this 2 s timeout; the
+                # bare prefix answers offline in about 0.02 s.
+                [brew, "--prefix"],
                 capture_output=True,
                 text=True, encoding="utf-8", errors="replace",
                 timeout=2,
@@ -174,7 +177,7 @@ def _tmux_paths_from_homebrew() -> List[str]:
             continue
         prefix = result.stdout.strip()
         if prefix:
-            paths.append(str(Path(prefix) / "bin" / "tmux"))
+            paths.append(str(Path(prefix) / "opt" / "tmux" / "bin" / "tmux"))
     return paths
 
 

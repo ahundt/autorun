@@ -151,6 +151,25 @@ class TestTmuxBinaryResolution:
         assert candidates[0] == "/usr/local/opt/tmux/bin/tmux"
         assert candidates.index("/usr/local/bin/tmux") < candidates.index("/opt/homebrew/bin/tmux")
 
+    def test_homebrew_lookup_asks_for_the_prefix_without_a_formula(self):
+        """`brew --prefix tmux` resolves the formula, which took 3.9 to 6.3 s
+        under an empty HOME against a 2 s timeout; `brew --prefix` alone
+        answers offline in about 0.02 s, and the tmux client sits at
+        `<prefix>/opt/tmux/bin/tmux`."""
+        calls = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(argv)
+            return Mock(returncode=0, stdout="/opt/homebrew\n")
+
+        with patch.object(
+            tmux_module, "_candidate_homebrew_binaries", return_value=["/opt/homebrew/bin/brew"]
+        ), patch.object(tmux_module.subprocess, "run", side_effect=fake_run):
+            paths = tmux_module._tmux_paths_from_homebrew()
+
+        assert calls == [["/opt/homebrew/bin/brew", "--prefix"]]
+        assert paths == [str(Path("/opt/homebrew") / "opt" / "tmux" / "bin" / "tmux")]
+
     def test_prefers_client_that_can_read_inherited_socket(self, monkeypatch):
         monkeypatch.delenv("AUTORUN_TMUX_BIN", raising=False)
         monkeypatch.setenv("TERM_PROGRAM_VERSION", "3.6b")
