@@ -73,8 +73,12 @@ that need it. No disk access: stage generated content to a temp dir and point th
 ## Traps
 
 - **A user edit in an owned tree is kept.** `decide()` returns `KEEP` and names
-  the files. No force path may ignore it. The one thing `--force` widens is a
-  tree whose marker predates file hashes (`files: []`): without hashes an edit
+  the files. No force path may discard it. Ordinary publication keeps an edit
+  even under `--force`; Claude's cache-specific forced refresh is the deliberate
+  exception that copies each edited or unproven payload file to the installer
+  backup directory, reports that path, and only then replaces the cache file.
+  The other thing `--force` widens is a tree whose marker predates file hashes
+  (`files: []`): without hashes an edit
   and a stale copy are indistinguishable, so a plain install or uninstall keeps
   it and says so, and `--force` republishes it (source still shipped) or
   retires it (route no longer shipped, or `--uninstall`) after the current
@@ -105,14 +109,23 @@ that need it. No disk access: stage generated content to a temp dir and point th
   with the hashes autorun recorded after fallback, placeholder substitution and
   command pinning, but remains outside the general publication sweep. A plain
   install refreshes only recorded, unchanged payload files, one file at a time,
-  with each changed file published by same-directory atomic rename; edited and
-  unrecorded files are kept and reported. A markerless cache is adopted only
-  when it exactly matches the bundled payload for that version. The version
-  root and `.venv` are never moved. Upgrades retain every old version because a
-  running session may still invoke its captured hook command. Only explicit
-  uninstall may retire a hash-proven, unmodified selected-plugin version.
-  Foreign same-name trees are left and reported; caches under another market or
-  plugin are never visited.
+  with each changed file published by same-directory atomic rename. Before the
+  first replacement, the same marker gains `intent.files`, the target hashes;
+  recovery accepts either the prior or intended hash, then the completed receipt
+  drops `intent`. Edited and unproven files are kept, the rest of the install
+  succeeds, and the report names `autorun --install --force` plus the backup
+  directory. A markerless cache adopts each file whose hash matches the bundled
+  payload; non-matching files remain unproven. Forced refresh backs every kept
+  file up under `~/.autorun/installer/backups/`, prints each generated path, and
+  then refreshes in place. The version root and `.venv` of every version are
+  never moved, renamed or deleted during install; Claude registration refresh
+  uses `plugin update`/`enable`, never an uninstall/reinstall cycle. Upgrades
+  retain every old version because a running session may still invoke its
+  captured hook command. Only explicit uninstall may retire a hash-proven,
+  unmodified selected-plugin version. Cache proof, refresh and retirement share
+  one metadata exclusion set for `.orphaned_at`, `.venv`, bytecode and
+  file-manager files. Foreign same-name trees are left and reported; caches
+  under another market or plugin are never visited.
 - **Never `uv tool uninstall` a name whose console script is also ours.** uv
   removes scripts by *name*, not by owner, and every uv tool shares one bin
   directory. Measured, with `autorun-ai` installed and providing all three:

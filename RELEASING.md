@@ -245,14 +245,21 @@ uv run --project plugins/autorun --locked python -c "from autorun.config import 
 # fix to hooks/hook_entry.py or hooks/hooks.json that never reaches the cache is
 # invisible: the live hook keeps running the previous file with nothing to say
 # so. The opt-in check below is what reads the cache, and it is meaningless
-# without this. To rehearse instead of committing, run the same command with
-# HOME, USERPROFILE, PI_CODING_AGENT_DIR, AUTORUN_HOME and
-# AUTORUN_TEST_STATE_DIR redirected to a scratch tree, as the marketplace
-# rehearsal below in this stage does, and skip the cache check.
+# without this. For an existing same-version Claude cache, --force refreshes
+# payload files through same-directory atomic replacement, keeps the version
+# root and .venv in place, backs every edited or unproven file up under
+# ~/.autorun/installer/backups/ and prints each backup path. It also reinstalls
+# this checkout non-editably into the existing cache venv; do not clear or
+# replace that venv, because running sessions retain its interpreter path.
+# To rehearse instead of committing, run the same command with HOME,
+# USERPROFILE, PI_CODING_AGENT_DIR, AUTORUN_HOME and AUTORUN_TEST_STATE_DIR
+# redirected to a scratch tree, as the marketplace rehearsal below in this
+# stage does, and skip the cache check.
 uv run --project plugins/autorun --locked python -m autorun --install --force
 # ─────────────────────────────────────────────────────────────────────────────
-# Hook configuration is read once at session start, so a hook change takes
-# effect in the NEXT session, not this one.
+# The command above restarts the shared daemon after a successful install.
+# Hook configuration is read once at session start, so a hook manifest change
+# takes effect in the NEXT session, not this one.
 
 # Opt-in, and only meaningful after that reinstall: the e2e tests read this
 # machine's installed copies (the Claude plugin cache carries this tree's hook
@@ -731,6 +738,11 @@ step.
    ```bash
    autorun --install --force
    ```
+
+   A same-version Claude cache is refreshed in place: the version root and
+   `.venv` keep their paths and inodes, edited or unproven files are copied to
+   the printed installer backup paths before replacement, and the pinned
+   distribution is reinstalled non-editably into the existing cache venv.
 
 3. **RELEASER live recovery action — restart the daemon from the recovery code:**
 
