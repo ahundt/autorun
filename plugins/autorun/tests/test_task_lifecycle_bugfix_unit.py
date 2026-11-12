@@ -131,6 +131,22 @@ class TestFix1NonBlockingStatuses:
         assert TaskLifecycle.NON_BLOCKING_STATUSES == frozenset(["completed", "deleted", "paused", "ignored", "delegated", "awaiting-user"])
 
 
+class TestUpdateOfARecordWithoutMetadata:
+    def test_status_update_of_a_record_stored_without_metadata(self, isolated_config, isolated_session_manager):
+        """update_task claims an inherited task and clears awaiting-user on
+        every update; a record stored with no metadata key must still update."""
+        manager = TaskLifecycle(session_id=f"test-no-metadata-{time.time()}", config=isolated_config)
+        manager.atomic_update_tasks(
+            lambda tasks: tasks.update(
+                {"9": {"id": "9", "subject": "Old record", "status": "pending", "created_at": 1.0, "updated_at": 1.0, "blockedBy": [], "blocks": [], "tool_outputs": []}}
+            )
+        )
+
+        manager.update_task("9", {"status": "in_progress"}, "started")
+
+        assert manager.tasks["9"]["status"] == "in_progress"
+
+
 # --- Fix 2: Ghost task returns sentinel ---
 
 

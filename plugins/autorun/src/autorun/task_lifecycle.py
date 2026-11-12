@@ -1824,15 +1824,16 @@ class TaskLifecycle:
             # This conversation's own update of a task it inherited from the
             # conversation it was forked from takes the task on: it blocks
             # from now on, and a later reprojection keeps it taken.
-            if task["metadata"].pop("inherited_from", None):
-                task["metadata"]["inherited_claimed"] = True
+            task_metadata = task.setdefault("metadata", {})
+            if task_metadata.pop("inherited_from", None):
+                task_metadata["inherited_claimed"] = True
 
             # Status transition (with ghost task protection)
             if "status" in updates:
                 old_status = task["status"]
                 if old_status == AWAITING_USER_STATUS:
                     # The agent resumed or settled it: no longer waiting on the user.
-                    task["metadata"].pop("awaiting_user", None)
+                    task_metadata.pop("awaiting_user", None)
                 new_status = updates["status"]
                 task_status_policy(new_status)
 
