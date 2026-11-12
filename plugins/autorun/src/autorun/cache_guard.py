@@ -16,6 +16,7 @@ statusline install, no new sync primitive, no new state file.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -548,6 +549,9 @@ _MEMO_TTL_SECONDS        = CONFIG["cache_guard_memo_ttl_seconds"]
 _GRANT_KEY = "cache/overrides"
 _LAST_USAGE_KEY = "cache/last_usage"
 _SNAPSHOT_KEY = "cache/statusline_snapshot"
+# sha256 of prompts the expiry check blocked; the same text then passes.
+_RESENT_PROMPTS_KEY = "cache/blocked_prompts"
+_RESENT_PROMPTS_KEPT = 50  # ponytail: oldest dropped; a block is rare, 50 covers a session
 
 
 @dataclass
@@ -600,8 +604,17 @@ class CacheGuard:
         if action == "warn":
             # Shown to the user only; the model gains nothing from it.
             return ctx.respond("allow", _render_expired(usage, self.config, blocking=False), to_ai=False)  # type: ignore[union-attr]
+        prompt = (ctx.prompt or "").strip()  # type: ignore[union-attr]
+        digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        if digest in (ctx.state_get(_RESENT_PROMPTS_KEY, []) or []):  # type: ignore[union-attr]
+            return None  # sent again after a block: the user chose to pay
         if self._consume_override(ctx):
             return None
+        ctx.state_update(  # type: ignore[union-attr]
+            _RESENT_PROMPTS_KEY,
+            lambda kept: [*(kept if isinstance(kept, list) else []), digest][-_RESENT_PROMPTS_KEPT:],
+            [],
+        )
         return ctx.deny(_render_expired(usage, self.config))  # type: ignore[union-attr]
 
     _INVALIDATING_EVENTS = frozenset({
