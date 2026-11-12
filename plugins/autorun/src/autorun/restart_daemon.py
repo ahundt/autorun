@@ -201,6 +201,22 @@ def cleanup_stale_files() -> None:
         if path.exists():
             path.unlink()
             removed.append(path.name)
+    # A killed daemon leaves daemon.flock, and a flock with no record is what
+    # sends get_daemon_pid() into its process scan. Remove it only by taking
+    # it: holding the lock proves no starting daemon or state lease owns it,
+    # and filelock's release unlinks the path while still holding the lock
+    # (an acquirer that opened the old file sees st_nlink == 0 and retries),
+    # the same take-and-release client.py's liveness probe already performs.
+    flock = ipc.daemon_flock_path(LOCK_PATH)
+    if flock.exists():
+        try:
+            with FileLock(str(flock), timeout=0):
+                pass
+        except (Timeout, OSError):
+            pass  # held: someone else's lock, never ours to remove
+        else:
+            if not flock.exists():
+                removed.append(flock.name)
     if removed:
         print(f"  Cleaned up stale files: {', '.join(removed)}")
 

@@ -1118,3 +1118,42 @@ class TestOnlyThisRuntimesDaemonIsSignalled:
         finally:
             proc.kill()
             proc.wait(timeout=10)
+
+    def test_cleanup_after_a_kill_removes_a_flock_nobody_holds(self, stale_home, capsys):
+        """The SIGKILL fallback's cleanup must not leave the flock-without-record
+        state that sends get_daemon_pid() into its process scan."""
+        from autorun.restart_daemon import cleanup_stale_files
+
+        (stale_home / "daemon.lock").write_text("999999999 0", encoding="utf-8")
+        cleanup_stale_files()
+        assert not (stale_home / "daemon.lock").exists()
+        assert not (stale_home / "daemon.flock").exists(), "a flock no process holds was left behind"
+        assert "daemon.flock" in capsys.readouterr().out
+
+    def test_cleanup_leaves_a_flock_another_process_holds(self, stale_home):
+        """A held flock is a starting daemon's or a state lease's: removing its
+        path would let a second daemon lock a new file beside it."""
+        import subprocess
+
+        from filelock import FileLock, Timeout
+
+        from autorun.restart_daemon import cleanup_stale_files
+
+        hold = (
+            "import sys, time; from filelock import FileLock; "
+            "lock = FileLock(sys.argv[1], timeout=0); lock.acquire(); "
+            "print('held', flush=True); time.sleep(60)"
+        )
+        flock = stale_home / "daemon.flock"
+        proc = subprocess.Popen(
+            [sys.executable, "-c", hold, str(flock)], stdout=subprocess.PIPE, text=True
+        )
+        try:
+            assert proc.stdout.readline().strip() == "held"
+            cleanup_stale_files()
+            assert flock.exists()
+            with pytest.raises(Timeout):
+                FileLock(str(flock), timeout=0).acquire()
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
