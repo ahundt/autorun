@@ -183,20 +183,6 @@ def apply_command_match(ctx, match: "CommandMatch") -> None:
     object.__setattr__(ctx, "_command_arguments", match.arguments)
 
 
-# === LEGACY GEMINI CLI PAYLOAD NORMALIZATION ===
-# Legacy Gemini CLI uses different event names and camelCase keys from Claude
-# Code. This mapping normalizes both formats to autorun's dispatcher names.
-
-# Event maps derive from autorun.platforms (single source of truth).
-# When @app.on handlers route either Gemini's PreCompress or Claude's
-# PreCompact, they listen to both directly in plugins.py without remapping.
-GEMINI_EVENT_MAP = dict(_PLATFORMS["gemini"].harness_cli_to_autorun_events)
-
-# Reverse mapping: internal event name → CLI-specific name.
-INTERNAL_TO_CLAUDE = dict(_PLATFORMS["claude"].autorun_to_harness_cli_events)
-INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].autorun_to_harness_cli_events)
-
-
 # === CLI TOOL GUIDANCE DISPATCH TABLE ===
 # Maps CLI type → {template_key: model-facing guidance} for suggestion strings.
 # Template keys ({read}, {edit}, etc.) are used in DEFAULT_INTEGRATIONS suggestion

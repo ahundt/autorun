@@ -51,8 +51,6 @@ from autorun.core import (
     format_suggestion,
     get_tool_names,
     CLI_TOOL_NAMES,
-    INTERNAL_TO_CLAUDE,
-    INTERNAL_TO_GEMINI,
     app,
     logger,
 )
@@ -1048,17 +1046,21 @@ class TestCLIEventNameMapping:
 
     def test_mapping_constants_complete(self):
         """Test mapping constants contain all expected events."""
+        from autorun.platforms import PLATFORMS
+
         # Verify Gemini mapping
-        assert "PreToolUse" in INTERNAL_TO_GEMINI
-        assert "PostToolUse" in INTERNAL_TO_GEMINI
-        assert "UserPromptSubmit" in INTERNAL_TO_GEMINI
-        assert "Stop" in INTERNAL_TO_GEMINI
+        to_gemini = PLATFORMS["gemini"].autorun_to_harness_cli_events
+        assert "PreToolUse" in to_gemini
+        assert "PostToolUse" in to_gemini
+        assert "UserPromptSubmit" in to_gemini
+        assert "Stop" in to_gemini
 
         # Verify Claude mapping (should be identity mapping)
-        assert "PreToolUse" in INTERNAL_TO_CLAUDE
-        assert "PostToolUse" in INTERNAL_TO_CLAUDE
-        assert "UserPromptSubmit" in INTERNAL_TO_CLAUDE
-        assert "Stop" in INTERNAL_TO_CLAUDE
+        to_claude = PLATFORMS["claude"].autorun_to_harness_cli_events
+        assert "PreToolUse" in to_claude
+        assert "PostToolUse" in to_claude
+        assert "UserPromptSubmit" in to_claude
+        assert "Stop" in to_claude
 
     def test_eventcontext_respond_uses_dynamic_event_names(self):
         """Test EventContext.respond() uses get_cli_event_name() for hookSpecificOutput."""

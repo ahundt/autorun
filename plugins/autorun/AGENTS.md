@@ -52,9 +52,9 @@ or they reach the live daemon; spec:
    `session_state()`; wrap legacy helpers in `state_synchronize`.
 3. **A new Claude event needs its Gemini analog in the same change:**
    `plugins.py:@app.on(...)`, the `harness_cli_to_autorun_events` maps of the
-   `gemini`, `antigravity` and `qwen` entries in `platforms.py` (`core.GEMINI_EVENT_MAP`
-   is derived from them), `tests/harness_hook_events.py`, and both
-   `hooks/hooks.json` and `src/autorun/gemini_template/hooks/hooks.json`.
+   `gemini`, `antigravity` and `qwen` entries in `platforms.py`,
+   `tests/harness_hook_events.py`, and both `hooks/hooks.json` and
+   `src/autorun/gemini_template/hooks/hooks.json`.
    `PreCompact` maps to `PreCompress`, which is advisory; there is no `PostCompress`.
 4. **New hook-stdin data needs a slot, a property, an `__init__` kwarg, and
    every `EventContext(...)` call site updated.** Never `getattr(ctx, "field",

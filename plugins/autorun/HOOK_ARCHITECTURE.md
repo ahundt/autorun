@@ -45,7 +45,7 @@ trims the transcript to about the last 64 KB unless `AUTORUN_NO_TRUNCATE=1`.
 
 **`platforms.py`** is the registry and the one owner of per-agent facts: event
 names in both directions (`harness_cli_to_autorun_events`,
-`autorun_to_harness_cli_events`; `core.GEMINI_EVENT_MAP` is derived from it),
+`autorun_to_harness_cli_events`),
 tool names (Claude `Write`/`Bash`/`Edit`, Gemini `write_file`/`run_shell_command`/`replace`),
 and the response protocol each agent reads. Nothing else should hard-code a
 harness name.

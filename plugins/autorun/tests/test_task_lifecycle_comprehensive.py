@@ -1045,12 +1045,14 @@ class TestGeminiSpecificPaths:
     """Gemini CLI event model, AfterAgent known gap, shared code parity."""
 
     def test_gemini_event_map_no_subagentstop(self):
-        from autorun.core import GEMINI_EVENT_MAP
-        assert "SubagentStop" not in GEMINI_EVENT_MAP
+        from autorun.platforms import PLATFORMS
+        gemini_events = PLATFORMS["gemini"].harness_cli_to_autorun_events
+        assert "SubagentStop" not in gemini_events
 
     def test_gemini_after_agent_maps_to_stop(self):
-        from autorun.core import GEMINI_EVENT_MAP
-        assert GEMINI_EVENT_MAP.get("AfterAgent") == "Stop"
+        from autorun.platforms import PLATFORMS
+        gemini_events = PLATFORMS["gemini"].harness_cli_to_autorun_events
+        assert gemini_events.get("AfterAgent") == "Stop"
 
     @pytest.mark.parametrize("status", ["completed", "deleted", "paused", "ignored", "delegated"])
     def test_gemini_non_blocking_status_allows_stop(self, status, isolated_session, cfg):
@@ -1088,8 +1090,9 @@ class TestGeminiSpecificPaths:
 
     def test_gemini_after_agent_blocked_known_gap(self, isolated_session, cfg):
         """AfterAgent→Stop is Gemini's known gap — still blocks in_progress."""
-        from autorun.core import GEMINI_EVENT_MAP
-        assert GEMINI_EVENT_MAP.get("AfterAgent") == "Stop"
+        from autorun.platforms import PLATFORMS
+        gemini_events = PLATFORMS["gemini"].harness_cli_to_autorun_events
+        assert gemini_events.get("AfterAgent") == "Stop"
         mgr = _mgr("gem-gap", cfg)
         mgr.create_task("t", {"subject": "T"}, "created")
         mgr.update_task("t", {"status": "in_progress"}, "started")
@@ -1109,9 +1112,10 @@ class TestGeminiSpecificPaths:
 
     def test_gemini_subagentstop_not_in_event_map(self):
         """Confirm SubagentStop is never dispatched via Gemini pathway."""
-        from autorun.core import GEMINI_EVENT_MAP
-        # SubagentStop must not be in GEMINI_EVENT_MAP (Gemini has no equivalent)
-        assert "SubagentStop" not in GEMINI_EVENT_MAP
+        from autorun.platforms import PLATFORMS
+        gemini_events = PLATFORMS["gemini"].harness_cli_to_autorun_events
+        # SubagentStop must not be in the Gemini event map (Gemini has no equivalent)
+        assert "SubagentStop" not in gemini_events
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

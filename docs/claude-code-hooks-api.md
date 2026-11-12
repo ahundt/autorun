@@ -243,9 +243,9 @@ When implementing a hook daemon that serves both Claude Code and Gemini CLI:
 - For Claude: Internal `"PreToolUse"` → keep as `"PreToolUse"`
 - For Gemini: Internal `"PreToolUse"` → convert to `"BeforeTool"`
 
-See `plugins/clautorun/src/clautorun/core.py` for reference implementation:
-- `GEMINI_EVENT_MAP` - Request normalization (line 88-95)
-- `get_cli_event_name()` - Response denormalization (line 119-131)
+Reference implementation in `plugins/autorun/src/autorun/`:
+- `harness_cli_to_autorun_events` of each `Platform` in `platforms.py` - Request normalization
+- `core.get_cli_event_name()` - Response denormalization
 
 ## Known Issues
 

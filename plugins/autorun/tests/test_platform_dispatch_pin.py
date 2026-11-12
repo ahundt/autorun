@@ -11,8 +11,8 @@ Dispatch surfaces covered (the 41-sites consolidation target):
   - core._bug_18534_human_channels()          — Bug #18534 workaround
   - core.get_tool_names()                     — tool-name dict per CLI
   - core.format_suggestion()                  — {tool} placeholder substitution
-  - core.GEMINI_EVENT_MAP                     — Gemini→internal event remap
-  - core.INTERNAL_TO_CLAUDE / INTERNAL_TO_GEMINI
+  - Platform.harness_cli_to_autorun_events   — Gemini→internal event remap
+  - Platform.autorun_to_harness_cli_events   — internal→Claude / Gemini
   - install.detect_available_clis() input shape (binary-presence dict)
 
 Concurrency note: pure read-only data structures — no fixtures required
@@ -26,10 +26,8 @@ import pytest
 from autorun import config as cfg_mod
 from autorun import core as core_mod
 from autorun.config import detect_cli_type
+from autorun.platforms import PLATFORMS
 from autorun.core import (
-    GEMINI_EVENT_MAP,
-    INTERNAL_TO_CLAUDE,
-    INTERNAL_TO_GEMINI,
     CLI_TOOL_NAMES,
     _bug_18534_human_channels,
     format_suggestion,
@@ -126,7 +124,7 @@ def test_get_cli_event_name_pin(internal, cli, expected):
     assert get_cli_event_name(internal, cli) == expected
 
 
-# ─── GEMINI_EVENT_MAP pin (frozen contract) ───────────────────────────────────
+# ─── Gemini event map pin (frozen contract) ───────────────────────────────────
 
 def test_gemini_event_map_pin():
     expected = {
@@ -141,7 +139,7 @@ def test_gemini_event_map_pin():
         "PreCompress": "PreCompress",
     }
     for k, v in expected.items():
-        assert GEMINI_EVENT_MAP.get(k) == v, f"GEMINI_EVENT_MAP[{k!r}] regressed"
+        assert PLATFORMS["gemini"].harness_cli_to_autorun_events.get(k) == v, f"gemini harness_cli_to_autorun_events[{k!r}] regressed"
 
 
 def test_internal_to_claude_pin():
@@ -149,10 +147,11 @@ def test_internal_to_claude_pin():
         "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop",
         "SessionStart", "SessionEnd", "BeforeModel", "AfterModel",
     }
-    assert expected.issubset(set(INTERNAL_TO_CLAUDE.keys()))
+    to_claude = PLATFORMS["claude"].autorun_to_harness_cli_events
+    assert expected.issubset(set(to_claude.keys()))
     # Identity invariant
-    for k, v in INTERNAL_TO_CLAUDE.items():
-        assert v == k, f"INTERNAL_TO_CLAUDE[{k!r}]={v!r} must be identity"
+    for k, v in to_claude.items():
+        assert v == k, f"claude autorun_to_harness_cli_events[{k!r}]={v!r} must be identity"
 
 
 def test_internal_to_gemini_pin():
@@ -163,7 +162,8 @@ def test_internal_to_gemini_pin():
         "Stop": "AfterAgent",
     }
     for k, v in expected.items():
-        assert INTERNAL_TO_GEMINI.get(k) == v, f"INTERNAL_TO_GEMINI[{k!r}] regressed"
+        assert PLATFORMS["gemini"].autorun_to_harness_cli_events.get(k) == v, \
+            f"gemini autorun_to_harness_cli_events[{k!r}] regressed"
 
 
 # ─── _bug_18534_human_channels pin ─────────────────────────────────────────────

@@ -362,14 +362,16 @@ class TestGeminiCompatibility:
     """Gemini CLI: Fix 1 is invisible; Fixes 2-4 work identically for both CLIs."""
 
     def test_gemini_event_map_has_no_subagentstop(self):
-        """Gemini has no SubagentStop — GEMINI_EVENT_MAP does not map it."""
-        from autorun.core import GEMINI_EVENT_MAP
-        assert "SubagentStop" not in GEMINI_EVENT_MAP
+        """Gemini has no SubagentStop — the Gemini event map does not map it."""
+        from autorun.platforms import PLATFORMS
+        gemini_events = PLATFORMS["gemini"].harness_cli_to_autorun_events
+        assert "SubagentStop" not in gemini_events
 
     def test_gemini_after_agent_maps_to_stop(self):
         """AfterAgent → Stop: Gemini behavior is UNCHANGED (known gap)."""
-        from autorun.core import GEMINI_EVENT_MAP
-        assert GEMINI_EVENT_MAP.get("AfterAgent") == "Stop"
+        from autorun.platforms import PLATFORMS
+        gemini_events = PLATFORMS["gemini"].harness_cli_to_autorun_events
+        assert gemini_events.get("AfterAgent") == "Stop"
 
     def test_gemini_stop_still_blocks_inprogress(self, isolated_session, isolated_config):
         """[REGRESSION] Gemini Stop with in_progress tasks still blocks."""
@@ -418,8 +420,9 @@ class TestGeminiCompatibility:
         so Gemini will still deadlock when using parallel agent delegation with
         in_progress tasks. Tracked here as expected behavior, not a regression.
         """
-        from autorun.core import GEMINI_EVENT_MAP
-        assert GEMINI_EVENT_MAP.get("AfterAgent") == "Stop"
+        from autorun.platforms import PLATFORMS
+        gemini_events = PLATFORMS["gemini"].harness_cli_to_autorun_events
+        assert gemini_events.get("AfterAgent") == "Stop"
         mgr = TaskLifecycle(session_id="gem-gap", config=isolated_config)
         mgr.create_task("1", {"subject": "Task A"}, "created")
         mgr.update_task("1", {"status": "in_progress"}, "started")

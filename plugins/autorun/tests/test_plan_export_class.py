@@ -1436,15 +1436,15 @@ class TestOption2ExportFlow:
     # ------------------------------------------------------------------
     # Gemini CLI first-class citizen tests
     # Gemini uses lowercase tool names: exit_plan_mode (not ExitPlanMode),
-    # write_file (not Write). Events are normalized by GEMINI_EVENT_MAP
-    # in core.py before reaching PlanExport, but tool_name stays lowercase.
+    # write_file (not Write). Events are normalized by the gemini entry of
+    # platforms.PLATFORMS (harness_cli_to_autorun_events) before reaching PlanExport, but tool_name stays lowercase.
     # PLAN_TOOLS = {"ExitPlanMode", "exit_plan_mode"} covers both CLIs.
     # ------------------------------------------------------------------
 
     def test_gemini_export_with_exit_plan_mode_tool_name(self, temp_project):
         """Gemini's exit_plan_mode (lowercase) triggers plan export same as Claude's ExitPlanMode.
 
-        Gemini AfterTool → normalized to PostToolUse by GEMINI_EVENT_MAP.
+        Gemini AfterTool → normalized to PostToolUse by the platform event map.
         Tool name stays as exit_plan_mode (lowercase). PLAN_TOOLS covers both.
         """
         store = ThreadSafeDB()
@@ -1981,7 +1981,7 @@ class TestPreToolUseBackup:
     # ------------------------------------------------------------------
     # Gemini CLI first-class citizen tests for PreToolUse backup
     # Gemini tool names: write_file (not Write), exit_plan_mode (not ExitPlanMode)
-    # BeforeTool normalized to PreToolUse by GEMINI_EVENT_MAP in core.py
+    # BeforeTool normalized to PreToolUse by the gemini platform event map
     # ------------------------------------------------------------------
 
     def test_gemini_write_file_tool_populates_active_plans(self, temp_project):
@@ -1997,7 +1997,7 @@ class TestPreToolUseBackup:
         store = ThreadSafeDB()
         ctx = EventContext(
             session_id="test-gemini-pre",
-            event="PreToolUse",  # normalized from BeforeTool by GEMINI_EVENT_MAP
+            event="PreToolUse",  # normalized from BeforeTool by the platform event map
             tool_name="write_file",  # Gemini's native tool name
             tool_input={"file_path": str(plan), "cwd": str(project_dir)},
             store=store

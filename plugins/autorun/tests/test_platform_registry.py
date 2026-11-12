@@ -648,18 +648,16 @@ def test_config_aliases_derived_from_platforms():
 
 
 def test_core_aliases_derived_from_platforms():
-    """core.CLI_TOOL_NAMES + INTERNAL_TO_GEMINI / INTERNAL_TO_CLAUDE must match
-    PLATFORMS data — no parallel maintenance.
+    """core.CLI_TOOL_NAMES must match PLATFORMS data — no parallel maintenance.
     """
     from autorun import core as core_mod
 
     # Tool names — both directions
     assert core_mod.CLI_TOOL_NAMES["claude"] == dict(PLATFORMS["claude"].tool_names)
     assert core_mod.CLI_TOOL_NAMES["gemini"] == dict(PLATFORMS["gemini"].tool_names)
-    # Event maps
-    expected_g2i = dict(PLATFORMS["gemini"].harness_cli_to_autorun_events)
-    for k, v in expected_g2i.items():
-        assert core_mod.GEMINI_EVENT_MAP.get(k) == v
+    # The event maps have no core alias left to drift: callers read
+    # PLATFORMS[...].harness_cli_to_autorun_events directly.
+    assert not hasattr(core_mod, "GEMINI_EVENT_MAP")
 
 
 # ─── Skill placement routing (one route per harness) ─────────────────────────
