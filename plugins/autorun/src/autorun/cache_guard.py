@@ -103,14 +103,46 @@ def parse_quantity(s: str, *, expect: Literal["tokens", "percent"]):
 # ── toggle ───────────────────────────────────────────────────────────
 
 _GLOBAL_SESSION_ID = "__global__"
-_TOGGLE_KEY = "cache/toggle"   # flat dict: {enabled, expires_at, prior}
+# flat dict: {enabled, expired_prompt_action, expires_at, prior}. `prior` is
+# the whole entry a timed toggle replaced, or None when there was none;
+# entries written before 1.0.0rc4 hold a bool there.
+_TOGGLE_KEY = "cache/toggle"
+_EXPIRED_PROMPT_ACTIONS = ("block", "warn")
+
+
+def _effective_entry(toggle) -> "dict | None":
+    """The entry in force now: a timed entry past its expiry yields its prior.
+
+    None means nothing is stored, so the caller falls back to the global
+    entry and then to CONFIG. Never raises on an old or malformed shape.
+    """
+    if not isinstance(toggle, dict) or not toggle:
+        return None
+    exp = toggle.get("expires_at")
+    if isinstance(exp, (int, float)) and time.time() >= exp:
+        prior = toggle.get("prior")
+        if isinstance(prior, bool):
+            return {"enabled": prior}
+        return _effective_entry(prior)
+    return toggle
+
+
+def _expired_prompt_action(entry: "dict | None") -> "str | None":
+    """`block`, `warn`, or None (off) for the prompt-time expiry check."""
+    default = CONFIG["cache_guard_expired_prompt_action"]
+    if entry is None:
+        return default
+    if not entry.get("enabled", False):
+        return None
+    action = entry.get("expired_prompt_action")
+    return action if action in _EXPIRED_PROMPT_ACTIONS else default
 
 
 def _read_toggle(session_id: str) -> dict:
     # ONE lock total — nested global read is reentrant (session_manager.py:172-175).
     with session_state(session_id) as st:
         t = st.get(_TOGGLE_KEY)
-        if t and isinstance(t, dict):
+        if _effective_entry(t) is not None:
             return t
         if session_id != _GLOBAL_SESSION_ID:
             with session_state(_GLOBAL_SESSION_ID) as gst:   # reentrant: 1 lock total
@@ -126,18 +158,14 @@ def is_cache_enabled(session_id: str) -> bool:
 
 def _toggle_enabled(toggle: dict) -> bool:
     """Resolve an enabled flag, including temporary override expiry."""
-    t = toggle or {}
-    exp = t.get("expires_at")
-    if exp and time.time() >= exp:
-        return bool(t.get("prior", False))   # revert to prior on TTL expiry
-    return bool(t.get("enabled", False))
+    return bool((_effective_entry(toggle) or {}).get("enabled", False))
 
 
 def _read_toggle_from_ctx(ctx: object, session_id: str) -> dict:
     """Read session then global toggle through the daemon's state cache."""
     state_get = getattr(ctx, "state_get")
     toggle = state_get(_TOGGLE_KEY, None, session_id=session_id)
-    if toggle and isinstance(toggle, dict):
+    if _effective_entry(toggle) is not None:
         return toggle
     if session_id != _GLOBAL_SESSION_ID:
         global_toggle = state_get(_TOGGLE_KEY, None, session_id=_GLOBAL_SESSION_ID)
@@ -146,17 +174,28 @@ def _read_toggle_from_ctx(ctx: object, session_id: str) -> dict:
     return {}
 
 
-def set_cache_enabled(session_id: str, enabled: bool, duration: float | None = None) -> None:
+def set_cache_enabled(
+    session_id: str,
+    enabled: bool,
+    duration: float | None = None,
+    expired_prompt_action: str = "block",
+) -> None:
     with session_state(session_id) as st:
         current = st.get(_TOGGLE_KEY)
-        if isinstance(current, dict) and current.get("expires_at") and time.time() < current["expires_at"]:
+        exp = current.get("expires_at") if isinstance(current, dict) else None
+        if isinstance(exp, (int, float)) and time.time() < exp:
             # Replacing a still-running temporary entry: its prior is the
             # standing state. Reading the effective state instead stored the
             # temporary value, so `off 1h` twice left the gate off for good.
-            prior = bool(current.get("prior", False))
+            prior = current.get("prior")
         else:
-            prior = is_cache_enabled(session_id)   # captured inside the lock (reentrant)
+            # The whole entry, so expiry restores the prompt action too; None
+            # when this session stored nothing, so expiry falls back to the
+            # global entry and then to CONFIG.
+            prior = _effective_entry(current)
         entry: dict = {"enabled": enabled}
+        if enabled:
+            entry["expired_prompt_action"] = expired_prompt_action
         if duration is not None:
             entry["expires_at"] = time.time() + duration
             entry["prior"] = prior
@@ -552,11 +591,15 @@ class CacheGuard:
         `read` and `age` thresholds stay at tool time in `check`. The caller
         decides which prompts reach it (the user's own, never a command).
         """
-        if not _toggle_enabled(_read_toggle_from_ctx(ctx, self.session_id)):
+        action = _expired_prompt_action(_effective_entry(_read_toggle_from_ctx(ctx, self.session_id)))
+        if action is None:
             return None
         usage = self._read_usage(ctx)
         if not _expired_trip(usage, self.config):
             return None
+        if action == "warn":
+            # Shown to the user only; the model gains nothing from it.
+            return ctx.respond("allow", _render_expired(usage, self.config, blocking=False), to_ai=False)  # type: ignore[union-attr]
         if self._consume_override(ctx):
             return None
         return ctx.deny(_render_expired(usage, self.config))  # type: ignore[union-attr]
@@ -659,17 +702,24 @@ def _duration_words(seconds: float) -> str:
     return f"{hours} h {minutes} m" if hours else f"{minutes} m"
 
 
-def _render_expired(usage: UsageReading, cfg: CacheGuardConfig) -> str:
-    """The prompt-time block message. Names no tool-time axis or hint."""
+def _render_expired(usage: UsageReading, cfg: CacheGuardConfig, *, blocking: bool = True) -> str:
+    """The prompt-time message. Names no tool-time axis or hint."""
     lifetime = usage.cache_lifetime_seconds or cfg.cache_age_max_seconds or 0
     ago = _duration_words(max(0.0, (usage.cache_age_seconds or 0) - lifetime))
     tokens = f"{round(usage.total_input_tokens or 0, -3):,}"
+    if blocking:
+        cost = f"Sending now re-writes about {tokens} tokens at the cache-write price.\n"
+        proceed = "  Send the same prompt again to proceed, or /ar:cache ok\n"
+        switch = "/ar:cache warn   tell me, do not stop me"
+    else:
+        cost = f"This prompt re-writes about {tokens} tokens at the cache-write price.\n"
+        proceed = ""
+        switch = "/ar:cache on     stop me before sending"
     return (
         f"ar:cache: this session's prompt cache expired {ago} ago.\n"
-        f"Sending now re-writes about {tokens} tokens at the cache-write price.\n"
-        "  Send the same prompt again to proceed, or /ar:cache ok\n"
+        f"{cost}{proceed}"
         "  /clear or a new session avoids the cost; /compact lowers later turns\n"
-        "  /ar:cache off        this session      /ar:cache warn   tell me, do not stop me\n"
+        f"  /ar:cache off        this session      {switch}\n"
         "  /ar:cache set expired-min-tokens 200k  only warn or block at this context size or larger"
     )
 
@@ -816,7 +866,7 @@ def _rate_limit_frac(v) -> float | None:
 
 # ── /ar:cache slash-command dispatcher ───────────────────────────────
 
-def _cmd_toggle(rest: list, session_id: str, target: bool) -> str:
+def _cmd_toggle(rest: list, session_id: str, target: bool, action: str = "block") -> str:
     # The /ar:ok scope grammar, minus counts: a toggle lasts a duration or perm.
     try:
         _ttl, uses, _perm = parse_scope_args(" ".join(rest))
@@ -825,8 +875,8 @@ def _cmd_toggle(rest: list, session_id: str, target: bool) -> str:
     if uses is not None:
         return "ar:cache: on/off takes a duration such as 5m or 1h, or perm; not a count."
     dur = _ttl
-    set_cache_enabled(session_id, target, duration=dur)
-    word = "enabled" if target else "disabled"
+    set_cache_enabled(session_id, target, duration=dur, expired_prompt_action=action)
+    word = ("enabled (warn only at prompt time)" if action == "warn" else "enabled") if target else "disabled"
     return f"ar:cache {word}{' for ' + ' '.join(rest) if dur else ''}."
 
 
@@ -836,6 +886,10 @@ def _cmd_on(rest: list, session_id: str) -> str:
 
 def _cmd_off(rest: list, session_id: str) -> str:
     return _cmd_toggle(rest, session_id, False)
+
+
+def _cmd_warn(rest: list, session_id: str) -> str:
+    return _cmd_toggle(rest, session_id, True, action="warn")
 
 
 def _cmd_set(rest: list, session_id: str) -> str:
@@ -900,19 +954,20 @@ _CACHE_HANDLERS: dict = {
     "": _cmd_status, "status": _cmd_status, "st": _cmd_status,
     "on": _cmd_on, "enable": _cmd_on,
     "off": _cmd_off, "disable": _cmd_off,
+    "warn": _cmd_warn,
     "set": _cmd_set, "ok": _cmd_ok, "no": _cmd_no,
 }
 
 
 def cache_command(args: str, session_id: str, cli_type: str | None = None) -> str:
-    """Dispatch /ar:cache subcommands. Grammar: on|off|set|ok|no|status [global]."""
+    """Dispatch /ar:cache subcommands. Grammar: on|warn|off|set|ok|no|status [global]."""
     parts = (args or "").strip().split()
     sub = (parts[0] if parts else "").lower()
     if sub == "global":
         return "[global] " + cache_command(" ".join(parts[1:]), _GLOBAL_SESSION_ID, cli_type)
     fn = _CACHE_HANDLERS.get(sub)
     if fn is None:
-        return f"ar:cache: unknown subcommand {sub!r}. Try: on, off, set, ok, no, status"
+        return f"ar:cache: unknown subcommand {sub!r}. Try: on, warn, off, set, ok, no, status"
     if fn is _cmd_status:
         return fn(parts[1:], session_id, cli_type)
     return fn(parts[1:], session_id)
@@ -939,11 +994,11 @@ def _render_status(session_id: str, cli_type: str | None = None) -> str:
                 g_toggle = gst.get(_TOGGLE_KEY)
                 g_thresh = gst.get(_THRESHOLD_KEY)
 
-    toggle_dict = (s_toggle if (s_toggle and isinstance(s_toggle, dict))
-                   else (g_toggle if (g_toggle and isinstance(g_toggle, dict)) else {}))
-    exp = toggle_dict.get("expires_at")
-    enabled = (bool(toggle_dict.get("prior", False)) if (exp and time.time() >= exp)
-               else bool(toggle_dict.get("enabled", False)))
+    entry = _effective_entry(s_toggle)
+    if entry is None:
+        entry = _effective_entry(g_toggle)
+    enabled = bool((entry or {}).get("enabled", False))
+    action = _expired_prompt_action(entry)
     _fields = CacheGuardConfig.__dataclass_fields__
     merged: dict = {}
     for blob in (g_thresh, s_thresh):
@@ -957,6 +1012,9 @@ def _render_status(session_id: str, cli_type: str | None = None) -> str:
     scope = "global" if session_id == _GLOBAL_SESSION_ID else "session"
     lines = [
         f"ar:cache [{scope}] — {'enabled' if enabled else 'disabled (default)'} — cli: {cli}",
+        f"prompt-time expiry check: {action or 'off'}"
+        f"{' (default)' if entry is None else ''}, context of"
+        f" {_expired_min_tokens(cfg):,} tokens or more",
         "thresholds:",
     ]
     configured = False

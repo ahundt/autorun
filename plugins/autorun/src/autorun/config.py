@@ -777,6 +777,12 @@ CONFIG = {
     # read + cache write tokens) at least this large. 0 checks every size.
     # `/ar:cache set expired-min-tokens <tokens>` overrides it per session.
     "cache_guard_expired_min_tokens": 100_000,
+    # What the prompt-time expiry check does when nothing is stored: "warn"
+    # shows the notice and lets the prompt through; "block" stops it until
+    # it is sent again. `/ar:cache on` stores block, `/ar:cache warn` warn,
+    # `/ar:cache off` turns the check off. Warn until the wrapper text of
+    # turns no person typed has been confirmed from captured payloads.
+    "cache_guard_expired_prompt_action": "warn",
     # ─── Hook Performance Budgets ───────────────────────────────────────────
     # Maximum time a hook-path state read/write may wait on the shared JSON
     # state lock. Longer waits cause Claude/Codex hook timeouts under many

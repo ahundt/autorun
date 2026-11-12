@@ -68,7 +68,11 @@ or they reach the live daemon; spec:
    whenever the data a threshold needs is missing.
 8. **Default off.** A new gate stays off until the user runs `/ar:<feature> on`;
    the cache gate reads its `cache/toggle` state through
-   `cache_guard._toggle_enabled`.
+   `cache_guard._toggle_enabled`. One exception: the cache guard's
+   prompt-time expiry check (`CacheGuard.check_prompt_after_expiry`) runs
+   with nothing stored, at CONFIG `cache_guard_expired_prompt_action`, which
+   is `warn`: it shows a notice and never stops a prompt unless the user
+   runs `/ar:cache on` (block). `/ar:cache off` turns it off.
 9. **Anchor `.gitignore` directory patterns with `/`** when you mean the repo
    root: unanchored `cache/` hid `plugins/autorun/skills/cache/` from git.
 10. **Harness hook-event allowlists have one owner, `tests/harness_hook_events.py`.**

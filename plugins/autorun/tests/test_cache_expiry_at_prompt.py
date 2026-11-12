@@ -299,7 +299,7 @@ def test_the_prompt_check_runs_after_every_state_writing_prompt_handler(clock, m
             spied.append(handler)
     monkeypatch.setitem(app.chains, "UserPromptSubmit", spied)
 
-    for mode in ("on",):
+    for mode in ("on", "warn"):
         ran.clear()
         response = armed(EXPIRED_1H, mode=mode).prompt("Continue with the refactor.")
         assert EXPIRED_NOTICE in text_of(response), f"{mode}: the check did not respond: {response}"
@@ -366,6 +366,51 @@ def test_warn_then_off_for_an_hour_returns_to_warn(clock):
     after = session.prompt("Now update the changelog.")
     assert not blocked(after), f"off 1h expired into block instead of the stored warn: {after}"
     assert EXPIRED_NOTICE in text_of(after), f"off 1h expired into off instead of warn: {after}"
+
+
+@pytest.mark.parametrize(("stored_enabled", "stored_prior"), [(False, True), (True, False), (True, True), (False, False)])
+def test_a_timed_toggle_stored_before_rc4_expires_to_its_bool_prior(clock, stored_enabled, stored_prior):
+    """rc3 stored `prior` as a bool. After upgrade it still decides the state.
+
+    A bool prior of True means the guard was on, with no prompt action
+    stored, so the prompt check takes the CONFIG default; False means off.
+    """
+    from autorun.cache_guard import _TOGGLE_KEY, is_cache_enabled
+    from autorun.session_manager import session_state
+
+    session = Session("claude", EXPIRED_1H)
+    with session_state(session.id) as st:
+        st[_TOGGLE_KEY] = {"enabled": stored_enabled, "prior": stored_prior, "expires_at": NOW - 60}
+
+    assert is_cache_enabled(session.id) is stored_prior
+    response = session.prompt("Continue with the refactor.")
+    if stored_prior:
+        assert EXPIRED_NOTICE in text_of(response), response
+        assert blocked(response) == (_default_action() == "block"), response
+    else:
+        assert EXPIRED_NOTICE not in text_of(response) and not blocked(response), response
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"enabled": True, "prior": "yes", "expires_at": NOW - 60},
+        {"enabled": True, "prior": {"expires_at": NOW - 120}, "expires_at": NOW - 60},
+        {"enabled": True, "expires_at": "tomorrow"},
+        {"enabled": True, "expired_prompt_action": "explode"},
+        ["not", "a", "dict"],
+    ],
+)
+def test_a_malformed_toggle_never_raises(clock, stored):
+    from autorun.cache_guard import _TOGGLE_KEY, cache_command
+    from autorun.session_manager import session_state
+
+    session = Session("claude", EXPIRED_1H)
+    with session_state(session.id) as st:
+        st[_TOGGLE_KEY] = stored
+    session.prompt("Continue with the refactor.")
+    assert "ar:cache" in cache_command("status", session.id)
+    assert "enabled" in cache_command("off 1h", session.id) or "disabled" in cache_command("off 1h", session.id)
 
 
 # ─── the context-size floor ───────────────────────────────────────────────
