@@ -674,20 +674,19 @@ _MARKER_SESSION_KEYWORDS = ("agent_session_id", "session")
 _AGENT_SPAWN_ID_RE = re.compile(r'\bagent(?:Id|_id)"?\s*:\s*"?([A-Za-z0-9][A-Za-z0-9-]{7,})')
 # A SubagentStop's transcript_path names the child: .../agent-<id>.jsonl.
 _AGENT_TRANSCRIPT_RE = re.compile(r"agent-([A-Za-z0-9-]{8,})\.jsonl$")
-# Storage bounds, not decisions. A claimed, unreturned spawn owns a delegated
-# task and is always kept. Only the newest unclaimed spawn can be claimed by a
-# marker that names no agent, so older unclaimed ones are kept only up to this
-# bound, and so is returned history.
+# A storage bound on returned history only. A spawn that has not returned,
+# claimed or not, is a child still running that a marker may name, so no count
+# drops it; it leaves the ledger by evidence (its SubagentStop, or its
+# harness process gone).
 _MAX_TRACKED_SPAWNS = 16
 _STATUS_FIELD_RE = re.compile(r'"status"\s*:\s*"([^"]+)"')
 
 
 def _bounded_spawn_ledger(entries: list[dict]) -> list[dict]:
-    """Every claimed unreturned spawn, plus bounded unclaimed and returned history."""
-    claimed = [entry for entry in entries if entry.get("claimed") and not entry.get("returned")]
-    unclaimed = [entry for entry in entries if not entry.get("claimed") and not entry.get("returned")]
+    """Every unreturned spawn, plus bounded returned history."""
+    running = [entry for entry in entries if not entry.get("returned")]
     returned = [entry for entry in entries if entry.get("returned")]
-    return claimed + unclaimed[-_MAX_TRACKED_SPAWNS:] + returned[-_MAX_TRACKED_SPAWNS:]
+    return running + returned[-_MAX_TRACKED_SPAWNS:]
 
 
 def _spawn_mode(cli_type: str | None, tool_result: str) -> str:
@@ -711,20 +710,32 @@ def _agent_receipt_key(cli_type: str, agent_id: str) -> str:
     return f"{cli_type}:{agent_id}"
 
 
-# ponytail: a storage bound on the machine-wide receipt registry. A receipt
-# whose child never reports (its harness was killed) is evicted oldest first
-# once this many are open; raise it if a returning child is ever not routed.
-_MAX_UNRESOLVED_DELEGATION_RECEIPTS = 1024
+def _bounded_delegation_receipts(receipts: dict[str, dict], *, reclaim: bool = False) -> dict[str, dict]:
+    """Every open receipt, plus bounded returned history.
 
+    An open receipt is the only way a child that reports in its own session
+    (Codex) reaches its parent, so no count drops it. With ``reclaim``, which
+    only SubagentStop passes, one whose recorded parent harness process is
+    gone is dropped: the child ran inside that process and cannot report.
+    One ``pid_exists`` per distinct recorded pid; a receipt without one stays.
+    """
+    alive: dict[int, bool] = {}
 
-def _bounded_delegation_receipts(receipts: dict[str, dict]) -> dict[str, dict]:
-    """Keep open authority up to a storage bound and bounded returned history."""
-    unresolved = dict(
-        sorted(
-            ((key, value) for key, value in receipts.items() if not value.get("returned")),
-            key=lambda item: float(item[1].get("at") or 0),
-        )[-_MAX_UNRESOLVED_DELEGATION_RECEIPTS:]
-    )
+    def harness_gone(receipt: dict) -> bool:
+        pid = receipt.get("harness_pid")
+        if not reclaim or not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            return False
+        if pid not in alive:
+            import psutil
+
+            alive[pid] = psutil.pid_exists(pid)
+        return not alive[pid]
+
+    unresolved = {
+        key: value
+        for key, value in receipts.items()
+        if not value.get("returned") and not harness_gone(value)
+    }
     resolved = sorted(
         (
             (key, value)
@@ -1183,7 +1194,7 @@ class TaskLifecycle:
         key = _agent_receipt_key(cli_type, agent_id)
         with self._delegation_receipt_state() as state:
             receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
-            bounded = _bounded_delegation_receipts(receipts)
+            bounded = _bounded_delegation_receipts(receipts, reclaim=True)
             if bounded != receipts:
                 state[_DELEGATION_RECEIPTS_FIELD] = bounded
             receipt = bounded.get(key)
@@ -3245,6 +3256,7 @@ class TaskLifecycle:
                             "parent_global_key": self.global_key,
                             "at": float(ledger_entry.get("at") or now),
                             "returned": bool(ledger_entry.get("returned")),
+                            "harness_pid": ctx.harness_pid,
                         }
                         receipt_state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(receipts)
         except Exception as exc:  # noqa: BLE001 - capture must never break the hook

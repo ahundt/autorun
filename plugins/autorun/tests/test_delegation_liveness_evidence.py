@@ -17,11 +17,15 @@ process dies at a Stop, are the end-to-end scenario in test_stop_gate_e2e.py.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 
 import pytest
 
+from autorun.session_manager import TASK_DELEGATION_RECEIPT_SESSION, session_state
 from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_env)
+    CODEX_SPAWN_ID,
+    DELEGATE,
     SPAWNS,
     Session,
     blocks,
@@ -89,3 +93,83 @@ def test_dead_harness_pid_reverts_at_session_start(gate_env, cli_type):
         f"{cli_type}: the harness process that ran the subagent is gone, yet #7 stayed {resumed.status('7')!r}"
     )
     assert "back to pending" in text(response), f"{cli_type}: no notice at SessionStart: {response}"
+
+
+def _seed_open_receipts(count: int, *, harness_pid: int, newer_than: float) -> None:
+    """``count`` children of other sessions, spawned after ``newer_than`` and still running."""
+    with session_state(TASK_DELEGATION_RECEIPT_SESSION) as state:
+        receipts = dict(state.get("receipts", {}))
+        for n in range(count):
+            receipts[f"codex:other-{n:05d}-0e6f-7bb2"] = {
+                "agent_id": f"other-{n:05d}-0e6f-7bb2",
+                "cli_type": "codex",
+                "parent_session_id": f"other-parent-{n}",
+                "at": newer_than + n + 1,
+                "returned": False,
+                "harness_pid": harness_pid,
+            }
+        state["receipts"] = receipts
+
+
+def _receipts() -> dict:
+    with session_state(TASK_DELEGATION_RECEIPT_SESSION) as state:
+        return dict(state.get("receipts", {}))
+
+
+def test_open_receipt_survives_any_number_of_newer_open_receipts(gate_env):
+    """A Codex child returns in its own session; only its receipt names the parent.
+    However many other children were spawned after it and are still running,
+    that receipt must still be there when the child reports."""
+    parent = _session("codex", "receipts")
+    parent.seed("7", "Sweep the fixtures")
+    parent.delegate("7")
+    assert parent.status("7") == "delegated"
+    _seed_open_receipts(1024, harness_pid=os.getpid(), newer_than=time.time())
+
+    parent.dispatch("SubagentStop", session_id=f"{parent.session_id}-child", agent_id=CODEX_SPAWN_ID)
+
+    assert parent.status("7") == "delegation-returned", (
+        f"the child's return was not routed to its parent: #7 is {parent.status('7')!r}, "
+        "because its receipt was evicted by a count of newer open receipts"
+    )
+
+
+def test_open_receipt_is_reclaimed_only_when_its_harness_process_is_gone(gate_env):
+    """Growth is bounded by evidence: a receipt whose parent harness exited is
+    dropped at the next SubagentStop; one whose harness runs is kept."""
+    gone, alive = dead_pid(), os.getppid()
+    _seed_open_receipts(3, harness_pid=gone, newer_than=time.time())
+    with session_state(TASK_DELEGATION_RECEIPT_SESSION) as state:
+        receipts = dict(state["receipts"])
+        receipts["codex:kept-0e6f-7bb2-9d1e"] = {
+            "agent_id": "kept-0e6f-7bb2-9d1e", "cli_type": "codex", "parent_session_id": "p",
+            "at": time.time(), "returned": False, "harness_pid": alive,
+        }
+        state["receipts"] = receipts
+    reporter = _session("codex", "reclaim")
+
+    reporter.dispatch("SubagentStop", agent_id="unrelated-0e6f-7bb2-9d1e")
+
+    left = _receipts()
+    assert "codex:kept-0e6f-7bb2-9d1e" in left, "a receipt whose harness still runs was dropped"
+    assert not [key for key in left if key.startswith("codex:other-")], (
+        f"receipts whose harness process exited were kept: {sorted(left)}"
+    )
+
+
+def test_every_unreturned_spawn_stays_in_the_ledger(gate_env):
+    """20 children spawned before any is claimed: each stays claimable with
+    its recorded mode, so naming the first one later still finds it."""
+    session = _session("codex", "ledger")
+    agent_ids = [f"01997b21-0e6f-7bb2-9d1e-{n:012d}" for n in range(20)]
+    for agent_id in agent_ids:
+        session.tool("spawn_agent", {"message": "sweep"}, {"agent_id": agent_id, "status": "spawned"})
+    session.seed("7", "Sweep the fixtures")
+
+    session.stop(DELEGATE.format(id=f"7, agent_session_id={agent_ids[0]}"))
+
+    record = session.task("7")["metadata"]["delegation"]
+    assert record["agent_id"] == agent_ids[0]
+    assert record["mode"] == "async", (
+        f"the first of 20 unclaimed spawns was evicted from the ledger by a count: mode {record['mode']!r}"
+    )
