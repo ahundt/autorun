@@ -429,3 +429,52 @@ class TestStorageFootprint:
             f"The write-ahead log reached {max(sizes)} bytes over 500 small "
             "writes, so it is being pinned rather than checkpointed."
         )
+
+
+# The prompt hook's whole budget is 10 s (hooks/hooks.json); the cache check
+# on it must stay a small part of that however long the transcript grows.
+PROMPT_CACHE_CHECK_P95_MS = 50.0
+
+
+def test_the_prompt_cache_check_stays_fast_on_a_100_mb_transcript(tmp_path, monkeypatch):
+    """Wall-clock companion to test_cache_expiry_at_prompt.py's byte count.
+
+    100 MB of unreadable head, an expired 250k-token record at the end. The
+    usage memo is disabled so every repetition reads the file again.
+    """
+    from autorun import cache_guard
+    from autorun.core import EventContext, ThreadSafeDB
+
+    fixture = PLUGIN_ROOT / "tests" / "fixtures" / "cache_expiry" / "claude_1h_lifetime_idle_2h_250k_tokens.jsonl"
+    big = tmp_path / "big.jsonl"
+    with open(big, "wb") as handle:
+        handle.seek(100 * 1_000_000)
+        handle.write(b"\n" + fixture.read_bytes())
+
+    state = tmp_path / "sessions"
+    state.mkdir()
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(state))
+    sm._reset_for_testing()
+
+    class Clock:
+        @staticmethod
+        def time() -> float:
+            return 1_794_398_400.0  # the fixture's "now": 2 h after its last record
+
+    monkeypatch.setattr(cache_guard, "time", Clock)
+    monkeypatch.setattr(cache_guard, "_MEMO_TTL_SECONDS", 0.0)
+    ctx = EventContext(
+        session_id="bench-prompt-cache",
+        event="UserPromptSubmit",
+        prompt="Continue with the refactor.",
+        cli_type="claude",
+        transcript_path=str(big),
+        store=ThreadSafeDB(),
+    )
+    guard = cache_guard.CacheGuard.from_ctx(ctx)
+    assert "cache expired" in json.dumps(guard.check_prompt_after_expiry(ctx))
+
+    timing = _time_repeatedly(lambda: guard.check_prompt_after_expiry(ctx))
+    print(f"prompt cache check on 100 MB: {timing}")
+    assert timing["p95_ms"] < PROMPT_CACHE_CHECK_P95_MS, timing
+    sm._reset_for_testing()

@@ -494,38 +494,70 @@ def test_where_a_prompt_cannot_be_blocked_the_check_warns_in_block_mode(clock, c
 # ─── cost bound ───────────────────────────────────────────────────────────
 
 
-def test_the_check_takes_under_50_ms_on_a_100_mb_transcript(clock, tmp_path):
+def _transcript_with_garbage_head(path: Path, head_bytes: int = 100 * 1_000_000) -> Path:
+    """A file of `head_bytes` zero bytes (no line is JSON) ending in EXPIRED_1H.
+
+    Written sparse: seeking past the end costs no disk time on any runner.
+    """
+    with open(path, "wb") as handle:
+        handle.seek(head_bytes)
+        handle.write(b"\n" + EXPIRED_1H.read_bytes())
+    return path
+
+
+def _prompt_context(transcript: Path) -> EventContext:
+    session = armed(transcript)
+    return EventContext(
+        session_id=session.id,
+        event="UserPromptSubmit",
+        prompt="Continue with the refactor.",
+        cli_type="claude",
+        transcript_path=str(transcript),
+        store=session.store,
+    )
+
+
+def test_the_check_reads_only_the_tail_of_a_100_mb_transcript(clock, tmp_path, monkeypatch):
+    """The cost bound as a property: bytes read, not wall-clock time.
+
+    The reader seeks from the end, so 100 MB of unreadable head is never
+    read. The wall-clock measurement lives in test_state_store_benchmark.py,
+    where timing runs alone.
+    """
+    from autorun import cache_guard
     from autorun.cache_guard import CacheGuard
 
-    big = tmp_path / "big.jsonl"
-    filler = json.dumps({"type": "user", "timestamp": "2026-11-11T09:00:00.000Z", "message": {"role": "user", "content": "x" * 10_000}}) + "\n"
-    chunk = filler * 100  # about 1 MB
-    with open(big, "w", encoding="utf-8") as handle:
-        for _ in range(100):
-            handle.write(chunk)
-        handle.write(EXPIRED_1H.read_text(encoding="utf-8"))
+    big = _transcript_with_garbage_head(tmp_path / "big.jsonl")
     assert big.stat().st_size >= 100 * 1_000_000
 
-    def context(transcript):
-        session = armed(transcript)
-        return EventContext(
-            session_id=session.id,
-            event="UserPromptSubmit",
-            prompt="Continue with the refactor.",
-            cli_type="claude",
-            transcript_path=str(transcript),
-            store=session.store,
-        )
+    read_bytes = []
+    real_open = open
 
-    warm = context(EXPIRED_1H)
-    check = getattr(CacheGuard.from_ctx(warm), "check_prompt_after_expiry", None)
-    assert check is not None, "CacheGuard.check_prompt_after_expiry is not defined"
-    check(warm)  # imports and first lock outside the measurement
+    class CountingFile:
+        def __init__(self, inner):
+            self._inner = inner
 
-    ctx = context(big)
-    guard = CacheGuard.from_ctx(ctx)
-    started = time.perf_counter()
-    result = guard.check_prompt_after_expiry(ctx)
-    elapsed = time.perf_counter() - started
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._inner.close()
+            return False
+
+        def seek(self, *args):
+            return self._inner.seek(*args)
+
+        def read(self, *args):
+            data = self._inner.read(*args)
+            read_bytes.append(len(data))
+            return data
+
+    def counting_open(path, mode="r", *args, **kwargs):
+        return CountingFile(real_open(path, mode, *args, **kwargs))
+
+    monkeypatch.setattr(cache_guard, "open", counting_open, raising=False)
+    ctx = _prompt_context(big)
+    result = CacheGuard.from_ctx(ctx).check_prompt_after_expiry(ctx)
     assert blocked(result), f"the 100 MB transcript ending in an expired record did not block: {result}"
-    assert elapsed < 0.050, f"the prompt-time check took {elapsed * 1000:.1f} ms on a 100 MB transcript"
+    bound = CONFIG["cache_guard_jsonl_scan_bytes"] + CONFIG["cache_guard_jsonl_retry_bytes"]
+    assert read_bytes and sum(read_bytes) <= bound, f"read {sum(read_bytes):,} bytes of a 100 MB file (bound {bound:,})"
