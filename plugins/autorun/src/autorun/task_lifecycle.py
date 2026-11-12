@@ -2950,12 +2950,28 @@ class TaskLifecycle:
         if not decisions:
             return [], unstated
 
+        prompt_marker = None
+        if platform_for(ctx.cli_type).policy_commands_arrive_in_transcript:
+            from .transcript_commands import latest_transcript_prompt
+
+            prompt = latest_transcript_prompt(ctx.transcript_path)
+            if prompt is None:
+                ctx.add_chain_notification(
+                    "Awaiting-user marker not recorded: no user prompt can be identified in the transcript. "
+                    "This harness may omit prompt hooks; the named tasks remain actionable until updated.",
+                    channel="both",
+                )
+                return [], unstated
+            prompt_marker = prompt.marker
+
         def entering(decision: str) -> Callable[[Dict], bool]:
             def update(task: Dict) -> bool:
                 status = task.get("status")
                 if status not in BLOCKING_TASK_STATUSES:
                     return False
                 task.setdefault("metadata", {})["awaiting_user"] = {"decision": decision, "previous_status": status}
+                if prompt_marker:
+                    task["metadata"]["awaiting_user"]["transcript_prompt_marker"] = prompt_marker
                 task["status"] = AWAITING_USER_STATUS
                 task.setdefault("tool_outputs", []).append(f"Waiting on the user: {decision}")
                 return True
@@ -2973,7 +2989,7 @@ class TaskLifecycle:
             self.log_event("AWAITING_USER", task_id, by_id[task_id].get("subject", ""), AWAITING_USER_STATUS, {"decision": decisions[task_id]})
         return entered, unstated
 
-    def restore_awaiting_user(self, ctx: EventContext) -> None:
+    def restore_awaiting_user(self, ctx: EventContext, *, expected_waits: Optional[Dict] = None) -> bool:
         """A prompt the user wrote: restart the loop guard and end awaiting-user.
 
         Only a prompt ``resolve_prompt_author`` credits to the user does
@@ -2985,27 +3001,37 @@ class TaskLifecycle:
         nothing waiting on the user writes nothing and reads no task row.
         """
         if resolve_prompt_author(ctx) != "user":
-            return
+            return False
         metadata = get_session_manager().read_field(self.global_key, "session_metadata", {}, timeout=self._state_lock_timeout)
         metadata = metadata if isinstance(metadata, dict) else {}
         waiting = [str(task_id) for task_id in metadata.get(_AWAITING_USER_INDEX, [])]
+        if expected_waits is not None:
+            waiting = [task_id for task_id in waiting if task_id in expected_waits]
         if not waiting:
-            if not _stop_sequence_is_reset(metadata):
+            if expected_waits is None and not _stop_sequence_is_reset(metadata):
                 self.atomic_update_metadata(_reset_stop_block_sequence)
-            return
+            return False
+
+        applied: set = set()
 
         def restored(task: Dict) -> bool:
             if task.get("status") != AWAITING_USER_STATUS:
+                return False
+            if expected_waits is not None and (task.get("metadata") or {}).get("awaiting_user") != expected_waits.get(str(task["id"])):
                 return False
             record = (task.get("metadata") or {}).pop("awaiting_user", None) or {}
             previous = record.get("previous_status")
             task["status"] = previous if previous in BLOCKING_TASK_STATUSES else "pending"
             task.setdefault("tool_outputs", []).append("The user replied; enforcement restored")
+            applied.add(str(task["id"]))
             return True
 
         def clear_index(metadata: Dict) -> None:
             _reset_stop_block_sequence(metadata)
-            metadata.pop(_AWAITING_USER_INDEX, None)
+            if expected_waits is None:
+                metadata.pop(_AWAITING_USER_INDEX, None)
+            else:
+                metadata[_AWAITING_USER_INDEX] = [task_id for task_id in metadata.get(_AWAITING_USER_INDEX, []) if str(task_id) not in applied]
 
         changed = self._update_task_rows({task_id: restored for task_id in waiting}, clear_index)
         for task_id in changed:
@@ -3016,6 +3042,44 @@ class TaskLifecycle:
                 "blocking again until done.",
                 channel="ai",
             )
+        return bool(changed)
+
+    def _restore_awaiting_user_from_transcript(self, ctx: EventContext, tasks: Dict) -> tuple[bool, list[str]]:
+        """Restore on a newer user entry; missing evidence keeps tasks actionable."""
+        if not platform_for(ctx.cli_type).policy_commands_arrive_in_transcript:
+            return False, []
+        waiting = {task_id: task for task_id, task in tasks.items() if task.get("status") == AWAITING_USER_STATUS}
+        if not waiting:
+            return False, []
+        from .plugins import _transcript_policy_context
+        from .transcript_commands import latest_transcript_prompt
+
+        prompt = latest_transcript_prompt(ctx.transcript_path)
+        fallback = _transcript_policy_context(ctx, prompt.text) if prompt else None
+        if fallback is not None and resolve_prompt_author(fallback) != "user":
+            return False, []
+        answered = {}
+        unverified = []
+        for task_id, task in waiting.items():
+            record = (task.get("metadata") or {}).get("awaiting_user") or {}
+            baseline = record.get("transcript_prompt_marker")
+            if prompt and baseline == prompt.marker:
+                continue
+            # Decide safely even if recording the restoration subsequently fails.
+            previous = record.get("previous_status")
+            task["status"] = previous if previous in BLOCKING_TASK_STATUSES else "pending"
+            if prompt and baseline:
+                answered[task_id] = copy.deepcopy(record)
+            else:
+                unverified.append(task_id)
+        notes = []
+        if unverified:
+            notes.append(
+                f"Cannot verify user replies from the transcript for {_task_refs(unverified)}. "
+                "Those tasks are actionable for this Stop; update their status explicitly."
+            )
+        restored = self.restore_awaiting_user(fallback, expected_waits=answered) if answered else False
+        return restored, notes
 
     def _apply_stop_markers(self, ctx: EventContext, tasks: Dict[str, Dict]) -> tuple[bool, list[str]]:
         """Apply the agent's markers against the tasks blocking now.
@@ -3145,6 +3209,14 @@ class TaskLifecycle:
                 notes.append(f"⚠️ autorun could not record {what}: {exc}. This Stop is decided from the task state as it was.")
                 return unchanged
 
+        restored, transcript_notes = recorded(
+            "the user's transcript reply",
+            lambda: self._restore_awaiting_user_from_transcript(ctx, tasks),
+            (False, []),
+        )
+        notes.extend(transcript_notes)
+        if restored:
+            tasks, metadata, unknown = self._open_task_snapshot()
         changed, marker_notes = recorded("the markers in your last reply", lambda: self._apply_stop_markers(ctx, tasks), (False, []))
         notes[:0] = marker_notes
         if changed:

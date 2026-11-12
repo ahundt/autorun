@@ -30,6 +30,13 @@ class _TranscriptPrompt:
     marker: str
 
 
+def latest_transcript_prompt(
+    path: str | None, *, max_bytes: int = DEFAULT_TRANSCRIPT_COMMAND_SCAN_BYTES
+) -> _TranscriptPrompt | None:
+    """Newest user entry from the same bounded parser used for policy commands."""
+    return next(_iter_user_prompts_from_tail(path, max_bytes=max_bytes), None) if path else None
+
+
 def latest_transcript_command(
     path: str | None,
     *,
@@ -46,7 +53,8 @@ def latest_transcript_command(
     if not path:
         return None
 
-    for prompt in _iter_user_prompts_from_tail(path, max_bytes=max_bytes):
+    prompt = latest_transcript_prompt(path, max_bytes=max_bytes)
+    if prompt is not None:
         command_line = first_non_empty_line(prompt.text)
         canonical = canonicalize_command_prompt(command_line, cli_type)
         command = canonical.split(maxsplit=1)[0] if canonical else ""

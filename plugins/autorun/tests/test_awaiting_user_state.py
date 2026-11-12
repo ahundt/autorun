@@ -17,6 +17,8 @@ decisions file item 3 (handler order).
 from __future__ import annotations
 
 import uuid
+import json
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +38,92 @@ from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_
 )
 
 DECISION = "approve pushing release-1.0 to origin/main"
+TRANSCRIPT_PLATFORMS = [name for name, platform in PLATFORMS.items() if platform.policy_commands_arrive_in_transcript]
+
+
+@pytest.mark.parametrize("cli_type", TRANSCRIPT_PLATFORMS)
+def test_transcript_reply_restores_waiting_task_without_prompt_hook(gate_env, tmp_path, cli_type):
+    fixture = Path(__file__).parent / "fixtures/cache_expiry/codex_rollout_no_usable_record.jsonl"
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_bytes(fixture.read_bytes())
+    session = _session(cli_type, "transcript-reply")
+    session.seed("7", "Push release-1.0")
+    assert not blocks(session.stop(awaiting("7", DECISION), transcript_path=str(transcript)), cli_type)
+    assert session.status("7") == "awaiting-user"
+    assert not blocks(session.stop("Waiting", transcript_path=str(transcript)), cli_type)
+    # Replay the fixture's user-message shape as the next typed reply.
+    reply = json.loads(transcript.read_text().splitlines()[1])
+    reply["timestamp"] = "2026-11-11T10:01:00.000Z"
+    reply["payload"]["content"][0]["text"] = "Approved; continue"
+    with transcript.open("a") as stream:
+        stream.write(json.dumps(reply) + "\n")
+    response = session.stop("Work remains.", transcript_path=str(transcript))
+    assert blocks(response, cli_type), f"a transcript reply left the task exempt: {response}"
+    assert session.status("7") == "in_progress"
+
+
+@pytest.mark.parametrize("author", ["subagent", "automation", "model", "harness"])
+@pytest.mark.parametrize("cli_type", TRANSCRIPT_PLATFORMS)
+def test_transcript_fallback_uses_the_prompt_author_guard(gate_env, tmp_path, author, cli_type):
+    fixture = Path(__file__).parent / "fixtures/cache_expiry/codex_rollout_no_usable_record.jsonl"
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_bytes(fixture.read_bytes())
+    session = _session(cli_type, "transcript-author")
+    session.seed("7", "Push release-1.0")
+    session.stop(awaiting("7", DECISION), transcript_path=str(transcript))
+    reply = json.loads(transcript.read_text().splitlines()[1])
+    reply["timestamp"] = "2026-11-11T10:01:00.000Z"
+    reply["payload"]["content"][0]["text"] = "A new turn"
+    with transcript.open("a") as stream:
+        stream.write(json.dumps(reply) + "\n")
+    fields = {"prompt_author": author}
+    if author == "subagent":
+        fields = {"agent_id": "child", "prompt_author": "user"}
+    session.stop("Waiting", transcript_path=str(transcript), **fields)
+    assert session.status("7") == "awaiting-user"
+
+
+@pytest.mark.parametrize("cli_type", TRANSCRIPT_PLATFORMS)
+def test_transcript_evidence_missing_keeps_tasks_actionable_and_says_why(gate_env, cli_type):
+    session = _session(cli_type, "transcript-missing")
+    session.seed("7", "Push release-1.0")
+    response = session.stop(awaiting("7", DECISION), transcript_path=None)
+    assert blocks(response, cli_type)
+    assert session.status("7") == "in_progress"
+    assert "no user prompt can be identified" in text(response)
+    _enter(session)
+    response = session.stop("Waiting", transcript_path=None)
+    assert blocks(response, cli_type), "losing the transcript silently exempted the task"
+    assert "Cannot verify user replies" in text(response)
+
+
+@pytest.mark.parametrize("cli_type", TRANSCRIPT_PLATFORMS)
+def test_legacy_waiting_decision_without_prompt_identity_is_actionable(gate_env, cli_type):
+    session = _session(cli_type, "legacy-transcript")
+    session.seed("7", "Push release-1.0", status="awaiting-user")
+    response = session.stop("Waiting")
+    assert blocks(response, cli_type)
+    assert "Cannot verify user replies" in text(response)
+
+
+@pytest.mark.parametrize("cli_type", TRANSCRIPT_PLATFORMS)
+def test_transcript_restoration_write_failure_keeps_task_actionable(gate_env, tmp_path, monkeypatch, cli_type):
+    from autorun.task_lifecycle import TaskLifecycle
+
+    fixture = Path(__file__).parent / "fixtures/cache_expiry/codex_rollout_no_usable_record.jsonl"
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_bytes(fixture.read_bytes())
+    session = _session(cli_type, "transcript-write-failure")
+    session.seed("7", "Push release-1.0")
+    session.stop(awaiting("7", DECISION), transcript_path=str(transcript))
+    reply = json.loads(transcript.read_text().splitlines()[1])
+    reply["timestamp"] = "2026-11-11T10:01:00.000Z"
+    with transcript.open("a") as stream:
+        stream.write(json.dumps(reply) + "\n")
+    monkeypatch.setattr(TaskLifecycle, "restore_awaiting_user", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")))
+    response = session.stop("Work remains", transcript_path=str(transcript))
+    assert blocks(response, cli_type)
+    assert "disk full" in text(response)
 
 
 def test_deferred_upgrade_records_marker_and_restores_on_reply(gate_env, monkeypatch):

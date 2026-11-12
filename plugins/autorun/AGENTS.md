@@ -169,6 +169,17 @@ blocker that is still open, a row a fork inherited). Keep it that way:
 - The awaiting-user clear runs inside `reset_stop_sequence_on_user_prompt`,
   the first UserPromptSubmit handler, and returns `None`; the prompt-time
   cache check stays last (`tests/test_cache_expiry_at_prompt.py`).
+- Where `Platform.policy_commands_arrive_in_transcript` is true, Stop also
+  restores on a different user-authored transcript prompt from the one stored
+  with the decision. Reuse `latest_transcript_prompt` and
+  `plugins._transcript_policy_context` with `resolve_prompt_author`; never add
+  a second parser. The Codex `response_item` user shape is covered by
+  `tests/fixtures/cache_expiry/codex_rollout_no_usable_record.jsonl`.
+  A missing prompt identity refuses a new awaiting-user marker. Missing
+  transcript evidence or a legacy decision without that identity makes the
+  task actionable for Stop and prints why; it cannot stay silently exempt.
+  Restoration compares the recorded decision before writing so an older
+  reply cannot clear a newer decision. This fallback adds no per-tool work.
 - Who wrote a prompt is `core.resolve_prompt_author`; which conversation an
   event belongs to is `core.resolve_conversation_role`. New code asks these
   rather than reading `agent_id` or `source` to decide either.

@@ -150,6 +150,8 @@ class Session:
     harness_pid: int = field(default_factory=os.getpid)
 
     def context(self, event: str, **fields) -> EventContext:
+        if PLATFORMS[self.cli_type].policy_commands_arrive_in_transcript:
+            fields.setdefault("transcript_path", str(Path(__file__).parent / "fixtures/cache_expiry/codex_rollout_no_usable_record.jsonl"))
         fields.setdefault("session_transcript", [])
         fields.setdefault("tool_input", {})
         fields.setdefault("active_tools", task_tool_evidence(self.cli_type))
