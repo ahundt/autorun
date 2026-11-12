@@ -46,7 +46,7 @@ from ..platforms import PLATFORMS, is_packaged_skill_route
 from .fs import Verdict, edit_target, handed_over, owns, preserved_paths, read_marker, record_tree
 from . import runtime
 from .runtime import Outcome, Runner, _spawn
-from .traversal import Context, Mode, retirements, run, targets
+from .traversal import Context, Mode, backup_root, retirements, run, targets
 
 __all__ = ["Result", "perform", "install", "uninstall", "preview"]
 
@@ -657,6 +657,7 @@ def _registrations(
             with preserved_paths(rollback_paths) as commit_registration:
                 if (
                     force_registration
+                    and flavor != "claude"
                     and not removing
                     and (registration_owned or not target_present)
                 ):
@@ -726,6 +727,7 @@ def _registrations(
                         )
                         cached = None
                         filled = None
+                        cache_backups: list[Path] = []
                         try:
                             cached = claude.cache_dir(
                                 platform,
@@ -746,7 +748,14 @@ def _registrations(
                                 if filled is not None:
                                     cached = filled
                             if cached is not None:
-                                claude.refresh_cache(source, cached, plugin=plugin)
+                                claude.refresh_cache(
+                                    source,
+                                    cached,
+                                    plugin=plugin,
+                                    force=ctx.force,
+                                    backup_root=backup_root(ctx),
+                                    backed_up=cache_backups,
+                                )
                                 if claude.substitute_root(cached):
                                     if not claude.record_cache(source, cached, plugin=plugin):
                                         raise RuntimeError(f"could not record substituted cache payload at {cached}")
@@ -785,10 +794,18 @@ def _registrations(
                             )
                             outcomes = (cache_failure,) if failed else (*outcomes, cache_failure)
                         else:
+                            if cache_backups:
+                                outcomes = (*outcomes, *(
+                                    Outcome(f"{name}: cache backup", True, str(path))
+                                    for path in cache_backups
+                                ))
                             if failed and filled is not None:
                                 outcomes = (Outcome(
                                     f"{name}: cache fallback", True, failed
-                                ),)
+                                ), *(
+                                    Outcome(f"{name}: cache backup", True, str(path))
+                                    for path in cache_backups
+                                ))
                 cache_lifecycle_ok = (
                     flavor == "claude"
                     and removing

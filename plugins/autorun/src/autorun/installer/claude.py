@@ -203,26 +203,40 @@ def refresh_cache(
     directory: Path,
     *,
     plugin: str = "",
+    force: bool = False,
+    backup_root: Path | None = None,
+    backed_up: list[Path] | None = None,
     after_step: Callable[[str], None] | None = None,
 ) -> Path | None:
-    """Refresh stale payload files in place while retaining Claude's private venv."""
+    """Refresh stale payload files in place while retaining Claude's private venv.
+
+    A forced refresh widens only the replacement of edited or unrecorded payload
+    files, and copies each such file to ``backup_root`` before the first cache
+    mutation. The version directory and ``.venv`` are never moved.
+    """
     plugin = plugin or _manifest_name(source)
     if not plugin:
         return None
     if read_marker(directory) is None and not record_cache(source, directory, plugin=plugin):
         raise RuntimeError(f"KEEP {directory}: unproven cache payload")
     kept = _cache_keep_paths(directory, plugin)
-    if kept:
+    if kept and not force:
         raise RuntimeError(f"KEEP {directory}: " + ", ".join(kept))
+    if kept and backup_root is None:
+        raise RuntimeError(f"KEEP {directory}: backup root required before forced refresh")
     if not cache_mismatches(source, directory):
         return None
     refreshed = refresh_unmarked_tree(
         source,
         directory,
         ownership_proof=lambda installed: (
-            cache_owned(installed, plugin) and not _cache_keep_paths(installed, plugin)
+            cache_owned(installed, plugin)
+            and (force or not _cache_keep_paths(installed, plugin))
         ),
         preserve_names=(".venv",),
+        backup_relatives=kept,
+        backup_root=backup_root,
+        backed_up=backed_up,
         after_step=after_step,
     )
     if not refreshed:

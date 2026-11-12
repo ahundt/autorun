@@ -1035,6 +1035,9 @@ def refresh_unmarked_tree(
     *,
     ownership_proof: Callable[[Path], bool],
     preserve_names: Iterable[str] = (),
+    backup_relatives: Iterable[str] = (),
+    backup_root: Path | None = None,
+    backed_up: list[Path] | None = None,
     after_step: Callable[[str], None] | None = None,
 ) -> bool:
     """Refresh a proven harness cache without moving its public directory.
@@ -1098,6 +1101,24 @@ def refresh_unmarked_tree(
                 raise _PublicationRefused(Decision(Verdict.KEEP, target, "ownership proof failed"))
         except (OSError, RuntimeError, ValueError) as error:
             raise _PublicationRefused(Decision(Verdict.KEEP, target, str(error))) from error
+
+        wanted_backups = tuple(sorted(set(backup_relatives)))
+        if wanted_backups and backup_root is None:
+            raise _PublicationRefused(
+                Decision(Verdict.KEEP, target, "backup root required before forced refresh")
+            )
+        for relative in wanted_backups:
+            target_path = destination(relative)
+            if not (target_path.is_file() or target_path.is_symlink()):
+                continue
+            assert backup_root is not None
+            backup = _park_backup(
+                target_path,
+                backup_root,
+                name=f"{target.name}-{relative.replace('/', '-')}",
+            )
+            if backed_up is not None:
+                backed_up.append(backup)
 
         for relative in sorted(expected):
             source_path = source / relative

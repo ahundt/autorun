@@ -1593,6 +1593,95 @@ def test_plain_claude_registration_repairs_same_version_cache_payload(tmp_path, 
     assert runtime.read_text(encoding="utf-8") == "runtime\n"
 
 
+def test_forced_same_version_claude_refresh_preserves_runtime_and_backs_up_edit(
+    tmp_path, monkeypatch
+):
+    import subprocess
+    from autorun.installer import runtime
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    base = _home_context(tmp_path, monkeypatch, tmp_path)
+    backups = tmp_path / "backups"
+    ctx = Context(
+        marketplace_root=base.marketplace_root,
+        home=base.home,
+        settings={"_backup_root": str(backups)},
+        force=True,
+    )
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+    )
+    (plugin / "hooks").mkdir()
+    (plugin / "hooks" / "hook_entry.py").write_text(
+        "import json, sys\njson.load(sys.stdin)\nprint(json.dumps({'answer': 'running'}))\n",
+        encoding="utf-8",
+    )
+    shipped = plugin / "config.py"
+    shipped.write_text("shipped = True\n", encoding="utf-8")
+    cached = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
+    cached.parent.mkdir(parents=True)
+    shutil.copytree(plugin, cached)
+    assert record_tree(cached, plugin="ar", ownership_proof=lambda installed: installed == cached)
+    edited = cached / "config.py"
+    edited.write_text("user_edit = True\n", encoding="utf-8")
+
+    cached_python = runtime.cache_venv_python(cached)
+    cached_python.parent.mkdir(parents=True)
+    if os.name == "nt":
+        shutil.copy2(sys.executable, cached_python)
+    else:
+        cached_python.symlink_to(sys.executable)
+    root_inode = cached.stat().st_ino
+    venv_inode = (cached / ".venv").stat().st_ino
+    hook_command = [str(cached_python), str(cached / "hooks" / "hook_entry.py")]
+
+    def run_hook():
+        result = subprocess.run(
+            hook_command,
+            input=json.dumps({"hook_event_name": "PreToolUse"}),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        assert json.loads(result.stdout) == {"answer": "running"}
+
+    calls = []
+    displaced = tmp_path / "native-uninstalled-cache"
+
+    def native(argv):
+        call = tuple(argv)
+        calls.append(call)
+        if call[:3] == ("claude", "plugin", "uninstall"):
+            os.replace(cached, displaced)
+        elif call[:3] == ("claude", "plugin", "update"):
+            if not cached.exists():
+                shutil.copytree(plugin, cached)
+            run_hook()
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    run_hook()
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
+        removing=False, run=native, available=("claude",),
+    )
+    run_hook()
+
+    assert calls == [
+        ("claude", "plugin", "update", "ar@autorun"),
+        ("claude", "plugin", "enable", "ar@autorun"),
+    ]
+    assert outcomes and all(outcome.ok for outcome in outcomes)
+    assert cached.stat().st_ino == root_inode
+    assert (cached / ".venv").stat().st_ino == venv_inode
+    assert edited.read_text(encoding="utf-8") == "shipped = True\n"
+    backup = next(backups.iterdir())
+    assert backup.read_text(encoding="utf-8") == "user_edit = True\n"
+    assert any(str(backup) in outcome.detail for outcome in outcomes)
+
+
 def test_claude_upgrade_keeps_superseded_cache_hook_runnable(tmp_path, monkeypatch):
     import shutil
     import subprocess
