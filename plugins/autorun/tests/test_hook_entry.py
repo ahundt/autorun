@@ -609,6 +609,23 @@ class TestHookEntryExecutionPriority:
 
         assert "antigravity" in hook_entry._VALID_CLI_TYPES
 
+    def test_explicit_installed_event_overrides_unknown_payload_event(self, monkeypatch):
+        """The command is trusted installer data; payload event text is not."""
+        hook_entry = load_hook_entry_module()
+        monkeypatch.setattr(
+            hook_entry.sys,
+            "argv",
+            ["hook_entry.py", "--cli", "claude", "--event", "PreToolUse"],
+        )
+        monkeypatch.setattr(
+            hook_entry.sys,
+            "stdin",
+            io.StringIO(json.dumps({"hook_event_name": "FutureUnknownEvent"})),
+        )
+
+        assert hook_entry._peek_event_name() == "PreToolUse"
+        assert hook_entry.is_tool_gate_event(hook_entry._peek_event_name())
+
     def test_antigravity_entry_injects_manifest_event_and_common_aliases(
         self, monkeypatch
     ):
@@ -794,7 +811,11 @@ class TestHookEntryExecutionPriority:
 
         hook_entry = load_hook_entry_module()
         assert hook_entry._TOOL_GATE_EVENTS == set(_TOOL_GATE_EVENTS)
-        assert hook_entry._VALID_EXPLICIT_EVENTS == set(PLATFORMS["antigravity"].native_hook_events)
+        assert hook_entry._VALID_EXPLICIT_EVENTS == {
+            event
+            for platform in PLATFORMS.values()
+            for event in platform.native_hook_events
+        }
 
     @pytest.mark.parametrize("cli_type", sorted(p.name for p in _hook_platforms()))
     def test_tool_gate_fail_closed_matches_canonical_platform_schema(
@@ -1598,6 +1619,22 @@ class TestHooksJson:
                     # Should use hook_entry.py wrapper
                     if "autorun" in command.lower():
                         assert "hook_entry.py" in command
+
+    def test_each_installed_command_carries_its_event_and_is_valid_shell(self):
+        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
+        data = json.loads(hooks_json.read_text(encoding="utf-8"))
+
+        for event, matchers in data["hooks"].items():
+            for matcher in matchers:
+                for hook in matcher["hooks"]:
+                    command = hook["command"]
+                    assert command.count(f"--event {event}") == 2, (event, command)
+                    checked = subprocess.run(
+                        ["bash", "-n", "-c", command],
+                        capture_output=True,
+                        text=True,
+                    )
+                    assert checked.returncode == 0, (event, checked.stderr)
 
     def test_no_shell_script_reference(self):
         """claude-hooks.json does not reference old shell script."""

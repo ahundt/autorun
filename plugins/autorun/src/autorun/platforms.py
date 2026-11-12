@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -536,21 +537,49 @@ class HookProtocol:
         """Return None so the shared response validator handles this harness."""
         return None
 
+    @staticmethod
+    def _with_installed_event(value: object, event: str) -> object:
+        """Copy a manifest value and bind hook commands to their installed event."""
+        if isinstance(value, list):
+            return [HookProtocol._with_installed_event(item, event) for item in value]
+        if not isinstance(value, dict):
+            return value
+        copied = {
+            key: HookProtocol._with_installed_event(item, event)
+            for key, item in value.items()
+        }
+        command = copied.get("command")
+        if isinstance(command, str) and (
+            "hook_entry.py" in command or "autorun --cli" in command
+        ):
+            if re.search(r"(?:^|\s)--event(?:=|\s+)\S+", command):
+                copied["command"] = re.sub(
+                    r"(?:(?<=\s)|^)--event(?:=|\s+)\S+",
+                    f"--event {event}",
+                    command,
+                    count=1,
+                )
+            else:
+                copied["command"] = f"{command} --event {event}"
+        return copied
+
     def _manifest_handlers(self, groups: object, event: str) -> list[dict]:
         """Normalize one event's shared matcher groups to the harness shape."""
         valid_groups = [group for group in groups if isinstance(group, dict)] if isinstance(groups, list) else []
         if event in self.manifest_events_with_flat_handlers:
-            return [
+            handlers = [
                 {key: value for key, value in handler.items() if key != "matcher"}
                 for group in valid_groups
                 for handler in (group.get("hooks", []) if isinstance(group.get("hooks"), list) else [group])
             ]
-        if self.hook_manifest_container_key == "hooks":
-            return [
+        elif self.hook_manifest_container_key == "hooks":
+            handlers = [
                 ({key: value for key, value in group.items() if key != "matcher"} if event in self.manifest_events_without_matchers else dict(group))
                 for group in valid_groups
             ]
-        return [{"matcher": "*", **group} for group in valid_groups]
+        else:
+            handlers = [{"matcher": "*", **group} for group in valid_groups]
+        return [self._with_installed_event(handler, event) for handler in handlers]
 
     def translate_manifest(self, data: dict, event_map: Mapping[str, str | None]) -> dict:
         """Translate the shared hook manifest to this harness CLI's contract."""

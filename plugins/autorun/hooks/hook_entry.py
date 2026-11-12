@@ -140,15 +140,15 @@ def _append_debug_log(message: str) -> None:
 _VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode", "pi", "prime")
 # Stdlib copies of registry data (this file must run when autorun cannot be
 # imported). test_hook_entry.py::test_event_sets_are_pinned_to_the_registry
-# holds them to client._TOOL_GATE_EVENTS and Antigravity's native events.
+# holds them to client._TOOL_GATE_EVENTS and every registry-native event.
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _VALID_EXPLICIT_EVENTS = {
-    "SessionStart",
-    "PreToolUse",
-    "PostToolUse",
-    "PreInvocation",
-    "PostInvocation",
-    "Stop",
+    "PostInvocation", "PostToolUse", "PreInvocation", "PreToolUse", "SessionStart", "Stop",
+    "agent_settled", "agent_start", "before_agent_start", "chat.message",
+    "event:session.compacted", "event:session.idle", "event:todo.updated",
+    "experimental.session.compacting", "session_before_compact", "session_compact",
+    "session_shutdown", "session_start", "session_tree", "tool.execute.before", "tool_call",
+    "tool_result",
 }
 #: config._CLI_DETECTORS without its environment variables, in the same
 #: (detection) order: (harness, payload session keys, event names, transcript
@@ -227,8 +227,8 @@ def prepare_hook_payload(payload: dict, cli_type: str) -> dict:
         prepared["autorun_harness_env"] = switches
     event_name = explicit_event_name()
     if event_name:
-        # Antigravity stdin deliberately omits the event name. The installed
-        # manifest command is authoritative, so it wins over payload content.
+        # The installed command is trusted registry data. It is authoritative
+        # when stdin omits the event and when payload text disagrees with it.
         prepared["hook_event_name"] = event_name
     if cli_type == "antigravity":
         transcript_path = prepared.get("transcriptPath")
@@ -533,10 +533,13 @@ def _peek_payload() -> dict | None:
 
 def _peek_event_name(default: str = "unknown") -> str:
     """Best-effort event name extraction for fallback safety decisions."""
+    installed_event = explicit_event_name()
+    if installed_event:
+        return installed_event
     payload = _peek_payload()
     if payload is None:
-        return explicit_event_name() or default
-    return payload.get("hook_event_name") or explicit_event_name() or default
+        return default
+    return payload.get("hook_event_name") or default
 
 
 # The fail-closed reason below names the commands that repair a broken runtime.
