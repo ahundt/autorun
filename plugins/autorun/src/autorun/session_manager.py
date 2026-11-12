@@ -2478,16 +2478,21 @@ class TaskRepository:
         if not excluded:
             return list(self.list_tasks(session_id, timeout).values())
         placeholders = ",".join("?" * len(excluded))
+        # Every shipped prunable expression names only these settled statuses.
+        # blocks_stop cannot narrow this view: waiting tasks belong in it too.
+        narrowed = set(_CANONICAL_PRUNABLE_TASK_STATUSES) <= set(excluded)
         with self._store.operation_scope(timeout) as owner:
             rows = owner.connection.execute(
                 "SELECT task_id, status, updated_at, payload_json FROM tasks "
-                f"WHERE session = ? AND status NOT IN ({placeholders}) "
+                + ("INDEXED BY tasks_retention " if narrowed else "")
+                + "WHERE session = ? "
+                + ("AND prunable = 0 " if narrowed else "")
+                + f"AND status NOT IN ({placeholders}) "
                 "ORDER BY task_id",
                 (session_id, *excluded),
             ).fetchall()
-        return [
-            self._record_from_row(session_id, row[0], row[1:]) for row in rows
-        ]
+        records = (self._record_from_row(session_id, row[0], row[1:]) for row in rows)
+        return [record for record in records if record["status"] not in excluded]
 
     def existing_task_ids(self, session_id: str, task_ids,
                           timeout: float = DEFAULT_SESSION_TIMEOUT) -> set:

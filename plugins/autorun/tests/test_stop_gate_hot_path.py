@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import json
+import sqlite3
 import uuid
 
 import pytest
@@ -143,3 +145,46 @@ def test_liveness_runs_at_stop_only_once_per_distinct_harness_pid(gate_env, monk
 
     resumed.stop("Waiting.")
     assert checked == [other], f"one Stop checked {checked}; expected one check of the one recorded pid {other}"
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_stop_snapshot_visits_only_open_tasks(calls, monkeypatch, historical, tmp_path):
+    from test_task_status_not_in_schema import _create_pre_3472b3ee_database
+
+    session = _session("history")
+    session.seed("open", "Finish the remaining work", status="pending")
+    store = sm.get_session_manager().task_repository()._store
+    if historical:
+        path = tmp_path / "old.sqlite3"
+        _create_pre_3472b3ee_database(path)
+        old = sm.SQLiteStore(path)
+        old.initialize()
+        with sqlite3.connect(path) as src, sqlite3.connect(store.db_path) as dst:
+            src.backup(dst)
+        session.seed("open", "Finish the remaining work", status="pending")
+    with store.operation_scope() as owner:
+        with store.write_transaction(owner) as conn:
+            conn.executemany(
+                "INSERT INTO tasks(session, task_id, status, updated_at, payload_json) VALUES (?, ?, 'completed', 1, ?)",
+                [(session.manager.global_key, str(i), json.dumps({"id": str(i)})) for i in range(30000)],
+            )
+    statements = []
+    steps = [0]
+    real_connect = store._connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        def progress():
+            steps[0] += 100
+            return 0
+        conn.set_progress_handler(progress, 100)
+        return conn
+
+    monkeypatch.setattr(store, "_connect", connect)
+    assert blocks(session.stop("There is work left."), "claude")
+    snapshot = next(sql for sql in statements if sql.startswith("SELECT task_id, status, updated_at, payload_json FROM tasks"))
+    with store.operation_scope() as owner:
+        plan = [row[3] for row in owner.connection.execute("EXPLAIN QUERY PLAN " + snapshot)]
+    assert any("tasks_retention (session=? AND prunable=?)" in row for row in plan), plan
+    assert steps[0] < 5000, f"Stop visited completed history: {steps[0]} VM steps; {plan}"
