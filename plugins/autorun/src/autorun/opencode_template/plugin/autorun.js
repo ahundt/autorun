@@ -2,7 +2,7 @@
 // Policy and command parsing remain in Python; this file maps OpenCode events
 // to portable hook frames and native veto behavior.
 
-import { createDaemonBridge, denialReason } from "./daemon-client.mjs"
+import { createDaemonBridge, denialReason, responseMessage } from "./daemon-client.mjs"
 
 const bridge = createDaemonBridge({
   cliType: "opencode",
@@ -17,7 +17,29 @@ export async function runArCommand(command, directory, sessionId) {
   return bridge.runCommand(command, directory, sessionId, {}, "model")
 }
 
-export const AutorunPlugin = async ({ serverUrl, directory }) => {
+function promptText(parts) {
+  return (Array.isArray(parts) ? parts : [])
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\n")
+}
+
+function isAutorunContinuation(parts) {
+  return (Array.isArray(parts) ? parts : []).some(
+    (part) => part?.synthetic === true && part?.metadata?.source === "autorun-stop-gate",
+  )
+}
+
+function noticePart(message) {
+  return {
+    type: "text",
+    text: `[autorun notice]\n${message}`,
+    synthetic: true,
+    metadata: { source: "autorun-hook" },
+  }
+}
+
+export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
   await bridge.askDaemon({
     hook_event_name: "OpenCodeAttach",
     server_url: String(serverUrl ?? ""),
@@ -25,6 +47,21 @@ export const AutorunPlugin = async ({ serverUrl, directory }) => {
   })
 
   const hooks = {
+    "chat.message": async (input, output) => {
+      const prompt = promptText(output?.parts)
+      const response = await bridge.askDaemon({
+        hook_event_name: "UserPromptSubmit",
+        session_id: input.sessionID,
+        prompt,
+        prompt_author: isAutorunContinuation(output?.parts) ? "automation" : "user",
+        cwd: String(directory ?? ""),
+      })
+      const blocked = denialReason(response)
+      if (blocked) throw new Error(blocked)
+      const message = responseMessage(response)
+      if (message && Array.isArray(output?.parts)) output.parts.push(noticePart(message))
+    },
+
     "tool.execute.before": async (input, output) => {
       const response = await bridge.askToolGate({
         hook_event_name: "PreToolUse",
@@ -37,9 +74,51 @@ export const AutorunPlugin = async ({ serverUrl, directory }) => {
       if (reason) throw new Error(reason)
     },
 
+    "experimental.session.compacting": async (input, output) => {
+      const response = await bridge.askDaemon({
+        hook_event_name: "PreCompact",
+        session_id: input.sessionID,
+        cwd: String(directory ?? ""),
+      })
+      const message = responseMessage(response)
+      if (message && Array.isArray(output?.context)) output.context.push(message)
+    },
+
     event: async ({ event }) => {
+      const properties = event?.properties ?? {}
+      if (event?.type === "session.idle") {
+        if (!properties.sessionID) return
+        const response = await bridge.askDaemon({
+          hook_event_name: "Stop",
+          session_id: String(properties.sessionID),
+          cwd: String(directory ?? ""),
+        })
+        const reason = denialReason(response)
+        if (!reason || typeof client?.session?.promptAsync !== "function") return
+        await client.session.promptAsync({
+          path: { id: String(properties.sessionID) },
+          query: { directory: String(directory ?? "") },
+          body: {
+            parts: [{
+              type: "text",
+              text: reason,
+              synthetic: true,
+              metadata: { source: "autorun-stop-gate" },
+            }],
+          },
+        })
+        return
+      }
+      if (event?.type === "session.compacted") {
+        if (!properties.sessionID) return
+        await bridge.askDaemon({
+          hook_event_name: "PostCompact",
+          session_id: String(properties.sessionID),
+          cwd: String(directory ?? ""),
+        })
+        return
+      }
       if (event?.type !== "todo.updated") return
-      const properties = event.properties ?? {}
       const todos = properties.todos
       // No session id means no session to attribute the list to; sending ""
       // would file it under a per-process key every session shares.

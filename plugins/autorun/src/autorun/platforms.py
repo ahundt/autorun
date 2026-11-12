@@ -2207,7 +2207,26 @@ OPENCODE = register(
         task_review_tools=frozenset({"todoread"}),
         task_record_source="opencode_todo",
         native_task_statuses=frozenset({"pending", "in_progress", "completed", "deleted"}),
-        supports_additional_context_events=frozenset({"PostToolUse"}),
+        supports_additional_context_events=frozenset({"UserPromptSubmit", "PostToolUse"}),
+        native_hook_events=frozenset({
+            "chat.message",
+            "tool.execute.before",
+            "event:todo.updated",
+            "event:session.idle",
+            "experimental.session.compacting",
+            "event:session.compacted",
+        }),
+        installed_hook_events=frozenset({
+            "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "PreCompact", "PostCompact"
+        }),
+        autorun_to_harness_cli_events={
+            "UserPromptSubmit": "chat.message",
+            "PreToolUse": "tool.execute.before",
+            "PostToolUse": "event:todo.updated",
+            "Stop": "event:session.idle",
+            "PreCompact": "experimental.session.compacting",
+            "PostCompact": "event:session.compacted",
+        },
     )
 )
 

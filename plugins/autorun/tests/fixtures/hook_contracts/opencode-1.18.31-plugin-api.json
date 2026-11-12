@@ -1,0 +1,23 @@
+{
+  "harness": "OpenCode",
+  "version": "1.18.31",
+  "upstream_tag": "v1.18.31",
+  "read_date": "2026-11-12",
+  "official_docs": [
+    "https://opencode.ai/docs/build/plugins/",
+    "https://opencode.ai/docs/build/plugins/migrate-v1"
+  ],
+  "upstream_sources": {
+    "plugin_contract": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.31/packages/plugin/src/index.ts",
+    "event_schema": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.31/packages/sdk/js/src/gen/types.gen.ts",
+    "client_schema": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.31/packages/sdk/js/src/gen/sdk.gen.ts"
+  },
+  "v1_hooks": {
+    "prompt": "chat.message mutates output.message and output.parts before durable prompt admission",
+    "stop_signal": "event receives session.idle with properties.sessionID",
+    "stop_continuation": "client.session.promptAsync POSTs a message to /session/{id}/prompt_async and returns 204",
+    "pre_compact": "experimental.session.compacting receives sessionID and mutable context/prompt output",
+    "post_compact": "event receives session.compacted with properties.sessionID"
+  },
+  "compatibility": "V1 object entrypoints remain supported in OpenCode 1.18.29 and newer. The Stop bridge feature-detects client.session.promptAsync; if absent, it preserves the older no-continuation behavior instead of throwing."
+}

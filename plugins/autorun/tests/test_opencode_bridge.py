@@ -21,7 +21,7 @@ plugin loaded in-process. The shim is the per-harness adapter that carries
 those events to the same daemon socket every other harness already uses, in
 the role `hooks/hook_entry.py` plays elsewhere.
 
-Facts these tests encode, measured against opencode 1.18.13:
+Facts these tests encode, measured against OpenCode 1.18.31:
   - plugins load from `<config>/plugin/`, singular, at session bootstrap
   - `PluginInput.serverUrl` is the bound loopback address
   - the client exposes no `permission` namespace, so the veto path is
@@ -64,7 +64,13 @@ class TestShimSourceIsSelfContained:
     def test_shim_registers_the_veto_hook_and_the_command_tool(self):
         text = SHIM_SOURCE.read_text(encoding="utf-8")
         assert "tool.execute.before" in text
-        assert 'event?.type !== "todo.updated"' in text
+        assert '"chat.message"' in text, "typed prompts must reach UserPromptSubmit"
+        assert 'event?.type === "session.idle"' in text, "idle must reach the Stop gate"
+        assert '"experimental.session.compacting"' in text, "compaction must reach PreCompact"
+        assert 'event?.type === "session.compacted"' in text, "successful compaction must reach PostCompact"
+        assert 'event: async ({ event }) => {\n      if (event?.type !== "todo.updated")' not in text, (
+            "the event bridge must route more than todo updates"
+        )
         assert "if (!properties.sessionID" in text, (
             "a todo frame without a session id must be dropped, not sent as "
             "'' — the daemon would file those todos under a per-process key "
@@ -377,6 +383,83 @@ class TestDaemonSocketFrames:
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
+    def test_typed_prompt_reaches_user_prompt_submit(self, tmp_path, short_socket_dir):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "UserPromptSubmit": {"systemMessage": "Cache expired; review cost before continuing."},
+            },
+        )
+        result = _run_shim(tmp_path, socket_path, "prompt")
+        thread.join(timeout=25)
+
+        assert "Cache expired; review cost before continuing." in result.stdout
+        prompt = frames[1]
+        assert prompt["hook_event_name"] == "UserPromptSubmit"
+        assert prompt["session_id"] == "prompt-session"
+        assert prompt["prompt"] == "ordinary user prompt"
+        assert prompt["prompt_author"] == "user"
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_idle_stop_block_continues_through_prompt_async(self, tmp_path, short_socket_dir):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "Stop": {"decision": "block", "reason": "Finish task #7 before stopping."},
+            },
+        )
+        result = _run_shim(tmp_path, socket_path, "idle")
+        thread.join(timeout=25)
+
+        assert "Finish task #7 before stopping." in result.stdout
+        assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
+        assert frames[1]["session_id"] == "idle-session"
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_idle_on_older_client_without_prompt_async_keeps_existing_behavior(self, tmp_path, short_socket_dir):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "Stop": {"decision": "block", "reason": "Finish task #7 before stopping."},
+            },
+        )
+        result = _run_shim(tmp_path, socket_path, "idle-old")
+        thread.join(timeout=25)
+
+        assert result.stdout == ""
+        assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_compaction_routes_pre_and_post_events(self, tmp_path, short_socket_dir):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "PreCompact": {"systemMessage": "Preserve the task ledger."},
+                "PostCompact": {},
+            },
+            connections=3,
+        )
+        result = _run_shim(tmp_path, socket_path, "compact")
+        thread.join(timeout=25)
+
+        assert "Preserve the task ledger." in result.stdout
+        assert [frame["hook_event_name"] for frame in frames] == [
+            "OpenCodeAttach", "PreCompact", "PostCompact"
+        ]
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
     def test_todo_updated_event_reaches_post_tool_use(self, tmp_path, short_socket_dir):
         """OpenCode's native todo event must feed the shared task lifecycle."""
         socket_path = short_socket_dir / "daemon.sock"
@@ -519,8 +602,46 @@ if (process.argv[2] === "command") {
   process.exit(0)
 }
 
+const client = {
+  session: {
+    promptAsync: async (options) => console.log("continued", JSON.stringify(options)),
+  },
+}
+
+if (process.argv[2] === "prompt") {
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
+  const output = {
+    message: { role: "user" },
+    parts: [{ type: "text", text: "ordinary user prompt" }],
+  }
+  await hooks["chat.message"]({ sessionID: "prompt-session" }, output)
+  console.log(JSON.stringify(output.parts))
+  process.exit(0)
+}
+
+if (process.argv[2] === "idle") {
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
+  process.exit(0)
+}
+
+if (process.argv[2] === "idle-old") {
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: {} })
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
+  process.exit(0)
+}
+
+if (process.argv[2] === "compact") {
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
+  const output = { context: [] }
+  await hooks["experimental.session.compacting"]({ sessionID: "compact-session" }, output)
+  console.log(JSON.stringify(output.context))
+  await hooks.event({ event: { type: "session.compacted", properties: { sessionID: "compact-session" } } })
+  process.exit(0)
+}
+
 if (process.argv[2] === "todo") {
-  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd() })
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
   await hooks.event({ event: {
     type: "todo.updated",
     properties: {
@@ -531,7 +652,7 @@ if (process.argv[2] === "todo") {
   process.exit(0)
 }
 
-const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd() })
+const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
 try {
   await hooks["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c1" }, { args: { command: "rm -rf /" } })
   console.log("allowed")
