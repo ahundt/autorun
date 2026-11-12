@@ -194,3 +194,71 @@ def test_awaiting_user_clear_runs_before_value_returning_prompt_handlers(gate_en
 
     assert f"answered by {first.__name__}" in text(response), f"control: the chain was not first-wins: {response}"
     assert session.status("7") == "in_progress", "a value-returning first handler pre-empted the awaiting-user clear"
+
+
+def _seed_two(session: Session) -> None:
+    session.seed("7", "Push release-1.0")
+    session.seed("8", "Write the release notes", status="pending")
+
+
+def test_refused_awaiting_user_write_still_blocks_on_actionable_tasks(gate_env, monkeypatch):
+    """The store refuses the awaiting-user row (the old status CHECK of a store
+    that could not be upgraded). The Stop still blocks on #7 and #8, whose
+    state did not change, and says why #7 is not waiting on the user."""
+    from autorun import session_manager as sm
+
+    monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+    sm._reset_for_testing()
+    session = _session("claude", "refused")
+    _seed_two(session)
+    real = sm.TaskRepository._write_task
+
+    def old_check(self, conn, session_id, task_id, record):
+        if record.get("status") == AWAITING_STATUS:
+            raise sm.SessionBackendError(f"Could not store task {task_id!r}: CHECK constraint failed: status IN (...)")
+        return real(self, conn, session_id, task_id, record)
+
+    monkeypatch.setattr(sm.TaskRepository, "_write_task", old_check)
+
+    response = session.stop(f"The branch is ready.\n\n{awaiting('7', DECISION)}\n")
+
+    assert blocks(response, "claude"), f"a refused awaiting-user write let the Stop through: {response}"
+    shown = text(response)
+    assert "#7" in shown and "#8" in shown, f"the block does not name the unchanged actionable tasks: {response}"
+    assert "CHECK constraint failed" in shown, f"the refused write was not reported: {response}"
+    assert session.status("7") == "in_progress"
+
+
+def test_stop_blocks_when_every_state_write_fails(gate_env, monkeypatch):
+    """Any storage error on the Stop's writes (markers, counter): the decision
+    is still made from the task state that was read."""
+    from autorun import session_manager as sm
+
+    session = _session("claude", "nowrite")
+    _seed_two(session)
+
+    def refuse(self):
+        raise sm.SessionPersistenceError(f"Could not save state file {self._state_file}: [Errno 28] No space left on device")
+
+    monkeypatch.setattr(sm._JSONStore, "_save", refuse)
+
+    response = session.stop(f"The branch is ready.\n\n{awaiting('7', DECISION)}\n")
+
+    assert blocks(response, "claude"), f"a failed state write let the Stop through: {response}"
+    assert "No space left on device" in text(response), f"the failed write was not reported: {response}"
+
+
+def test_failed_restore_on_the_users_reply_is_reported(gate_env, monkeypatch):
+    from autorun import session_manager as sm
+
+    session = _session("claude", "restorefail")
+    session.seed("7", "Push release-1.0")
+    _enter(session)
+
+    def refuse(self):
+        raise sm.SessionPersistenceError(f"Could not save state file {self._state_file}: [Errno 28] No space left on device")
+
+    monkeypatch.setattr(sm._JSONStore, "_save", refuse)
+    response = session.prompt("yes, push")
+
+    assert "could not record your reply" in text(response), f"a failed restore was silent: {response}"

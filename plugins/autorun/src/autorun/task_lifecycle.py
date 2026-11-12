@@ -36,7 +36,7 @@ Architecture:
 - DRY: Reuses session_manager.py patterns, no custom persistence code
 """
 
-from typing import Optional, Dict, List, Callable, Literal
+from typing import Any, Optional, Dict, List, Callable, Literal
 from pathlib import Path
 from dataclasses import dataclass, asdict
 import contextlib
@@ -3006,9 +3006,17 @@ class TaskLifecycle:
         if not blocking:
             return False, []
         changed = bool(self.apply_delegation_markers(ctx, blocking))
-        entered, unstated = self.apply_awaiting_user_markers(ctx, blocking)
-        changed = changed or bool(entered)
         notes = []
+        try:
+            entered, unstated = self.apply_awaiting_user_markers(ctx, blocking)
+        except Exception as exc:  # noqa: BLE001 - the tasks keep the state they had
+            logger.warning("Could not record awaiting-user markers: %s", exc)
+            entered, unstated = [], []
+            notes.append(
+                f"⚠️ autorun could not record the awaiting-user marker: {exc}. "
+                "The tasks it named still block this Stop."
+            )
+        changed = changed or bool(entered)
         if unstated:
             notes.append(
                 f"Awaiting-user marker ignored for {_task_refs(unstated)}: no decision stated. "
@@ -3103,17 +3111,30 @@ class TaskLifecycle:
            passes through instead, saying so.
         """
         tasks, metadata, unknown = self._open_task_snapshot()
-        changed, notes = self._apply_stop_markers(ctx, tasks)
+        notes: list[str] = []
+
+        def recorded(what: str, write: Callable[[], Any], unchanged: Any) -> Any:
+            """Run one of this Stop's state writes; on any failure, say so and decide
+            from the task state as it was read, never by letting the Stop through."""
+            try:
+                return write()
+            except Exception as exc:  # noqa: BLE001 - a failed write must not decide the Stop
+                logger.warning("Stop gate could not record %s: %s", what, exc)
+                notes.append(f"⚠️ autorun could not record {what}: {exc}. This Stop is decided from the task state as it was.")
+                return unchanged
+
+        changed, marker_notes = recorded("the markers in your last reply", lambda: self._apply_stop_markers(ctx, tasks), (False, []))
+        notes[:0] = marker_notes
         if changed:
             tasks, metadata, unknown = self._open_task_snapshot()
-        if self._settle_delegations(ctx, tasks):
+        if recorded("the end of a delegation", lambda: self._settle_delegations(ctx, tasks), False):
             tasks, metadata, unknown = self._open_task_snapshot()
         actionable, waiting = self._stop_view(tasks, unknown)
         waiting_text = "Not blocking this Stop:\n" + "\n".join(waiting) if waiting else ""
 
         if not actionable:
             if not _stop_sequence_is_reset(metadata):
-                self.atomic_update_metadata(_reset_stop_block_sequence)
+                recorded("the Stop loop guard's restart", lambda: self.atomic_update_metadata(_reset_stop_block_sequence), None)
             for note in [*notes, waiting_text]:
                 if note:
                     ctx.add_chain_notification(note, channel="both")
@@ -3127,7 +3148,7 @@ class TaskLifecycle:
             metadata.pop("last_stop_block_id_hash", None)
             computed["block_count"] = metadata["stop_block_count"]
 
-        self.atomic_update_metadata(count_block)
+        recorded("this block in the Stop loop guard", lambda: self.atomic_update_metadata(count_block), None)
         ctx.state_set_volatile(STOP_LOOP_GUARD_ARMED, True)
         # If the counter update failed, block (count 1) rather than release.
         block_count = computed.get("block_count", 1)
@@ -4480,6 +4501,13 @@ def register_hooks(app_instance) -> None:
             TaskLifecycle(ctx=ctx).restore_awaiting_user(ctx)
         except Exception as error:
             logger.warning(f"Task Stop-sequence prompt reset error: {error}")
+            # Tasks awaiting the user keep waiting until a later prompt
+            # restores them; say so rather than leave them exempt silently.
+            ctx.add_chain_notification(
+                f"⚠️ autorun could not record your reply for tasks waiting on you: {error}. "
+                "They stay waiting until your next message is recorded.",
+                channel="both",
+            )
         return None
 
     @app_instance.on("PostToolUse")
