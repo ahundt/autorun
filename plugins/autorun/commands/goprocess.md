@@ -11,9 +11,8 @@ description: Start autorun with the plan, critique and wait process at every ste
 1. **MANDATORY EXECUTION MODE (Goal and Capabilities)**
     1. Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your task and goals.
     2. Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
-    3. **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
-    4. **Bias Mitigation:** Be cautious, humble, patient, and scrupulous; avoid overconfidence and check your assumptions and your work, explore your environment to ensure you understand the system tasks goals and what is already done, verifying because you are often overconfident, duplicate work, and falsely claim incomplete tasks are "complete" or "production ready".
-    5. **Safety and Exit Protocols** check the safety and exit protocols.
+    3. **Bias Mitigation:** Be cautious, humble, patient, and scrupulous; avoid overconfidence and check your assumptions and your work, explore your environment to ensure you understand the system tasks goals and what is already done, verifying because you are often overconfident, duplicate work, and falsely claim incomplete tasks are "complete" or "production ready".
+    4. **Safety and Exit Protocols** check the safety and exit protocols.
 2. Write the areas of expertise needed (Act as an expert in those areas).
 3. For each area of expertise separately write 10 best practices generally and 10 best practices specifically for the task.
 4. Explore to understand the context and determine what is already done and the right point at which to work to avoid duplication.

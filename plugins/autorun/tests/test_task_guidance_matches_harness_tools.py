@@ -125,6 +125,10 @@ def test_no_plan_skill_claims_the_model_may_use_every_tool_without_asking():
     for name in PLAN_SKILLS:
         text = (plugin_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
         assert "full permission" not in text.lower(), name
+    for relative in ("commands/go.md", "commands/goprocess.md", "src/autorun/config.py",
+                     "src/autorun/plugins.py"):
+        text = (plugin_root / relative).read_text(encoding="utf-8")
+        assert "full permission to use all tools" not in text.lower(), relative
 
 
 def test_every_plan_skill_makes_native_task_tracking_capability_conditional():

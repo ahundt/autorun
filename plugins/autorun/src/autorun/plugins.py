@@ -1782,7 +1782,6 @@ def build_injection_prompt(ctx: EventContext, use_progressive_disclosure: bool =
 This system ensures thorough, high-quality work through a structured three-stage process. You will receive stage instructions progressively.
 
 1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
-    * **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
 2.  **SYSTEM STOP SIGNAL RULE:** The exact string **{emergency_stop}** is a **SYSTEM STOP SIGNAL**. You MUST **NEVER** output this string unless catastrophic/irreversible risk exists. Accidental output will immediately halt the entire system.
 3.  **Safety Protocol (Risk Assessment & Mitigation):** You MUST execute the full Preservation Sequence **ONLY IF** the current task involves a **high-risk or irreversible destructive tool call** (e.g., initial modification, database interaction, or action following a prior failure).
     * **Assess Risk:** Implicitly evaluate the potential for irreversible state misalignment or system integrity breach.
