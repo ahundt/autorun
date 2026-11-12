@@ -1235,7 +1235,7 @@ def _allow_schema_rewrite(conn) -> None:
 
     Defensive builds (Apple's system Python) refuse writes to sqlite_master;
     Python 3.12+ can lift that per connection. Elsewhere the rewrite meets the
-    refusal and the caller falls back to rebuilding the table.
+    refusal and the caller keeps compatible status storage until offline repair.
     """
     if hasattr(sqlite3, "SQLITE_DBCONFIG_DEFENSIVE"):
         conn.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, False)
@@ -1293,7 +1293,7 @@ def _tasks_rebuild_space(conn, db_path) -> tuple:
 
 
 def _rebuild_tasks_table(conn) -> None:
-    """Rebuild tasks with the current definition, for an SQLite that refuses writable_schema.
+    """Offline-only rebuild with the current definition; never called at startup.
 
     SQLite's table-rebuild procedure. Foreign keys go off outside the
     transaction, because dropping tasks would otherwise cascade-delete every
@@ -1305,7 +1305,7 @@ def _rebuild_tasks_table(conn) -> None:
         conn.execute("BEGIN IMMEDIATE")
         try:
             recorded = _schema_meta_value(conn, "schema_revision")
-            if int(recorded or 2) < SCHEMA_REVISION:
+            if int(recorded or 2) <= SCHEMA_REVISION:
                 conn.execute(_tasks_table_sql(name="tasks_rebuilt"))
                 conn.execute(
                     "INSERT INTO tasks_rebuilt (session, task_id, status, updated_at, payload_json) "
@@ -1358,8 +1358,8 @@ def _migrate_tasks_revision_3(conn) -> bool:
     indexes need no REINDEX because a table created at version 2 has a CHECK
     that admitted only statuses whose blocks_stop and prunable have never
     changed (test_existing_status_policy_never_changes). A table that reached
-    version 2 through the version-1 step had no CHECK, so its indexes are
-    rebuilt; only 1.0.0 development builds wrote version 1. A definition that
+    version 2 through the version-1 step had no CHECK, so its indexes need
+    offline repair; only 1.0.0 development builds wrote version 1. A definition that
     does not read back as written rolls the rewrite back and the store keeps
     its old definition.
     """
@@ -1376,7 +1376,12 @@ def _migrate_tasks_revision_3(conn) -> bool:
         logger.error(
             "Not upgrading the tasks table: its columns %s differ from %s.", live, proposed
         )
-        return False
+        return True
+
+    if order != list(_TASK_COLUMNS) and _schema_meta_value(conn, "schema_revision") != "3":
+        # This older, CHECK-free layout may contain statuses its indexes omit.
+        # Repairing those indexes requires an offline rebuild, never startup.
+        return True
 
     conn.execute("SAVEPOINT tasks_revision_3")
     try:
@@ -1393,10 +1398,7 @@ def _migrate_tasks_revision_3(conn) -> bool:
         conn.execute("ROLLBACK TO tasks_revision_3")
         conn.execute("RELEASE tasks_revision_3")
         logger.error("Not upgrading the tasks table: after the rewrite, %s.", "; ".join(problems))
-        return False
-    if order != list(_TASK_COLUMNS) and _schema_meta_value(conn, "schema_revision") != "3":
-        conn.execute("REINDEX tasks_incomplete")
-        conn.execute("REINDEX tasks_retention")
+        return True
     _record_schema_revision(conn)
     conn.execute("RELEASE tasks_revision_3")
     logger.info("Rewrote the tasks table definition to schema revision %d.", SCHEMA_REVISION)
@@ -1812,7 +1814,13 @@ class SQLiteStore:
                     _rollback_without_masking_original(conn)
                     raise
                 if needs_rebuild:
-                    self._rebuild_refused_definition(conn)
+                    self.upgrade_pending = (
+                        "SQLite could not rewrite the task definition. New task statuses "
+                        "use pending plus a payload marker; task enforcement remains active. "
+                        "Optional offline repair: stop all daemons using this store, then "
+                        "run autorun --state-rebuild-tasks."
+                    )
+                    logger.warning("%s", self.upgrade_pending)
 
                 # journal_mode cannot change inside a transaction. Every
                 # initializer reaches this only after a validated commit.
@@ -1824,27 +1832,18 @@ class SQLiteStore:
 
         self._initialized = True
 
-    def _rebuild_refused_definition(self, conn) -> None:
-        """The fallback when SQLite refused the in-place rewrite: rebuild, if there is room.
-
-        Without room the store stays at revision 2 and keeps working; only a
-        status its old CHECK does not list is refused, with what is needed.
-        """
-        needed, free, directory = _tasks_rebuild_space(conn, self._db_path)
-        if free < needed:
-            self.upgrade_pending = (
-                f"The task table of {self._db_path} predates this status, and "
-                f"replacing it needs {needed} MB free in {directory} ({free} MB "
-                "free now). Free that space; the next autorun start replaces "
-                "the table."
-            )
-            logger.warning("%s", self.upgrade_pending)
-            return
-        logger.warning(
-            "Upgrading autorun state (%d MB of tasks); other sessions wait for it.",
-            math.ceil(needed / 2.2),
-        )
-        _rebuild_tasks_table(conn)
+    def rebuild_tasks_offline(self) -> None:
+        """Explicit maintenance only, after every daemon using this store is stopped."""
+        with _managed_connection(self._connect(timeout=DEFAULT_SESSION_TIMEOUT)) as conn:
+            self._validate_existing_database(conn)
+            needed, free, directory = _tasks_rebuild_space(conn, self._db_path)
+            if free < needed:
+                raise SessionBackendError(
+                    f"Rebuilding tasks needs {needed} MB free in {directory} ({free} MB free now). "
+                    "Nothing was rebuilt; task enforcement uses compatible status storage."
+                )
+            _rebuild_tasks_table(conn)
+        self.upgrade_pending = None
 
     def _enable_wal(self, conn, timeout: float) -> None:
         """Switch the database to WAL, tolerating a concurrent initializer.
@@ -2470,7 +2469,6 @@ class TaskRepository:
         excluded = list(statuses)
         if not excluded:
             return list(self.list_tasks(session_id, timeout).values())
-        placeholders = ",".join("?" * len(excluded))
         # Every shipped prunable expression names only these settled statuses.
         # blocks_stop cannot narrow this view: waiting tasks belong in it too.
         narrowed = set(_CANONICAL_PRUNABLE_TASK_STATUSES) <= set(excluded)
@@ -2480,9 +2478,8 @@ class TaskRepository:
                 + ("INDEXED BY tasks_retention " if narrowed else "")
                 + "WHERE session = ? "
                 + ("AND prunable = 0 " if narrowed else "")
-                + f"AND status NOT IN ({placeholders}) "
-                "ORDER BY task_id",
-                (session_id, *excluded),
+                + "ORDER BY task_id",
+                (session_id,),
             ).fetchall()
         records = (self._record_from_row(session_id, row[0], row[1:]) for row in rows)
         return [record for record in records if record["status"] not in excluded]
@@ -2633,6 +2630,13 @@ class TaskRepository:
             )
         record["status"] = status
         record["updated_at"] = updated_at
+        marker = record.pop("_autorun_status", None)
+        if (
+            status == "pending" and isinstance(marker, dict)
+            and marker.get("updated_at") == updated_at
+            and marker.get("status") in task_status.STATUS_POLICY
+        ):
+            record["status"] = marker["status"]
         return record
 
     def _event_from_row(self, session_id: str, row) -> dict:
@@ -2651,6 +2655,13 @@ class TaskRepository:
 
     def _write_task(self, conn, session_id: str, task_id: str, record: dict) -> None:
         status, updated_at, encoded = self._storage_identity(task_id, record)
+        if self._store.upgrade_pending and status not in {
+            "pending", "in_progress", "paused", "delegated", "completed", "deleted", "ignored"
+        }:
+            payload = json.loads(encoded)
+            payload["_autorun_status"] = {"status": status, "updated_at": updated_at}
+            encoded = _encode_state_value(f"task {task_id}", payload)
+            status = "pending"
 
         self._ensure_session_row(conn, session_id, updated_at)
         try:

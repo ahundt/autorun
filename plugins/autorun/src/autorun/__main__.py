@@ -183,6 +183,8 @@ def _print_schema_status(database: str) -> None:
         print(f"schema             : {user_version} (revision {revision})")
     if writer:
         print(f"schema written by  : autorun {writer}")
+    if space:
+        print("upgrade fallback   : compatible task statuses; optional offline autorun --state-rebuild-tasks")
     if space and space[1] < space[0]:
         needed, free, directory = space
         print(f"upgrade pending    : needs {needed} MB free in {directory} ({free} MB free now)")
@@ -214,6 +216,25 @@ def _run_state_command(args) -> int:
         os.path.join(directory, "daemon_state.sqlite3"),
         os.path.join(directory, "daemon_state.migration.json"),
     )
+
+    if args.state_rebuild_tasks:
+        from filelock import Timeout as FileLockTimeout
+
+        database = os.path.join(directory, "daemon_state.sqlite3")
+        if not os.path.exists(database):
+            print(f"Task rebuild did not run: no SQLite state database exists at {database}.")
+            return 1
+        try:
+            with _scoped_daemon_lease():
+                SQLiteStore(database).rebuild_tasks_offline()
+        except FileLockTimeout:
+            print("Task rebuild did not run: the scoped daemon is active. Stop all daemons using this store first.")
+            return 1
+        except SessionStateError as exc:
+            print(f"Task rebuild did not run: {exc}")
+            return 1
+        print("Rebuilt the tasks table and indexes; task records and events were preserved.")
+        return 0
 
     if args.state_maintenance:
         database = os.path.join(directory, "daemon_state.sqlite3")
@@ -632,6 +653,11 @@ For more information: https://github.com/ahundt/autorun
         "--state-maintenance",
         action="store_true",
         help="Report SQLite database, WAL, and reclaimable storage bytes",
+    )
+    info_group.add_argument(
+        "--state-rebuild-tasks",
+        action="store_true",
+        help="Rebuild tasks after stopping ALL daemons using the store; checks free space first",
     )
     info_group.add_argument(
         "--restart-daemon",
@@ -1244,7 +1270,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
         )
 
     # Restart daemon mode
-    if args.state_status or args.state_migrate or args.state_rollback or args.state_maintenance:
+    if args.state_status or args.state_migrate or args.state_rollback or args.state_maintenance or args.state_rebuild_tasks:
         return _run_state_command(args)
 
     if (

@@ -38,6 +38,30 @@ from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_
 DECISION = "approve pushing release-1.0 to origin/main"
 
 
+def test_deferred_upgrade_records_marker_and_restores_on_reply(gate_env, monkeypatch):
+    import sqlite3
+    from autorun import session_manager as sm
+    from test_state_schema_revision import _force_defensive_sqlite, _receipt_backed
+    from test_task_status_not_in_schema import _create_pre_3472b3ee_database
+
+    _receipt_backed(gate_env, _create_pre_3472b3ee_database)
+    _force_defensive_sqlite(monkeypatch)
+    monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+    sm._reset_for_testing()
+    session = _session("claude", "deferred")
+    session.seed("7", "Push release-1.0")
+    response = _enter(session)
+    assert not blocks(response, "claude")
+    assert "could not record" not in text(response), response
+    store = sm.get_session_manager().task_repository()._store
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("SELECT status, blocks_stop FROM tasks WHERE session = ? AND task_id = '7'", (session.manager.global_key,)).fetchone() == ("pending", 1)
+    session.prompt("Approved; continue")
+    assert session.status("7") == "in_progress"
+    assert blocks(session.stop("Work remains."), "claude")
+    sm._reset_for_testing()
+
+
 def _session(cli_type: str, label: str) -> Session:
     return Session(f"await-{label}-{cli_type}-{uuid.uuid4().hex[:8]}", cli_type)
 

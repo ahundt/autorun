@@ -289,6 +289,8 @@ def test_a_table_an_older_build_upgraded_from_version_1_is_reindexed(tmp_path):
 
     store = SQLiteStore(db_path)
     store.initialize()
+    assert store.upgrade_pending
+    store.rebuild_tasks_offline()
 
     assert _revision(db_path) == "3"
     assert _read(db_path, "PRAGMA integrity_check") == [("ok",)]
@@ -557,7 +559,49 @@ def test_a_version_1_database_with_a_receipt_reaches_its_upgrade_step(tmp_path, 
 # ── When SQLite refuses the in-place rewrite ───────────────────────────────
 
 
-def test_defensive_sqlite_takes_the_rebuild_path(tmp_path, monkeypatch, caplog):
+def test_defensive_startup_never_rebuilds_and_stores_new_statuses(tmp_path, monkeypatch):
+    path = tmp_path / "defensive.sqlite3"
+    _create_pre_3472b3ee_database(path)
+    old_ddl = _tasks_ddl(path)
+    _force_defensive_sqlite(monkeypatch)
+    monkeypatch.setattr(sm, "_rebuild_tasks_table", lambda conn: pytest.fail("startup rebuilt the task table under its write lock"))
+    store = SQLiteStore(path)
+    store.initialize()
+    assert _tasks_ddl(path) == old_ddl
+    repository = TaskRepository(store)
+    for status in ("awaiting-user", "delegation-returned"):
+        repository.put_task(SESSION, "478", dict(repository.get_task(SESSION, "478"), status=status))
+        assert repository.get_task(SESSION, "478")["status"] == status
+        assert _read(path, "SELECT status, blocks_stop FROM tasks WHERE task_id = '478'") == [("pending", 1)]
+        reopened = SQLiteStore(path)
+        reopened.initialize()
+        assert TaskRepository(reopened).get_task(SESSION, "478")["status"] == status
+    # An older writer leaves unfamiliar payload fields but advances updated_at.
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE tasks SET updated_at = updated_at + 1 WHERE task_id = '478'")
+    assert repository.get_task(SESSION, "478")["status"] == "pending"
+
+
+def test_offline_rebuild_refuses_an_active_daemon(tmp_path, monkeypatch, capsys):
+    from filelock import FileLock
+    from autorun import ipc
+    from autorun.__main__ import main
+
+    path = tmp_path / "daemon_state.sqlite3"
+    _create_pre_3472b3ee_database(path)
+    before = path.read_bytes()
+    lock_path = tmp_path / "daemon.lock"
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", lock_path)
+    with FileLock(str(lock_path.with_suffix(".flock"))):
+        assert main(["--state-rebuild-tasks"]) == 1
+    assert "daemon is active" in capsys.readouterr().out
+    assert path.read_bytes() == before
+
+
+def test_explicit_offline_command_rebuilds_defensive_sqlite(tmp_path, monkeypatch, caplog, capsys):
+    from autorun.__main__ import main
+    from autorun import ipc
     db_path = tmp_path / "state" / "daemon_state.sqlite3"
     _create_pre_3472b3ee_database(db_path)
     columns, digest = _columns(db_path), _content_digest(db_path)
@@ -568,8 +612,13 @@ def test_defensive_sqlite_takes_the_rebuild_path(tmp_path, monkeypatch, caplog):
         store.initialize()
 
     messages = [record.getMessage() for record in caplog.records]
-    assert any(message.startswith("Upgrading autorun state (") for message in messages), messages
+    assert any("compatible" in message or "payload marker" in message for message in messages), messages
     assert not any(message.startswith("Rewrote the tasks table definition") for message in messages)
+    assert "CHECK" in _tasks_ddl(db_path)
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(db_path.parent))
+    monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", tmp_path / "daemon.lock")
+    assert main(["--state-rebuild-tasks"]) == 0
+    assert "Rebuilt the tasks table" in capsys.readouterr().out
 
     assert "CHECK" not in _tasks_ddl(db_path)
     assert _revision(db_path) == "3"
@@ -608,13 +657,10 @@ def test_no_room_for_the_rebuild_keeps_revision_2_and_says_what_it_needs(tmp_pat
     assert _tasks_ddl(db_path) == old_ddl
     assert _revision(db_path) is None
     repository = TaskRepository(store)
-    with pytest.raises(sm.SessionBackendError) as refused:
-        repository.put_task(SESSION, "478", dict(repository.get_task(SESSION, "478"), status="delegation-returned"))
-    assert str(refused.value).endswith(
-        f"The task table of {db_path} predates this status, and replacing it needs "
-        f"{needed_mb} MB free in {state_dir} (0 MB free now). Free that space; the next "
-        "autorun start replaces the table."
-    ), str(refused.value)
+    repository.put_task(SESSION, "478", dict(repository.get_task(SESSION, "478"), status="delegation-returned"))
+    assert repository.get_task(SESSION, "478")["status"] == "delegation-returned"
+    with pytest.raises(sm.SessionBackendError, match=f"needs {needed_mb} MB free"):
+        store.rebuild_tasks_offline()
     repository.put_task(SESSION, "479", dict(repository.get_task(SESSION, "479"), status="completed"))
 
     monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(state_dir))

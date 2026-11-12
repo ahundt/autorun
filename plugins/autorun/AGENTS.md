@@ -127,7 +127,7 @@ So two numbers, with different jobs:
   `tests/test_state_store_benchmark.py::TestRevision3Upgrade`) and copies no
   database.
 
-Task status policy has one owner, `task_status.py`. The tasks table has no
+Task status policy has one owner, `task_status.py`. A rewritten tasks table has no
 status CHECK; its `blocks_stop` and `prunable` columns exist for older builds
 and fail closed for statuses written after them. Code here never takes
 policy from them: `list_incomplete` passes `task_status.py`'s lists as
@@ -142,6 +142,17 @@ Adding a status changes `task_status.py` only. Changing what an existing
 status means (`blocks_stop`, `prunable`) is an incompatible change:
 `test_existing_status_policy_never_changes` freezes them, because skipping
 REINDEX in the revision-3 rewrite depends on it.
+
+If SQLite refuses the metadata rewrite, startup keeps the old definition and
+never copies tasks or rebuilds indexes under the shared write lock. Newer
+statuses use a CHECK-accepted `pending` column and an internal payload marker,
+decoded at the repository boundary. An older writer advancing `updated_at`
+invalidates that marker; older builds see blocking `pending`. The same fallback
+applies to a historical CHECK-free layout whose indexes would need rebuilding.
+`autorun --state-rebuild-tasks` is optional offline maintenance: stop **all**
+daemons using the store first. It refuses an active scoped daemon and checks
+free space before rebuilding; it can hold the write lock for the table's full
+copy time, so no startup or hook may call it. `user_version` stays 2.
 
 ## The Stop gate decides from state
 
