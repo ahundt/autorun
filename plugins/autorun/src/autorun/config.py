@@ -357,9 +357,9 @@ DEFAULT_INTEGRATIONS = {
     },
     # Command-line tools that should use platform-native AI tools or shell
     # affordances instead (v0.8.0)
-    # These block the BASH COMMAND (e.g. "grep") and suggest the platform-native
-    # route (e.g. {grep}). These are distinct namespaces: bash "grep" is not
-    # Claude "Grep", Gemini "grep_search", or Codex "`rg -n` shell search".
+    # These block the BASH COMMAND (e.g. "sed -i") and suggest the platform-native
+    # route (e.g. {edit}). These are distinct namespaces: bash "sed" is not
+    # Claude "Edit", Gemini "replace", or Codex "apply_patch".
     #
     # Suggestion strings use {tool_key} format variables resolved by format_suggestion()
     # in core.py to the correct model-facing guidance for the active CLI:
@@ -1085,12 +1085,12 @@ After every step and substep you must say "Wait," and execute this sequential th
     "policies": {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
-        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep}. NO new files."),
+        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Search existing file names and contents first. NO new files."),
     },
     # ─── Policy Blocked Messages ──────────────────────────────────────────────
     "policy_blocked": {
-        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality with {glob} and patterns like "*related-topic*", 3) Use {grep} to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
-        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files related to your functionality with {glob} and {grep}, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation.",
+        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search existing file names for similar functionality with patterns like "*related-topic*", 3) Search file contents for relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
+        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search existing file names and contents for your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation.",
     },
     # ─── Command Mappings ─────────────────────────────────────────────────────
     # Values are internal ids in plugins._INTERNAL_COMMANDS (case-sensitive);

@@ -2451,15 +2451,6 @@ class TestFormatSuggestion:
         assert "read_file" in result
         assert "{read}" not in result
 
-    def test_policy_blocked_search_gemini(self):
-        from autorun.config import CONFIG
-
-        msg = CONFIG["policy_blocked"]["SEARCH"]
-        result = format_suggestion(msg, "gemini")
-        assert "grep_search" in result
-        assert "glob" in result.lower()
-        assert "{grep}" not in result
-
     # ─── Canary: API tool name stability ────────────────────────────────────
     # These tests document exact API tool names as of specific CLI versions.
     # A failure means the CLI renamed a tool at the API level.

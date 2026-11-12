@@ -199,7 +199,7 @@ INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].autorun_to_harness_cli_events)
 
 # === CLI TOOL GUIDANCE DISPATCH TABLE ===
 # Maps CLI type → {template_key: model-facing guidance} for suggestion strings.
-# Template keys ({grep}, {read}, etc.) are used in DEFAULT_INTEGRATIONS suggestion
+# Template keys ({read}, {edit}, etc.) are used in DEFAULT_INTEGRATIONS suggestion
 # strings, parallel to the {args} substitution in Integration.redirect (plugins.py:531).
 # Adding a new CLI: add one entry here. No other changes required.
 #
@@ -221,8 +221,8 @@ INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].autorun_to_harness_cli_events)
 #                         This is a UI rendering choice; hooks and AI calls use API names.
 #
 #   3. Bash command     — the shell command being BLOCKED in DEFAULT_INTEGRATIONS
-#                         e.g. blocking "grep" (bash) and suggesting {grep} (AI tool)
-#                         These are different namespaces — "grep" bash ≠ "Grep" AI tool.
+#                         e.g. blocking "sed -i" (bash) and suggesting {edit} (AI tool)
+#                         These are different namespaces — "sed" bash ≠ "Edit" AI tool.
 #
 # The values in this table are model-facing strings. For Claude/Gemini they are
 # API tool_names (layer 1), NOT CLI display names (layer 2). For Codex they may
