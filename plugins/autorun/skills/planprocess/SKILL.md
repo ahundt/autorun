@@ -2,14 +2,20 @@
 name: planprocess
 description: Use when the user asks to "execute the plan", "run the plan", or "/ar:planprocess". Executes an approved plan step by step with the wait process, task tracking, and verification before each completion claim.
 aliases: [pp]
-argument-hint: "[task description]"
+argument-hint: "[plan path or task description]"
 ---
 
-# Development Planning (/ar:planprocess)
+# Execute an Approved Plan (/ar:planprocess)
 
 <purpose>
 
-The user's request is the task description for everything below.
+This skill executes a plan that is already written and approved. It starts
+autorun's three-stage execution for that plan: work through every step, run the
+wait process after each one, and claim completion only with evidence. To write
+or improve a plan first, use `/ar:plannew` or `/ar:planrefine`.
+
+The user's argument is the plan's path or the task it covers. With no argument,
+execute the plan approved most recently in this session.
 
 ## Harness-specific plan lifecycle
 
@@ -24,104 +30,26 @@ The user's request is the task description for everything below.
 
 <requirements>
 
-## CRITICAL RULES — SURVIVE COMPACTION
+## Rules that survive compaction
 
-If this session was compacted, these rules STILL apply without exception:
+If this session was compacted, these rules still apply without exception:
 
-1. **On Claude Code, call ExitPlanMode when ALL planning tasks are complete** — this is Claude Code’s approval boundary. On Pi, report the durable plan note path and wait for explicit user approval.
+1. **Execute only an approved plan.** If the plan has not been approved, stop and ask for approval: on Claude Code through `ExitPlanMode`, on Pi by reporting the durable plan note path.
 2. **When TaskCreate is exposed, ALL plan steps require TaskCreate.** If another native checklist mutation tool is exposed, track every step with that tool instead. Otherwise, use the durable Markdown checklist as required by the capability rule above.
-3. **ALL user instructions must be directly quoted as a numbered list** at the top of the plan file. Every distinct message, with sub-items for context if needed.
-4. **NEVER delete content from plan files.** Only add or make micro-edits. Read before editing. Verify after.
-5. **After plan acceptance:** Create [TDD] and [EXEC] tasks for every implementation step before writing any code (the scaffold is plannew's §10).
-6. **Keep tasks updated:** Before starting any step, `TaskUpdate(status="in_progress")`. When done, `TaskUpdate(status="completed")`.
+3. **Before writing any code, scaffold every task and check it is visible in `TaskList`.** For each implementation step N:
+   1. `TaskCreate(subject="[TDD] Step N: Write tests for <step description>")`
+   2. `TaskCreate(subject="[EXEC] Step N: <step description>")`
+   3. `TaskUpdate([EXEC] task, addBlockedBy=[[TDD] task])`: tests must pass before implementation
+   4. `TaskUpdate([EXEC] Step N, addBlockedBy=[[EXEC] Step N-1])`: steps run in order
 
----
+   Then `TaskCreate(subject="[VERIFY] Run full test suite and confirm all steps complete")`.
+4. **Keep tasks current:** `TaskUpdate(status="in_progress")` before starting a step, `TaskUpdate(status="completed")` only when its tests pass and its requirements are met, then `TaskList` to find the next one. Unexpected blocking work gets `TaskCreate(subject="[BLOCKER] description")` at once. After every 3 tool calls, check that the current task is `in_progress`.
+5. **Never delete content from plan files.** Only add or make micro-edits: tick checkboxes, append results and new user messages to the plan's quoted list. Read before editing; verify after.
+6. **Concrete evidence for every claim:** file paths, `file:line` ranges, function names, exact error messages, the exact commands run and their output, and full URIs for every external source.
 
-## 1. Foundation (Read First)
-
-### 1.1 Key Principles
-
-| Acronym | Meaning | Question to Ask |
-|---------|---------|-----------------|
-| TDD | Test-Driven Development | Tests written first? Location specified? |
-| DRY | Don't Repeat Yourself | No code duplication? Reusing utilities? |
-| OODA | Observe-Orient-Decide-Act | Cycle followed before each decision? |
-| KISS | Keep It Simple | Simplest solution that works? |
-| YAGNI | You Aren't Gonna Need It | No premature optimization? |
-| SOLID | Single responsibility, Open/closed, Liskov, Interface segregation, Dependency inversion | Each principle addressed? |
-| RAII | Resource Acquisition Is Initialization | Resources properly managed? |
-| WOLOG | Without Loss Of Generality | Solution generalizes appropriately? |
-
-### 1.2 Definition of Concrete
-
-All outputs should include where applicable:
-
-1. **File paths**: `/path/to/file.ts` or `./relative/path.ts`
-2. **Line references**: `file.ts:42-56`
-3. **Function/class names**: `handleRequest()` in `handler.ts:15-28`
-4. **Error messages**: `"socket hang up (ECONNRESET)"`
-5. **Testable commands**: `npm test -- --grep "auth"`
-6. **Sources and references**: External sources (web URIs, external file URIs, web searches, documentation, research papers) must be recorded with full URIs and cited in plan output
-
-### 1.3 Quality Standards
-
-1. **Sequential improvement**: Each iteration builds on previous insights
-2. **Superb quality**: All solutions meet highest standards with thorough justification
-3. **Direct quotes**: Show WHY assessments are made, not just WHAT
-4. **Verifiable outcomes**: Reasoning transparent and reproducible
-5. **Compelling cases**: Selections demonstrate clear superiority
-
----
-
-## 2. Setup
-
-### 2.1 Plan Mode Check
-
-**Claude Code only:** If not already in plan mode, use `EnterPlanMode` now. **Pi:** remain in the current mode and write the durable plan note directly.
-
-### 2.2 Planning Task Setup — STOP: MUST DO BEFORE ANY PLANNING
-
-> **STOP. Before writing one word of plan content, complete ALL steps below. Do not skip. Do not defer.**
-
-**Step A — Establish the planning boundary:** On Claude Code, call `EnterPlanMode` if needed. On Pi, do not call a plan-mode tool; use the durable plan note.
-
-**Step B — Record ALL user instructions** as a numbered list at the top of the plan file.
-Every distinct message must appear with sub-items for context if necessary:
-```markdown
-## User Messages (exact quotes, in order)
-
-1. "first message the user sent"
-   - Context: what prompted this; what was happening at the time
-2. "second message — a correction or clarification"
-   - Context: what changed from the previous message
-```
-Include EVERY distinct user message that shaped this plan. Do not summarize or merge messages.
-
-**Step C — Create [PLANNING] tasks** for EVERY step AND substep via TaskCreate:
-1. `TaskCreate(subject="[PLANNING] Step N: [name]", activeForm="Planning [name]...")`
-2. `TaskCreate(subject="[PLANNING] Step N.M: [substep]", activeForm="Planning [substep]...")`
-3. `TaskCreate(subject="[PLANNING] Req: [distinct-requirement]")` for each requirement
-4. Wire dependencies: `TaskUpdate(taskId=N, addBlockedBy=[N-1])` for sequential steps
-
-**Step D — Verify:** Call `TaskList` and confirm ALL [PLANNING] tasks visible before continuing.
-
-**Step E — Track Progress**:
-- Start each task: `TaskUpdate(taskId, status="in_progress")`
-- Finish each task: `TaskUpdate(taskId, status="completed")`
-
----
-
-## 3. MODE: PLANNING (Not Execution)
-
-Execute rigorous methodology step by step. Do NOT execute code changes until plan approved.
-
-**Self-Check Questions** (answer YES to all before proceeding):
-1. Is the code clean, robust, and concise?
-2. Has the full plan file been brought up to date with latest insights?
-3. Does the plan integrate beautifully with existing code and patterns?
-4. Have you consolidated to match best approach per §1.1 Principles with concrete outputs per §1.2?
-5. Is it superbly designed for architect, maintainer, AND user audiences?
-6. Are different backends handled transparently, seamlessly, and robustly for future API changes?
+Hold each step to these principles: TDD (test first, location named), DRY,
+OODA before each decision, KISS, YAGNI, SOLID, RAII (resources released) and
+WOLOG (the solution generalizes as far as it should, no further).
 
 </requirements>
 
@@ -129,130 +57,53 @@ Execute rigorous methodology step by step. Do NOT execute code changes until pla
 
 <workflow>
 
-## 4. Process Steps
+## Process
 
-**PERSISTENT RULE**: After EVERY step AND substep of your plan (both during creation and execution), you must output the exact string "Wait," then execute §5 Wait Process "out loud" step by step and substep by substep.
+1. **Load the plan.** Read the whole plan file. List its steps, its quoted user messages and its verification commands. If a step's premise is false in the code (a cited line moved, a file is gone), record that in the plan and fix the step before executing it.
+2. **Create the tasks** of rules 2 and 3.
+3. **For each step, in dependency order:**
+   1. Mark it in progress.
+   2. Write or update the test first and run it; see it fail for the stated reason.
+   3. Make the change.
+   4. Run the step's verification command and read the output.
+   5. Output the exact string "Wait," and run the wait process below out loud, step by step.
+   6. Tick the plan's checkbox and complete the task only when the check passed and any error correction is done.
+4. **Delegate independent work in parallel** when it helps (subagent table below), then verify every finding yourself: Read every file reference, confirm code snippets match the file, cite `file:line` ranges, mark anything you could not verify "[UNVERIFIED]", and never pass on an unchecked claim.
+5. **Name each competing approach** with an incrementing version (`<taskname>-v1`, `<taskname>-v2`) so a later note can say which one was tried and why it changed.
+6. **Final verification before any completion claim:**
+   1. [ ] Primary use case works
+   2. [ ] Every edge case in the requirements is covered
+   3. [ ] Every language and platform named is covered
+   4. [ ] Every file type and format named is handled
+   5. [ ] Every user example is addressed
+   6. [ ] No requirement was silently dropped
 
-### Step 1: Identify Expertise Areas
-List expertise areas needed. Act as expert. **Output in plan**: State expertise explicitly.
+   Then check your work again: verify file references with Read, confirm code runs, check `TaskList` for skipped steps. If any case is missing, return to its step.
 
-### Step 2: Generate Best Practices
-For each expertise area separately, write:
-- 10 general best practices
-- 10 task-specific best practices
+## Wait process
 
-**Output in plan** under "## Best Practices" as numbered list.
-
-### Step 3: Explore Context
-Understand existing work. Determine right integration point. Avoid duplication.
-
-### Step 4: Launch Explore Subagents
-Use Task tool to launch parallel Explore subagents (up to 3) to understand:
-1. Existing implementations and patterns
-2. Related components and dependencies
-3. Testing patterns and conventions
-
-**CRITICAL - Verify Subagent Findings:**
-1. Use Read tool to verify EVERY file reference
-2. Confirm code snippets match actual content
-3. Do NOT trust unverified claims
-4. CITE file:line-range for verified findings
-5. Mark unverifiable findings as "[UNVERIFIED]"
-
-### Step 5: Launch Plan Subagent
-Use Task tool with Plan subagent to design implementation from exploration results.
-
-### Step 6: Describe Logic Flow
-Trace logic flow through the description. Show data/control flow.
-
-### Step 7: Use Actual Quotes
-Quote actual code with file:line-range references. No paraphrasing.
-
-### Step 8: Critique Work
-Critique overall + line-by-line against ALL best practices (§1.1) and quality standards (§1.3).
-
-### Step 9: Propose Multiple Solutions
-Propose ≥3 distinct solutions to each issue. Choose best with compelling justification.
-
-### Step 10: Thread Management
-Each thread of updates (different approaches/solutions being refined) needs a unique name with incrementing version number (`<taskname>-v1`, `<taskname>-v2`, ...). This enables referencing specific iterations: "In auth-solution-v2 we tried X, but auth-solution-v3 uses Y".
-
-### Step 11: Final Verification - Completeness Check
-
-1. **Verify ALL cases from the user's request:**
-   1. [ ] Primary use case implemented
-   2. [ ] ALL edge cases from requirements included
-   3. [ ] ALL languages/platforms mentioned covered
-   4. [ ] ALL file types/formats specified handled
-   5. [ ] ALL user examples addressed
-   6. [ ] No requirements silently dropped
-
-2. Check your work. Do not hallucinate.
-3. Verify all file references with Read tool
-4. Confirm code examples are syntactically correct
-5. Ensure no steps skipped (check TaskList)
-6. **If ANY case missing**: Return to relevant step. Do NOT proceed incomplete.
-
-### Step 12: Plan Output
-Create concrete step-by-step plan with checkbox items. Add all to TaskList via TaskCreate.
-
----
-
-## 5. Wait Process (Sequential Improvement Methodology)
-
-After outputting "Wait," execute these 8 steps:
+After outputting "Wait,", execute these 8 steps:
 
 1. **Elaborate Best Practices**: Elaborate and refine best practices lists (create new lists if none exist yet) as numbered list for current context; keep refining as new circumstances develop
 2. **Comprehensive Critique**: Harshly and constructively critique overall + line-by-line against every single best practice and criteria
 3. **Pre-mortem Analysis**: Identify potential failure modes, edge cases, weaknesses. Assume disaster → determine what went wrong → prevent those outcomes
-4. **Multiple Solution Generation**: Propose ≥3 superb quality concrete solutions (high-level + specific code quotes) to each identified issue in your task, critiques, and pre-mortem analysis
+4. **Multiple Solution Generation**: Propose ≥3 concrete solutions (high-level + specific code quotes) to each identified issue in your task, critiques, and pre-mortem analysis
 5. **Synthesized Solution Building**: Synthesize insights from all cumulative context including all previous critiques, the original work (if applicable), all previous proposed solutions, and all accumulated best practices to create refined solutions that incorporate lessons learned from the complete analysis
-6. **Sequential Quality Enhancement**: Each proposal must be superb quality, building on benefits of previous iterations
-7. **Best Solution Selection**: Choose the optimal solution from all proposals including the original, synthesized, or combinations of all proposals, in ranked order with compelling justification
+6. **Sequential Quality Enhancement**: Each proposal builds on the benefits of previous iterations
+7. **Best Solution Selection**: Choose the optimal solution from all proposals including the original, synthesized, or combinations of all proposals, in ranked order with the reason for each rank
 8. **Error Correction Protocol**: On error: immediately TaskCreate(fix) → TaskUpdate ALL steps from error point onward (failed_step and all subsequent steps) back to "pending" or "in_progress" status → Update dependencies (addBlockedBy) for reset steps to reflect corrected sequence → execute corrective steps → return to the step that produced the error and redo from there
 
----
-
-## 6. Checkbox Management
-
-1. **Create plan with checkboxes** → Put all in TaskList via TaskCreate
-2. **Execute each checkbox** → Execute Wait Process after completion
-3. **Check off only when**: Execution complete AND error correction complete
-4. **On errors**: Continue until resolved, then check off
+Before ticking a step, answer yes to each: Is the code clean, robust and
+concise? Is the plan file up to date with what was learned? Does the change fit
+the existing code and patterns? Does it handle each backend the plan names?
 
 </workflow>
 
 ---
 
-<output_contract>
-
-## 7. Output Format
-
-### Plan Structure
-1. **Summary**: 2-3 sentences (goal + approach)
-2. **Checklist**: Concrete items with file:line-range references
-3. **Dependencies**: What must be done first?
-4. **Risks**: What could go wrong?
-5. **Verification**: How to test each step?
-
-### Code Block Format
-```language
-// File: /path/to/file.ext
-// Line: XX-YY (where this code goes)
-// Purpose: Brief description
-
-[actual code here - not pseudocode]
-```
-
-**Requirement**: Every implementation step needs ≥1 code block showing exact change.
-
-</output_contract>
-
----
-
 <delegation>
 
-## 8. Subagent Guidelines
+## Subagents
 
 | Subagent Type | When to Use |
 |---------------|-------------|
@@ -263,7 +114,7 @@ After outputting "Wait," execute these 8 steps:
 | **code-reviewer** | Code quality, bugs, security review (Claude Code `pr-review-toolkit` plugin, when installed) |
 | **pr-test-analyzer** | Test coverage analysis (same plugin) |
 
-**Parallel execution**: Launch multiple in single message when tasks are independent.
+Launch independent subagents in one message so they run in parallel.
 
 </delegation>
 
@@ -271,32 +122,28 @@ After outputting "Wait," execute these 8 steps:
 
 <acceptance_protocol>
 
-## 9. Plan Acceptance and Execution Protocol
+## Execution protocol
 
-When the plan is ready for approval, use the harness-specific boundary above: Claude Code calls **ExitPlanMode**; Pi reports the durable note path and waits for explicit approval before `/ar planprocess <path>`.
+1. **Execution mode**
+   1. Continue the uninterrupted, autonomous, non-interactive, patient and safe execution of the plan until every step is verified.
+   2. Work carefully and concretely, per your instructions and the definition of concrete in rule 6.
+   3. **Bias mitigation:** be cautious and check your assumptions and your work; explore the environment to learn what is already done, because overconfidence leads to duplicated work and to calling incomplete tasks "complete" or "production ready".
 
-Then transition to execution:
-
-1. **MANDATORY EXECUTION MODE (Goal and Capabilities)**
-   1. Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your task and goals.
-   2. Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
-   3. **Bias Mitigation:** Be cautious, humble, patient, and scrupulous; avoid overconfidence and check your assumptions and your work, explore your environment to ensure you understand the system tasks goals and what is already done, verifying because you are often overconfident, duplicate work, and falsely claim incomplete tasks are "complete" or "production ready".
-
-2. **SYSTEM STOP SIGNALS** - NEVER output unless condition met:
+2. **System stop signals.** Never output either unless its condition is met:
    - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP`
    - `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY`
 
-3. **Safety Protocol**: Execute **ONLY IF** task involves high-risk or irreversible destructive actions (e.g., database operations, file deletion, state modification).
-   1. **Assess Risk**: Evaluate if action is irreversible or could cause state corruption.
-   2. **Mitigation Action**: If high-risk, execute these steps and explicitly state your actions:
-      1. **INITIATE SAFETY PROTOCOL**: Announce 'INITIATE SAFETY PROTOCOL' to begin assessment.
-      2. **Secure State**: Create environment backup or state checkpoint **before** proceeding.
-      3. **Verify Integrity**: Verify checkpoint succeeded.
-      4. **CONSIDER OPTIONS**: List options, evaluate failure modes, select best.
-   3. **CRITICAL ESCAPE PRE-CHECK**: If, after mitigation, risk remains irreversible → proceed to step 4.
+3. **Safety protocol.** Run it only when a step involves a high-risk or irreversible action (database operations, file deletion, state modification).
+   1. **Assess risk:** is the action irreversible, or could it corrupt state?
+   2. **Mitigate:** if it is high-risk, say what you do at each step:
+      1. Announce 'INITIATE SAFETY PROTOCOL'.
+      2. Create a backup or state checkpoint **before** proceeding.
+      3. Verify the checkpoint succeeded.
+      4. List the options, evaluate their failure modes, select the best.
+   3. **Escape pre-check:** if the risk is still irreversible after mitigation, go to step 4.
 
-4. **CRITICAL ESCAPE TO STOP SYSTEM**: Only if irreversible, catastrophic, or cannot be mitigated, immediately output exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
+4. **Escape to stop:** only if the action is irreversible, catastrophic or cannot be mitigated, output this exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
 
-5. **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM**: When 100% complete and verified, remember you are often overconfident—double-check the resources from which you receive or retrieve new tasks and think if anything was missed, then output exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
+5. **Final output on success:** when every step is complete and verified, check once more where your tasks come from and whether anything was missed, then output this exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
 
 </acceptance_protocol>

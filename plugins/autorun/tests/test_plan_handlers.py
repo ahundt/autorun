@@ -115,7 +115,7 @@ class TestPlanCommandHandlers:
         assert ctx.autorun_task == "Execute plan notes/approved-plan.md"
         assert ctx.plan_awaiting_execution_tasks is True
         assert ctx.plan_awaiting_planning_tasks is False
-        assert "Development Planning" in result
+        assert "Execute an Approved Plan" in result
 
     @pytest.mark.unit
     @pytest.mark.parametrize(
