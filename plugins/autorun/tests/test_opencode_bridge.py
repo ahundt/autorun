@@ -422,7 +422,7 @@ class TestDaemonSocketFrames:
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
-    def test_idle_on_older_client_without_prompt_async_keeps_existing_behavior(self, tmp_path, short_socket_dir):
+    def test_idle_on_older_client_surfaces_denial_without_claiming_enforcement(self, tmp_path, short_socket_dir):
         socket_path = short_socket_dir / "daemon.sock"
         frames, thread = self._serve(
             socket_path,
@@ -434,8 +434,16 @@ class TestDaemonSocketFrames:
         result = _run_shim(tmp_path, socket_path, "idle-old")
         thread.join(timeout=25)
 
-        assert result.stdout == ""
+        assert "Finish task #7 before stopping." in result.stdout
+        assert "cannot enforce the continuation" in result.stdout
         assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    def test_idle_with_unreachable_daemon_stays_fail_open_and_silent(self, tmp_path):
+        result = _run_shim(tmp_path, tmp_path / "nothing.sock", "idle-old")
+
+        assert result.stdout == ""
+        assert result.stderr == ""
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
@@ -626,7 +634,12 @@ if (process.argv[2] === "idle") {
 }
 
 if (process.argv[2] === "idle-old") {
-  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: {} })
+  const oldClient = {
+    tui: {
+      showToast: async (options) => console.log("toast", JSON.stringify(options)),
+    },
+  }
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: oldClient })
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
   process.exit(0)
 }

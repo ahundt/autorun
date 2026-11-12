@@ -16,8 +16,9 @@
     "prompt": "chat.message mutates output.message and output.parts before durable prompt admission",
     "stop_signal": "event receives session.idle with properties.sessionID",
     "stop_continuation": "client.session.promptAsync POSTs a message to /session/{id}/prompt_async and returns 204",
+    "stop_notice_fallback": "client.tui.showToast POSTs a visible warning to /tui/show-toast when continuation is unavailable",
     "pre_compact": "experimental.session.compacting receives sessionID and mutable context/prompt output",
     "post_compact": "event receives session.compacted with properties.sessionID"
   },
-  "compatibility": "V1 object entrypoints remain supported in OpenCode 1.18.29 and newer. The Stop bridge feature-detects client.session.promptAsync; if absent, it preserves the older no-continuation behavior instead of throwing."
+  "compatibility": "V1 object entrypoints remain supported in OpenCode 1.18.29 and newer. The Stop bridge feature-detects client.session.promptAsync; if absent, a received denial is shown through client.tui.showToast with an explicit non-enforcement warning. Daemon-unavailable and timeout paths still fail open."
 }

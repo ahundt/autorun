@@ -39,6 +39,43 @@ function noticePart(message) {
   }
 }
 
+async function surfaceStopDenial(client, sessionID, directory, reason) {
+  if (typeof client?.session?.promptAsync === "function") {
+    try {
+      await client.session.promptAsync({
+        path: { id: sessionID },
+        query: { directory },
+        body: {
+          parts: [{
+            type: "text",
+            text: reason,
+            synthetic: true,
+            metadata: { source: "autorun-stop-gate" },
+          }],
+        },
+      })
+      return
+    } catch {
+      // Older/mismatched clients may expose the method but reject its shape.
+    }
+  }
+  if (typeof client?.tui?.showToast === "function") {
+    await client.tui.showToast({
+      query: { directory },
+      body: {
+        title: "Autorun could not continue this session",
+        message: `${reason}\n\nThis OpenCode client cannot enforce the continuation; continue manually.`,
+        variant: "warning",
+        duration: 12000,
+      },
+    })
+    return
+  }
+  console.error(
+    `[autorun] Stop blocked but this OpenCode client cannot continue the session: ${reason}`,
+  )
+}
+
 export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
   await bridge.askDaemon({
     hook_event_name: "OpenCodeAttach",
@@ -94,19 +131,13 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
           cwd: String(directory ?? ""),
         })
         const reason = denialReason(response)
-        if (!reason || typeof client?.session?.promptAsync !== "function") return
-        await client.session.promptAsync({
-          path: { id: String(properties.sessionID) },
-          query: { directory: String(directory ?? "") },
-          body: {
-            parts: [{
-              type: "text",
-              text: reason,
-              synthetic: true,
-              metadata: { source: "autorun-stop-gate" },
-            }],
-          },
-        })
+        if (!reason) return
+        await surfaceStopDenial(
+          client,
+          String(properties.sessionID),
+          String(directory ?? ""),
+          reason,
+        )
         return
       }
       if (event?.type === "session.compacted") {
