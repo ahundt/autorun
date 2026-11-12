@@ -10,7 +10,7 @@ argument-hint: "[list] or [send --to A -- TEXT]"
 <purpose>
 
 `autorun tmux list` prints each AI coding session running in a tmux window,
-lettered A, B, C, with its target (`session:window`), harness, directory,
+lettered A, B, C, with its target (`session:window.pane`), harness, directory,
 purpose and state. It only reads.
 
 `autorun tmux send --to <targets> -- <text>` types the text into the sessions
@@ -71,10 +71,10 @@ the sessions and ask what to do.
 4. Read the output: one line per target naming its session, window, pane,
    directory and harness, then `[ok]` or `[FAIL]` per target. The exit status
    is 1 when any send failed or nothing was sent.
-5. Capture each pane and tell the user what it shows:
+5. Capture each pane (its target from the list) and tell the user what it shows:
 
    ```bash
-   tmux capture-pane -p -t <session>:<window> | tail -20
+   tmux capture-pane -p -t <target> | tail -20
    ```
 
 ## Targets
@@ -94,18 +94,17 @@ With no `--to`, or no text after `--`, `send` types nothing and exits 1.
 
 ## Which pane receives the text
 
-A send to `session:window` reaches that window's active pane, the one the
-`pane` field names. If the window is split, check that pane runs the harness
-before sending:
-
-```bash
-tmux list-panes -t <session>:<window> -F '#{pane_index} #{pane_active} #{pane_current_command}'
-```
+Each pane that runs an AI coding harness is its own session in the list,
+with target `session:window.pane`. A window split into a shell and a
+harness lists only the harness pane; a window with two harness panes lists
+both, each with its own letter. `send` types into the pane the target
+names, whichever pane of the window is active. Letters follow tmux's order:
+sessions by name, windows by index, panes by index.
 
 ## Keys other than text
 
 `autorun tmux send` types text and Enter only. To interrupt a Claude Code
-turn, ask first, then send `tmux send-keys -t <session>:<window> Escape` and
+turn, ask first, then send `tmux send-keys -t <target> Escape` and
 capture the pane. Commands to resume each harness in place after it exits are
 in the `tmux-automation` skill.
 

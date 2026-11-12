@@ -759,64 +759,45 @@ class TmuxUtilities:
         return self.pane_harness(session, window) is not None
 
     def pane_harness(self, session: str, window: str) -> Optional[str]:
-        """
-        Return the platform name of the AI harness a tmux window runs, or None.
+        """Platform name of the first harness a window's panes run, or None."""
+        found = self.pane_harnesses(session, window)
+        return found[0][1] if found else None
 
-        Uses existing execute_tmux_command infrastructure to get pane PID,
-        then examines child processes for a registered harness executable.
+    def pane_harnesses(self, session: str, window: str) -> List[Tuple[str, str]]:
+        """(pane index, platform name) of each pane in the window that runs a
+        registered AI harness, in pane order.
 
-        Args:
-            session: Tmux session name
-            window: Window index within session
-
-        Returns:
-            The ``platforms.PLATFORMS`` key of the first harness found, or None
-
-        Implementation:
-            1. Query tmux for the PID of every pane in the window
-            2. Use pgrep -P to find the direct children of those processes
-            3. Match each child's executable name, then each pane process's
-               own (a pane started as `tmux new-window codex` has no shell
-               above the harness), against client.harness_process_names()
-               (see _process_harness)
-
-        Best Practices:
-            - Leverages existing execute_tmux_command for consistency
-            - Timeout protection for subprocess calls (2s)
-            - Robust error handling for missing processes
-            - Case-insensitive matching for process names
-            - Fails safely (returns None on any error)
+        A pane runs a harness when its own process (`tmux new-window codex`)
+        or one of its child processes (a shell that started it) is a
+        registered harness executable (see _process_harness). Fails safe:
+        any error reports no harness.
         """
         try:
-            # Get pane PID using existing execute_tmux_command
             result = self.execute_tmux_command(
-                ['list-panes', '-F', '#{pane_pid}'],
+                ['list-panes', '-F', '#{pane_index} #{pane_pid}'],
                 session=session,
                 window=window
             )
-
-            if not result or result['returncode'] != 0 or not result['stdout'].strip():
-                return None
-
-            # One pid per pane; pgrep -P takes a comma-separated list and
-            # rejects the newline-separated one list-panes prints.
-            pane_pids = ','.join(result['stdout'].split())
-
-            child_result = subprocess.run(
-                ['pgrep', '-P', pane_pids],
-                capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-                timeout=2
-            )
-
-            # pgrep exits 1 when no pane has a child; the panes still count.
-            children = child_result.stdout.split() if child_result.returncode == 0 else []
-            candidates = children + result['stdout'].split()
-            return next(filter(None, map(_process_harness, candidates)), None)
-
+            if not result or result['returncode'] != 0:
+                return []
+            found = []
+            for line in result['stdout'].splitlines():
+                fields = line.split()
+                if len(fields) != 2 or not fields[1].isdigit():
+                    continue
+                index, pid = fields
+                # pgrep exits 1 when the pane has no child; the pane still counts.
+                children = subprocess.run(
+                    ['pgrep', '-P', pid],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2
+                )
+                candidates = (children.stdout.split() if children.returncode == 0 else []) + [pid]
+                harness = next(filter(None, map(_process_harness, candidates)), None)
+                if harness:
+                    found.append((index, harness))
+            return found
         except (subprocess.TimeoutExpired, Exception):
-            # Fail safely - don't report a harness if detection fails
-            return None
+            return []
 
 
 SCRIPT_INTERPRETERS = frozenset({'node', 'bun', 'deno'})
@@ -982,10 +963,9 @@ TMUX_WINDOW_FORMAT = TMUX_FORMAT_SEPARATOR.join([
     '#{pane_pid}',
     '#{window_active}',
     '#{window_activity}',
-    '#{pane_index}',  # the window's active pane: where a send to session:window lands
     '#{window_flags}'
 ])
-TMUX_FORMAT_FIELDS = ('session', 'w', 'raw_title', 'cmd', 'path', 'pid', 'active', 'activity', 'pane', 'flags')
+TMUX_FORMAT_FIELDS = ('session', 'w', 'raw_title', 'cmd', 'path', 'pid', 'active', 'activity', 'flags')
 
 
 class WindowList(list):
@@ -1193,7 +1173,6 @@ def tmux_list_windows(
         - active: bool - True if this window is currently selected/visible in its session
         - activity: int - Unix timestamp of last activity in this window
         - flags: str - tmux window flags (* = current, - = last, Z = zoomed, ! = bell)
-        - pane: str - index of the window's active pane, the one a send to session:window reaches
         - content: str - (only if content_lines > 0) captured terminal output, last N lines
         - prompt_type: str|None - (only if content_lines > 0) detected Claude Code prompt type:
           'input', 'plan_approval', 'tool_permission_yn', 'tool_permission_numbered',
@@ -1270,8 +1249,7 @@ def tmux_list_windows(
                 'pid': int(data['pid']) if data['pid'].isdigit() else 0,
                 'active': data['active'] == '1',  # Is this the current window?
                 'activity': int(data['activity']) if data['activity'].isdigit() else 0,  # Unix timestamp
-                'flags': data['flags'],  # * = current, - = last, etc.
-                'pane': data['pane'],
+                'flags': data['flags']  # * = current, - = last, etc.
             }
 
             # Optional: capture pane content and detect state
@@ -2393,50 +2371,68 @@ def tmux_dangerous_batch_execute(
 # ---------------------------------------------------------------------------
 
 def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
-    """Discover all Claude sessions across tmux windows.
+    """Discover every tmux pane that runs a registered AI harness.
 
-    Uses tmux_list_windows() for a single-query window scan, then filters to
-    windows running any registered AI harness via is_ai_session(). Populates
-    the 'tmux_target' key (format: 'session:window') used by
-    execute_session_selections() and send_to_session().
+    Each such pane is one entry, so a window split into a shell and a
+    harness, or into two harnesses, is targeted pane by pane. 'tmux_target'
+    is 'session:window.pane', which execute_session_selections() and
+    send_to_session() type into, so the pane named is the pane that receives
+    the keys, whichever pane of the window is active. Order, which fixes the
+    letters `autorun tmux list` shows: sessions as tmux lists them (by name),
+    windows by index, panes by index. The caller's own pane is left out.
 
     Returns list of session dicts with tmux_target, session_name, window_id,
-    content, content_preview, title, cmd, path, pid, active, activity, flags,
-    branch, and the prompt_type and is_active tmux_list_windows() detected.
+    pane, harness, content and content_preview (that pane's last
+    DEFAULT_CAPTURE_LINES lines), path (that pane's directory), prompt_type
+    and is_active (read from that pane), and the window's title, cmd, pid,
+    active, activity, flags and branch.
     """
-    all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES)
+    current = _tmux_current_location()
     sessions = []
-    for win in all_windows:
-        if tmux.is_ai_session(win['session'], str(win['w'])):
-            content = win.get('content', '')
+    for win in tmux_list_windows(exclude_current=False):
+        window_id = str(win['w'])
+        for pane, harness in tmux.pane_harnesses(win['session'], window_id):
+            if current == (win['session'], window_id, pane):
+                continue
+            capture = tmux.execute_tmux_command(
+                ['capture-pane', '-p', '-S', f'-{DEFAULT_CAPTURE_LINES}'], win['session'], window_id, pane)
+            content = capture['stdout'] if capture and capture.get('returncode') == 0 else ''
+            where = tmux.execute_tmux_command(
+                ['display-message', '-p', '-t', f"{win['session']}:{window_id}.{pane}", '#{pane_current_path}'])
+            path = where['stdout'].strip() if where and where.get('returncode') == 0 else win.get('path', '')
             sessions.append({
                 'session_name': win['session'],
-                'window_id': str(win['w']),
-                'tmux_target': f"{win['session']}:{win['w']}",
+                'window_id': window_id,
+                'pane': pane,
+                'tmux_target': f"{win['session']}:{window_id}.{pane}",
                 'content': content,
                 'content_preview': content[:CONTENT_PREVIEW_LENGTH],
                 'title': win.get('title', ''),
                 'cmd': win.get('cmd', ''),
-                'path': win.get('path', ''),
+                'path': path.replace(os.path.expanduser('~'), '~'),
                 'pid': win.get('pid', 0),
                 'active': win.get('active', False),
                 'activity': win.get('activity', 0),
                 'flags': win.get('flags', ''),
-                'pane': win.get('pane', ''),
                 'branch': win.get('branch'),
-                'prompt_type': win.get('prompt_type'),
-                'is_active': win.get('is_active', False),
-                'harness': win.get('harness'),
+                'prompt_type': pane_prompt_type(content, harness),
+                'is_active': tmux_detect_claude_active(content),
+                'harness': harness,
             })
     return sessions
 
 
-def _send_result(session: dict, command: str, send: Callable[[str, str], bool]) -> dict:
-    """Run send(session_name, window_id) for session['tmux_target'] and report it."""
+def _send_result(session: dict, command: str, send: Callable[..., bool]) -> dict:
+    """Run send(session_name, window_id, pane) for session['tmux_target'] and report it.
+
+    The target is 'session:window.pane' (pane None for a bare 'session:window',
+    which tmux resolves to the window's active pane).
+    """
     target = session['tmux_target']
     session_name, window_id = target.split(':', 1)
+    window_id, _, pane = window_id.partition('.')
     try:
-        success = bool(send(session_name, window_id))
+        success = bool(send(session_name, window_id, pane or None))
     except Exception as e:
         return {'target': target, 'command': command, 'success': False, 'error': str(e)}
     return {
@@ -2452,22 +2448,22 @@ def send_to_session(tmux: 'TmuxUtilities', session: dict, cmd: str) -> dict:
 
     Args:
         tmux:    TmuxUtilities instance
-        session: Session dict with 'tmux_target' key ('session:window' format)
+        session: Session dict with 'tmux_target' key ('session:window.pane' format)
         cmd:     Command string to send
 
     Returns:
         {'target': str, 'command': str, 'success': bool, 'error': str|None};
         success is False when either the text or the Enter was not delivered.
     """
-    return _send_result(session, cmd, lambda s, w: send_text_and_enter(tmux, cmd, s, w))
+    return _send_result(session, cmd, lambda s, w, p: send_text_and_enter(tmux, cmd, s, w, p))
 
 
 # Default-action labels (tmux_tab_ai_session_status.get_default_actions) that
 # name something to send. The others ('let it work', 'new task', 'status', ...)
 # are advice for a person; typing one would submit it to Claude as a prompt.
 _DEFAULT_ACTION_SENDERS: Dict[str, Callable[..., bool]] = {
-    'continue': lambda tmux, s, w: send_text_and_enter(tmux, 'continue', s, w),
-    'interrupt': lambda tmux, s, w: send_escape(tmux, s, w),
+    'continue': lambda tmux, s, w, p: send_text_and_enter(tmux, 'continue', s, w, p),
+    'interrupt': lambda tmux, s, w, p: send_escape(tmux, s, w, p),
 }
 
 
@@ -2477,7 +2473,7 @@ def _run_default_action(tmux: 'TmuxUtilities', session: dict, letter: str) -> di
     if sender is None:
         return {'target': session['tmux_target'], 'command': label, 'success': False,
                 'error': f"'{label}' is advice, not a command; use {letter}:<command>"}
-    return _send_result(session, label, lambda s, w: sender(tmux, s, w))
+    return _send_result(session, label, lambda s, w, p: sender(tmux, s, w, p))
 
 
 def execute_session_selections(selection_str: str, sessions: list,

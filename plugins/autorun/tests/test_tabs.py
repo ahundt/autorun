@@ -50,7 +50,7 @@ class TestIsClaudeSession:
 
         with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
              patch('autorun.tmux_utils.subprocess.run') as mock_run:
-            mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
+            mock_tmux.return_value = {'returncode': 0, 'stdout': '0 12345'}
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),  # pgrep -P
                 Mock(returncode=0, stdout='/usr/local/bin/claude\n'),  # ps -p
@@ -64,7 +64,7 @@ class TestIsClaudeSession:
 
         with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
              patch('autorun.tmux_utils.subprocess.run') as mock_run:
-            mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
+            mock_tmux.return_value = {'returncode': 0, 'stdout': '0 12345'}
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),
                 Mock(returncode=0, stdout='/usr/local/bin/happy-dev\n'),
@@ -78,7 +78,7 @@ class TestIsClaudeSession:
 
         with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
              patch('autorun.tmux_utils.subprocess.run') as mock_run:
-            mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
+            mock_tmux.return_value = {'returncode': 0, 'stdout': '0 12345'}
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),
                 Mock(returncode=0, stdout='/bin/bash\n'),  # ps -o comm=
@@ -93,7 +93,7 @@ class TestIsClaudeSession:
 
         with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
              patch('autorun.tmux_utils.subprocess.run') as mock_run:
-            mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
+            mock_tmux.return_value = {'returncode': 0, 'stdout': '0 12345'}
             mock_run.return_value = Mock(returncode=1, stdout='')
 
             assert tmux.is_claude_session('test-session', '0') is False
@@ -146,9 +146,9 @@ class TestIsClaudeSessionMatchesTheProcessNotItsArguments:
 
     def test_claude_in_the_second_pane_of_a_split_window_is_detected(self):
         assert self._detect(
-            '111\n222\n',
+            '0 111\n1 222\n',
             {'222': ['333']},
-            {'333': ('/usr/local/bin/claude', 'claude')},
+            {'111': ('-zsh', '-zsh'), '333': ('/usr/local/bin/claude', 'claude')},
         ) is True
 
     @pytest.mark.parametrize('comm,args', [
@@ -157,11 +157,23 @@ class TestIsClaudeSessionMatchesTheProcessNotItsArguments:
         ('/usr/bin/less', 'less claude'),
     ])
     def test_a_command_line_that_only_mentions_claude_is_not_claude(self, comm, args):
-        assert self._detect('111\n', {'111': ['333']}, {'333': (comm, args)}) is False
+        assert self._detect('0 111\n', {'111': ['333']}, {'333': (comm, args)}) is False
+
+    def test_each_pane_running_a_harness_is_reported_with_its_index(self):
+        """A send must reach the pane that runs the harness, not the window's
+        active pane, so discovery reports which pane matched."""
+        tmux = TmuxUtilities(session_name="test-session")
+        procs = {'111': ('-zsh', '-zsh'), '333': ('/usr/local/bin/claude', 'claude'),
+                 '222': ('/usr/local/bin/codex', 'codex')}
+        with patch.object(tmux, 'execute_tmux_command',
+                          return_value={'returncode': 0, 'stdout': '0 111\n1 222\n2 444\n'}), \
+                patch('autorun.tmux_utils.subprocess.run',
+                      side_effect=_fake_process_table({'111': ['333']}, {**procs, '444': ('/bin/sh', 'sh')})):
+            assert tmux.pane_harnesses('test-session', '0') == [('0', 'claude'), ('1', 'codex')]
 
     def test_node_running_the_claude_script_is_detected(self):
         assert self._detect(
-            '111\n',
+            '0 111\n',
             {'111': ['333']},
             {'333': ('/usr/local/bin/node', 'node /usr/local/bin/claude --resume')},
         ) is True
@@ -176,7 +188,7 @@ class TestDiscoveryFindsEveryRegisteredHarness:
     def _harness(self, procs):
         tmux = TmuxUtilities(session_name="test-session")
         with patch.object(tmux, 'execute_tmux_command',
-                          return_value={'returncode': 0, 'stdout': '111\n'}), \
+                          return_value={'returncode': 0, 'stdout': '0 111\n'}), \
                 patch('autorun.tmux_utils.subprocess.run',
                       side_effect=_fake_process_table({'111': ['333']}, {'333': procs})):
             return (tmux.pane_harness('test-session', '0'), tmux.is_ai_session('test-session', '0'),
@@ -215,7 +227,7 @@ class TestDiscoveryFindsEveryRegisteredHarness:
             children, procs = {'111': ['333']}, {'111': ('-zsh', '-zsh'), '333': proc}
         tmux = TmuxUtilities(session_name="test-session")
         with patch.object(tmux, 'execute_tmux_command',
-                          return_value={'returncode': 0, 'stdout': '111\n'}), \
+                          return_value={'returncode': 0, 'stdout': '0 111\n'}), \
                 patch('autorun.tmux_utils.subprocess.run',
                       side_effect=_fake_process_table(children, procs)):
             assert tmux.pane_harness('test-session', '0') == name
@@ -254,11 +266,10 @@ class TestDiscoveryFindsEveryRegisteredHarness:
         from autorun import tmux_utils
 
         listing = create_autospec(tmux_utils.tmux_list_windows, return_value=[
-            {'session': 'main', 'w': 1, 'content': '', 'title': 't', 'harness': 'pi'},
+            {'session': 'main', 'w': 1, 'content': '', 'title': 't'},
         ])
         tmux = Mock()
-        tmux.is_ai_session.return_value = True
-        tmux.is_claude_session.return_value = False
+        tmux.pane_harnesses.return_value = [('0', 'pi')]
         with patch.object(tmux_utils, 'tmux_list_windows', listing):
             assert discover_claude_sessions(tmux)[0]['harness'] == 'pi'
 
@@ -625,11 +636,30 @@ def test_discovery_calls_tmux_list_windows_with_its_real_signature():
         {"session": "main", "w": 1, "content": "> ", "title": "t", "cmd": "claude"},
     ])
     tmux = Mock()
-    tmux.is_ai_session.return_value = True
+    tmux.pane_harnesses.return_value = [("0", "claude")]
     with patch.object(tmux_utils, "tmux_list_windows", listing):
         sessions = discover_claude_sessions(tmux)
 
-    assert [s["tmux_target"] for s in sessions] == ["main:1"]
+    assert [s["tmux_target"] for s in sessions] == ["main:1.0"]
+
+
+def test_discovery_lists_each_harness_pane_as_its_own_target():
+    """Two harness panes in one window are two entries, each targeted at its
+    own pane; the window's other panes are not entries."""
+    from unittest.mock import create_autospec
+
+    from autorun import tmux_utils
+
+    listing = create_autospec(tmux_utils.tmux_list_windows, return_value=[
+        {"session": "main", "w": 1, "content": "", "title": "t", "cmd": "zsh"},
+    ])
+    tmux = Mock()
+    tmux.pane_harnesses.return_value = [("1", "codex"), ("2", "pi")]
+    with patch.object(tmux_utils, "tmux_list_windows", listing):
+        sessions = discover_claude_sessions(tmux)
+
+    assert [(s["tmux_target"], s["pane"], s["harness"]) for s in sessions] == [
+        ("main:1.1", "1", "codex"), ("main:1.2", "2", "pi")]
 
 
 class TestTabsUsesThePromptDetector:
@@ -637,7 +667,8 @@ class TestTabsUsesThePromptDetector:
     in '>' or containing 'waiting for'/'your selection'. A generating window
     that printed 'waiting for build' was awaiting; Claude Code idle at its
     '❯' prompt, with status lines below it, was not. discover_claude_sessions
-    also dropped the prompt_type and is_active that tmux_list_windows computed."""
+    also dropped the prompt_type and is_active that tmux_list_windows computed;
+    discovery now reads both from the capture of the pane that runs the harness."""
 
     IDLE = (
         "⏺ All tests pass.\n\n"
@@ -668,11 +699,12 @@ class TestTabsUsesThePromptDetector:
         from autorun import tmux_utils
 
         listing = create_autospec(tmux_utils.tmux_list_windows, return_value=[
-            {'session': 'main', 'w': 1, 'content': 'plain text', 'title': 't',
-             'prompt_type': 'input', 'is_active': False},
+            {'session': 'main', 'w': 1, 'content': 'plain text', 'title': 't'},
         ])
         tmux = Mock()
-        tmux.is_ai_session.return_value = True
+        tmux.pane_harnesses.return_value = [('1', 'claude')]
+        tmux.execute_tmux_command.side_effect = lambda cmd, *a, **k: {
+            'returncode': 0, 'stdout': self.IDLE if cmd[0] == 'capture-pane' else '/w\n'}
         with patch.object(tmux_utils, 'tmux_list_windows', listing):
             session = discover_claude_sessions(tmux)[0]
 

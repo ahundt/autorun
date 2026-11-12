@@ -21,10 +21,10 @@ from autorun import tmux_tab_ai_session_status as status
 from autorun.__main__ import main
 
 SESSIONS = [
-    {'tmux_target': 'work:1', 'session_name': 'work', 'window_id': '1', 'pane': '0',
+    {'tmux_target': 'work:1.0', 'session_name': 'work', 'window_id': '1', 'pane': '0',
      'path': '~/src/one', 'harness': 'claude', 'content': '❯ \n', 'prompt_type': 'input',
      'is_active': False, 'title': 'one'},
-    {'tmux_target': 'work:2', 'session_name': 'work', 'window_id': '2', 'pane': '1',
+    {'tmux_target': 'work:2.1', 'session_name': 'work', 'window_id': '2', 'pane': '1',
      'path': '~/src/two', 'harness': 'codex', 'content': '', 'prompt_type': 'unknown',
      'is_active': False, 'title': 'two'},
 ]
@@ -61,7 +61,7 @@ def test_list_json_prints_the_discovery_json(discovered, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data['count'] == 2
     assert [(s['tmux_target'], s['harness']) for s in data['sessions']] == [
-        ('work:1', 'claude'), ('work:2', 'codex')]
+        ('work:1.0', 'claude'), ('work:2.1', 'codex')]
 
 
 def test_list_table_names_each_session_with_its_harness(discovered, capsys):
@@ -85,7 +85,7 @@ def test_send_reaches_the_one_sender_with_that_selection(discovered, capsys):
     selection, sessions = sender.call_args.args[:2]
     assert selection == 'A'
     assert sender.call_args.kwargs['command'] == 'x'
-    assert [s['tmux_target'] for s in sessions] == ['work:1', 'work:2']
+    assert [s['tmux_target'] for s in sessions] == ['work:1.0', 'work:2.1']
 
 
 def test_send_types_into_the_named_pane_only_after_naming_it(discovered, tmux, capsys):
@@ -95,12 +95,12 @@ def test_send_types_into_the_named_pane_only_after_naming_it(discovered, tmux, c
 
     assert main(['tmux', 'send', '--to', 'B', '--', 'hello', 'there']) == 0
 
-    typed = [(c.args[0], c.args[1], c.args[2]) for c in tmux.send_keys.call_args_list]
-    assert typed == [('hello there', 'work', '2'), ('C-m', 'work', '2')]
+    typed = [c.args[:4] for c in tmux.send_keys.call_args_list]
+    assert typed == [('hello there', 'work', '2', '1'), ('C-m', 'work', '2', '1')]
     before = printed_before_typing[0]
     assert 'session work' in before and 'window 2' in before and 'pane 1' in before
     assert '~/src/two' in before and 'codex' in before
-    assert 'work:1' not in before, 'named a pane it is not going to type into'
+    assert 'work:1.0' not in before, 'named a pane it is not going to type into'
 
 
 @pytest.mark.parametrize('argv', [
@@ -121,13 +121,13 @@ def test_send_without_a_target_or_text_types_nothing_and_fails(argv, discovered,
 def test_send_awaiting_input_skips_a_pane_whose_state_is_unknown(discovered, tmux, capsys):
     assert main(['tmux', 'send', '--to', 'awaiting-input', '--', 'go']) == 0
 
-    assert {c.args[1:3] for c in tmux.send_keys.call_args_list} == {('work', '1')}
+    assert {c.args[1:4] for c in tmux.send_keys.call_args_list} == {('work', '1', '0')}
 
 
 def test_send_accepts_awaiting_for_awaiting_input(discovered, tmux):
     assert main(['tmux', 'send', '--to', 'awaiting', '--', 'go']) == 0
 
-    assert {c.args[1:3] for c in tmux.send_keys.call_args_list} == {('work', '1')}
+    assert {c.args[1:4] for c in tmux.send_keys.call_args_list} == {('work', '1', '0')}
 
 
 def test_a_failed_send_exits_nonzero(discovered, tmux, capsys):
@@ -229,75 +229,99 @@ _PANES = [
 ]
 
 
-@pytest.mark.tmux
-class TestTmuxCommandOnAPrivateServer:
-    """`autorun tmux list` and `send`, run as a separate process the way a user
-    runs them, against a tmux server only this test uses.
+@pytest.fixture
+def private_tmux(request, tmp_path):
+    """A tmux server only this test uses, and a way to launch stubs in it.
 
     The server is reached the way conftest.py reaches the suite's private
     one: AUTORUN_TMUX_BIN names a wrapper that adds `-S <socket>`. A server
-    of its own keeps panes other tests leave behind out of the letters."""
+    of its own keeps panes other tests leave behind out of the letters.
+    Yields (tmux, env, stub_argv): tmux(*args) runs a tmux command there,
+    env runs autorun against it, and stub_argv(exe, screen, how) is the argv
+    of a stub harness, run as the pane's own process or a shell's child.
+    """
+    import os
+    import shlex
+    import subprocess
+    import sys
+    import tempfile
+    import uuid
+    from pathlib import Path
+
+    real_tmux = getattr(request.config, '_autorun_real_tmux_bin', None)
+    assert real_tmux and os.environ.get('AUTORUN_TEST_TMUX_SOCKET'), \
+        "tmux-marked tests need tmux and the suite's private server setup"
+    # A socket path must stay under the 104-byte limit of sun_path.
+    socket = Path(tempfile.gettempdir()) / f'arh9-{uuid.uuid4().hex[:8]}'
+    wrapper = tmp_path / 'bin' / 'tmux'
+    wrapper.parent.mkdir()
+    wrapper.write_text(
+        '#!/bin/sh\nunset TMUX\nexport SHELL=/bin/sh\n'
+        f'exec {shlex.quote(real_tmux)} -f /dev/null -S {shlex.quote(str(socket))} "$@"\n')
+    wrapper.chmod(0o755)
+    stub = tmp_path / 'stub.py'
+    stub.write_text(_STUB)
+
+    env = {k: v for k, v in os.environ.items() if k not in ('TMUX', 'ANTHROPIC_API_KEY')}
+    env['AUTORUN_TMUX_BIN'] = str(wrapper)
+    env['PATH'] = f"{wrapper.parent}{os.pathsep}{env.get('PATH', '')}"
+
+    def tmux(*args):
+        return subprocess.run([str(wrapper), *args], capture_output=True, text=True,
+                              encoding='utf-8', env=env, timeout=10)
+
+    def stub_argv(exe, screen, how='own'):
+        launch = f'exec -a {exe} {shlex.quote(sys.executable)} {shlex.quote(str(stub))} {exe} {screen}'
+        if how == 'shell':  # a subshell execs the stub, so bash stays as its parent
+            launch = f'({launch}); echo exited'
+        return ['bash', '-c', launch]
+
+    try:
+        yield tmux, env, stub_argv
+    finally:
+        tmux('kill-server')
+
+
+def _wait_for_screens(tmux, targets):
+    """Each pane has drawn its first screen (a stub's banner, a shell's prompt)."""
+    import time
+
+    for target in targets:
+        for _ in range(50):
+            if tmux('capture-pane', '-p', '-t', target).stdout.strip():
+                break
+            time.sleep(0.1)
+
+
+def _autorun_tmux(env, *args):
+    import subprocess
+    import sys
+
+    return subprocess.run([sys.executable, '-m', 'autorun', 'tmux', *args], capture_output=True,
+                          text=True, encoding='utf-8', env=env, timeout=120)
+
+
+@pytest.mark.tmux
+class TestTmuxCommandOnAPrivateServer:
+    """`autorun tmux list` and `send`, run as a separate process the way a user
+    runs them, against a tmux server only this test uses (private_tmux)."""
 
     @pytest.fixture
-    def server(self, request, tmp_path):
-        import os
-        import shlex
-        import subprocess
-        import sys
-        import tempfile
-        import time
-        import uuid
-        from pathlib import Path
-
-        real_tmux = getattr(request.config, '_autorun_real_tmux_bin', None)
-        assert real_tmux and os.environ.get('AUTORUN_TEST_TMUX_SOCKET'), \
-            "tmux-marked tests need tmux and the suite's private server setup"
-        # A socket path must stay under the 104-byte limit of sun_path.
-        socket = Path(tempfile.gettempdir()) / f'arh9-{uuid.uuid4().hex[:8]}'
-        wrapper = tmp_path / 'bin' / 'tmux'
-        wrapper.parent.mkdir()
-        wrapper.write_text(
-            '#!/bin/sh\nunset TMUX\nexport SHELL=/bin/sh\n'
-            f'exec {shlex.quote(real_tmux)} -f /dev/null -S {shlex.quote(str(socket))} "$@"\n')
-        wrapper.chmod(0o755)
-        stub = tmp_path / 'stub.py'
-        stub.write_text(_STUB)
-
-        env = {k: v for k, v in os.environ.items() if k not in ('TMUX', 'ANTHROPIC_API_KEY')}
-        env['AUTORUN_TMUX_BIN'] = str(wrapper)
-        env['PATH'] = f"{wrapper.parent}{os.pathsep}{env.get('PATH', '')}"
-
-        def tmux(*args):
-            return subprocess.run([str(wrapper), *args], capture_output=True, text=True,
-                                  encoding='utf-8', env=env, timeout=10)
-
+    def server(self, private_tmux):
+        tmux, env, stub_argv = private_tmux
         for index, (exe, _, how, screen) in enumerate(_PANES):
-            launch = f'exec -a {exe} {shlex.quote(sys.executable)} {shlex.quote(str(stub))} {exe} {screen}'
-            if how == 'shell':  # a subshell execs the stub, so bash stays as its parent
-                launch = f'({launch}); echo exited'
-            argv = ['bash', '-c', launch]
+            argv = stub_argv(exe, screen, how)
             if index == 0:
                 result = tmux('new-session', '-d', '-s', 'h9', '-x', '100', '-y', '20', *argv)
             else:
                 result = tmux('new-window', '-d', '-t', f'h9:{index}', *argv)
             assert result.returncode == 0, result.stderr
-        for index in range(len(_PANES)):  # each stub has drawn its first screen
-            for _ in range(50):
-                if tmux('capture-pane', '-p', '-t', f'h9:{index}').stdout.strip():
-                    break
-                time.sleep(0.1)
-        try:
-            yield tmux, env
-        finally:
-            tmux('kill-server')
+        _wait_for_screens(tmux, [f'h9:{i}' for i in range(len(_PANES))])
+        return tmux, env
 
     @staticmethod
     def _autorun(env, *args):
-        import subprocess
-        import sys
-
-        return subprocess.run([sys.executable, '-m', 'autorun', 'tmux', *args], capture_output=True,
-                              text=True, encoding='utf-8', env=env, timeout=120)
+        return _autorun_tmux(env, *args)
 
     def _screens(self, tmux):
         return [tmux('capture-pane', '-p', '-t', f'h9:{i}').stdout for i in range(len(_PANES))]
@@ -309,7 +333,7 @@ class TestTmuxCommandOnAPrivateServer:
 
         assert result.returncode == 0, result.stdout + result.stderr
         found = [(s['tmux_target'], s['harness']) for s in json.loads(result.stdout)['sessions']]
-        assert found == [(f'h9:{i}', harness) for i, (_, harness, _, _) in enumerate(_PANES)]
+        assert found == [(f'h9:{i}.0', harness) for i, (_, harness, _, _) in enumerate(_PANES)]
 
     def test_list_table_names_the_harness_of_each_pane(self, server):
         _, env = server
@@ -319,7 +343,7 @@ class TestTmuxCommandOnAPrivateServer:
         assert result.returncode == 0, result.stdout + result.stderr
         rows = [line.split() for line in result.stdout.splitlines() if line[:2] in ('A ', 'B ', 'E ')]
         assert [(r[0], r[1], r[2]) for r in rows] == [
-            ('A', 'h9:0', 'claude'), ('B', 'h9:1', 'codex'), ('E', 'h9:4', 'antigravity')]
+            ('A', 'h9:0.0', 'claude'), ('B', 'h9:1.0', 'codex'), ('E', 'h9:4.0', 'antigravity')]
 
     def test_send_to_a_types_into_the_first_pane_only(self, server):
         tmux, env = server
@@ -328,8 +352,8 @@ class TestTmuxCommandOnAPrivateServer:
         result = self._autorun(env, 'send', '--to', 'A', '--', 'hello')
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert 'h9:0: session h9, window 0, pane 0' in result.stdout
-        assert 'harness claude' in result.stdout and '[ok] h9:0' in result.stdout
+        assert 'h9:0.0: session h9, window 0, pane 0' in result.stdout
+        assert 'harness claude' in result.stdout and '[ok] h9:0.0' in result.stdout
         after = self._screens(tmux)
         # The TUI took the line: it shows it as the last submission and the
         # boxed input line is empty again.
@@ -345,7 +369,7 @@ class TestTmuxCommandOnAPrivateServer:
         result = self._autorun(env, 'send', '--to', letter, '--', 'stays')
 
         assert result.returncode == 1, result.stdout + result.stderr
-        assert f'[FAIL] h9:{stuck}: typed, not submitted' in result.stdout
+        assert f'[FAIL] h9:{stuck}.0: typed, not submitted' in result.stdout
         after = self._screens(tmux)
         assert '│ > stays' in after[stuck], after[stuck]
         assert after[:stuck] == before[:stuck]
@@ -358,3 +382,90 @@ class TestTmuxCommandOnAPrivateServer:
 
         assert result.returncode == 1
         assert self._screens(tmux) == before
+
+
+@pytest.mark.tmux
+class TestSplitWindowsOnAPrivateServer:
+    """Discovery found a harness in any pane of a window, but send typed into
+    the window's active pane, so text meant for an AI session could land in a
+    shell or editor beside it. Each pane running a harness is now its own
+    entry, targeted as session:window.pane, in tmux's order: sessions by name,
+    windows by index, panes by index.
+
+    sp:0  pane 0 claude (TUI, inactive) | pane 1 a shell (active)
+    sp:1  pane 0 codex | pane 1 pi (both harnesses)
+    sp:2  agy, unsplit
+    """
+
+    PANES = ['sp:0.0', 'sp:0.1', 'sp:1.0', 'sp:1.1', 'sp:2.0']
+
+    @pytest.fixture
+    def server(self, private_tmux):
+        tmux, env, stub_argv = private_tmux
+        steps = [
+            ('new-session', '-d', '-s', 'sp', '-x', '120', '-y', '20', *stub_argv('claude', 'tui')),
+            # split-window without -d makes the new shell pane the active one
+            ('split-window', '-h', '-t', 'sp:0', 'sh'),
+            ('new-window', '-d', '-t', 'sp:1', *stub_argv('codex', 'plain')),
+            ('split-window', '-d', '-h', '-t', 'sp:1', *stub_argv('pi', 'plain', 'shell')),
+            ('new-window', '-d', '-t', 'sp:2', *stub_argv('agy', 'plain')),
+        ]
+        for step in steps:
+            result = tmux(*step)
+            assert result.returncode == 0, (step, result.stderr)
+        _wait_for_screens(tmux, self.PANES)
+        active = tmux('display-message', '-p', '-t', 'sp:0', '#{pane_index}').stdout.strip()
+        assert active == '1', 'the shell pane must be the active one'
+        return tmux, env
+
+    def _screens(self, tmux):
+        return {t: tmux('capture-pane', '-p', '-t', t).stdout for t in self.PANES}
+
+    def test_each_harness_pane_is_its_own_entry_and_the_shell_is_none(self, server):
+        _, env = server
+
+        result = _autorun_tmux(env, 'list', '--json')
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        found = [(s['tmux_target'], s['pane'], s['harness'])
+                 for s in json.loads(result.stdout)['sessions']]
+        assert found == [('sp:0.0', '0', 'claude'), ('sp:1.0', '0', 'codex'),
+                         ('sp:1.1', '1', 'pi'), ('sp:2.0', '0', 'antigravity')]
+
+    def test_send_reaches_the_inactive_harness_pane_not_the_active_shell(self, server):
+        tmux, env = server
+        before = self._screens(tmux)
+
+        result = _autorun_tmux(env, 'send', '--to', 'A', '--', 'hello')
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert 'sp:0.0: session sp, window 0, pane 0' in result.stdout
+        after = self._screens(tmux)
+        assert 'last: hello' in after['sp:0.0'], after['sp:0.0']
+        assert after['sp:0.1'] == before['sp:0.1'], 'text reached the shell pane'
+        assert {t: after[t] for t in self.PANES[2:]} == {t: before[t] for t in self.PANES[2:]}
+
+    def test_two_harness_panes_in_one_window_are_sent_to_separately(self, server):
+        tmux, env = server
+        before = self._screens(tmux)
+
+        result = _autorun_tmux(env, 'send', '--to', 'C', '--', 'hi')
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert 'sp:1.1: session sp, window 1, pane 1' in result.stdout and 'harness pi' in result.stdout
+        after = self._screens(tmux)
+        assert 'got: hi' in after['sp:1.1'], after['sp:1.1']
+        assert {t: after[t] for t in self.PANES if t != 'sp:1.1'} == \
+            {t: before[t] for t in self.PANES if t != 'sp:1.1'}
+
+    def test_an_unsplit_window_is_unchanged(self, server):
+        tmux, env = server
+        before = self._screens(tmux)
+
+        result = _autorun_tmux(env, 'send', '--to', 'D', '--', 'yo')
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert 'sp:2.0: session sp, window 2, pane 0' in result.stdout
+        after = self._screens(tmux)
+        assert 'got: yo' in after['sp:2.0'], after['sp:2.0']
+        assert {t: after[t] for t in self.PANES[:-1]} == {t: before[t] for t in self.PANES[:-1]}
