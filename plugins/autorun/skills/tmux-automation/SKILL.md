@@ -100,30 +100,21 @@ autorun provides convenient commands for tmux session automation:
   - Batch operations: `all:continue`, `awaiting:status`, `A:pwd, B:ls`
   - AI-powered session analysis (uses Claude SDK when available)
 
-### Session Management
-- `/ar:tmux` or `/ar:tm` - Create and manage isolated tmux sessions
-  - `create <name>` - Create new isolated session
-  - `list` - List all sessions with health status
-  - `cleanup` - Remove sessions older than 1 hour
-
-### Testing Automation
-- `/ar:ttest` or `/ar:tt` - Automated CLI testing in isolated sessions
-  - Tests basic functionality, help system, custom commands
-  - Session killed after each test (try/finally); long-running commands are not auto-killed
-  - Clean session isolation
+Creating, listing and cleaning up isolated sessions, and testing a CLI in
+one: `references/session-management.md` and `references/isolated-testing.md`
+in this skill. autorun ships no slash command for them.
 
 ### Related Documentation
 - `skills/tabs/SKILL.md` + `commands/tabs-exec` - Session discovery (`/ar:tabs`)
-- `commands/tmux.md` - Session management command (`/ar:tmux`)
 
 ### Quick Reference: Commands vs Manual tmux
 
 | Task | Manual tmux Command | autorun Shortcut |
 |------|-------------------|-------------------|
 | List Claude sessions | `tmux list-windows` (manual) | `/ar:tabs` |
-| Create session | `tmux new-session -d -s name` | `/ar:tm create name` |
+| Create session | `tmux new-session -d -s name` | (none) |
 | Send to all sessions | `for s in $(tmux list-sessions); do ...` | `/ar:tabs all:continue` |
-| Test CLI | Manual scripting required | `/ar:tt test my-cli` |
+| Test CLI | Manual scripting required | (none) |
 
 </integrations>
 
@@ -156,10 +147,10 @@ byobu send-keys -t "autorun" "/plugin install ar@autorun" C-m
 sleep 5
 
 # Test commands
-byobu send-keys -t "autorun" "/afs" C-m
+byobu send-keys -t "autorun" "/ar:file existing-only" C-m
 sleep 3
 
-byobu send-keys -t "autorun" "/afst" C-m
+byobu send-keys -t "autorun" "/ar:status" C-m
 sleep 3
 
 # Capture output for verification
@@ -251,7 +242,6 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 - Some functionality may be installed as slash commands in `~/.claude/commands/` rather than formal plugins
 - Check slash commands first: `ls -la ~/.claude/commands/`
 - Slash commands work immediately without plugin installation
-- Example: `/afs`, `/afst`, `/afa`, `/afj` may be available as slash commands even when no plugins are installed
 
 ## Best Practices
 

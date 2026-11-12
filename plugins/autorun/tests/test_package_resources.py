@@ -457,7 +457,7 @@ class TestGetCommandsDir:
 
         commands_dir = get_commands_dir()
         # These are core commands that should always exist
-        expected_commands = ["go.md", "st.md", "sos.md"]
+        expected_commands = ["go.md", "status.md", "estop.md", "file.md"]
         for cmd in expected_commands:
             assert (commands_dir / cmd).exists(), f"Command file missing: {cmd}"
 

@@ -1,5 +1,5 @@
 ---
-description: Force-reload all integration rules from config files
+description: Reload the guard rules from autorun's defaults and your integration files
 ---
 
 # Reload Integrations

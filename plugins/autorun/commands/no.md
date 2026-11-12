@@ -1,12 +1,17 @@
 ---
-description: Block a command pattern in this session
+description: Block a command pattern in this session, or for every session with --global
 ---
 
-# Session Block Pattern
+# Block a pattern
 
-Add a command pattern to the session block list. Blocked commands show a warning and safe alternative.
+Adds a command pattern to the block list. A blocked command is denied with a
+warning and a safe alternative.
 
-**Usage**: `/ar:no <pattern>` or `/ar:no '<pattern>' [description]`
+**Usage**: `/ar:no [--global] <pattern>` or `/ar:no [--global] '<pattern>' [description]`
+
+`--global` writes the block to the global rules, which apply to every session
+until `/ar:clear --global` removes them. Without it the block applies to this
+session only.
 
 Unquoted words are all one pattern, the same pattern `/ar:ok` would use, and
 `/ar:no` also removes the matching `/ar:ok` allow. A custom description needs a
@@ -23,5 +28,8 @@ invalid or unsafe regex is refused.
 - `/ar:no git reset` — block git reset (same as `/ar:no "git reset"`)
 - `/ar:no "rm" use trash instead` — block rm with a custom message
 - `/ar:no regex:eval\(` — block eval() calls
+- `/ar:no --global "kubectl delete"` — block kubectl delete in every session
 
-UserPromptSubmit hook processes this command and updates session state.
+`/ar:status` lists the current blocks.
+
+UserPromptSubmit hook processes this command and updates session or global state.

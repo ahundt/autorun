@@ -41,7 +41,7 @@ Only a user command can activate or extend a pause. Autorun supplies the AI a
 generation-bound recovery marker; the exact marker on its own non-code line
 may end that pause. While discussion remains paused, autorun repeats the
 reason and recovery guidance at the configured task-progress cadence when no
-task update occurs. `/ar:task resume`, `/ar:go`, and `/ar:proc` also resume
+task update occurs. `/ar:task resume`, `/ar:go`, and `/ar:goprocess` also resume
 enforcement.
 
 Task-staleness prompting uses two phases. A fresh primary agent or subagent gets

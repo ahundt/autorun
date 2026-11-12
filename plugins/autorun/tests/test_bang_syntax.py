@@ -50,16 +50,5 @@ class TestBangOperatorSyntax:
         assert len(incorrect_files) == 0, \
             f"Found bare dynamic-context syntax in: {', '.join(incorrect_files)}"
 
-    @pytest.mark.unit
-    def test_bang_operator_documentation_exists(self):
-        """Test bang operator is documented in plugin help"""
-        help_md = Path(__file__).parent.parent / "commands" / "claude-code-plugin-help.md"
-        content = help_md.read_text(encoding="utf-8")
-
-        # Check for documentation sections
-        assert "## Dynamic Context" in content
-        assert "!`command`" in content
-        assert "https://code.claude.com/docs/en/skills" in content
-
 
 # Run with: python3 -m pytest tests/test_bang_syntax.py -v --override-ini='addopts='

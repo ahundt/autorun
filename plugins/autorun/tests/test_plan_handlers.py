@@ -42,11 +42,13 @@ class TestPlanCommandHandlers:
     def test_plan_procedures_live_in_skills_with_short_spellings_intact(self):
         """The four plan procedures are skills; the short spellings still work.
 
-        They used to be command documents with pn/pr/pu/pp symlinked onto them
-        so the two spellings could not drift. The procedure now lives once in
-        `skills/<name>/SKILL.md`, which every harness reading ~/.agents/skills
-        can load, and each short document points at it.
+        They used to be command documents (pn/pr/pu/pp pointing at the skill).
+        The procedure lives once in `skills/<name>/SKILL.md`; no command
+        document repeats it, and the short spelling still dispatches to the
+        skill's handler through core._RETIRED_COMMAND_SPELLINGS.
         """
+        from autorun.core import app
+
         plugin_root = Path(__file__).parent.parent
         commands_dir = plugin_root / "commands"
         skills_dir = plugin_root / "skills"
@@ -57,17 +59,12 @@ class TestPlanCommandHandlers:
             ("planupdate", "pu"),
             ("planprocess", "pp"),
         ):
-            skill = skills_dir / name / "SKILL.md"
-            assert skill.is_file(), f"Missing skills/{name}/SKILL.md"
-
-            pointer = commands_dir / f"{short}.md"
-            assert pointer.is_file(), f"Missing commands/{short}.md"
-            text = pointer.read_text(encoding="utf-8")
-            assert name in text, f"{short}.md does not name the {name} skill"
-            assert text.count("$ARGUMENTS") == 1, (
-                f"{short}.md must project invocation arguments exactly once"
-            )
-            assert len(text.splitlines()) < 25, f"{short}.md grew a second copy"
+            assert (skills_dir / name / "SKILL.md").is_file(), f"Missing skills/{name}/SKILL.md"
+            assert not (commands_dir / f"{short}.md").exists(), f"commands/{short}.md is back"
+            assert not (commands_dir / f"{name}.md").exists(), f"commands/{name}.md repeats the skill"
+            match = app._find_command(f"/ar:{short} notes/plan.md")
+            assert match is not None and match.handler is app.command_handlers[f"/ar:{name}"]
+            assert match.arguments == "notes/plan.md"
 
     @pytest.mark.unit
     def test_plan_handler_factory(self):

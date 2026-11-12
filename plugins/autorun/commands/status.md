@@ -1,15 +1,18 @@
 ---
-description: Show current AutoFile policy and settings
-aliases: [st, afst]
+description: Show this session's file policy, its /ar:ok and /ar:no rules, and the global rules
 ---
 
-# AutoFile Status
+# autorun status
 
-Displays the current AutoFile policy for this session.
+Shows, for the current session:
 
-**Policy Levels**:
-- **allow-all** - No restrictions on file creation (default)
-- **justify-create** - Requires justification tag for new files
-- **strict-search** - Only modify existing files, no new file creation
+- the new-file policy set by `/ar:file` (allow-all, justify-create or strict-search);
+- session blocks and allows added with `/ar:no` and `/ar:ok`;
+- global blocks and allows added with `/ar:no --global` and `/ar:ok --global`;
+- whether task enforcement is paused.
 
-UserPromptSubmit hook will display the current policy.
+**Usage**: `/ar:status`
+
+The default safety guards are not listed.
+
+UserPromptSubmit hook processes this command and displays the state.

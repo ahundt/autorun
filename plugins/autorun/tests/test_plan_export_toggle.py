@@ -395,15 +395,15 @@ class TestCommandSurface:
 
     COMMANDS_DIR = Path(__file__).resolve().parents[1] / "commands"
 
-    def test_only_two_plan_export_command_documents_exist(self):
+    def test_only_one_plan_export_command_document_exists(self):
         family = sorted(
             p.name
             for p in self.COMMANDS_DIR.glob("*.md")
             if p.name.startswith(("pe", "planexport"))
         )
-        assert family == ["pe.md", "planexport.md"], family
+        assert family == ["planexport.md"], family
 
-    @pytest.mark.parametrize("name", ["pe.md", "planexport.md"])
+    @pytest.mark.parametrize("name", ["planexport.md"])
     def test_description_shows_the_option_grammar(self, name):
         text = (self.COMMANDS_DIR / name).read_text(encoding="utf-8")
         frontmatter = text.split("---")[1]

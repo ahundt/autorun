@@ -149,7 +149,8 @@ class TestTheInventoryHasOneOwnerPerCommand:
         control = [entry for entry in entries if entry.dispatches]
         workflow = [entry for entry in entries if not entry.dispatches]
         assert len(control) >= 10, "control commands lost their dispatch classification"
-        assert len(workflow) >= 5, "workflow documents lost their classification"
+        # restart-daemon is the one document the model runs rather than autorun.
+        assert len(workflow) >= 1, "workflow documents lost their classification"
 
     def test_every_entry_carries_a_description(self):
         assert [entry.name for entry in command_help_inventory(COMMANDS_DIR) if not entry.description] == []
@@ -195,7 +196,10 @@ class TestHelpSpeaksEachHarnessOwnLanguage:
         rendered = _run_help("/ar:help")
         for entry in command_help_inventory(COMMANDS_DIR):
             assert f"/ar:{entry.name}" in rendered, f"{entry.name} missing from help"
-        assert "/ar:a" in rendered, "the short spelling of /ar:allow is not advertised"
+        # One advertised name per command: retired short spellings still
+        # dispatch but help never teaches them.
+        for retired in ("/ar:a ", "/ar:f ", "/ar:st ", "/ar:x ", "/ar:sos ", "/ar:pe "):
+            assert retired not in rendered, f"help advertises the retired spelling {retired.strip()}"
 
 
 class TestHelpListsTheSkillsToo:

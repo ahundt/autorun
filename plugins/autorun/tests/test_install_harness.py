@@ -84,8 +84,9 @@ def test_a_body_without_arguments_is_unchanged():
     assert parsed["prompt"].strip() == "No placeholder here"
 
 
-@pytest.mark.parametrize("short", ("pn", "pr", "pu", "pp"))
+@pytest.mark.parametrize("short", ("go", "goprocess", "planexport", "cache", "tasks"))
 def test_every_plan_pointer_renders_one_family_argument_placeholder(short):
+    """Every command document that takes arguments renders one {{args}}."""
     from autorun.command_docs import read_command_doc
 
     path = Path(__file__).resolve().parents[1] / "commands" / f"{short}.md"

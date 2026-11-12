@@ -1,6 +1,5 @@
 ---
 description: Graceful stop - finish current task then stop autorun
-aliases: [x]
 ---
 
 # Graceful Stop

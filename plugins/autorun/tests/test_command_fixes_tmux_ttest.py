@@ -408,23 +408,12 @@ output = f"Result: {session_out}"
 
 
 class TestTmuxCommandDocumentsPointAtOneSkill:
-    """Every tmux spelling reaches one body of guidance.
+    """The tmux procedures live once, in the `tmux-automation` skill.
 
-    tm.md used to be a symlink to tmux.md so the two spellings could not drift.
-    The procedures now live in the `tmux-automation` skill, which every harness
-    that reads ~/.agents/skills can load, so all four documents are short
-    pointers instead — same guarantee, one copy, and it works off Claude too.
+    The four pointer documents (tmux.md, tm.md, ttest.md, tt.md) had no
+    handler and were deleted; the skill, which every harness that reads
+    ~/.agents/skills can load, is the one copy.
     """
-
-    SPELLINGS = ("tmux.md", "tm.md", "ttest.md", "tt.md")
-
-    def test_each_spelling_points_at_the_skill(self):
-        commands_dir = Path(__file__).resolve().parents[1] / "commands"
-
-        for name in self.SPELLINGS:
-            text = (commands_dir / name).read_text(encoding="utf-8")
-            assert "tmux-automation" in text, f"{name} does not name the skill"
-            assert len(text.splitlines()) < 25, f"{name} grew a second copy of the procedure"
 
     def test_the_skill_carries_the_procedures_the_documents_promise(self):
         skill = Path(__file__).resolve().parents[1] / "skills" / "tmux-automation"

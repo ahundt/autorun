@@ -504,13 +504,10 @@ def test_autorun_maintainer_skill_covers_current_harnesses_and_scoped_restarts()
 
 COMMANDS_ROOT = PLUGIN_ROOT / "commands"
 
-MANUAL_ONLY_COMMANDS = (
-    "estop",
-    "sos",
-    "globalno",
-    "globalok",
-    "globalclear",
-)
+# The global pattern commands are now `--global` arguments of ok, no and
+# clear, whose documents stay model-invocable (the refusal of a model-sent
+# permission change is enforced in code, not by hiding the document).
+MANUAL_ONLY_COMMANDS = ("estop",)
 
 
 def _frontmatter(path: Path) -> dict[str, str]:
@@ -549,7 +546,7 @@ def test_the_pilot_stays_small_and_excludes_ordinary_controls():
     """A pilot that quietly grows into "hide everything" removes capability
     instead of removing context. Ordinary policy and status commands must stay
     model-invocable."""
-    for stem in ("status", "allow", "find", "justify", "ok", "no", "blocks"):
+    for stem in ("status", "file", "ok", "no", "clear"):
         fields = _frontmatter(COMMANDS_ROOT / f"{stem}.md")
         assert fields.get("disable-model-invocation") is None, stem
 
