@@ -1933,7 +1933,7 @@ def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: 
         disable = format_command_for_cli("/ar:tasks off", ctx.cli_type)
         if no_tasks:
             return (
-                f"\nNO CHECKLIST EXISTS: {threshold} calls without tracked steps. "
+                f"\nAUTORUN HAS NO CHECKLIST RECORDED: {threshold} calls without tracked steps in autorun's durable mirror. "
                 "Next: {task_progress}; use concrete steps with current=in_progress and later=pending. "
                 f"No other tool first. Disable reminders: {disable}." + agent_context
             )

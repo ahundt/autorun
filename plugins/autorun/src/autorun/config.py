@@ -717,9 +717,11 @@ CONFIG = {
         "Do not call any other tool. Your next non-Task tool call will be blocked. "
         "Disable: /ar:tasks off"
     ),
-    # Injected when a cadence threshold is crossed with zero active tasks.
+    # Injected when a cadence threshold is crossed with no active task row in
+    # autorun's durable mirror. The harness may retain native tasks that its
+    # resume hook does not replay, so this must not claim they do not exist.
     "task_staleness_no_tasks_message": (
-        "\nNO TASKS EXIST: {threshold} tool calls with zero tasks tracking your work. "
+        "\nAUTORUN HAS NO ACTIVE TASKS RECORDED: {threshold} tool calls with no active task in autorun's durable mirror. "
         "Your next action must be {{task_create}}: "
         '1. {{task_create}}({{task_title}}="[step]: [action]", description="..."): one concrete step per task, NOT one broad task '
         '2. {{task_update}}({{task_id_param}}=N, status="in_progress"): mark the task you are starting '

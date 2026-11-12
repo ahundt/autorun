@@ -844,11 +844,10 @@ def test_staleness_fires_without_autorun_when_tasks_exist():
 
 
 def test_staleness_fires_no_tasks_when_all_tasks_complete():
-    """All tasks complete = no active work. Fires NO TASKS EXIST (not TASK UPDATE).
+    """All tasks complete = no active recorded work (not TASK UPDATE).
 
     When all tasks are completed and the AI continues working without creating
-    new tasks, this is treated the same as zero tasks — no active work is being
-    tracked. The no_tasks_threshold fires "NO TASKS EXIST" to prompt task creation.
+    new tasks, this is treated the same as zero active rows in autorun's mirror.
     """
     sid = "test-stale-all-complete"
     _make_pending_task(sid, "1", "done task")
@@ -863,9 +862,11 @@ def test_staleness_fires_no_tasks_when_all_tasks_complete():
             st["tasks"] = tasks
     ctx = _make_post_tool_ctx("Bash", sid, tool_calls_since_task_update=50, task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
-    # Should fire NO TASKS EXIST (not TASK UPDATE) — all-complete = no active work
+    # Should fire the no-active-record reminder, not TASK UPDATE.
     assert "TASK UPDATE" not in str(result), "All-complete should NOT fire TASK UPDATE"
-    assert "NO TASKS EXIST" in str(result), f"All-complete should fire NO TASKS EXIST. Got: {str(result)[:120]}"
+    assert "AUTORUN HAS NO ACTIVE TASKS RECORDED" in str(result), (
+        f"All-complete should report no active recorded tasks. Got: {str(result)[:120]}"
+    )
 
 
 def test_staleness_fires_when_zero_tasks_exist():
@@ -873,14 +874,14 @@ def test_staleness_fires_when_zero_tasks_exist():
     ctx = _make_post_tool_ctx("Bash", "test-stale-zero-tasks", tool_calls_since_task_update=24)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
-    assert "NO TASKS EXIST" in additional
+    assert "AUTORUN HAS NO ACTIVE TASKS RECORDED" in additional
 
 
 def test_staleness_no_fire_below_zero_tasks_threshold():
     """Zero-task startup stays quiet before the configured initial threshold."""
     ctx = _make_post_tool_ctx("Bash", "test-stale-zero-below-thresh", tool_calls_since_task_update=23)
     result = plugins.app.dispatch(ctx) or {}
-    assert "NO TASKS EXIST" not in str(result)
+    assert "AUTORUN HAS NO ACTIVE TASKS RECORDED" not in str(result)
     assert "TASK UPDATE" not in str(result)
 
 
@@ -1223,7 +1224,7 @@ def test_pi_no_tasks_reminder_requires_create_capability(monkeypatch):
 
     result = plugins.app.dispatch(ctx) or {}
 
-    assert "NO TASKS EXIST" not in str(result)
+    assert "AUTORUN HAS NO ACTIVE TASKS RECORDED" not in str(result)
     assert plugins._task_progress_state_get(
         ctx, "task_staleness_enforce_next", None
     ) in (None, False)  # not armed: unset reads as False
@@ -3209,7 +3210,7 @@ class TestStalenessE2E:
         assert ctx_new.task_staleness_threshold is None, "New session threshold should be None"
 
     def test_all_complete_tasks_fires_no_tasks_reminder(self):
-        """All tasks complete = no active work. Should fire NO TASKS EXIST after threshold.
+        """All tasks complete reports no active recorded work after threshold.
 
         When all tasks are marked completed and the AI keeps working without
         creating new tasks, this is the same as zero tasks — the AI is doing
@@ -3238,17 +3239,17 @@ class TestStalenessE2E:
         for _ in range(4):
             _e2e_post_tool("Bash", sid, self.store)
 
-        # Next batch should trigger NO TASKS EXIST reminder
+        # Next batch should trigger the no-active-record reminder.
         results = []
         for _ in range(3):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert any("NO TASKS EXIST" in str(r) for r in results), (
-            f"All tasks complete + threshold crossed should fire NO TASKS EXIST. Got: {[str(r)[:80] for r in results]}"
+        assert any("AUTORUN HAS NO ACTIVE TASKS RECORDED" in str(r) for r in results), (
+            f"All tasks complete + threshold crossed should report no active recorded tasks. Got: {[str(r)[:80] for r in results]}"
         )
 
     def test_zero_tasks_fires_no_tasks_reminder(self):
-        """Zero tasks fires NO TASKS EXIST after no_tasks_threshold (5).
+        """Zero active rows are reported after no_tasks_threshold (5).
 
         The no_tasks_threshold path requires task_lifecycle.is_enabled()=True.
         We create+complete a task to enable the lifecycle DB, then the tasks
@@ -3280,8 +3281,8 @@ class TestStalenessE2E:
         for _ in range(8):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert any("NO TASKS EXIST" in str(r) for r in results), (
-            f"All tasks complete + no_tasks_threshold crossed should fire NO TASKS EXIST. Got: {[str(r)[:80] for r in results]}"
+        assert any("AUTORUN HAS NO ACTIVE TASKS RECORDED" in str(r) for r in results), (
+            f"All tasks complete + no_tasks_threshold crossed should report no active recorded tasks. Got: {[str(r)[:80] for r in results]}"
         )
 
     def test_incomplete_task_uses_normal_threshold_not_no_tasks(self):
@@ -3303,9 +3304,11 @@ class TestStalenessE2E:
 
         messages = [str(r) for r in results]
         combined = " ".join(messages)
-        # Should see TASK UPDATE (REQUIRED or OVERDUE), NOT "NO TASKS EXIST"
-        assert "TASK UPDATE" in combined or "NO TASKS" not in combined, f"Incomplete task should use normal threshold path. Got: {[m[:80] for m in messages]}"
-        assert "NO TASKS EXIST" not in combined, f"Incomplete task must NOT trigger NO TASKS EXIST. Got: {[m[:80] for m in messages]}"
+        # Should see TASK UPDATE (REQUIRED or OVERDUE), not the empty-mirror message.
+        assert "TASK UPDATE" in combined or "AUTORUN HAS NO" not in combined, f"Incomplete task should use normal threshold path. Got: {[m[:80] for m in messages]}"
+        assert "AUTORUN HAS NO ACTIVE TASKS RECORDED" not in combined, (
+            f"Incomplete task must not trigger the empty-mirror reminder. Got: {[m[:80] for m in messages]}"
+        )
 
     def test_all_complete_below_threshold_stays_silent(self):
         """All tasks complete but below no_tasks_threshold — no reminder yet.
@@ -3568,7 +3571,7 @@ def test_stop_block_no_markdown_literals(tmp_path, monkeypatch):
 
 
 # ============================================================================
-# tool_result type coercion tests (Fix: "NO TASKS EXIST" misfiring)
+# tool_result type coercion tests (empty-mirror reminder misfiring)
 #
 # Root cause: ctx.tool_result is dict/list from Claude Code PostToolUse,
 # but handle_task_create used `ctx.tool_result or ""` which passes dict

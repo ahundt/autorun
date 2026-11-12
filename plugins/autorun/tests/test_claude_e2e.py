@@ -2097,7 +2097,7 @@ class TestClaudeE2ERealMoney:
     # This tests the FULL chain:
     #   AI works → PostToolUse fires → check_task_staleness sets enforce_next
     #   → PreToolUse fires → enforce_task_staleness returns allow(msg)
-    #   → AI sees "NO TASKS EXIST" in reason/systemMessage
+    #   → AI sees the no-active-record reminder in reason/systemMessage
     #   → AI spontaneously calls TaskCreate
     #
     # no_tasks_threshold (default 5) fires after 5 tool calls with 0 tasks.
