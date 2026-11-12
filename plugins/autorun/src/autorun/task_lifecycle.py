@@ -1970,7 +1970,7 @@ class TaskLifecycle:
             if not blockers:
                 ready.append(task)
             elif all(
-                tasks.get(blocker_id, {}).get("status") in self.COMPLETED_STATUSES
+                tasks.get(blocker_id, {}).get("status") in FINISHED_TASK_STATUSES
                 for blocker_id in blockers
             ):
                 waiting.append(task)
@@ -2350,7 +2350,7 @@ class TaskLifecycle:
         plan_tasks = [all_tasks[tid] for tid in task_ids if tid in all_tasks]
 
         if incomplete_only:
-            return [t for t in plan_tasks if t["status"] not in self.COMPLETED_STATUSES]
+            return [t for t in plan_tasks if t["status"] not in FINISHED_TASK_STATUSES]
 
         return plan_tasks
 
@@ -3981,7 +3981,10 @@ class TaskLifecycle:
 
             if output_format == "json":
                 # Wrap tasks in metadata for CLI usability
-                incomplete_count = len([t for t in tasks.values() if t["status"] not in cls.COMPLETED_STATUSES])
+                incomplete_count = len([
+                    task for task in tasks.values()
+                    if task["status"] not in FINISHED_TASK_STATUSES
+                ])
                 output = {"session_id": session_id, "total_tasks": len(tasks), "incomplete_tasks": incomplete_count, "tasks": tasks}
                 print(json.dumps(output, indent=2))
                 return 0

@@ -206,6 +206,25 @@ def test_cli_status_json_format():
     print("✅ cli_status JSON format works")
 
 
+def test_cli_status_json_does_not_count_ignored_as_incomplete():
+    session_id = 'test-cli-status-json-ignored'
+    manager = create_test_manager_with_tasks(session_id)
+    manager.create_task('6', {'subject': 'Dismissed work'}, 'Created task 6')
+    manager.update_task('6', {'status': 'ignored'}, 'Ignored task 6')
+
+    exit_code, output = capture_stdout(
+        TaskLifecycle.cli_status,
+        session_id=session_id,
+        verbose=False,
+        output_format='json'
+    )
+
+    assert exit_code == 0
+    data = json.loads(output)
+    assert data['total_tasks'] == 6
+    assert data['incomplete_tasks'] == 3
+
+
 def test_cli_status_table_format():
     """Test cli_status with table output format."""
     session_id = 'test-cli-status-table'

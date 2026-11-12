@@ -1175,6 +1175,33 @@ class TestFilterFunctionInvariants:
         ids = [t["id"] for t in result]
         assert ids.index("ready") < ids.index("blocked")
 
+    def test_ignored_dependency_is_finished_for_prioritization(self, isolated_session, cfg):
+        mgr = _mgr("fi-ignored-dependency", cfg)
+        mgr.create_task("ignored", {"subject": "Dismissed prerequisite"}, "created")
+        mgr.update_task("ignored", {"status": "ignored"}, "dismissed")
+        mgr.create_task("blocked", {"subject": "Still blocked"}, "created")
+        mgr.create_task("unblocked", {"subject": "Can start"}, "created")
+        with session_state(mgr.global_key) as state:
+            tasks = dict(state.get("tasks", {}))
+            for task_id, blocker in (("unblocked", "ignored"), ("blocked", "missing")):
+                tasks[task_id] = dict(tasks[task_id])
+                tasks[task_id]["blockedBy"] = [blocker]
+            state["tasks"] = tasks
+
+        ids = [task["id"] for task in mgr.get_prioritized_tasks()]
+
+        assert ids.index("unblocked") < ids.index("blocked")
+
+    def test_plan_incomplete_tasks_exclude_ignored(self, isolated_session, cfg):
+        mgr = _mgr("fi-plan-ignored", cfg)
+        mgr.create_task("ignored", {"subject": "Dismissed plan task"}, "created")
+        mgr.update_task("ignored", {"status": "ignored"}, "dismissed")
+        mgr.create_task("pending", {"subject": "Open plan task"}, "created")
+        mgr.link_task_to_plan("ignored", "plan")
+        mgr.link_task_to_plan("pending", "plan")
+
+        assert [task["id"] for task in mgr.get_plan_tasks("plan")] == ["pending"]
+
     def test_prioritized_tasks_excludes_completed(self, isolated_session, cfg):
         mgr = _mgr("fi-done", cfg)
         mgr.create_task("done", {"subject": "Done"}, "created")
