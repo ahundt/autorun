@@ -15,6 +15,7 @@ asserts what the harness receives and what is stored.
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from pathlib import Path
@@ -309,6 +310,18 @@ def test_gate_messages_name_no_retired_command_spelling(gate_env, cli_type):
 
 
 # --- the running-agents evidence is declared per harness --------------------
+
+
+def test_claude_background_arrays_are_not_running_agent_evidence():
+    fixture = (
+        Path(__file__).parent
+        / "fixtures/hook_contracts/claude-2.1.322-background-work.json"
+    )
+    contract = json.loads(fixture.read_text(encoding="utf-8"))
+
+    assert contract["safe_running_agent_signal"] is None
+    assert "stale" in contract["reason"].lower()
+    assert PLATFORMS["claude"].stop_payload_lists_running_agents is None
 
 
 @pytest.mark.parametrize("platform_name", sorted(PLATFORMS))

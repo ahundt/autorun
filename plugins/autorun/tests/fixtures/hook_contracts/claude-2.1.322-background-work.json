@@ -1,0 +1,22 @@
+{
+  "harness": "Claude Code",
+  "version": "2.1.322",
+  "read_date": "2026-11-12",
+  "official_docs": "https://code.claude.com/docs/en/hooks#stop-input",
+  "fields": {
+    "background_tasks": "array of task entries present on Stop and SubagentStop",
+    "session_crons": "array of scheduled session cron entries present on Stop and SubagentStop"
+  },
+  "counterevidence": [
+    {
+      "source": "https://github.com/anthropics/claude-code/issues/85955",
+      "observation": "idle in_process_teammate entries can remain in background_tasks with status running across later Stop events"
+    },
+    {
+      "source": "https://github.com/anthropics/claude-code/issues/98816",
+      "observation": "ambient tasks can appear in background_tasks without representing delegated work that the parent must await"
+    }
+  ],
+  "safe_running_agent_signal": null,
+  "reason": "Non-empty arrays and status=running are not safe evidence: entries can be stale or ambient, and session crons describe scheduled wakeups rather than a currently running delegated child."
+}
