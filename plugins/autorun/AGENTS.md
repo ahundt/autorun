@@ -74,7 +74,7 @@ or they reach the live daemon; spec:
    is `warn`: it shows a notice and never stops a prompt unless the user
    runs `/ar:cache on` (block). `/ar:cache off` turns it off.
 9. **Anchor `.gitignore` directory patterns with `/`** when you mean the repo
-   root: unanchored `cache/` hid `plugins/autorun/skills/cache/` from git.
+   root: unanchored `cache/` once hid a plugin directory named `cache` from git.
 10. **Harness hook-event allowlists have one owner, `tests/harness_hook_events.py`.**
     An unknown event name in a Claude-scanned manifest is what
     [anthropics/claude-code#24115](https://github.com/anthropics/claude-code/issues/24115)

@@ -1,70 +1,108 @@
 ---
-description: Cache-miss / compaction protection gate (disabled by default)
-argument-hint: "[on|off|set|ok|no|status] [args…]"
+description: Warn or stop before a prompt re-sends an expired prompt cache; optional tool-time cache thresholds
+argument-hint: "[on|warn|off|set|ok|no|status] [args…]"
 ---
 
-# Cache Protection Gate (/ar:cache)
+# Prompt cache guard (/ar:cache)
 
 $ARGUMENTS
 
-Blocks tool use when the Claude Code prompt cache is cold (cache hit ratio low,
-cache-read tokens below floor, or cache age above ceiling), using the same
-`5m | 5 | perm` override grammar as `/ar:ok`. **Off by default** — enable with
-`/ar:cache on`.
+## What you see
+
+When you send a prompt after the session's prompt cache has expired, and the
+context is 100,000 tokens or more, autorun shows this before the request goes
+out:
+
+```
+ar:cache: this session's prompt cache expired 5 h 48 m ago.
+This prompt re-writes about 257,000 tokens at the cache-write price.
+  /clear or a new session avoids the cost; /compact lowers later turns
+  /ar:cache off        this session      /ar:cache on     stop me before sending
+  /ar:cache set expired-min-tokens 200k  only warn or block at this context size or larger
+```
+
+That is the default, `warn`: the message is shown and the prompt is sent.
+Nothing is added to the model's context.
+
+The cache has expired when the time since the last response is longer than
+the cache lifetime that response wrote: 1 hour or 5 minutes on Claude Code,
+read from the transcript. The context size is the input, cache-read and
+cache-write tokens of that response.
+
+## What proceeding costs
+
+Sending re-writes the whole context into the cache at the cache-write price
+instead of reading it at the much lower cache-read price. On a 250,000-token
+context that is one full-price write of 250,000 tokens. `/clear` or a new
+session avoids it; `/compact` makes the context, and so every later turn,
+smaller.
+
+## Switching it
+
+```
+/ar:cache on      # block: the prompt is stopped; send the same text again to proceed
+/ar:cache warn    # warn: show the message, send the prompt (the default)
+/ar:cache off     # no prompt check and no tool-time check in this session
+```
+
+Each takes an optional duration, `5m`, `1h` or `perm`; a timed one returns to
+the previous setting when it ends. `/ar:cache global off` (or `on`, `warn`)
+sets the default for every session.
+
+With `on`, Claude Code shows the blocked prompt's text under the message, so
+nothing typed is lost. Sending the same text again passes for the rest of the
+session. `/ar:cache ok` lets the next prompt through once. `/ar:cache off` and
+every other autorun command always get through. A prompt you did not type (a background-task notification, a message
+from a subagent or another session, a prompt with a subagent id) is never
+checked.
+
+```
+/ar:cache set expired-min-tokens 200k   # check only contexts of 200,000 tokens or more; 0 checks every size
+/ar:cache                               # status: the prompt check's setting, the floor, thresholds, overrides
+```
+
+Token units: `50000`, `50,000`, `50_000`, `50k`, `.5M`. Durations: `5s`, `5m`,
+`1h`, `2h30m`, `2d`, `perm`.
+
 Every `/ar:cache` form takes effect only when the user types it; sent by the
 model or a subagent, it changes nothing.
 
-## Usage
+## Where it applies
+
+| Harness | Cache data in its session records | Result |
+| --- | --- | --- |
+| Claude Code | yes, with the lifetime written | warns, or blocks with `/ar:cache on` |
+| Codex | no; usage is in `event_msg` records autorun does not read | silent |
+| Pi, Prime Agent | yes, with no lifetime | warns only when you have set `/ar:cache set age <duration>`, which stands in for the lifetime; silent otherwise. These harnesses cannot stop a prompt from a hook, so `on` also warns |
+| Gemini CLI, Qwen Code | not confirmed | warns only when `age` is set and data is found; never blocks |
+| Antigravity, OpenCode, ForgeCode | no prompt hook | not applicable |
+
+A response that arrives after the lifetime while a turn is already running
+(a slow tool result) is not caught: the turn has started.
+
+## Tool-time thresholds (optional)
+
+After `/ar:cache on` or `warn`, these also run before each tool call and deny
+it when one trips. None is set by default.
 
 ```
-/ar:cache                    # show status (enabled? thresholds? active overrides?)
-/ar:cache on [5m|1h|perm]    # enable; a timed window reverts to the prior state when it ends
-/ar:cache off [5m|1h|perm]   # disable; a timed window reverts the same way
+/ar:cache set ratio 0.3    # deny when cache_read / (input + cache read + cache write) < 30%
+/ar:cache set read 50k     # deny when cache-read tokens < 50,000
+/ar:cache set age 10m      # deny when the last response is older than 10 minutes
 
-/ar:cache set ratio 0.3      # block when cache_read / total_input < 30%
-/ar:cache set read 50k       # block when cache_read_tokens < 50,000
-/ar:cache set age 10m        # block when time since last cache hit > 10 min
-/ar:cache set full 0.9       # block when total_input / context_window > 90%
-
-/ar:cache ok 5m              # allow for 5 minutes
-/ar:cache ok 3               # allow next 3 tool uses
-/ar:cache ok perm            # allow until axis clears or session end
-/ar:cache no                 # cancel all outstanding overrides
+/ar:cache ok 5m            # allow for 5 minutes
+/ar:cache ok 3             # allow the next 3 tool uses (or the next 3 prompts)
+/ar:cache ok perm          # allow until the session ends
+/ar:cache no               # cancel outstanding ok grants
 ```
 
-Token units: `50000`, `50,000`, `50_000`, `50k`, `.5M`, `1.5M`, `2M`.
-Percent units: `85%`, `0.85`.
-Durations: `5s`, `5m`, `1h`, `2h30m`, `2d`, `perm` (reuses `parse_scope_args`).
+They never block a prompt; at prompt time only the expiry check runs. Missing
+data never trips anything: no transcript, no usage record, or a record the
+reader cannot parse means allow.
 
-## How it decides
+`autorun --cache-snapshot` is still accepted so an old statusline line keeps
+working, but it does nothing. You can remove it from your statusline script.
 
-On every `PreToolUse` (Claude Code) / `BeforeTool` (Gemini CLI), when enabled:
-
-1. Read usage snapshot from `session_state['cache/last_usage']` (2 s memo) or
-   tail the transcript JSONL at `transcript_path` (bounded 64 KB reverse scan,
-   locates the most recent `message.usage`).
-2. Check each configured axis; collect those that trip.
-3. If any axis tripped and no active `/ar:cache ok` grant, render a block
-   message and deny the tool call.
-
-On Gemini CLI, cache-token fields are not surfaced to hooks — ratio and
-cache-read axes fail-open; age and compaction-proximity axes remain active.
-
-## Optional fast path (opt-in, one line in your statusline)
-
-`/ar:cache` never touches your `statusLine` setting. If you want the rich
-Claude statusline JSON (exposes `context_window.current_usage.cache_read_input_tokens`
-and `rate_limits`) to feed the gate directly, add one line to your **existing**
-statusline script:
-
-```bash
-INPUT=$(cat)
-printf '%s' "$INPUT" | autorun --cache-snapshot >/dev/null 2>&1 &
-# ... your existing logic continues on $INPUT as before ...
-```
-
-## See also
-
-- Implementation: `plugins/autorun/src/autorun/cache_guard.py`.
-- Shared primitives: `ScopedAllow`, `parse_scope_args`, `session_state`,
-  `check_blocked_commands`, `detect_cli_type`.
+Implementation: `plugins/autorun/src/autorun/cache_guard.py`
+(`CacheGuard.check_prompt_after_expiry` at prompt time, `CacheGuard.check` at
+tool time).

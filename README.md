@@ -559,7 +559,7 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 | `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
 | `/ar:tabs` | list the agent sessions running in your tmux windows, lettered A, B, C, with directory, purpose and status |
 | `/ar:tabw` | type into those sessions after stating what it will send, e.g. `/ar:tabw awaiting:continue` or `/ar:tabw A:git status, B:pwd` |
-| `/ar:cache` | off by default; blocks tool use while Claude Code's prompt cache is cold or the context is near compaction, so a resumed session does not pay to rebuild it: `on\|off [5m\|1h\|perm]` (a timed one reverts when it ends), `set ratio\|read\|age <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`, `2d`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>` |
+| `/ar:cache` | warns before a prompt re-sends an expired prompt cache of 100,000 tokens or more (Claude Code; Pi and Prime Agent when `age` is set): `on` blocks it until the same text is sent again, `warn` (the default) only tells, `off` stops it; each takes `[5m\|1h\|perm]`. `set expired-min-tokens <tokens>` sets the floor. Optional tool-time thresholds: `set ratio\|read\|age <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>`. Details: [commands/cache.md](plugins/autorun/commands/cache.md) |
 | `/ar:restart-daemon` | restart the daemon for this install |
 
 `/ar:tabs` shows each session as `awaiting input`, `working`, `plan approval`,

@@ -618,10 +618,17 @@ class TestUsageExtractionSchemaVariants:
         assert u is not None
 
 
-class TestGitignoreSkillVisible:
-    def test_skill_file_present(self):
-        skill = Path(__file__).resolve().parents[1] / "skills" / "cache" / "SKILL.md"
-        assert skill.exists(), f"Cache skill must exist at {skill}"
+class TestOneCacheDocument:
+    def test_the_command_document_is_the_only_cache_document(self):
+        """The cache skill was folded into commands/cache.md: one document,
+        leading with the prompt-time check a user meets first."""
+        plugin = Path(__file__).resolve().parents[1]
+        assert not (plugin / "skills" / "cache").exists()
+        body = (plugin / "commands" / "cache.md").read_text(encoding="utf-8")
+        first_section = body.split("## ", 2)[1]
+        assert first_section.startswith("What you see") and "prompt cache expired" in first_section
+        for switch in ("/ar:cache on", "/ar:cache warn", "/ar:cache off"):
+            assert switch in body
 
 
 class TestGeminiTemplateHasPreCompress:
