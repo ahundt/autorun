@@ -1,0 +1,193 @@
+"""Waiting on the user is a recorded task status, entered by marker, cleared by the user.
+
+The agent prints ``AUTORUN_TASK_AWAITING_USER(<id>[,<id>]): <decision>`` on
+a standalone, unfenced line of its latest turn, for a task that blocks now.
+The task becomes ``awaiting-user`` with ``metadata.awaiting_user`` holding the
+decision and the status it had; the Stop passes through and the user sees the
+decision. The next prompt whose author is the user restores the previous
+status, as does the agent's own update of the task. A subagent, a harness
+wrapper (``<task-notification>`` and friends) or automation restores nothing.
+
+The stateless marker of commit 675f982c allowed one Stop per line and left no
+state; its guard cases (fenced, mid-sentence, unknown id, finished id) are
+ported here from 7f614bb1. Design: stop_gate_design.md sections 3a and 3c;
+decisions file item 3 (handler order).
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+
+from autorun import plugins
+from autorun.platforms import PLATFORMS
+from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_env)
+    AWAITING_PREFIX,
+    AWAITING_STATUS,
+    TASK_TOOL_PLATFORMS,
+    Session,
+    awaiting,
+    blocks,
+    gate_env_fixture,
+    lookup,
+    text,
+)
+
+DECISION = "approve pushing release-1.0 to origin/main"
+
+
+def _session(cli_type: str, label: str) -> Session:
+    return Session(f"await-{label}-{cli_type}-{uuid.uuid4().hex[:8]}", cli_type)
+
+
+def _enter(session: Session, task_id: str = "7"):
+    """The agent marks #task_id as waiting on the user; returns the Stop response."""
+    response = session.stop(f"The branch is ready.\n\n{awaiting(task_id, DECISION)}\n")
+    status = session.status(task_id)
+    assert status == AWAITING_STATUS, (
+        f"{session.cli_type}: the awaiting-user marker left #{task_id} {status!r}; it must be recorded as "
+        f"{AWAITING_STATUS!r} state, not a stateless allow"
+    )
+    return response
+
+
+@pytest.mark.parametrize("cli_type", TASK_TOOL_PLATFORMS)
+def test_awaiting_user_marker_records_status_decision_and_previous_status(gate_env, cli_type):
+    session = _session(cli_type, "record")
+    session.seed("7", "Push release-1.0")
+
+    response = _enter(session)
+
+    record = session.task("7").get("metadata", {}).get("awaiting_user")
+    assert isinstance(record, dict), f"{cli_type}: metadata.awaiting_user was not stored: {session.task('7')}"
+    assert record.get("decision") == DECISION
+    assert record.get("previous_status") == "in_progress"
+    assert not blocks(response, cli_type), f"{cli_type}: a task waiting on the user still blocked the Stop: {response}"
+    shown = text(response)
+    assert "Waiting on you" in shown and "#7" in shown and DECISION in shown, (
+        f"{cli_type}: the user was not shown what #7 waits on: {response}"
+    )
+    assert "[AWAITING_USER]" in session.audit(), f"{cli_type}: no AWAITING_USER audit line"
+
+    # Recorded, so the next Stop needs no restated marker.
+    again = session.stop("Waiting for your answer.")
+    assert not blocks(again, cli_type), f"{cli_type}: the recorded state did not outlive the reply that stated it: {again}"
+    assert DECISION in text(again)
+
+
+def test_awaiting_user_marker_without_decision_is_rejected_and_named(gate_env):
+    session = _session("claude", "bare")
+    session.seed("7", "Push release-1.0")
+
+    response = session.stop(awaiting("7", decision=""))
+
+    assert blocks(response, "claude"), f"a bare marker with no decision allowed the Stop: {response}"
+    reason = text(response)
+    assert AWAITING_PREFIX in reason and "#7" in reason and "decision" in reason.lower(), (
+        f"the block does not say that #7's marker needs the decision text: {reason}"
+    )
+    assert session.status("7") == "in_progress"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(f"```\n{awaiting('7')}\n```", id="inside-code-fence"),
+        pytest.param(f"I could print {awaiting('7')} here.", id="mid-sentence"),
+        pytest.param(awaiting("999"), id="unknown-task"),
+        pytest.param(awaiting("8"), id="finished-task"),
+    ],
+)
+def test_awaiting_user_marker_ignores_fenced_quoted_unknown_and_finished_ids(gate_env, reply):
+    session = _session("claude", "forged")
+    session.seed("7", "Push release-1.0")
+    session.seed("8", "Tag release-1.0", status="completed")
+
+    response = session.stop(reply)
+
+    assert blocks(response, "claude"), f"a forged or stale marker released the Stop: {response}"
+    assert session.status("7") == "in_progress"
+    assert session.status("8") == "completed", "a marker reopened a finished task"
+    assert "999" not in session.manager.tasks, "a marker created a task"
+    # Control: the genuine marker on #7 does enter the state, so the refusals
+    # above are the guard and not a marker that never works.
+    _enter(session)
+
+
+@pytest.mark.parametrize("author", ["user", "subagent", "harness", "automation"])
+def test_awaiting_user_cleared_only_by_user_authored_prompt(gate_env, author):
+    session = _session("claude", f"author-{author}")
+    session.seed("7", "Push release-1.0")
+    _enter(session)
+
+    fields: dict = {}
+    prompt = "yes, push"
+    if author == "subagent":
+        fields["agent_id"] = "subagent-7f3e"
+    elif author == "harness":
+        prefixes = getattr(PLATFORMS["claude"], "harness_authored_prompt_prefixes", None)
+        assert prefixes, "Platform.harness_authored_prompt_prefixes is missing or empty for claude"
+        prompt = f"{prefixes[0]}<summary>Agent finished</summary></task-notification>"
+    elif author == "automation":
+        fields["prompt_author"] = "automation"
+    ctx = session.context("UserPromptSubmit", prompt=prompt, **fields)
+    resolve_prompt_author = lookup("resolve_prompt_author")
+    assert resolve_prompt_author(ctx) == author, f"control: the prompt was not attributed to {author}"
+
+    response = plugins.app.dispatch(ctx)
+
+    after = session.stop("Waiting for your answer.")
+    if author == "user":
+        assert session.status("7") == "in_progress", "the user's reply did not restore #7's previous status"
+        assert "#7" in text(response), f"the agent was not told the user replied about #7: {response}"
+        assert blocks(after, "claude"), f"enforcement did not return after the user's reply: {after}"
+    else:
+        assert session.status("7") == AWAITING_STATUS, f"a {author}-authored prompt cleared the user's decision"
+        assert not blocks(after, "claude"), f"a {author}-authored prompt restored enforcement: {after}"
+
+
+def test_awaiting_user_cleared_by_agent_task_update(gate_env):
+    session = _session("claude", "update")
+    session.seed("7", "Push release-1.0")
+    _enter(session)
+
+    session.tool("TaskUpdate", {"taskId": "7", "status": "in_progress"}, "Updated task #7 status")
+
+    assert session.status("7") == "in_progress", "the agent's own TaskUpdate left #7 awaiting the user"
+    assert blocks(session.stop("Back on it."), "claude")
+
+
+def test_awaiting_user_clear_runs_before_value_returning_prompt_handlers(gate_env, monkeypatch):
+    """UserPromptSubmit is first-wins (core.AutorunApp._run_chain). The clear
+    must be a side effect of the first handler, returning None, so that no
+    handler that answers the prompt (the prompt-time cache check, for one)
+    can run before it and skip it (decisions file, item 3)."""
+    session = _session("claude", "order")
+    session.seed("7", "Push release-1.0")
+    chain = list(plugins.app.chains["UserPromptSubmit"])
+    first = chain[0]
+
+    _enter(session)
+    returned = first(session.context("UserPromptSubmit", prompt="yes, push"))
+    assert returned is None, f"{first.__name__} answers the prompt ({returned}); the clear must return None"
+    assert session.status("7") == "in_progress", (
+        f"the first UserPromptSubmit handler, {first.__name__}, does not clear awaiting-user; "
+        f"chain: {[handler.__name__ for handler in chain]}"
+    )
+
+    # Every handler answering the prompt: only the first one runs, and the
+    # clear must already have happened.
+    def answering(handler):
+        def answers_the_prompt(ctx):
+            handler(ctx)
+            return ctx.respond("allow", f"answered by {handler.__name__}")
+
+        return answers_the_prompt
+
+    _enter(session)
+    monkeypatch.setitem(plugins.app.chains, "UserPromptSubmit", [answering(handler) for handler in chain])
+    response = session.prompt("yes, push")
+
+    assert f"answered by {first.__name__}" in text(response), f"control: the chain was not first-wins: {response}"
+    assert session.status("7") == "in_progress", "a value-returning first handler pre-empted the awaiting-user clear"
