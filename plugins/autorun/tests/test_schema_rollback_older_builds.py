@@ -89,6 +89,31 @@ _OLDER_BUILD_PROBE = textwrap.dedent("""
     print(json.dumps(result))
 """)
 
+_OLDER_DELEGATION_ROLLBACK_PROBE = textwrap.dedent("""
+    import inspect, json, sys
+    sys.path.insert(0, sys.argv[1])
+    from autorun import session_manager as sm, task_lifecycle as tl
+    from autorun.core import EventContext
+    store = sm._build_store(sys.argv[2])
+    repo = sm.TaskRepository(store)
+    session = sys.argv[3]
+    parent_id = session.removeprefix("__task_lifecycle__")
+    tl.CONFIG["delegation_ttl_seconds"] = 1
+    evidence = ({"active_tools": ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]}
+                if "active_tools" in inspect.signature(EventContext).parameters else {})
+    child_fields = dict(session_id=f"{parent_id}-child", event="SubagentStop",
+                        cli_type="codex", agent_id="rollback-child", **evidence)
+    try:
+        tl.TaskLifecycle(ctx=EventContext(**child_fields)).handle_stop(EventContext(**child_fields))
+        child_return = "ok"
+    except Exception as error:
+        child_return = f"{type(error).__name__}: {error}"
+    parent_ctx = EventContext(session_id=parent_id, event="Stop", cli_type="codex", **evidence)
+    tl.TaskLifecycle(ctx=parent_ctx)._revert_expired_delegations(parent_ctx)
+    print(json.dumps({"child_return": child_return,
+                      "status": repo.get_task(session, "rollback-delegated")["status"]}))
+""")
+
 
 def _extract(ref: str, destination: Path) -> Path:
     archive = subprocess.run(
@@ -178,6 +203,77 @@ def test_older_builds_open_and_gate_a_migrated_database(ref, tmp_path):
     assert result["stop"] and result["stop"]["decision"] == "block", result
     assert "t-awaiting" in json.dumps(result["stop"]), result
     assert _read(db_path, "PRAGMA integrity_check") == [("ok",)]
+
+
+@pytest.mark.parametrize("ref", ["v1.0.0rc3", "bdcdb9ac"])
+def test_rollback_builds_ignore_keyed_receipts_and_expire_delegations(ref, tmp_path):
+    """Unknown keyed roots are harmless; the older TTL prevents permanent exemption."""
+    state_dir = tmp_path / "sessions"
+    _migrated_database(state_dir)
+    store = sm._build_store(str(state_dir))
+    repo = sm.TaskRepository(store)
+    repo.put_task(
+        SESSION,
+        "rollback-delegated",
+        {
+            "id": "rollback-delegated",
+            "subject": "Rollback delegation",
+            "status": "delegated",
+            "metadata": {
+                "delegated_to_session": "rollback-child",
+                "delegated_at": 0.0,
+            },
+        },
+    )
+    with store.session(SESSION, 30) as state:
+        state["session_metadata"] = {
+            "agent_spawns": [
+                {
+                    "id": "rollback-child",
+                    "at": 0.0,
+                    "claimed": True,
+                    "returned": False,
+                }
+            ]
+        }
+    keyed = f"{sm.TASK_DELEGATION_RECEIPT_SESSION_PREFIX}codex:rollback-child"
+    with store.session(keyed, 30) as state:
+        state["receipt"] = {
+            "agent_id": "rollback-child",
+            "cli_type": "codex",
+            "parent_session_id": SESSION.removeprefix("__task_lifecycle__"),
+            "parent_global_key": SESSION,
+            "at": 0.0,
+            "claimed": True,
+            "returned": False,
+        }
+
+    src = _extract(ref, tmp_path / "older-delegation")
+    home = tmp_path / "home-delegation"
+    home.mkdir()
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _OLDER_DELEGATION_ROLLBACK_PROBE,
+            str(src),
+            str(state_dir),
+            SESSION,
+        ],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "AUTORUN_HOME": str(tmp_path / "ar-home-delegation"),
+            "AUTORUN_TEST_STATE_DIR": str(state_dir),
+        },
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert result == {"child_return": "ok", "status": "pending"}
 
 
 @pytest.mark.parametrize("ref", OLDER_BUILDS)

@@ -111,6 +111,7 @@ _STAGE3_OVERFLOW_NAME_COUNT: int = 3  # task names shown in stage-3 overflow mes
 _MAX_CONSUMED_DELEGATION_MARKERS: int = 256
 _SESSION_START_CLAIM_DIGEST_HEX_CHARS: int = 16
 _DELEGATION_RECEIPTS_FIELD = "receipts"
+_DELEGATION_RECEIPTS_KEYED_MIGRATION = "keyed_migration_complete"
 _MAX_RESOLVED_DELEGATION_RECEIPTS = 256
 _MAX_AWAITING_USER_DECISION_CHARS = 300
 # Session metadata: ids of tasks waiting on the user, so a prompt restores
@@ -1272,6 +1273,51 @@ class TaskLifecycle:
             ) as state:
                 yield state
 
+    def _promote_legacy_delegation_receipts_once(
+        self, ctx: EventContext | None = None
+    ) -> None:
+        """Move the bounded legacy receipt map to keyed roots, then retire it.
+
+        Each keyed write commits before the completion marker and legacy-map
+        deletion commit. A crash therefore leaves the marker absent and the
+        next attempt safely replays identical keyed writes; conflicting keyed
+        data is refused rather than overwritten.
+        """
+        manager = get_session_manager()
+        done = manager.read_field(
+            TASK_DELEGATION_RECEIPT_SESSION,
+            _DELEGATION_RECEIPTS_KEYED_MIGRATION,
+            False,
+            timeout=self._state_lock_timeout,
+        )
+        if done is True:
+            return
+        with self._legacy_delegation_receipt_state(ctx) as legacy_state:
+            if legacy_state.get(_DELEGATION_RECEIPTS_KEYED_MIGRATION) is True:
+                return
+            receipts = _bounded_delegation_receipts(
+                copy.deepcopy(legacy_state.get(_DELEGATION_RECEIPTS_FIELD, {}))
+            )
+            for key, receipt in receipts.items():
+                if not isinstance(receipt, dict):
+                    continue
+                cli_type = str(receipt.get("cli_type") or "")
+                agent_id = str(receipt.get("agent_id") or "")
+                if not cli_type or not agent_id or _agent_receipt_key(cli_type, agent_id) != key:
+                    continue
+                with self._delegation_receipt_state(cli_type, agent_id, ctx) as keyed_state:
+                    existing = copy.deepcopy(keyed_state.get("receipt"))
+                    if isinstance(existing, dict) and existing != receipt:
+                        raise RuntimeError(
+                            f"delegation receipt {key!r} exists in legacy and keyed storage "
+                            "with different contents; refusing to choose one"
+                        )
+                    if not isinstance(existing, dict):
+                        keyed_state["receipt"] = copy.deepcopy(receipt)
+            if _DELEGATION_RECEIPTS_FIELD in legacy_state:
+                del legacy_state[_DELEGATION_RECEIPTS_FIELD]
+            legacy_state[_DELEGATION_RECEIPTS_KEYED_MIGRATION] = True
+
     def _receipt_parent_still_owns_child(self, receipt: dict) -> bool:
         """Whether recorded parent state still authorizes this child receipt."""
         parent_global_key = receipt.get("parent_global_key")
@@ -1324,36 +1370,20 @@ class TaskLifecycle:
 
     def _delegation_receipt(self, cli_type: str, agent_id: str) -> dict | None:
         """Read one parent authority record and retire evidence-ended records."""
-        key = _agent_receipt_key(cli_type, agent_id)
+        self._promote_legacy_delegation_receipts_once()
         with self._delegation_receipt_state(cli_type, agent_id) as state:
             receipt = copy.deepcopy(state.get("receipt"))
-        legacy = False
-        if not isinstance(receipt, dict):
-            with self._legacy_delegation_receipt_state() as state:
-                receipts = state.get(_DELEGATION_RECEIPTS_FIELD, {})
-                receipt = copy.deepcopy(receipts.get(key)) if isinstance(receipts, dict) else None
-            legacy = isinstance(receipt, dict)
         if not isinstance(receipt, dict):
             return None
         if not self._receipt_is_reclaimable(receipt):
             return receipt
 
-        if legacy:
-            with self._legacy_delegation_receipt_state() as state:
-                receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
-                if receipts.get(key) == receipt:
-                    receipts.pop(key, None)
-                    if receipts:
-                        state[_DELEGATION_RECEIPTS_FIELD] = receipts
-                    else:
-                        state.clear()
-        else:
-            get_session_manager().clear_session_if_field_matches(
-                _delegation_receipt_session_id(cli_type, agent_id),
-                "receipt",
-                receipt,
-                timeout=self._state_lock_timeout,
-            )
+        get_session_manager().clear_session_if_field_matches(
+            _delegation_receipt_session_id(cli_type, agent_id),
+            "receipt",
+            receipt,
+            timeout=self._state_lock_timeout,
+        )
         return None
 
     def _mark_delegation_receipt_claimed(
@@ -1363,6 +1393,7 @@ class TaskLifecycle:
         task_ids: Iterable[str],
     ) -> None:
         """Record that task state now depends on this exact child receipt."""
+        self._promote_legacy_delegation_receipts_once()
         with self._delegation_receipt_state(cli_type, agent_id) as state:
             receipt = copy.deepcopy(state.get("receipt"))
             if isinstance(receipt, dict) and receipt.get("parent_session_id") == self.session_id:
@@ -1370,14 +1401,6 @@ class TaskLifecycle:
                 receipt["delegated_task_ids"] = list(dict.fromkeys(str(value) for value in task_ids))
                 state["receipt"] = receipt
                 return
-        key = _agent_receipt_key(cli_type, agent_id)
-        with self._legacy_delegation_receipt_state() as state:
-            receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
-            receipt = receipts.get(key)
-            if isinstance(receipt, dict) and receipt.get("parent_session_id") == self.session_id:
-                receipt["claimed"] = True
-                receipt["delegated_task_ids"] = list(dict.fromkeys(str(value) for value in task_ids))
-                state[_DELEGATION_RECEIPTS_FIELD] = receipts
 
     def _finish_delegation_receipts(
         self,
@@ -1385,8 +1408,8 @@ class TaskLifecycle:
         agent_ids: Iterable[str],
         now: float,
     ) -> None:
-        """Retire keyed receipts and mark matching legacy records returned."""
-        legacy_ids: list[str] = []
+        """Retire keyed receipts after a child return."""
+        self._promote_legacy_delegation_receipts_once(self.ctx)
         manager = get_session_manager()
         for value in agent_ids:
             agent_id = str(value)
@@ -1404,24 +1427,7 @@ class TaskLifecycle:
                     receipt,
                     timeout=self._state_lock_timeout,
                 )
-            else:
-                legacy_ids.append(agent_id)
-        if not legacy_ids:
-            return
-        with self._legacy_delegation_receipt_state(self.ctx) as state:
-            receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
-            changed = False
-            for agent_id in legacy_ids:
-                key = _agent_receipt_key(cli_type, agent_id)
-                receipt = receipts.get(key)
-                if not isinstance(receipt, dict) or receipt.get("parent_session_id") != self.session_id:
-                    continue
-                if not receipt.get("returned"):
-                    receipt["returned"] = True
-                    receipt["returned_at"] = now
-                    changed = True
-            if changed:
-                state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(receipts)
+
 
     def _migrate_if_needed(self, state: Dict) -> None:
         """Migrate stored state to current schema version (lazy self-healing).
@@ -3545,19 +3551,11 @@ class TaskLifecycle:
             return
         agent_id = match.group(1)
         try:
+            self._promote_legacy_delegation_receipts_once(ctx)
             with self._session_state() as state:
                 with self._delegation_receipt_state(ctx.cli_type, agent_id, ctx) as receipt_state:
                     now = time.time()
                     existing = copy.deepcopy(receipt_state.get("receipt"))
-                    if not isinstance(existing, dict):
-                        key = _agent_receipt_key(ctx.cli_type, agent_id)
-                        with self._legacy_delegation_receipt_state(ctx) as legacy_state:
-                            receipts = legacy_state.get(_DELEGATION_RECEIPTS_FIELD, {})
-                            existing = (
-                                copy.deepcopy(receipts.get(key))
-                                if isinstance(receipts, dict)
-                                else None
-                            )
                     if isinstance(existing, dict):
                         if existing.get("parent_session_id") != self.session_id:
                             logger.warning(

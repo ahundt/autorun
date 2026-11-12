@@ -220,12 +220,26 @@ class TestSpawnLedger:
             tl._delegation_receipt_session_id("claude", SPAWN_ID)
         )
         with sm.session_state(sm.TASK_DELEGATION_RECEIPT_SESSION) as state:
+            if tl._DELEGATION_RECEIPTS_KEYED_MIGRATION in state:
+                del state[tl._DELEGATION_RECEIPTS_KEYED_MIGRATION]
             state["receipts"] = {key: {**receipt, "at": days_ago}}
 
         child = TaskLifecycle(config=cfg, session_id="untrusted-child")
         receipt = child._delegation_receipt("claude", SPAWN_ID)
         assert receipt is not None and receipt["parent_session_id"] == "dl-old-receipt"
         assert key in _receipts()
+        with sm.session_state(sm.TASK_DELEGATION_RECEIPT_SESSION) as state:
+            assert state.get(tl._DELEGATION_RECEIPTS_KEYED_MIGRATION) is True
+            assert "receipts" not in state
+
+        sm.get_session_manager().clear_session(
+            tl._delegation_receipt_session_id("claude", SPAWN_ID)
+        )
+        with sm.session_state(sm.TASK_DELEGATION_RECEIPT_SESSION) as state:
+            state["receipts"] = {key: receipt}
+        assert child._delegation_receipt("claude", SPAWN_ID) is None, (
+            "the legacy blob must never be consulted after migration completion"
+        )
 
     @pytest.mark.parametrize("backend", ["json", "sqlite"])
     def test_clear_parent_removes_its_cross_session_receipts(

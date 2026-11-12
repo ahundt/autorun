@@ -117,8 +117,12 @@ def test_spawn_and_subagent_stop_are_keyed_with_5000_open_receipts(gate_env, mon
         lambda: child.dispatch("SubagentStop", agent_id=CODEX_SPAWN_ID),
     )
 
-    receipt_roots = sm.get_session_manager().list_sessions(
-        namespace="task_delegation_receipts"
+    receipt_roots = tuple(
+        session
+        for session in sm.get_session_manager().list_sessions(
+            namespace="task_delegation_receipts"
+        )
+        if session != sm.TASK_DELEGATION_RECEIPT_SESSION
     )
     assert len(receipt_roots) == OPEN_RECEIPTS, (
         "SubagentStop left an empty keyed receipt root behind: "
