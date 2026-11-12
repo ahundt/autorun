@@ -82,11 +82,15 @@ nothing declares it, PEP 427 just normalises `-` to `_`. Derive it
 pins all of the above, including that no module spells the stem out and that the
 plugin id stays `ar`.
 
-Two harness plugins, one uv workspace member (`plugins/autorun`): **autorun**
+Three harness plugins, one uv workspace member (`plugins/autorun`): **autorun**
 (`/ar:` — autonomous execution with three-stage verification, file policies,
-safety guards, task tracking, plan export) and **pdf-extractor**
+safety guards, task tracking, plan export, and the skills those commands use),
+**autorun-skills** (eleven general-purpose skills that need nothing from
+autorun; skills only, no code) and **pdf-extractor**
 (`/pdf-extractor:extract`, `extract-pdfs`), whose code ships inside
-`autorun-ai`. In the registry `gemini` is the standalone Gemini CLI, retired
+`autorun-ai`. `autorun-skills` and `pdf-extractor` are plugin ids, named on
+purpose, not spellings of `autorun`; neither is a distribution.
+`autorun --install` installs all three. In the registry `gemini` is the standalone Gemini CLI, retired
 but installable with `--gemini`; `qwen` and `antigravity` are separate entries
 built from the same extension template.
 
@@ -95,6 +99,7 @@ built from the same extension template.
 | `plugins/autorun/src/autorun/` | Package: `config.py` (all CONFIG), `__main__.py` (CLI + hook routing), `plugins.py` (command handlers), `core.py`/`session_manager.py` (daemon state), `installer/` (install walk), `task_lifecycle.py`, `plan_export.py`, `cache_guard.py`, `integrations.py` |
 | `plugins/autorun/{commands,skills,agents,hooks}/` | Slash commands, skills, tmux agents, `hooks/hook_entry.py` + `hooks.json` |
 | `plugins/autorun/AGENTS.md` | Plugin development guidance: hook error prevention, feature lessons, bug-workaround policy, harness families |
+| `plugins/autorun-skills/` | Manifests for every harness family, `README.md`, and `skills/`: the general-purpose skills. An install hands any copy `ar` wrote under an earlier release to this plugin (`installer/skills.heirs`) |
 | `plugins/pdf-extractor/` | Manifests, command, skill, `CLAUDE.md` (full docs), and `src/pdf_extraction` (symlinked into `plugins/autorun/src/` so it ships in the `autorun-ai` distribution; backends beyond `pdftotext` need the `pdf` extra) |
 | `README.md` | User documentation: installation, every `/ar:` command, three-stage markers, safety-guard defaults, tmux integration, troubleshooting |
 

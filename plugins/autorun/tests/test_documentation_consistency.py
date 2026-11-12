@@ -1246,6 +1246,12 @@ def test_each_autorun_spelling_keeps_its_own_job():
     | plugin id / prefix   | `ar`         | plugin.json, `/ar:<cmd>`, commands/|
     | wheel filename stem  | *derived*    | `DISTRIBUTION.replace("-", "_")`   |
 
+    The repository marketplace also lists two more plugin ids, on purpose and
+    not as spellings of autorun: `pdf-extractor`, and `autorun-skills`, the
+    general-purpose skills that left `ar`. "-skills" says what it holds, and
+    "autorun-" says whose it is, because the id is the `autorun-skills:<skill>`
+    prefix on Claude Code. Neither is a distribution.
+
     The wheel stem is deliberately absent from that list of names: nothing
     declares it, the build backend emits it because PEP 427 normalises "-" to
     "_". It was briefly written out as a literal in four places, which made a
@@ -1316,6 +1322,28 @@ def test_each_autorun_spelling_keeps_its_own_job():
     assert market["name"] == "autorun", "the marketplace keeps the bare name"
     assert [entry["name"] for entry in market["plugins"]] == ["ar"], (
         "the marketplace publishes exactly the `ar` plugin"
+    )
+
+    # -- the other plugin ids are named on purpose ---------------------------
+    # The repository marketplace lists exactly these ids. A new one is a
+    # decision recorded here and in AGENTS.md section 3, not a fourth spelling.
+    from autorun.installer.entrypoint import _PLUGIN_DISTRIBUTIONS
+
+    root_market = json.loads(
+        (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+    )
+    assert [entry["name"] for entry in root_market["plugins"]] == [
+        "ar", "autorun-skills", "pdf-extractor"
+    ]
+    for plugin_id in ("autorun-skills", "pdf-extractor"):
+        directory = REPO_ROOT / "plugins" / plugin_id
+        assert json.loads(
+            (directory / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )["name"] == plugin_id
+        assert plugin_id not in _PLUGIN_DISTRIBUTIONS, f"{plugin_id} is not a distribution"
+        assert not (directory / "pyproject.toml").exists(), f"{plugin_id} declares a distribution"
+    assert "`autorun-skills`" in (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8"), (
+        "AGENTS.md section 3 must name the skills plugin id"
     )
 
     # -- the wheel stem is derived, never spelled ----------------------------
