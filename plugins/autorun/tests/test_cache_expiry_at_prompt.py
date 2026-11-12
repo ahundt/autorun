@@ -476,6 +476,21 @@ def test_pi_record_without_lifetime_warns_only_when_age_is_set(clock, cli_type):
     assert EXPIRED_NOTICE in text_of(response), f"{cli_type} with age 1h and a 2h-old record said nothing: {response}"
 
 
+@pytest.mark.parametrize("cli_type", sorted(p.name for p in hook_platforms()))
+def test_where_a_prompt_cannot_be_blocked_the_check_warns_in_block_mode(clock, cli_type):
+    """Pi and Prime Agent show a message and cannot stop the prompt, as do
+    Gemini CLI and Qwen. There `/ar:cache on` warns, and never claims the
+    prompt was held back or offers to resend it."""
+    can_block = "UserPromptSubmit" in PLATFORMS[cli_type].hook_protocol.context_events_with_block_decision
+    session = armed(PI_NO_LIFETIME, cli_type, mode="on")
+    session.command("ar:cache set age 1h")
+    response = session.prompt("Continue with the refactor.")
+    text = text_of(response)
+    assert EXPIRED_NOTICE in text, f"{cli_type} said nothing: {response}"
+    assert blocked(response) == can_block, f"{cli_type}: {response}"
+    assert (RESEND_LINE in text) == can_block, f"{cli_type} offers a resend it cannot honour: {text}"
+
+
 # ─── cost bound ───────────────────────────────────────────────────────────
 
 

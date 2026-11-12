@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import IO, Literal, Optional
 
 from .config import CONFIG, detect_cli_type
+from .platforms import platform_for
 from .scoped_allow import (
     ScopedAllow, _PERMANENT_KEYWORDS,
     call_fingerprint, parse_scope_args, parse_duration,
@@ -601,6 +602,10 @@ class CacheGuard:
         usage = self._read_usage(ctx)
         if not _expired_trip(usage, self.config):
             return None
+        if "UserPromptSubmit" not in platform_for(ctx.cli_type).hook_protocol.context_events_with_block_decision:  # type: ignore[union-attr]
+            # Pi, Prime Agent, Gemini CLI, Qwen: a denial is only a message
+            # and the prompt goes out anyway, so say so instead.
+            action = "warn"
         if action == "warn":
             # Shown to the user only; the model gains nothing from it.
             return ctx.respond("allow", _render_expired(usage, self.config, blocking=False), to_ai=False)  # type: ignore[union-attr]
