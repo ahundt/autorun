@@ -173,3 +173,43 @@ def test_every_unreturned_spawn_stays_in_the_ledger(gate_env):
     assert record["mode"] == "async", (
         f"the first of 20 unclaimed spawns was evicted from the ledger by a count: mode {record['mode']!r}"
     )
+
+
+def test_dead_harness_evidence_does_not_end_a_newer_delegation(gate_env, monkeypatch):
+    """Liveness is checked outside the state lock. If the task is delegated
+    again (new child, live harness) between that check and the write, the
+    evidence about the old delegation must not send the new one to pending."""
+    import psutil
+
+    from autorun.task_lifecycle import TaskLifecycle
+
+    old_harness = dead_pid()
+    session = _session("codex", "race", harness_pid=old_harness)
+    session.seed("7", "Sweep the fixtures")
+    session.delegate("7")
+    newer = {
+        "agent_id": "01997b21-0e6f-7bb2-9d1e-0000000000ff",
+        "cli_type": "codex",
+        "parent_session_id": session.session_id,
+        "harness_pid": os.getpid(),
+        "mode": "async",
+        "delegated_at": time.time(),
+    }
+    real = psutil.pid_exists
+
+    def redelegated_meanwhile(pid):
+        if pid == old_harness:
+            def redelegate(tasks):
+                tasks["7"]["metadata"]["delegation"] = dict(newer)
+            TaskLifecycle(session_id=session.session_id).atomic_update_tasks(redelegate)
+        return real(pid)
+
+    monkeypatch.setattr(psutil, "pid_exists", redelegated_meanwhile)
+    resumed = Session(session.session_id, "codex", store=session.store)
+    resumed.stop("Waiting for the subagent.")
+
+    task = session.task("7")
+    assert task["status"] == "delegated", (
+        f"evidence about the old delegation's harness ended the newer delegation: #7 is {task['status']!r}"
+    )
+    assert task["metadata"]["delegation"]["agent_id"] == newer["agent_id"]

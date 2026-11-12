@@ -2820,6 +2820,9 @@ class TaskLifecycle:
         """
         legacy: list[str] = []
         exited: Dict[str, str] = {}
+        # The exact record each pid check was about: the check runs outside
+        # the state lock, so the write applies only to a task still carrying it.
+        checked: Dict[str, Dict] = {}
         alive: Dict[int, bool] = {}
         for task_id, task in tasks.items():
             if task.get("status") != "delegated":
@@ -2839,6 +2842,7 @@ class TaskLifecycle:
                 alive[pid] = psutil.pid_exists(pid)
             if not alive[pid]:
                 exited[task_id] = str(record.get("agent_id") or "with no recorded id")
+                checked[task_id] = copy.deepcopy(record)
         if not legacy and not exited:
             return False
 
@@ -2850,16 +2854,22 @@ class TaskLifecycle:
             task.setdefault("tool_outputs", []).append("Delegation liveness not recorded before upgrade; verify the subagent's results")
             return True
 
-        def back_to_pending(task: Dict) -> bool:
-            if task.get("status") != "delegated":
-                return False
-            task["status"] = "pending"
-            task.setdefault("tool_outputs", []).append("The harness process that ran the subagent exited before it reported")
-            return True
+        applied: set = set()
+
+        def back_to_pending(task_id: str) -> Callable[[Dict], bool]:
+            def update(task: Dict) -> bool:
+                if task.get("status") != "delegated" or (task.get("metadata") or {}).get("delegation") != checked[task_id]:
+                    return False
+                task["status"] = "pending"
+                task.setdefault("tool_outputs", []).append("The harness process that ran the subagent exited before it reported")
+                applied.add(exited[task_id])
+                return True
+
+            return update
 
         def close_ledger_entries(metadata: Dict) -> None:
             ledger = list(metadata.get("agent_spawns", []))
-            gone = set(exited.values())
+            gone = applied
             for entry in ledger:
                 if str(entry.get("id")) in gone and not entry.get("returned"):
                     entry["returned"] = True
@@ -2868,7 +2878,7 @@ class TaskLifecycle:
                 metadata["agent_spawns"] = _bounded_spawn_ledger(ledger)
 
         updaters: Dict[str, Callable[[Dict], bool]] = {task_id: returned_for_verification for task_id in legacy}
-        updaters.update({task_id: back_to_pending for task_id in exited})
+        updaters.update({task_id: back_to_pending(task_id) for task_id in exited})
         changed = set(self._update_task_rows(updaters, close_ledger_entries if exited else None))
         verify = [task_id for task_id in legacy if task_id in changed]
         pending = [task_id for task_id in exited if task_id in changed]
