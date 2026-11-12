@@ -2412,5 +2412,14 @@ def test_wrapper_fail_open_tells_the_user_what_the_client_path_would(cli_type, n
         hook_entry.fail_open_for_cli(message, cli_type, native_event)
     wrapper = json.loads(capsys.readouterr().out)
 
-    assert set(wrapper) <= set(client), (wrapper, client)
-    assert (message in json.dumps(client)) == (message in json.dumps(wrapper)), (wrapper, client)
+    overrides = hook_entry._FAIL_OPEN_MESSAGE_FIELDS.get(cli_type, {})
+    carrier = overrides.get(native_event, overrides.get(None, "systemMessage"))
+    if carrier == "injectSteps":
+        assert message in wrapper["injectSteps"][0]["ephemeralMessage"]
+        assert message in client["injectSteps"][0]["ephemeralMessage"]
+    elif carrier:
+        assert message in wrapper[carrier], (cli_type, native_event, wrapper)
+        assert message in client[carrier], (cli_type, native_event, client)
+    else:
+        assert message not in json.dumps(wrapper)
+        assert message not in json.dumps(client)

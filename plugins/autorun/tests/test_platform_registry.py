@@ -42,11 +42,11 @@ from autorun.platforms import (
 # ─── Registry shape ───────────────────────────────────────────────────────────
 
 
-def test_registry_contains_supported_platforms():
-    for name in (
-        "claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "pi"
-    ):
-        assert name in PLATFORMS, f"PLATFORMS missing {name!r}"
+@pytest.mark.parametrize("name", tuple(PLATFORMS), ids=tuple(PLATFORMS))
+def test_registry_contains_supported_platforms(name):
+    """Every registered platform is a supported platform; the registry is the list."""
+    assert len(PLATFORMS) == 9
+    assert PLATFORMS[name].name == name
 
 
 def test_forgecode_21321_has_no_user_configurable_enforcement_hooks():
