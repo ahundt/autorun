@@ -264,6 +264,7 @@ def test_an_eighth_harness_needs_no_module_edited(sandbox):
     newcomer = replace(
         PLATFORMS["forgecode"], name="acme", display_name="Acme Code",
         binary="acme", config_dir="~/.acme", config_dir_env_vars=(),
+        config_dirs_preferred_when_present=(), retired_config_dirs=(),
     )
     table = {**steps.STEPS, "acme": steps.STEPS["forgecode"]}
 
@@ -2430,3 +2431,72 @@ def test_an_escaped_backslash_before_u_is_not_a_unicode_escape():
     assert "José" in render_json_like({"hook": "C:\\users", "h": "José"}, windows)
     escaped = '{"n": "caf\\u00e9"}\n'
     assert "\\u00e9" in render_json_like({"n": "café"}, escaped)
+
+
+def _forgecode_install(sandbox, step_table=None):
+    from autorun.installer.orchestrate import install
+
+    return install(
+        step_table=step_table,
+        marketplace_root=REPO,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=sandbox,
+        harnesses=(PLATFORMS["forgecode"],),
+        available=(),
+        state_dir=sandbox / ".state",
+    )
+
+
+def test_forgecode_commands_follow_forgecodes_own_base_directory(sandbox, monkeypatch):
+    """ForgeCode reads ~/forge when it exists and ~/.forge otherwise
+    (`forge cmd list` on 2.13.21 shows only the ~/forge copy when both hold
+    one). An install into ~/.forge on a machine with ~/forge is invisible.
+
+    Upgrade path: an earlier install wrote ~/.forge/commands; once ~/forge
+    exists the commands go there and the owned copies under ~/.forge retire.
+    Files autorun does not own survive in both, and in ~/.codex/commands.
+    """
+    monkeypatch.delenv("FORGE_CONFIG", raising=False)
+    dot_forge = sandbox / ".forge" / "commands"
+    dot_forge.mkdir(parents=True)
+    (dot_forge / "mine.md").write_text("theirs in .forge\n", encoding="utf-8")
+    codex_commands = sandbox / ".codex" / "commands"
+    codex_commands.mkdir(parents=True)
+    (codex_commands / "mine.md").write_text("theirs in .codex\n", encoding="utf-8")
+
+    # Commands only: the skills step writes ~/forge/skills, which creates
+    # ~/forge and so moves ForgeCode's base before the commands are placed.
+    assert _forgecode_install(sandbox, {**steps.STEPS, "forgecode": (steps.commands_step,)}).ok is True
+    shipped = sorted(p.name for p in dot_forge.glob("ar-*.md"))
+    assert "ar-status.md" in shipped, "with only ~/.forge present, commands go there"
+    assert not (sandbox / "forge").exists()
+
+    forge = sandbox / "forge" / "commands"
+    forge.mkdir(parents=True)
+    (forge / "mine.md").write_text("theirs in forge\n", encoding="utf-8")
+
+    assert _forgecode_install(sandbox).ok is True
+    assert sorted(p.name for p in forge.glob("ar-*.md")) == shipped
+    assert not list(dot_forge.glob("ar-*.md")), "owned copies under ~/.forge are retired"
+    assert (dot_forge / "mine.md").read_text(encoding="utf-8") == "theirs in .forge\n"
+    assert (forge / "mine.md").read_text(encoding="utf-8") == "theirs in forge\n"
+    assert sorted(p.name for p in codex_commands.iterdir()) == ["mine.md"]
+
+
+@pytest.mark.parametrize(
+    "present, env, expected",
+    [
+        ((".forge",), {}, ".forge"),
+        (("forge", ".forge"), {}, "forge"),
+        (("forge",), {}, "forge"),
+        ((), {}, ".forge"),
+        (("forge", ".forge"), {"FORGE_CONFIG": "custom"}, "custom"),
+    ],
+)
+def test_forgecode_config_dir_prefers_forge_when_it_exists(sandbox, present, env, expected):
+    for name in present:
+        (sandbox / name).mkdir()
+    environ = {key: str(sandbox / value) for key, value in env.items()}
+    resolved = discovery.config_dir(PLATFORMS["forgecode"], env=environ, home=sandbox)
+    assert resolved == sandbox / expected

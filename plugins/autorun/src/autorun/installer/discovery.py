@@ -533,7 +533,7 @@ def config_dir(platform: object, *, env: Mapping[str, str] | None = None,
                home: Path | None = None) -> Path | None:
     """Where this harness keeps its configuration.
 
-    Three tiers, in order.
+    Four tiers, in order.
 
     ``CONFIG["harness_config_dirs"][name]`` first: it is the only way to
     relocate a harness root *without* an environment variable, which matters
@@ -547,6 +547,11 @@ def config_dir(platform: object, *, env: Mapping[str, str] | None = None,
     answer writes every file one level too high, where the harness never looks
     and nothing reports an error.
 
+    Then the first of ``config_dirs_preferred_when_present`` that exists:
+    a harness that reads one directory when present and falls back to
+    another (ForgeCode: ~/forge, else ~/.forge) ignores whatever is written
+    to the fallback while the preferred one exists.
+
     Then the declared default.
     """
     environ = os.environ if env is None else env
@@ -558,6 +563,9 @@ def config_dir(platform: object, *, env: Mapping[str, str] | None = None,
         resolved = expand_home(value, home=home)
         subdir = getattr(platform, "config_dir_env_var_subdir", "")
         return resolved / subdir if subdir else resolved
+    for preferred in getattr(platform, "config_dirs_preferred_when_present", ()) or ():
+        if (candidate := expand_home(preferred, home=home)).is_dir():
+            return candidate
     declared = getattr(platform, "config_dir", "")
     return expand_home(declared, home=home) if declared else None
 

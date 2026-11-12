@@ -113,6 +113,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "native_task_statuses": sorted(platform.native_task_statuses),
         "config_dir_env_vars": list(platform.config_dir_env_vars),
         "config_dir_env_var_subdir": platform.config_dir_env_var_subdir,
+        "config_dirs_preferred_when_present": list(platform.config_dirs_preferred_when_present),
         "retired_config_dirs": list(platform.retired_config_dirs),
         "extensions_subdir": platform.extensions_subdir,
         # The route's own words, not a reconstruction from path fragments: a

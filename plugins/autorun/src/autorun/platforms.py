@@ -1158,10 +1158,16 @@ class Platform:
     # the config dir itself, as XDG_CONFIG_HOME does. Empty means the variable
     # already holds the config dir (CODEX_HOME, CLAUDE_CONFIG_DIR, ...).
     config_dir_env_var_subdir: str = ""
+    # Directories the harness itself prefers over ``config_dir`` when they
+    # exist, in its own order; the first existing one is the base. Consulted
+    # after the environment variables and before ``config_dir``. ForgeCode
+    # reads ~/forge when it exists and ~/.forge otherwise.
+    config_dirs_preferred_when_present: tuple[str, ...] = ()
     # Roots an earlier release wrote to that no current step targets. The
-    # installer never writes here; the retirement sweep reads them so an owned
-    # tree left on an old route is decided (kept with a reason, or retired)
-    # instead of sitting outside every swept root forever.
+    # retirement sweep reads them so an owned tree left on an old route is
+    # decided (kept with a reason, or retired) instead of sitting outside every
+    # swept root forever. A root that is also the active base (ForgeCode's
+    # ~/.forge when ~/forge is absent) is written and claimed, not retired.
     retired_config_dirs: tuple[str, ...] = ()
     template_dir: str | None = None
     hooks_path_var: str = ""
@@ -1994,6 +2000,10 @@ FORGECODE = register(
         hook_protocol=NO_HOOKS,
         config_dir="~/.forge/",
         config_dir_env_vars=("FORGE_CONFIG",),
+        # ForgeCode's own rule: FORGE_CONFIG, else ~/forge when it exists,
+        # else ~/.forge (`forge cmd list`, 2.13.21, with files in both).
+        config_dirs_preferred_when_present=("~/forge/",),
+        retired_config_dirs=("~/.forge/",),
         template_dir="forgecode_template",
         skill_search_routes=(HomeDirSkills("forge/skills"),),
         memory_filename="AGENTS.md",

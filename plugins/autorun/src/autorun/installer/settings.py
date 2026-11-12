@@ -605,6 +605,11 @@ def synthesize(custom: CustomHarness) -> object:
         install_flavor=custom.flavor,
         config_dir=custom.config_dir,
         config_dir_env_vars=(),
+        # The flavor's other directories belong to the flavor's harness, not
+        # to this one: inheriting them would install into, or sweep, ~/forge
+        # or ~/.forge for a harness whose root is custom.config_dir.
+        config_dirs_preferred_when_present=(),
+        retired_config_dirs=(),
     )
 
 
