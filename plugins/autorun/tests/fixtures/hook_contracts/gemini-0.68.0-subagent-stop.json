@@ -1,0 +1,29 @@
+{
+  "harness": "Gemini CLI",
+  "version": "0.68.0",
+  "release_date": "2026-11-10",
+  "read_date": "2026-11-12",
+  "release_notes": "https://github.com/google-gemini/gemini-cli/blob/v0.68.0/docs/changelogs/latest.md",
+  "change": "https://github.com/google-gemini/gemini-cli/pull/30111",
+  "migration_source": "https://github.com/google-gemini/gemini-cli/blob/v0.68.0/packages/cli/src/commands/hooks/migrate.ts",
+  "native_event_source": "https://github.com/google-gemini/gemini-cli/blob/v0.68.0/packages/core/src/hooks/types.ts",
+  "migration_mapping": {
+    "Stop": "AfterAgent",
+    "SubagentStop": "AfterAgent",
+    "SubAgentStop": "AfterAgent"
+  },
+  "native_hook_events": [
+    "BeforeTool",
+    "AfterTool",
+    "BeforeAgent",
+    "Notification",
+    "AfterAgent",
+    "SessionStart",
+    "SessionEnd",
+    "PreCompress",
+    "BeforeModel",
+    "AfterModel",
+    "BeforeToolSelection"
+  ],
+  "contract": "SubagentStop is accepted only as a Claude Code configuration key by `gemini hooks migrate`; it is merged into Gemini's native AfterAgent definitions. It is not a Gemini native hook event or a distinguishable SubagentStop payload."
+}

@@ -22,7 +22,7 @@ Each event cell states whether the harness emits the event and what its output c
 | C2 | Claude Code changelog, <https://code.claude.com/docs/en/changelog>, release 2.1.322, read 2026-11-12. |
 | X1 | Codex hooks reference, <https://developers.openai.com/codex/hooks>, read 2026-11-12; installed Codex CLI 0.167.0. |
 | G1 | Gemini CLI hooks reference, <https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md>, read 2026-11-12; installed Gemini CLI 0.51.0. |
-| G2 | Gemini CLI v0.68.0 changelog, <https://github.com/google-gemini/gemini-cli/blob/main/docs/changelogs/latest.md>, released 2026-11-10, read 2026-11-12. |
+| G2 | Gemini CLI v0.68.0 changelog and PR #30111, <https://github.com/google-gemini/gemini-cli/blob/main/docs/changelogs/latest.md> and <https://github.com/google-gemini/gemini-cli/pull/30111>, released 2026-11-10, read 2026-11-12. |
 | Q1 | Qwen Code hooks reference, <https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/>, read 2026-11-12. Installed Qwen Code 0.21.15: `bundled/qc-helper/docs/features/hooks.md`, `chunks/chunk-4W4BROUS.js`, and `chunks/chunk-L7RG5PVT.js`; upstream tag `v0.21.15`, commit `5dce251`. |
 | A1 | Antigravity hooks reference, <https://antigravity.google/docs/hooks>, read 2026-11-12; installed Agy 1.1.12 embedded hook reference and protobuf symbols in `/opt/homebrew/bin/agy`. |
 | A2 | Antigravity engine changelog, <https://www.antigravity.google/changelog?tab=engine>, read 2026-11-12. |
@@ -71,7 +71,7 @@ Each event cell states whether the harness emits the event and what its output c
 | BeforeTool | `B=decision:deny`; reason and context are supported. AR subscribes and normalizes unsupported `ask` to deny. [G1][AR1] |
 | AfterTool | Emits after tools; `C=additionalContext`; output cannot undo the tool. AR subscribes. [G1][AR1] |
 | AfterAgent | Stop event. `B=decision:deny` triggers retry; allowed common output can carry a notice. AR subscribes. [G1][AR1] |
-| SubagentStop | Installed 0.51.0 does not expose a distinct event. Gemini CLI 0.68.0 added SubagentStop event mapping. AR does not subscribe. Gap: add a version-compatible manifest mapping after testing how pre-0.68 clients handle an unknown event. [G1][G2][AR1] |
+| SubagentStop | Neither installed 0.51.0 nor current 0.68.0 exposes a native SubagentStop event. The 0.68 change accepts Claude's `SubagentStop` spelling only in `gemini hooks migrate` and merges that configuration under Gemini's existing AfterAgent event. AR correctly keeps `SubagentStop` out of the Gemini manifest; adding it would be invalid on both versions. AfterAgent carries no documented field that distinguishes a child completion, so AR cannot safely update the delegation ledger from it. [G1][G2][AR1] |
 | PermissionRequest | Not established in the installed 0.51.0 hook reference. No AR subscription. [G1][AR1] |
 | PreCompress | Emits before compression and is advisory. AR subscribes as `PreCompact`. [G1][AR1] |
 
@@ -171,7 +171,7 @@ Each event cell states whether the harness emits the event and what its output c
 
 1. Claude Code 2.1.322 documents more lifecycle events, including `SubagentStart`, task events, model-switch events, and structured `background_tasks`/`session_crons` on Stop and SubagentStop. Autorun already parses the two arrays. A follow-up needs captured payloads before either array becomes running-subagent proof. [C1][C2]
 2. Codex 0.167.0 documents `PreModelRequest`, `PostModelRequest`, `Interrupt`, and `SubagentStart`. Autorun needs a handler-level design before subscribing because none of its current policies target those points. Add explicit compact-event registry rows now or with that change. [X1]
-3. Gemini CLI 0.68.0 added SubagentStop mapping. Test unknown-event handling on 0.51.0 before adding it to the shared extension manifest; an unrecognized event must not disable older hooks. [G2]
+3. Gemini CLI 0.68.0 added a `gemini hooks migrate` alias from Claude's `SubagentStop` setting to Gemini's native AfterAgent event; it did not add a native event. AR pins that distinction in `tests/fixtures/hook_contracts/gemini-0.68.0-subagent-stop.json` and keeps the invalid key out of the shared manifest for both 0.51 and 0.68. [G2]
 4. Qwen 0.21.15 supports `systemMessage` on Stop. Implemented in `942cddd2`; allowed Stop notices no longer disappear. [Q1]
 5. Antigravity 1.1.12 supports SessionStart/PreInvocation `injectSteps`; `invocationNum=0` identifies the first model call, and Stop `fullyIdle=false` means a background command or asynchronous task is active. AR now routes first-invocation prompt policy, defers allowed-Stop notices to the next injection point, and treats the inverse idle flag as running-work evidence without claiming it identifies a specific subagent. [A1]
 6. OpenCode 1.18.31's V1 API provides `chat.message`, `session.idle`, `experimental.session.compacting`, `session.compacted`, and `client.session.promptAsync`; V1 object entrypoints remain supported from 1.18.29. AR now uses those routes for prompt policy, Stop continuation, and compaction while feature-detecting promptAsync for older clients. The pinned source fixture is `tests/fixtures/hook_contracts/opencode-1.18.31-plugin-api.json`. [O1]

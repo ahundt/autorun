@@ -652,6 +652,25 @@ class TestCrossCliEventValidation:
                 f"Valid: {sorted(GEMINI_CLI_VALID_EVENTS)}"
             )
 
+    def test_gemini_068_subagent_stop_is_a_migration_alias_not_native_event(self):
+        """0.68 maps Claude's SubagentStop configuration into AfterAgent.
+
+        It does not add SubagentStop to Gemini's native HookEventName enum.
+        Registering that key would make 0.51 reject the extension and would
+        still be invalid on 0.68.
+        """
+        fixture = (
+            get_plugin_root()
+            / "tests/fixtures/hook_contracts/gemini-0.68.0-subagent-stop.json"
+        )
+        contract = json.loads(fixture.read_text(encoding="utf-8"))
+        hooks = json.loads(get_gemini_hooks_path().read_text(encoding="utf-8"))["hooks"]
+
+        assert contract["migration_mapping"]["SubagentStop"] == "AfterAgent"
+        assert "SubagentStop" not in contract["native_hook_events"]
+        assert "SubagentStop" not in hooks
+        assert "AfterAgent" in hooks
+
     def test_no_cross_cli_event_contamination(self):
         """Neither hooks file should contain events exclusive to the other CLI."""
         claude_only = CLAUDE_CODE_VALID_EVENTS - GEMINI_CLI_VALID_EVENTS
