@@ -15,6 +15,11 @@ from pathlib import Path
 
 import pytest
 
+#: This skill's own directory, wherever it is installed or checked out. The
+#: audit script ships beside it in the same plugin's skills directory.
+SKILL_DIR = Path(__file__).resolve().parents[1]
+AUDIT_SCRIPT = SKILL_DIR.parent / "ai-skill-builder" / "scripts" / "audit-skill.sh"
+
 # --- Cast file resolution tests ---
 
 CAST_FILES = [
@@ -100,10 +105,8 @@ def test_mp4_resolution_minimum(mp4_file, min_width):
 
 def test_skill_audit_no_failures():
     """Audit script must have 0 FAILs (score >= 85%)."""
-    audit_script = Path(
-        "~/.claude/skills/ai-skill-builder/scripts/audit-skill.sh"
-    ).expanduser()
-    skill_dir = Path("~/.claude/skills/cli-demo-recorder").expanduser()
+    audit_script = AUDIT_SCRIPT
+    skill_dir = SKILL_DIR
     if not audit_script.exists():
         pytest.skip("Audit script not found")
     if not skill_dir.exists():
@@ -123,7 +126,7 @@ def test_skill_audit_no_failures():
 
 def test_skill_word_count_under_limit():
     """SKILL.md must be under 5000 words (hard limit)."""
-    skill_md = Path("~/.claude/skills/cli-demo-recorder/SKILL.md").expanduser()
+    skill_md = SKILL_DIR / "SKILL.md"
     if not skill_md.exists():
         pytest.skip("SKILL.md not found")
     text = skill_md.read_text()
@@ -150,7 +153,7 @@ EXPECTED_REFERENCES = [
 @pytest.mark.parametrize("ref_file", EXPECTED_REFERENCES)
 def test_reference_file_exists(ref_file):
     """All reference files listed in SKILL.md must exist and have content."""
-    path = Path("~/.claude/skills/cli-demo-recorder").expanduser() / ref_file
+    path = SKILL_DIR / ref_file
     assert path.exists(), f"Reference file missing: {ref_file}"
     assert path.stat().st_size > 100, f"Reference file too small: {ref_file}"
 
@@ -160,7 +163,7 @@ def test_reference_file_exists(ref_file):
 
 def test_skill_frontmatter_has_version():
     """SKILL.md frontmatter must have version field."""
-    skill_md = Path("~/.claude/skills/cli-demo-recorder/SKILL.md").expanduser()
+    skill_md = SKILL_DIR / "SKILL.md"
     if not skill_md.exists():
         pytest.skip("SKILL.md not found")
     text = skill_md.read_text()
@@ -169,7 +172,7 @@ def test_skill_frontmatter_has_version():
 
 def test_skill_frontmatter_has_trigger_phrases():
     """SKILL.md description must have quoted trigger phrases."""
-    skill_md = Path("~/.claude/skills/cli-demo-recorder/SKILL.md").expanduser()
+    skill_md = SKILL_DIR / "SKILL.md"
     if not skill_md.exists():
         pytest.skip("SKILL.md not found")
     text = skill_md.read_text()[:500]
