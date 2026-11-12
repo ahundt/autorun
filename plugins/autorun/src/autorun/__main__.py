@@ -1123,6 +1123,7 @@ def run_direct(payload: dict | None = None) -> int:
         transcript_path=normalized.get("transcript_path"),
         agent_transcript_path=normalized.get("agent_transcript_path"),
         stop_hook_active=normalized["stop_hook_active"],
+        fully_idle=normalized.get("fully_idle"),
         last_assistant_message=normalized["last_assistant_message"],
         background_tasks=normalized["background_tasks"],
         session_crons=normalized["session_crons"],

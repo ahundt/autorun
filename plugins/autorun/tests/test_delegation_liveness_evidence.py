@@ -147,6 +147,21 @@ def test_same_harness_pid_and_birth_keeps_delegation_open(gate_env, monkeypatch)
     assert resumed.status("7") == "delegated", "the same live process identity ended the delegation"
 
 
+def test_antigravity_fully_idle_false_keeps_delegation_running(gate_env):
+    session = _session("antigravity", "fully-idle", harness_pid=dead_pid())
+    session.seed("7", "Sweep the fixtures")
+    session.delegate("7")
+    assert session.status("7") == "delegated"
+
+    active = Session(session.session_id, "antigravity", store=session.store)
+    active.stop("Background work is still running.", fully_idle=False)
+    assert active.status("7") == "delegated"
+
+    idle = Session(session.session_id, "antigravity", store=session.store)
+    idle.stop("Background work ended.", fully_idle=True)
+    assert idle.status("7") == "pending"
+
+
 def _seed_open_receipts(count: int, *, harness_pid: int, newer_than: float) -> None:
     """``count`` children of other sessions, spawned after ``newer_than`` and still running."""
     for n in range(count):

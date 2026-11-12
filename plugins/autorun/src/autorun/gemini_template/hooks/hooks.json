@@ -21,6 +21,16 @@
         }]
       }
     ],
+    "BeforeModel": [
+      {
+        "hooks": [{
+          "name": "autorun-beforemodel",
+          "type": "command",
+          "command": "uv run --quiet --no-sync --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ],
     "BeforeTool": [
       {
         "hooks": [{

@@ -3344,6 +3344,29 @@ def _register_command_mappings() -> None:
 _register_command_mappings()
 
 
+# === DEFERRED ALLOWED-STOP NOTICES ===
+
+
+@app.on("SessionStart")
+@app.on("UserPromptSubmit")
+@app.on("BeforeModel")
+def deliver_deferred_stop_notice(ctx: EventContext) -> Optional[Dict]:
+    """Deliver one notice at a native context-injection point, exactly once."""
+    platform = platform_for(ctx.cli_type)
+    if ctx.event not in platform.deferred_stop_notice_events:
+        return None
+    notice = ctx.pop_deferred_stop_notice()
+    if not notice:
+        return None
+    # UserPromptSubmit's default response must still run the cache warning;
+    # its eventual response merges chain notifications. These lifecycle events
+    # have no later generic responder, so serialize the notice directly.
+    if ctx.event == "UserPromptSubmit":
+        ctx.add_chain_notification(notice, channel="both")
+        return None
+    return ctx.respond("allow", notice)
+
+
 # === CACHE GUARD — prompt-time expiry check ===
 #
 # Registered last on UserPromptSubmit on purpose: the chain stops at the

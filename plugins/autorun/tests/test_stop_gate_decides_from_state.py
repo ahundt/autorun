@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import re
 import uuid
+from pathlib import Path
 
 import pytest
 
 from autorun.config import CONFIG
 from autorun.core import EventContext, format_command_for_cli
-from autorun.platforms import PLATFORMS
+from autorun.platforms import PLATFORMS, StopPayloadRunningAgents
 from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_env)
     AWAITING_PREFIX,
     DELEGATE,
@@ -34,7 +35,6 @@ from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_
     bash_tool,
     blocks,
     gate_env_fixture,
-    running_agents_fixture,
     text,
 )
 from test_command_surface_one_name import _retired_mentions
@@ -287,11 +287,15 @@ def test_gate_messages_name_no_retired_command_spelling(gate_env, cli_type):
     session.tool(*work)
     session.manager.update_task("1", {"status": "completed"}, "release notes written")
     messages["awaiting-user entry"] = session.stop(awaiting("4"))
+    if cli_type == "antigravity":
+        messages["awaiting-user entry"] = session.dispatch("BeforeModel")
     session.tool(*work)
     session.seed("5", "Bump the version")
     for _ in range(session.manager.config.stop_block_max_count):
         assert blocks(session.stop("Still working."), cli_type)
     messages["loop-guard release"] = session.stop("Still working.")
+    if cli_type == "antigravity":
+        messages["loop-guard release"] = session.dispatch("BeforeModel")
 
     rendered = {name: text(response) for name, response in messages.items()}
     assert "waits on #3" in rendered["block with waiting line"], f"no waiting line: {rendered}"
@@ -311,18 +315,20 @@ def test_gate_messages_name_no_retired_command_spelling(gate_env, cli_type):
 def test_every_platform_declares_running_agent_reporting(platform_name):
     """``stop_payload_lists_running_agents`` is a recorded fact per harness.
 
-    True is allowed only with a captured Stop payload that lists running
-    agents by id (stop_gate_design.md 3b evidence 3); until that capture the
-    evidence ships disabled.
+    A signal is allowed only with a pinned native Stop contract. It may name a
+    list-valued running-agent field or an inverse idle boolean; absent evidence
+    stays None.
     """
     platform = PLATFORMS[platform_name]
     assert hasattr(platform, "stop_payload_lists_running_agents"), (
         "Platform.stop_payload_lists_running_agents is missing"
     )
     value = platform.stop_payload_lists_running_agents
-    assert isinstance(value, bool), f"{platform_name}: expected a bool, got {value!r}"
-    if value:
-        assert running_agents_fixture(platform_name).is_file(), (
-            f"{platform_name} claims its Stop payload lists running agents without a captured fixture at "
-            f"{running_agents_fixture(platform_name)}"
+    assert value is None or isinstance(value, StopPayloadRunningAgents), (
+        f"{platform_name}: expected a StopPayloadRunningAgents signal or None, got {value!r}"
+    )
+    if value is not None:
+        fixture = Path(__file__).parent / "fixtures" / value.fixture
+        assert fixture.is_file(), (
+            f"{platform_name} claims native Stop running-work evidence without a captured fixture at {fixture}"
         )

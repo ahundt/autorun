@@ -538,7 +538,11 @@ def test_all_registered_harnesses_encode_block_then_bounded_allow(
     assert blocked["decision"] == protocol.stop_blocking_decision
     assert blocked["reason"]
     assert allowed.get("decision") != protocol.stop_blocking_decision
-    if allowed:
+    if PLATFORMS[cli_type].deferred_stop_notice_events:
+        assert _message(allowed) == "", (
+            f"{cli_type} must queue the notice for {sorted(PLATFORMS[cli_type].deferred_stop_notice_events)}"
+        )
+    elif allowed:
         assert format_command_for_cli("/ar:task status", cli_type) in _message(allowed)
     else:
         assert protocol.requires_json_for_unhandled_hook

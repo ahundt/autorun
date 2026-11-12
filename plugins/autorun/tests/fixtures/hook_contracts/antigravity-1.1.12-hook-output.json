@@ -14,7 +14,13 @@
     }
   ],
   "session_start_output_fields": ["injectSteps"],
+  "pre_invocation_input_fields": ["invocationNum", "initialNumSteps", "lastUserInput"],
+  "pre_invocation_output_fields": ["injectSteps", "terminationBehavior"],
+  "first_invocation_index": 0,
+  "stop_input_fields": ["executionNum", "terminationReason", "error", "fullyIdle"],
+  "fully_idle_contract": "true means the agent is completely finished and all background commands or asynchronous tasks have completed; false means active background tasks are still running",
   "stop_output_fields": ["decision", "reason"],
   "allowed_stop_notice_field": null,
-  "allowed_stop_notice_reason": "The official Stop contract applies reason only when decision is continue; it defines no output field for a notice on an allowed Stop."
+  "allowed_stop_notice_reason": "The official Stop contract applies reason only when decision is continue; it defines no output field for a notice on an allowed Stop.",
+  "deferred_notice_route": "Queue on allowed Stop, then inject exactly once as an ephemeralMessage at SessionStart or PreInvocation."
 }

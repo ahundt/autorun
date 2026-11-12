@@ -282,7 +282,9 @@ def test_antigravity_platform_fields():
         "PostInvocation",
         "Stop",
     }
-    assert p.installed_hook_events == {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
+    assert p.installed_hook_events == {
+        "SessionStart", "PreToolUse", "PostToolUse", "PreInvocation", "Stop"
+    }
 
 
 def test_qwen_platform_fields():

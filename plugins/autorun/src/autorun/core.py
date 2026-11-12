@@ -561,10 +561,17 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
     from .config import detect_cli_type
 
     cli_type = detect_cli_type(payload)
+    platform = platform_for(cli_type)
 
     # Map the selected harness CLI's event name to autorun's dispatcher event.
     raw_event = payload.get("hook_event_name") or payload.get("type", "")
     event = to_autorun_event(raw_event, cli_type)
+    if (
+        raw_event == platform.first_model_invocation_event
+        and platform.first_model_invocation_index_field
+        and payload.get(platform.first_model_invocation_index_field) == 0
+    ):
+        event = "UserPromptSubmit"
 
     # Get session ID (Gemini uses sessionId; Antigravity uses conversationId).
     session_id = (
@@ -631,7 +638,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
     tool_input = dict(raw_tool_input) if isinstance(raw_tool_input, dict) else {}
     # A harness's own argument names (Antigravity's are PascalCase) stay for
     # diagnostics; the canonical names existing policies read are added.
-    for native, canonical in platform_for(cli_type).tool_input_aliases.items():
+    for native, canonical in platform.tool_input_aliases.items():
         value = tool_input.get(native)
         if canonical not in tool_input and value is not None:
             tool_input[canonical] = value
@@ -672,7 +679,10 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "cli_type": cli_type,
         "hook_event_name": event,
         "session_id": session_id,
-        "prompt": payload.get("prompt", ""),
+        "prompt": (
+            payload.get(platform.prompt_payload_field)
+            or payload.get("prompt", "")
+        ),
         "tool_name": payload.get("tool_name") or payload.get("toolName") or tool_call.get("name", ""),
         "tool_input": tool_input,
         "tool_result": payload.get("tool_response") or payload.get("tool_result") or payload.get("toolResult"),
@@ -697,6 +707,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "last_assistant_message": payload.get("last_assistant_message", ""),
         "background_tasks": payload.get("background_tasks") or [],
         "session_crons": payload.get("session_crons") or [],
+        "fully_idle": payload.get("fullyIdle"),
         # Expanded at normalise time so downstream consumers can read a filesystem-ready path.
         "transcript_path": os.path.expanduser(transcript_path) if transcript_path else None,
         "cwd": payload.get("_cwd") or payload.get("cwd") or workspace_path,
@@ -1838,6 +1849,9 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     return filtered
 
 
+_DEFERRED_STOP_NOTICES = "deferred_stop_notices"
+
+
 class EventContext:
     """
     Rich context with MAGIC STATE PERSISTENCE.
@@ -1892,6 +1906,7 @@ class EventContext:
         "_last_assistant_message",
         "_background_tasks",
         "_session_crons",
+        "_fully_idle",
         "_server_url",
         "_harness_pid",
         "_harness_started_at_units",
@@ -1963,6 +1978,7 @@ class EventContext:
         last_assistant_message: str = "",
         background_tasks: List = None,
         session_crons: List = None,
+        fully_idle: bool | None = None,
         session_identity_authority: SessionIdentityAuthority = "unresolved",
         server_url: str = "",
         harness_pid: Optional[int] = None,
@@ -2040,6 +2056,7 @@ class EventContext:
         object.__setattr__(self, "_last_assistant_message", last_assistant_message or "")
         object.__setattr__(self, "_background_tasks", tuple(background_tasks or ()))
         object.__setattr__(self, "_session_crons", tuple(session_crons or ()))
+        object.__setattr__(self, "_fully_idle", fully_idle if isinstance(fully_idle, bool) else None)
         object.__setattr__(self, "_chain_notifications", [])
 
     # === Read-only accessors for payload data ===
@@ -2129,6 +2146,11 @@ class EventContext:
     def session_crons(self) -> tuple:
         """Structured session cron jobs reported with the current Stop event."""
         return self._session_crons
+
+    @property
+    def fully_idle(self) -> bool | None:
+        """Whether the native Stop says all asynchronous work has ended."""
+        return self._fully_idle
 
     @property
     def prompt(self) -> str:
@@ -2407,6 +2429,28 @@ class EventContext:
             state = object.__getattribute__(self, "_state")
             state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value
         return value
+
+    def queue_deferred_stop_notice(self, message: str) -> None:
+        """Append an allowed-Stop notice for a later native injection event."""
+        self.state_update(
+            _DEFERRED_STOP_NOTICES,
+            lambda queued: [*(queued if isinstance(queued, list) else []), message][-32:],
+            [],
+        )
+
+    def pop_deferred_stop_notice(self) -> str | None:
+        """Atomically consume one queued notice, so concurrent hooks cannot repeat it."""
+        consumed: list[str] = []
+
+        def pop_first(queued):
+            values = queued if isinstance(queued, list) else []
+            if values:
+                consumed.append(str(values[0]))
+                return values[1:]
+            return []
+
+        self.state_update(_DEFERRED_STOP_NOTICES, pop_first, [])
+        return consumed[0] if consumed else None
 
     def state_set_volatile(self, name: str, value, *, session_id: str | None = None) -> None:
         """Set daemon-lifetime advisory state, with durable direct-mode fallback."""
@@ -2778,6 +2822,21 @@ class EventContext:
                 resp = protocol.response_to_reject_stop_and_continue(stop_msg)
                 return validate_hook_response(self._event, resp, cli_type=cli_type)
 
+            if platform and platform.deferred_stop_notice_events and stop_msg:
+                try:
+                    self.queue_deferred_stop_notice(stop_msg)
+                except Exception as exc:  # noqa: BLE001 - never discard an allowed-Stop notice
+                    failure = (
+                        f"{stop_msg}\n⚠️ autorun could not queue this notice for the next "
+                        f"{platform.display_name} injection point: {exc}"
+                    )
+                    return validate_hook_response(
+                        self._event,
+                        protocol.response_to_reject_stop_and_continue(failure),
+                        cli_type=cli_type,
+                    )
+                stop_msg = ""
+
             resp = {
                 "continue": True,
                 "stopReason": "",
@@ -3012,6 +3071,10 @@ class AutorunApp:
             "PreCompact": [],
             "PostCompact": [],
             "PreCompress": [],
+            # Model-invocation lifecycle. Antigravity uses the first
+            # BeforeModel as its typed-prompt admission point and later calls
+            # as context-injection points.
+            "BeforeModel": [],
             # Harness-specific lifecycle frames. OpenCode's plugin is the only
             # sender today: it hands the daemon its server address on load and
             # withdraws it on dispose.
@@ -3653,6 +3716,7 @@ class AutorunDaemon:
                 last_assistant_message=normalized["last_assistant_message"],
                 background_tasks=normalized["background_tasks"],
                 session_crons=normalized["session_crons"],
+                fully_idle=normalized["fully_idle"],
                 server_url=payload.get("server_url", ""),
                 harness_pid=payload.get("_pid"),
                 harness_started_at_units=payload.get("_pid_started_at_units"),

@@ -195,6 +195,32 @@ class TestDualPlatformResponse:
         stop = EventContext("test", "Stop", cli_type="antigravity")
         assert stop.respond("block", "Keep working") == {"decision": "continue", "reason": "Keep working"}
 
+    def test_antigravity_allowed_stop_notice_queue_failure_blocks_instead_of_losing_it(self, monkeypatch):
+        stop = EventContext("agy-stop-notice-failure", "Stop", cli_type="antigravity")
+
+        def fail(_message):
+            raise RuntimeError("state unavailable")
+
+        monkeypatch.setattr(EventContext, "queue_deferred_stop_notice", lambda self, message: fail(message))
+        response = stop.respond("allow", "Waiting on you: approve publishing.")
+
+        assert response["decision"] == "continue"
+        assert "Waiting on you: approve publishing." in response["reason"]
+        assert "state unavailable" in response["reason"]
+
+    def test_antigravity_allowed_stop_notice_is_delivered_once_at_preinvocation(self):
+        from autorun.plugins import app
+
+        session_id = "agy-deferred-stop-notice"
+        stop = EventContext(session_id, "Stop", cli_type="antigravity")
+        assert stop.respond("allow", "Waiting on you: approve publishing.") == {"decision": ""}
+
+        first = app.dispatch(EventContext(session_id, "BeforeModel", cli_type="antigravity"))
+        second = app.dispatch(EventContext(session_id, "BeforeModel", cli_type="antigravity"))
+
+        assert first == {"injectSteps": [{"ephemeralMessage": "Waiting on you: approve publishing."}]}
+        assert second is None, "the queued notice must be consumed exactly once"
+
     def test_codex_stop_uses_one_continuation_channel(self):
         ctx = EventContext("test", "Stop", cli_type="codex")
         assert ctx.respond("block", "Keep working") == {"decision": "block", "reason": "Keep working"}
@@ -394,7 +420,7 @@ class TestDualPlatformResponse:
     def test_stop_allow_never_blocks_or_stops_agent(self, cli_type):
         response = EventContext("stop-allow", "Stop", cli_type=cli_type).respond("allow", "Reason")
         if cli_type == "antigravity":
-            assert response == {"decision": "", "reason": "Reason"}
+            assert response == {"decision": ""}
         else:
             assert response == {
                 "continue": True,
@@ -452,6 +478,27 @@ class TestDualPlatformResponse:
     def test_codex_empty_context_channels_emit_no_payload(self):
         response = EventContext("codex-empty-context", "UserPromptSubmit", cli_type="codex").respond("allow", "", to_human=False, to_ai=False)
         assert response == {}
+
+
+def test_normalize_antigravity_first_preinvocation_as_user_prompt():
+    first = normalize_hook_payload({
+        "cli_type": "antigravity",
+        "hook_event_name": "PreInvocation",
+        "conversationId": "agy-prompt",
+        "invocationNum": 0,
+        "lastUserInput": "Fix the failing unit test",
+    })
+    later = normalize_hook_payload({
+        "cli_type": "antigravity",
+        "hook_event_name": "PreInvocation",
+        "conversationId": "agy-prompt",
+        "invocationNum": 1,
+        "lastUserInput": "Fix the failing unit test",
+    })
+
+    assert first["hook_event_name"] == "UserPromptSubmit"
+    assert first["prompt"] == "Fix the failing unit test"
+    assert later["hook_event_name"] == "BeforeModel"
 
 
 @pytest.mark.parametrize(

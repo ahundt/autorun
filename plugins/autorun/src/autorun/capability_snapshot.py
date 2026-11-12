@@ -86,11 +86,23 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
                 "proves_tools": platform.task_tool_switch.proves_tools,
             }
         ),
+        "first_model_invocation_event": platform.first_model_invocation_event,
+        "first_model_invocation_index_field": platform.first_model_invocation_index_field,
+        "prompt_payload_field": platform.prompt_payload_field,
+        "deferred_stop_notice_events": sorted(platform.deferred_stop_notice_events),
         "task_record_source": platform.task_record_source,
         "agent_spawn_tools": sorted(platform.agent_spawn_tools),
         "agent_spawn_running_results": list(platform.agent_spawn_running_results),
         "agent_spawn_finished_results": list(platform.agent_spawn_finished_results),
-        "stop_payload_lists_running_agents": platform.stop_payload_lists_running_agents,
+        "stop_payload_lists_running_agents": (
+            None
+            if platform.stop_payload_lists_running_agents is None
+            else {
+                "field": platform.stop_payload_lists_running_agents.field,
+                "running_value": platform.stop_payload_lists_running_agents.running_value,
+                "fixture": platform.stop_payload_lists_running_agents.fixture,
+            }
+        ),
         "fork_session_start_sources": list(platform.fork_session_start_sources),
         "goal_clear_command": platform.goal_clear_command,
         "aggregates_conductor_tasks": platform.aggregates_conductor_tasks,

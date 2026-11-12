@@ -476,9 +476,11 @@ def test_antigravity_staging_uses_its_native_manifest_and_hook_events(walk, sand
     hooks = json.loads((plugin / "hooks.json").read_text(encoding="utf-8"))
     assert manifest["hooks"] == "./hooks.json"
     assert not (plugin / "gemini-extension.json").exists()
-    assert set(hooks["autorun"]) == {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
+    assert set(hooks["autorun"]) == {
+        "SessionStart", "PreToolUse", "PostToolUse", "PreInvocation", "Stop"
+    }
     serialized = (plugin / "hooks.json").read_text(encoding="utf-8")
-    for event in ("SessionStart", "PreToolUse", "PostToolUse", "Stop"):
+    for event in ("SessionStart", "PreToolUse", "PostToolUse", "PreInvocation", "Stop"):
         assert f"--cli antigravity --event {event}" in serialized
     for groups in hooks["autorun"].values():
         handlers = [

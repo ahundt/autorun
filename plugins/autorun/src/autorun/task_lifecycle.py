@@ -3036,6 +3036,10 @@ class TaskLifecycle:
         A SubagentStop (``_return_delegations``) and the agent's or user's own
         update of the task are the other evidence, handled where they arrive.
         """
+        running_signal = platform_for(ctx.cli_type).stop_payload_lists_running_agents
+        if running_signal is not None and running_signal.reports_running(ctx):
+            return False
+
         legacy: list[str] = []
         exited: Dict[str, str] = {}
         # The exact record each pid check was about: the check runs outside

@@ -972,6 +972,18 @@ PI_HOOKS = HookProtocol("pi")
 
 
 @dataclass(frozen=True, slots=True)
+class StopPayloadRunningAgents:
+    """One native Stop field that proves background work is still active."""
+
+    field: str
+    running_value: object
+    fixture: str
+
+    def reports_running(self, ctx: object) -> bool:
+        return getattr(ctx, self.field) == self.running_value
+
+
+@dataclass(frozen=True, slots=True)
 class Platform:
     """Immutable specification for one AI coding CLI platform.
 
@@ -1008,6 +1020,15 @@ class Platform:
     # Empty mappings mean the harness already uses autorun's names.
     harness_cli_to_autorun_events: Mapping[str, str] = field(default_factory=dict)
     autorun_to_harness_cli_events: Mapping[str, str] = field(default_factory=dict)
+    # Some harnesses expose the typed prompt only on the first model invocation.
+    # These three fields describe that conversion without naming the harness in
+    # payload normalization. Empty means no conversion.
+    first_model_invocation_event: str = ""
+    first_model_invocation_index_field: str = ""
+    prompt_payload_field: str = "prompt"
+    # Allowed Stop notices a native Stop schema cannot carry are queued and
+    # delivered at the first supported context-injection event in this set.
+    deferred_stop_notice_events: frozenset[str] = field(default_factory=frozenset)
 
     # === Tool name resolution (logical key → API tool_name) ===
     tool_names: Mapping[str, str] = field(default_factory=dict)
@@ -1054,10 +1075,11 @@ class Platform:
     # delegation without evidence is what the Stop gate must never do.
     agent_spawn_running_results: tuple[str, ...] = ()
     agent_spawn_finished_results: tuple[str, ...] = ()
-    # True only when a captured Stop payload lists the subagents still
-    # running by id (tests/fixtures/running_agents/<name>.json), so that a
-    # delegated child missing from it can be taken as ended. False until then.
-    stop_payload_lists_running_agents: bool = False
+    # A captured native Stop field that proves work is still running. The
+    # historical name is retained because list-valued running-agent payloads
+    # were the first planned source; value semantics now also cover inverse
+    # booleans such as Antigravity's fullyIdle=false.
+    stop_payload_lists_running_agents: StopPayloadRunningAgents | None = None
     # SessionStart ``source`` values that mean this conversation was forked
     # from another and arrived with its history (core.resolve_conversation_role).
     # Empty where no capture shows what a fork sends.
@@ -1601,6 +1623,9 @@ GEMINI = register(
         has_hooks=True,
         schema_type="permissive",
         hook_protocol=GEMINI_HOOKS,
+        installed_hook_events=frozenset(
+            {"SessionStart", "BeforeAgent", "BeforeTool", "AfterAgent", "AfterTool", "PreCompress"}
+        ),
         has_exit2_workaround=False,
         drops_additional_context=False,
         config_dir="~/.gemini/",
@@ -1696,6 +1721,17 @@ ANTIGRAVITY = register(
             "AfterModel": "PostInvocation",
             "Stop": "Stop",
         },
+        first_model_invocation_event="PreInvocation",
+        first_model_invocation_index_field="invocationNum",
+        prompt_payload_field="lastUserInput",
+        deferred_stop_notice_events=frozenset(
+            {"SessionStart", "UserPromptSubmit", "BeforeModel"}
+        ),
+        stop_payload_lists_running_agents=StopPayloadRunningAgents(
+            field="fully_idle",
+            running_value=False,
+            fixture="hook_contracts/antigravity-1.1.12-hook-output.json",
+        ),
         has_hooks=True,
         schema_type="permissive",
         hook_protocol=ANTIGRAVITY_HOOKS,
@@ -1710,7 +1746,7 @@ ANTIGRAVITY = register(
             }
         ),
         installed_hook_events=frozenset(
-            {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
+            {"SessionStart", "PreToolUse", "PostToolUse", "PreInvocation", "Stop"}
         ),
         has_exit2_workaround=False,
         drops_additional_context=False,
