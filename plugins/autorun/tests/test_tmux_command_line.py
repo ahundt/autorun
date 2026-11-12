@@ -68,6 +68,14 @@ def test_list_json_prints_the_discovery_json(discovered, capsys):
         ('work:1.0', 'claude'), ('work:2.1', 'codex')]
 
 
+def test_list_json_prints_the_empty_discovery_json_when_no_pane_is_found(capsys):
+    with patch.object(status, 'discover_claude_sessions', return_value=[]), \
+            patch.object(status, 'get_tmux_utilities', return_value=MagicMock()):
+        assert main(['tmux', 'list', '--json']) == 0
+
+    assert json.loads(capsys.readouterr().out) == {'sessions': [], 'count': 0}
+
+
 def test_list_table_names_each_session_with_its_harness(discovered, capsys):
     assert main(['tmux', 'list']) == 0
 

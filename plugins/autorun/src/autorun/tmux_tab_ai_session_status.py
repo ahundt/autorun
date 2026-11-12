@@ -362,7 +362,10 @@ def list_sessions(as_json: bool = False) -> int:
     """`autorun tmux list`: print the AI sessions in tmux. Types nothing."""
     sessions = discover_claude_sessions(get_tmux_utilities())
     if not sessions:
-        print('No AI coding sessions found in tmux.')
+        if as_json:
+            print(json.dumps({'sessions': [], 'count': 0}, indent=2))
+        else:
+            print('No AI coding sessions found in tmux.')
         return 0
     analyzed = analyze_sessions(sessions)
     if as_json:
