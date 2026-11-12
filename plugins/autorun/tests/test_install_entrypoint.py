@@ -181,7 +181,7 @@ def marketplace_copy(tmp_path_factory):
 
 
 @pytest.fixture
-def isolated(monkeypatch, tmp_path):
+def isolated(monkeypatch, tmp_path, point_daemon_at):
     home = tmp_path / "home"
     home.mkdir()
     # Both names: Path.home() resolves through os.path.expanduser, which reads
@@ -194,21 +194,10 @@ def isolated(monkeypatch, tmp_path):
     # explicit XDG_CONFIG_HOME, which CI may export globally; relocation itself
     # is covered by the discovery tests.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    runtime = tmp_path / "ar"
-    monkeypatch.setenv("AUTORUN_HOME", str(runtime))
     monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "state"))
-    # ipc and restart_daemon fix the daemon's paths at first import, so the
-    # variable above does not move them once any earlier test imported autorun,
-    # and an uninstall's teardown would find and stop this worker's daemon.
-    # Production keeps import-time paths: client.py reads them on every hook,
-    # and installer/AGENTS.md documents setting AUTORUN_HOME before import.
-    from autorun import ipc, restart_daemon
-
-    previous = ipc.AUTORUN_CONFIG_DIR
-    for module in (ipc, restart_daemon):
-        for name, value in list(vars(module).items()):
-            if isinstance(value, Path) and (value == previous or value.parent == previous):
-                monkeypatch.setattr(module, name, runtime / value.relative_to(previous))
+    # AUTORUN_HOME and the daemon paths fixed at import, so an uninstall's
+    # teardown cannot find and stop this worker's daemon (conftest.py).
+    point_daemon_at(tmp_path / "ar")
     return home
 
 

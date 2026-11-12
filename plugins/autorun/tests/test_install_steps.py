@@ -40,7 +40,7 @@ EVERY_PLUGIN = tuple(
 
 
 @pytest.fixture
-def sandbox(tmp_path, monkeypatch):
+def sandbox(tmp_path, monkeypatch, point_daemon_at):
     """A home nothing outside this test can see."""
     home = tmp_path / "home"
     home.mkdir()
@@ -52,8 +52,9 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(home))
     # autorun's own state (backups, switch records) follows AUTORUN_HOME, which
     # the suite points at one directory per worker; give each test its own so
-    # one test's backups are not another's.
-    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    # one test's backups are not another's, and move the daemon's paths with
+    # it so an uninstall's teardown cannot stop the worker's daemon.
+    point_daemon_at(tmp_path / "ar-home")
     # OpenCode honours XDG_CONFIG_HOME as an explicit parent override.  A CI
     # runner may export it globally, so clear it here or the OpenCode command
     # and plugin intents intentionally land outside this sandbox.
@@ -2391,7 +2392,7 @@ def test_a_dangling_settings_link_at_uninstall_keeps_the_record_for_later(tmp_pa
     assert json.loads((dotfiles / "settings.json").read_text()) == {"theme": "dark"}
 
 
-def test_a_dangling_memory_link_does_not_stop_an_uninstall(tmp_path, monkeypatch):
+def test_a_dangling_memory_link_does_not_stop_an_uninstall(tmp_path, monkeypatch, point_daemon_at):
     """One broken link must not keep every other harness's files installed:
     a missing file holds nothing of autorun's to remove."""
     if not _can_symlink(tmp_path):
@@ -2402,6 +2403,7 @@ def test_a_dangling_memory_link_does_not_stop_an_uninstall(tmp_path, monkeypatch
     (home / ".codex").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    point_daemon_at(tmp_path / "ar-home")  # the uninstall's teardown is on
     (home / ".codex" / "AGENTS.md").symlink_to(tmp_path / "gone" / "AGENTS.md")
     result = uninstall(
         marketplace_root=REPO,
@@ -2515,3 +2517,20 @@ def test_forgecode_config_dir_prefers_forge_when_it_exists(sandbox, present, env
     environ = {key: str(sandbox / value) for key, value in env.items()}
     resolved = discovery.config_dir(PLATFORMS["forgecode"], env=environ, home=sandbox)
     assert resolved == sandbox / expected
+
+def _assert_daemon_paths_follow(runtime):
+    """An uninstall's teardown finds the daemon through these paths."""
+    from autorun import ipc, restart_daemon
+
+    assert ipc.AUTORUN_CONFIG_DIR == runtime
+    assert restart_daemon.LOCK_PATH == runtime / "daemon.lock"
+    assert ipc.SOCKET_PATH == runtime / "daemon.sock"
+
+
+def test_the_sandbox_fixtures_daemon_paths_follow_its_autorun_home(sandbox):
+    """Several tests here uninstall `ar` with teardown on; with the daemon
+    paths still on the worker's runtime that teardown stopped the worker's own
+    daemon (the defect the shared point_daemon_at fixture exists for)."""
+    import os
+
+    _assert_daemon_paths_follow(Path(os.environ["AUTORUN_HOME"]))

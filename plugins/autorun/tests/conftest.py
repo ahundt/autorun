@@ -781,6 +781,34 @@ def reset_cli_type_between_tests():
 
 
 @pytest.fixture
+def point_daemon_at(monkeypatch):
+    """point_daemon_at(runtime): set AUTORUN_HOME to runtime and move the
+    daemon's paths there, for this test only.
+
+    autorun.ipc (AUTORUN_CONFIG_DIR, SOCKET_PATH, PORT_FILE, TOKEN_FILE, ...)
+    and autorun.restart_daemon (LOCK_PATH, RESTART_LOCK_PATH) fix the daemon's
+    paths at first import, so setting AUTORUN_HOME afterwards does not move
+    them. An `uninstall()` with teardown on (the default whenever `ar` is
+    uninstalled) then finds the test worker's own daemon through them and
+    stops it. Production keeps import-time paths: client.py reads them on
+    every hook, and installer/AGENTS.md documents setting AUTORUN_HOME before
+    the first import. Use this in any test that uninstalls `ar` with teardown.
+    """
+    from autorun import ipc, restart_daemon
+
+    def point(runtime: Path) -> Path:
+        monkeypatch.setenv("AUTORUN_HOME", str(runtime))
+        previous = ipc.AUTORUN_CONFIG_DIR
+        for module in (ipc, restart_daemon):
+            for name, value in list(vars(module).items()):
+                if isinstance(value, Path) and (value == previous or value.parent == previous):
+                    monkeypatch.setattr(module, name, runtime / value.relative_to(previous))
+        return runtime
+
+    return point
+
+
+@pytest.fixture
 def temp_session_dir():
     """Create a temporary directory for session storage"""
     temp_dir = tempfile.mkdtemp()

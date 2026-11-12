@@ -1246,7 +1246,9 @@ def test_uninstall_of_something_never_installed_is_a_no_op(ctx, source, tmp_path
     assert not target.exists()
 
 
-def test_uninstall_uses_receipts_when_the_marketplace_source_is_gone(tmp_path, monkeypatch):
+def test_uninstall_uses_receipts_when_the_marketplace_source_is_gone(
+    tmp_path, monkeypatch, point_daemon_at
+):
     import json
     from autorun.installer import codex
     from autorun.installer.orchestrate import uninstall
@@ -1254,6 +1256,7 @@ def test_uninstall_uses_receipts_when_the_marketplace_source_is_gone(tmp_path, m
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    point_daemon_at(tmp_path / "ar-home")  # the uninstall's teardown is on
     installed = tmp_path / ".codex" / "skills" / "demo"
     source = tmp_path / "source"
     source.mkdir()
@@ -1384,7 +1387,7 @@ def test_a_link_replaced_after_the_preflight_is_not_removed(tmp_path, monkeypatc
 
 
 def test_a_kept_target_is_reported_once_per_uninstall_not_once_per_phase(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, point_daemon_at
 ):
     """One target, one decision, however many walks the operation takes.
 
@@ -1403,6 +1406,7 @@ def test_a_kept_target_is_reported_once_per_uninstall_not_once_per_phase(
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    point_daemon_at(tmp_path / "ar-home")  # the uninstall's teardown is on
     marketplace = Path(__file__).resolve().parents[3]
     where = dict(
         marketplace_root=marketplace,

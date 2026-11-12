@@ -85,7 +85,7 @@ def checkouts(tmp_path_factory) -> tuple[Path, Path]:
 
 
 @pytest.fixture
-def homes(tmp_path, monkeypatch):
+def homes(tmp_path, monkeypatch, point_daemon_at):
     """Switch the process to one of several isolated homes by name."""
     for name in ("CODEX_HOME", "XDG_CONFIG_HOME", "GEMINI_CLI_HOME", "QWEN_HOME",
                  "CLAUDE_CONFIG_DIR", "FORGE_CONFIG", "PI_CODING_AGENT_DIR"):
@@ -96,7 +96,7 @@ def homes(tmp_path, monkeypatch):
         home.mkdir(exist_ok=True)
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("USERPROFILE", str(home))
-        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / f"{label}-ar"))
+        point_daemon_at(tmp_path / f"{label}-ar")
         return home
 
     return use
@@ -408,4 +408,22 @@ def test_an_ar_skill_pointing_to_a_moved_skill_names_the_plugin_that_ships_it():
         if f"`{name}`" in (text := path.read_text(encoding="utf-8")) and SKILLS_PLUGIN not in text
     ]
     assert not missing, missing
+
+def _assert_daemon_paths_follow(runtime):
+    """An uninstall's teardown finds the daemon through these paths."""
+    from autorun import ipc, restart_daemon
+
+    assert ipc.AUTORUN_CONFIG_DIR == runtime
+    assert restart_daemon.LOCK_PATH == runtime / "daemon.lock"
+    assert ipc.SOCKET_PATH == runtime / "daemon.sock"
+
+
+def test_each_home_of_the_homes_fixture_has_its_own_daemon_paths(homes):
+    """The `cli` tests run `--uninstall ar`, whose teardown stops the daemon
+    those paths name."""
+    import os
+
+    for label in ("one", "two"):
+        homes(label)
+        _assert_daemon_paths_follow(Path(os.environ["AUTORUN_HOME"]))
 
