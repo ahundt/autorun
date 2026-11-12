@@ -2878,6 +2878,11 @@ class TaskLifecycle:
                 "delegated": "🤝",
                 "delegation-returned": "📥",
             }.get(status, "❓")
+            if status not in STATUS_POLICY:
+                # Written by a newer build: it blocks (fail closed), so say why.
+                status_icon += (
+                    f" unknown status {status!r}: update this task, or install the release that wrote it"
+                )
             task_lines.append(f"{len(task_lines) + 1}. #{tid}: {subject} ({status_icon})")
 
         task_list = " ".join(task_lines)

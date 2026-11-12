@@ -2308,18 +2308,32 @@ class TaskRepository:
 
     def list_incomplete(self, session_id: str,
                         timeout: float = DEFAULT_SESSION_TIMEOUT) -> list:
-        """Tasks whose canonical policy says they block Stop.
+        """Tasks task_status.py does not list as non-blocking, unknown statuses included.
 
         This is the question the Stop check asks. Answering it from the status
         column means finished work is never decoded to establish that it is
         finished.
         """
         _validate_session_id(session_id)
+        non_blocking = sorted(task_status.NON_BLOCKING_TASK_STATUSES)
+        placeholders = ",".join("?" * len(non_blocking))
         with self._store.operation_scope(timeout) as owner:
-            rows = owner.connection.execute(
-                "SELECT task_id, status, updated_at, payload_json FROM tasks "
-                "WHERE session = ? AND blocks_stop = 1 ORDER BY task_id",
-                (session_id,),
+            conn = owner.connection
+            # The policy is task_status.py's list. blocks_stop only narrows the
+            # rows through its partial index, and only while every status the
+            # column was written to call non-blocking is non-blocking here too;
+            # otherwise (revision 2, or a column a newer build wrote) every
+            # task of the session is read.
+            try:
+                written = json.loads(_schema_meta_value(conn, "blocks_stop_non_blocking") or "null")
+            except ValueError:
+                written = None
+            narrowed = isinstance(written, list) and set(written) <= set(non_blocking)
+            rows = conn.execute(
+                "SELECT task_id, status, updated_at, payload_json FROM tasks WHERE session = ? "
+                + ("AND blocks_stop = 1 " if narrowed else "")
+                + f"AND status NOT IN ({placeholders}) ORDER BY task_id",
+                (session_id, *non_blocking),
             ).fetchall()
         return [
             self._record_from_row(session_id, row[0], row[1:]) for row in rows
