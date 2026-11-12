@@ -151,9 +151,9 @@ IGNORED_GLOBS: tuple[str, ...] = (
 _LINK = "link:"
 
 
-def _ignored(name: str) -> bool:
+def _ignored(name: str, patterns: Iterable[str] = IGNORED_GLOBS) -> bool:
     """True for a name neither copied nor fingerprinted."""
-    return any(fnmatch.fnmatch(name, pattern) for pattern in IGNORED_GLOBS)
+    return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
 
 
 def _strip_extended_prefix(path: Path) -> Path:
@@ -311,7 +311,9 @@ def _as_published(path: Path) -> Path:
     return path.resolve() if path.is_symlink() else path
 
 
-def scan_tree(root: Path) -> dict[str, str]:
+def scan_tree(
+    root: Path, *, ignored_globs: Iterable[str] = IGNORED_GLOBS
+) -> dict[str, str]:
     """Fingerprint every file under ``root``, keyed by relative path.
 
     Walks with ``os.walk`` rather than ``rglob`` so symlinked directories are
@@ -330,8 +332,16 @@ def scan_tree(root: Path) -> dict[str, str]:
         # more window in which a concurrent installer's swap could move the
         # tree away, and on Windows that surfaced as FileNotFoundError from
         # a status pass that had done nothing wrong.
-        links = [d for d in subdirs if (here / d).is_symlink() and (here / d).is_dir()]
-        subdirs[:] = [d for d in subdirs if not _ignored(d) and not (here / d).is_symlink()]
+        links = [
+            d for d in subdirs
+            if not _ignored(d, ignored_globs)
+            and (here / d).is_symlink()
+            and (here / d).is_dir()
+        ]
+        subdirs[:] = [
+            d for d in subdirs
+            if not _ignored(d, ignored_globs) and not (here / d).is_symlink()
+        ]
         for link in links:
             # Receipt keys are persisted and compared across hosts; keep their
             # separators stable instead of encoding the host's ``Path`` style.
@@ -340,7 +350,7 @@ def scan_tree(root: Path) -> dict[str, str]:
             except FileNotFoundError:
                 continue  # moved away between the listing and the read
         for name in names:
-            if name == OWNED_MARKER_NAME or _ignored(name):
+            if name == OWNED_MARKER_NAME or _ignored(name, ignored_globs):
                 continue
             path = here / name
             try:
@@ -464,6 +474,7 @@ def record_tree(
     *,
     plugin: str,
     ownership_proof: Callable[[Path], bool],
+    ignored_globs: Iterable[str] = IGNORED_GLOBS,
 ) -> bool:
     """Fingerprint a regular tree after its native installer materializes it.
 
@@ -485,13 +496,24 @@ def record_tree(
             return False
         atomic_write(
             directory / OWNED_MARKER_NAME,
-            json.dumps(TreeManifest.of(directory, plugin).as_payload(), indent=2)
-            + "\n",
+            json.dumps(
+                TreeManifest(
+                    plugin=plugin,
+                    files=scan_tree(directory, ignored_globs=ignored_globs),
+                ).as_payload(),
+                indent=2,
+            ) + "\n",
         )
     return True
 
 
-def record_matching_tree_files(source: Path, directory: Path, *, plugin: str) -> bool:
+def record_matching_tree_files(
+    source: Path,
+    directory: Path,
+    *,
+    plugin: str,
+    ignored_globs: Iterable[str] = IGNORED_GLOBS,
+) -> bool:
     """Record only unmarked cache files whose bytes match the shipped source.
 
     A native harness may have populated the directory without autorun's receipt.
@@ -507,8 +529,8 @@ def record_matching_tree_files(source: Path, directory: Path, *, plugin: str) ->
     with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
         if not directory.is_dir() or directory.is_symlink() or read_marker(directory) is not None:
             return False
-        expected = scan_tree(source)
-        actual = scan_tree(directory)
+        expected = scan_tree(source, ignored_globs=ignored_globs)
+        actual = scan_tree(directory, ignored_globs=ignored_globs)
         matched = {
             relative: fingerprint
             for relative, fingerprint in actual.items()
@@ -527,6 +549,7 @@ def record_tree_intent(
     plugin: str,
     intended_files: Mapping[str, str],
     ownership_proof: Callable[[Path], bool],
+    ignored_globs: Iterable[str] = IGNORED_GLOBS,
 ) -> bool:
     """Durably record a file-by-file refresh target before any replacement.
 
@@ -545,7 +568,7 @@ def record_tree_intent(
             or not ownership_proof(directory)
         ):
             return False
-        current = scan_tree(directory)
+        current = scan_tree(directory, ignored_globs=ignored_globs)
         previous = dict(marker.files)
         for relative, fingerprint in marker.intended_files.items():
             if current.get(relative) == fingerprint:
@@ -564,15 +587,22 @@ def record_tree_intent(
 
 
 def compare(
-    root: Path, manifest: TreeManifest
+    root: Path,
+    manifest: TreeManifest,
+    *,
+    ignored_globs: Iterable[str] = IGNORED_GLOBS,
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Return (edited, missing, extra) paths for a tree we recorded.
 
     With an empty pre-fingerprint manifest, every present path is conservatively
     extra: there is no byte receipt proving it is disposable.
     """
-    current = scan_tree(root)
-    known = set(manifest.files) | set(manifest.intended_files)
+    current = scan_tree(root, ignored_globs=ignored_globs)
+    known = {
+        relative
+        for relative in set(manifest.files) | set(manifest.intended_files)
+        if not any(_ignored(part, ignored_globs) for part in Path(relative).parts)
+    }
     states = {p: manifest.state_of(root, p) for p in known}
     return (
         tuple(sorted(p for p, s in states.items() if s is FileState.EDITED)),
@@ -1132,6 +1162,7 @@ def refresh_unmarked_tree(
     backup_relatives: Iterable[str] = (),
     backup_root: Path | None = None,
     backed_up: list[Path] | None = None,
+    ignored_globs: Iterable[str] = IGNORED_GLOBS,
     after_step: Callable[[str], None] | None = None,
 ) -> bool:
     """Refresh a proven harness cache without moving its public directory.
@@ -1188,7 +1219,7 @@ def refresh_unmarked_tree(
                 temporary.unlink()
         notify(f"replace {relative}")
 
-    expected = scan_tree(source)
+    expected = scan_tree(source, ignored_globs=ignored_globs)
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
         try:
             if not ownership_proof(target):
@@ -1225,7 +1256,7 @@ def refresh_unmarked_tree(
                     pass
             replace_path(source_path, target_path, relative)
 
-        actual = scan_tree(target)
+        actual = scan_tree(target, ignored_globs=ignored_globs)
         for relative in sorted(set(actual) - set(expected), reverse=True):
             target_path = destination(relative)
             if target_path.is_symlink() or target_path.is_file():
@@ -1340,6 +1371,7 @@ def withdrawn(
     ownership_proof: Callable[[Path], bool] | None = None,
     force: bool = False,
     backup_root: Path | None = None,
+    ignored_globs: Iterable[str] = IGNORED_GLOBS,
 ) -> bool:
     """Delete a directory autorun owns, restoring it if the delete fails.
 
@@ -1409,7 +1441,7 @@ def withdrawn(
                     allowed = proven_legacy
                 elif plugin is not None and not owns(manifest, plugin):
                     allowed = False
-                elif any(compare(quarantined, manifest)):
+                elif any(compare(quarantined, manifest, ignored_globs=ignored_globs)):
                     if manifest.files or not (
                         proven_legacy or (force and backup_root is not None)
                     ):

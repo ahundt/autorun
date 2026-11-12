@@ -247,6 +247,8 @@ def test_retirement_removes_only_hash_proven_unmodified_cache_versions(source, h
     current = install(source, home, version="1.2.4")
     old = install(source, home, version="1.2.3")
     edited = install(source, home, version="1.2.2")
+    for directory in (old, edited):
+        (directory / ".orphaned_at").write_text("2026-11-12T00:00:00Z\n", encoding="utf-8")
     (edited / "hooks" / "hooks.json").write_text("user edit\n", encoding="utf-8")
     unproven = claude.cache_dir(Harness(), market="autorun", plugin="ar", version="0.9.0", home=home)
     assert unproven is not None

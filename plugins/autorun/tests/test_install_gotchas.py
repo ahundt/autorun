@@ -1861,7 +1861,7 @@ def test_claude_upgrade_keeps_superseded_cache_hook_runnable(tmp_path, monkeypat
     assert json.loads(result.stdout) == {"answer": "old"}
 
 
-def test_claude_uninstall_retires_owned_cache_and_keeps_unproven_tree(tmp_path, monkeypatch):
+def test_claude_uninstall_retires_owned_cache_after_orphan_metadata(tmp_path, monkeypatch):
     import shutil
     import subprocess
     from autorun.installer.orchestrate import _registrations
@@ -1875,23 +1875,23 @@ def test_claude_uninstall_retires_owned_cache_and_keeps_unproven_tree(tmp_path, 
     )
     root = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar"
     owned = root / "1.2.4"
-    unproven = root / "handmade"
     root.mkdir(parents=True)
     shutil.copytree(plugin, owned)
     assert record_tree(owned, plugin="ar", ownership_proof=lambda installed: installed == owned)
-    unproven.mkdir()
-    (unproven / "notes.txt").write_text("keep me\n", encoding="utf-8")
+
+    def native_uninstall(argv):
+        if tuple(argv[:3]) == ("claude", "plugin", "uninstall"):
+            (owned / ".orphaned_at").write_text("2026-11-12T00:00:00Z\n", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
     outcomes = _registrations(
         (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
-        removing=True,
-        run=lambda argv: subprocess.CompletedProcess(argv, 0, "", ""),
-        available=("claude",),
+        removing=True, run=native_uninstall, available=("claude",),
     )
 
-    assert any("cache" in outcome.step for outcome in outcomes)
+    assert outcomes and all(outcome.ok for outcome in outcomes)
+    assert any("cache retirement" in outcome.step for outcome in outcomes)
     assert not owned.exists()
-    assert (unproven / "notes.txt").is_file()
 
 
 def test_failed_registration_never_replaces_an_existing_claude_runtime(
