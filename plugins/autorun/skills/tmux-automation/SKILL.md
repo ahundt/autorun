@@ -1,6 +1,6 @@
 ---
 name: tmux-automation
-description: Drive CLI tests inside isolated tmux/byobu sessions with ai-monitor integration. Use when asked to "test this CLI", "run it in tmux", "automate a terminal session", "capture the output of an interactive command", "send keystrokes to a session", or to exercise a plugin or terminal app without touching the current session. Covers session lifecycle, keystroke control, output capture, and autonomous monitoring.
+description: Drive CLI tests inside isolated tmux/byobu sessions. Use when asked to "test this CLI", "run it in tmux", "automate a terminal session", "capture the output of an interactive command", "send keystrokes to a session", or to exercise a plugin or terminal app without touching the current session. Covers session lifecycle, keystroke control, and output capture.
 ---
 
 # Automated CLI Testing with Session Management
@@ -13,7 +13,7 @@ sessions, including the rule that cleanup only ever touches names starting with
 `autorun-test`. `references/isolated-testing.md` runs a command inside the
 dedicated `autorun-test` session so the caller's own session is never touched.
 
-This skill provides comprehensive capabilities for automated testing of CLI applications, plugins, and terminal workflows using tmux/byobu sessions with full ai-monitor integration. Perfect for testing Claude Code plugins, command-line tools, and automated workflows.
+This skill provides comprehensive capabilities for automated testing of CLI applications, plugins, and terminal workflows using tmux/byobu sessions. Perfect for testing Claude Code plugins, command-line tools, and automated workflows.
 
 </purpose>
 
@@ -90,31 +90,6 @@ This skill provides comprehensive capabilities for automated testing of CLI appl
 
 <integrations>
 
-## AI-Monitor Integration
-
-The ai_monitor.py in autorun provides comprehensive tmux monitoring and automation:
-
-### Core AI-Monitor Functions
-```python
-# Start monitoring a session
-start_monitor(session_id, prompt="Continue working", stop_marker="COMPLETE", max_cycles=5)
-
-# Stop monitoring
-stop_monitor(session_id)
-
-# Check if monitor is running
-check_monitor(session_id)
-```
-
-### AI-Monitor Capabilities
-- **Session Discovery**: Automatically finds tmux sessions and windows
-- **Content Monitoring**: Tracks window content changes and detects meaningful updates
-- **Change Detection**: Filters out minor changes (echoes) vs. substantial content updates
-- **Automatic Re-prompting**: Sends continuation prompts when idle (configurable intervals)
-- **Stop Marker Detection**: Automatically stops when specific completion markers appear
-- **Cycle Management**: Limits number of re-prompt cycles to prevent infinite loops
-- **Window Management**: Can target specific windows for monitoring and interaction
-
 ## autorun Command Integration
 
 autorun provides convenient commands for tmux session automation:
@@ -150,44 +125,11 @@ autorun provides convenient commands for tmux session automation:
 | Send to all sessions | `for s in $(tmux list-sessions); do ...` | `/ar:tabs all:continue` |
 | Test CLI | Manual scripting required | `/ar:tt test my-cli` |
 
-### AI-Monitor Configuration Options
-- `--prompt/-p <text>` - Custom prompt to send when idle
-- `--stop/-s <string>` - Stop marker to detect completion
-- `--stop-delay-seconds <n>` - Delay before stopping after detecting stop marker
-- `--max-retry-cycles/-c <n>` - Maximum number of re-prompt cycles
-- `--max-runtime-minutes <n>` - Maximum runtime in minutes
-- `--check-interval <n>` - Seconds between checks
-- `--prompt-on-start [window]` - Send the prompt immediately on start, optionally to one window
-
 </integrations>
 
 <examples>
 
 ## Usage Examples
-
-### Create Testing Session with AI-Monitor
-```bash
-# Create session (default: autorun)
-byobu new-session -d -s "autorun"
-
-# Navigate and start process
-byobu send-keys -t "autorun" "cd /path/to/project" C-m
-byobu send-keys -t "autorun" "npm test" C-m
-
-# Start ai-monitor (from separate terminal)
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m autorun.ai_monitor "autorun" --prompt "Continue testing" --stop "Tests completed" --max-retry-cycles 3
-```
-
-### Monitor Claude Code Session
-```bash
-# Create Claude Code session (default: autorun unless user specifies otherwise)
-byobu new-session -d -s "autorun"
-byobu send-keys -t "autorun" "cd /project" C-m
-byobu send-keys -t "autorun" "claude" C-m
-
-# Start monitoring for autonomous work
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m autorun.ai_monitor "autorun" --prompt "Continue working autonomously" --stop "AUTORUN_ALL_TASKS_COMPLETED" --max-retry-cycles 10
-```
 
 ### Automated Plugin Testing Workflow
 ```bash
@@ -320,14 +262,13 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 5. **Output Verification**: Use capture-pane for command result verification and testing validation
 6. **Resource Management**: Clean up sessions after testing with `byobu kill-session`
 7. **Timing**: Add appropriate sleep intervals between commands (2-5 seconds for Claude Code startup)
-8. **AI-Monitor Integration**: Use ai-monitor for long-running autonomous sessions and automated workflows
-9. **Model Selection**: Use haiku for automated tasks to reduce resource usage and improve performance
-10. **Byobu vs Tmux**: Prefer byobu commands for user-friendly interface, tmux commands for scripting
-11. **Control Sequences**: Always use proper control sequence syntax - commands in quotes, C-m/C-c as separate arguments
-12. **Error Prevention**: Test control sequences manually before automation scripts
-13. **Efficiency Operations**: Use `&&` to chain byobu commands for single-line execution: `byobu send-keys C-c && byobu send-keys C-m`
-14. **Debugging Strategy**: Test functionality step-by-step instead of assuming installation state
-15. **Slash Command Priority**: Check `~/.claude/commands/` first before plugin installation attempts
+8. **Model Selection**: Use haiku for automated tasks to reduce resource usage and improve performance
+9. **Byobu vs Tmux**: Prefer byobu commands for user-friendly interface, tmux commands for scripting
+10. **Control Sequences**: Always use proper control sequence syntax - commands in quotes, C-m/C-c as separate arguments
+11. **Error Prevention**: Test control sequences manually before automation scripts
+12. **Efficiency Operations**: Use `&&` to chain byobu commands for single-line execution: `byobu send-keys C-c && byobu send-keys C-m`
+13. **Debugging Strategy**: Test functionality step-by-step instead of assuming installation state
+14. **Slash Command Priority**: Check `~/.claude/commands/` first before plugin installation attempts
 
 </pitfalls>
 
@@ -338,7 +279,6 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 - This skill uses tmux as the primary backend (byobu is a tmux wrapper providing user-friendly interface)
 - Byobu provides enhanced F-key shortcuts and session management over tmux
 - All tmux commands work with both byobu and tmux sessions (byobu with tmux backend)
-- AI-monitor provides the automation layer for autonomous workflows and session monitoring
 - Control sequences (C-m for Enter, C-c for interrupt) are critical for proper command execution
 - Proper timing and error handling ensure reliable automated testing workflows
 - Byobu sessions can be managed with both byobu commands and direct tmux commands
@@ -372,11 +312,6 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
   - Essential for understanding best practices from official plugins
 
 ### Testing and Automation Resources
-- **AI-Monitor Integration (autorun)** - `src/autorun/ai_monitor.py`
-  - Built-in tmux monitoring and automation capabilities
-  - Use for autonomous session monitoring and automated re-prompting
-  - Essential for long-running automated workflows and testing
-
 - **Bash Scripting Guide** - https://www.gnu.org/software/bash/manual/
   - Reference for creating automated test scripts
   - Use when writing complex test automation scripts
@@ -390,14 +325,12 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 - Review tmux Manual when learning advanced session management
 
 **Development Phase:**
-- Use AI-Monitor integration for implementing autonomous workflows
 - Reference Claude Code Plugin Examples when developing plugins
 - Consult Bash Scripting Guide for complex automation scripts
 
 **Debugging Phase:**
 - Check Claude Code Plugin Documentation when troubleshooting plugin issues
 - Review tmux Manual when debugging session management problems
-- Use AI-Monitor logs when monitoring automated workflows
 
 **Best Practices:**
 - Always reference official Claude Code Plugin Examples for patterns

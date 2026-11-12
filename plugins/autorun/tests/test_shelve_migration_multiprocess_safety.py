@@ -6,8 +6,8 @@ Verifies that the persistence migration from Python shelve to filelock+JSON
 
 Test groups:
 1. Shelve retirement completeness — no shelve references remain in migrated modules
-2. ai_monitor persistence migration — monitor_state() uses session_state(), not shelve
-3. Multi-process safety — concurrent monitors and daemon threads don't lose data
+2. Namespaced session state — a second key namespace in the shared store
+3. Multi-process safety — concurrent writer processes and daemon threads don't lose data
 4. Log rotation — RotatingFileHandler replaces unbounded FileHandler
 5. EventContext concurrency documentation — atomicity warning present in docstring
 
@@ -19,7 +19,7 @@ Concurrency scenarios tested:
 - Key isolation between monitor namespace and daemon namespace in shared JSON
 """
 
-import ast
+from contextlib import contextmanager
 import multiprocessing
 import os
 import sys
@@ -47,18 +47,18 @@ def _source_text(module_name: str) -> str:
         return f.read()
 
 
-def _imports_module(source_text: str, module_name: str) -> bool:
-    """Check if source_text has an `import <module_name>` statement (via ast)."""
-    tree = ast.parse(source_text)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == module_name:
-                    return True
-        elif isinstance(node, ast.ImportFrom):
-            if node.module == module_name:
-                return True
-    return False
+@contextmanager
+def monitor_state(session_id):
+    """A second writer's namespace in the shared store: ``monitor_<sid>``.
+
+    Stands in for any process that keeps its own keys beside the daemon's
+    (the retired tmux monitor did exactly this), so the concurrency tests
+    below exercise session_state() from two namespaces at once.
+    """
+    from autorun.session_manager import session_state
+
+    with session_state(f"monitor_{session_id}") as state:
+        yield state
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +68,7 @@ def _imports_module(source_text: str, module_name: str) -> bool:
 class TestShelveRetirementCompleteness:
     """After migration to filelock+JSON (commit ca0d418, 2026-02-19), the word
     'shelve' must not appear in core.py, plan_export.py, or task_lifecycle.py.
-    It may still appear in session_manager.py (documents migration history)
-    and in ai_monitor.py (if not yet migrated — tested separately).
+    It may still appear in session_manager.py (documents migration history).
     """
 
     def test_core_py_has_no_shelve_references(self):
@@ -98,30 +97,13 @@ class TestShelveRetirementCompleteness:
 
 
 # ---------------------------------------------------------------------------
-# 2. ai_monitor persistence migration — uses session_state(), not shelve
+# 2. Namespaced session state — dict API, persistence, isolation
 # ---------------------------------------------------------------------------
 
-class TestAiMonitorPersistenceMigration:
-    """ai_monitor.py must use session_state() (filelock+JSON) instead of
-    shelve.open() for tmux monitor state. The monitor_state() context manager
-    must yield a dict-like object with the same API as shelve.Shelf.
+class TestNamespacedSessionState:
+    """session_state() under a second namespace must behave like a dict,
+    persist across reopen, and stay isolated from other namespaces.
     """
-
-    def test_ai_monitor_does_not_import_shelve(self):
-        text = _source_text("ai_monitor")
-        assert not _imports_module(text, "shelve"), (
-            "ai_monitor.py still has 'import shelve'. "
-            "Replace shelve.open() with session_state() from session_manager.py. "
-            "See: plugins/autorun/src/autorun/ai_monitor.py:17"
-        )
-
-    def test_ai_monitor_imports_session_state(self):
-        text = _source_text("ai_monitor")
-        assert "session_state" in text, (
-            "ai_monitor.py does not reference session_state. "
-            "monitor_state() should delegate to session_state('monitor_{sid}'). "
-            "See: plugins/autorun/src/autorun/session_manager.py:285"
-        )
 
     def test_monitor_state_supports_dict_api(self, tmp_path, monkeypatch):
         """monitor_state() must yield an object supporting [], .get(), .keys(),
@@ -132,7 +114,6 @@ class TestAiMonitorPersistenceMigration:
         session_manager._store = None
         session_manager._manager = None
 
-        from autorun.ai_monitor import monitor_state
 
         with monitor_state("test_dict_api") as state:
             state["key1"] = "value1"
@@ -154,7 +135,6 @@ class TestAiMonitorPersistenceMigration:
         session_manager._store = None
         session_manager._manager = None
 
-        from autorun.ai_monitor import monitor_state
 
         with monitor_state("roundtrip_test") as state:
             state["windows"] = {"0": "pane output here"}
@@ -181,7 +161,6 @@ class TestAiMonitorPersistenceMigration:
         session_manager._store = None
         session_manager._manager = None
 
-        from autorun.ai_monitor import monitor_state
 
         with monitor_state("session_a") as state:
             state["secret"] = "only_for_a"
@@ -203,7 +182,6 @@ class TestAiMonitorPersistenceMigration:
         session_manager._store = None
         session_manager._manager = None
 
-        from autorun.ai_monitor import monitor_state
         from autorun.session_manager import session_state
 
         # Daemon writes to session_state("s1")
@@ -252,7 +230,6 @@ def _worker_write_keys(state_dir: str, session_id: str, prefix: str, count: int)
     from autorun import session_manager
     session_manager._store = None
 
-    from autorun.ai_monitor import monitor_state
 
     for i in range(count):
         with monitor_state(session_id) as state:
@@ -275,7 +252,7 @@ def _daemon_thread_write_keys(state_dir: str, session_id: str, count: int):
 
 
 class TestMultiProcessConcurrentAccess:
-    """Verify that multiple processes (ai_monitor instances, daemon threads)
+    """Verify that multiple processes (namespaced writers, daemon threads)
     can write to the shared daemon_state.json simultaneously without data
     loss or corruption. Uses filelock for cross-process serialization and
     atomic tempfile+rename for crash safety.
@@ -347,7 +324,6 @@ class TestMultiProcessConcurrentAccess:
         session_manager._store = None
         session_manager._manager = None
 
-        from autorun.ai_monitor import monitor_state
 
         with monitor_state(sid) as state:
             for i in range(n):
@@ -397,7 +373,6 @@ class TestMultiProcessConcurrentAccess:
         session_manager._store = None
         session_manager._manager = None
 
-        from autorun.ai_monitor import monitor_state
         with monitor_state(sid) as state:
             for i in range(n):
                 assert state.get(f"monitor_{i}") == f"value_monitor_{i}", (
@@ -441,7 +416,6 @@ class TestMultiProcessConcurrentAccess:
         from autorun import session_manager
         session_manager._store = None
         session_manager._manager = None
-        from autorun.ai_monitor import monitor_state
 
         for j in range(3):
             with monitor_state(f"session_{j}") as state:

@@ -1686,7 +1686,6 @@ def _deactivate(ctx: EventContext, msg: str) -> str:
     """Shared deactivation logic."""
     ctx.autorun_active = False
     ctx.autorun_stage = EventContext.STAGE_INACTIVE
-    stop_external_monitor(ctx)
     return msg
 
 
@@ -3167,33 +3166,28 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
     if CONFIG["emergency_stop"] in combined:
         ctx.autorun_active = False
         ctx.autorun_stage = EventContext.STAGE_INACTIVE
-        stop_external_monitor(ctx)
         return None  # Allow Claude to stop - emergency protocol triggered
 
     # Track hook calls for countdown
     ctx.hook_call_count = (ctx.hook_call_count or 0) + 1
-
-    # Helper: Return via injection method
-    def inject(msg: str) -> Optional[Dict]:
-        return ctx.continue_running(msg) if get_injection_method(ctx) == "HOOK_INTEGRATION" else None
 
     # === STAGE 1: Initial work ===
     if stage == EventContext.STAGE_1:
         if CONFIG["stage1_message"] in combined:
             ctx.autorun_stage = EventContext.STAGE_2
             msg = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete."
-            return inject(msg)
+            return ctx.continue_running(msg)
 
         # Bug #7 Fix: Warn about premature stage2_message
         if CONFIG["stage2_message"] in combined:
-            return inject(f"Complete Stage 1 first. Output **{CONFIG['stage1_message']}** when Stage 1 is done.")
+            return ctx.continue_running(f"Complete Stage 1 first. Output **{CONFIG['stage1_message']}** when Stage 1 is done.")
 
         if CONFIG["stage3_message"] in combined:
-            return inject(f"Complete Stage 1 first. Output **{CONFIG['stage1_message']}** when done.")
+            return ctx.continue_running(f"Complete Stage 1 first. Output **{CONFIG['stage1_message']}** when done.")
 
         if is_premature_stop(ctx):
             ctx.recheck_count = (ctx.recheck_count or 0) + 1
-            return inject(build_injection_prompt(ctx))
+            return ctx.continue_running(build_injection_prompt(ctx))
 
     # === STAGE 2: Critical evaluation ===
     elif stage == EventContext.STAGE_2:
@@ -3201,17 +3195,17 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
             ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
             ctx.hook_call_count = -1  # Bug #8 Fix: Reset to -1 so next increment makes it 0
             remaining = CONFIG.get("stage3_countdown_calls", 3)
-            return inject(f"Stage 2 complete. Continue for {remaining} more cycles before Stage 3.")
+            return ctx.continue_running(f"Stage 2 complete. Continue for {remaining} more cycles before Stage 3.")
 
         # Bug #7 Fix: Warn about regression to stage1_message
         if CONFIG["stage1_message"] in combined:
-            return inject(f"Already in Stage 2. Continue with critical evaluation. Output **{CONFIG['stage2_message']}** when complete.")
+            return ctx.continue_running(f"Already in Stage 2. Continue with critical evaluation. Output **{CONFIG['stage2_message']}** when complete.")
 
         if CONFIG["stage3_message"] in combined:
-            return inject(f"Complete Stage 2 first. Output **{CONFIG['stage2_message']}** when done.")
+            return ctx.continue_running(f"Complete Stage 2 first. Output **{CONFIG['stage2_message']}** when done.")
 
         if is_premature_stop(ctx):
-            return inject(f"Continue Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete.")
+            return ctx.continue_running(f"Continue Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete.")
 
     # === STAGE 2 COMPLETED: Countdown to stage 3 ===
     elif stage == EventContext.STAGE_2_COMPLETED:
@@ -3221,25 +3215,24 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
         if CONFIG["stage3_message"] in combined:
             if remaining > 0:
                 ctx.autorun_stage = EventContext.STAGE_2
-                return inject(f"Too early for Stage 3. Continue Stage 2: {CONFIG['stage2_instruction']}")
+                return ctx.continue_running(f"Too early for Stage 3. Continue Stage 2: {CONFIG['stage2_instruction']}")
             else:
                 ctx.autorun_active = False
                 ctx.autorun_stage = EventContext.STAGE_INACTIVE
-                stop_external_monitor(ctx)
                 return None  # Allow Claude to stop
 
         if remaining > 0:
             if ctx.hook_call_count % 2 == 0:
-                return inject(f"Stage 3 countdown: {remaining} calls remaining. Continue evaluation.")
+                return ctx.continue_running(f"Stage 3 countdown: {remaining} calls remaining. Continue evaluation.")
             else:
                 ctx.recheck_count = (ctx.recheck_count or 0) + 1
-                return inject(build_injection_prompt(ctx))
+                return ctx.continue_running(build_injection_prompt(ctx))
         else:
-            return inject(get_stage3_instructions(ctx))
+            return ctx.continue_running(get_stage3_instructions(ctx))
 
     # Fallback
     ctx.recheck_count = (ctx.recheck_count or 0) + 1
-    return inject(build_injection_prompt(ctx))
+    return ctx.continue_running(build_injection_prompt(ctx))
 
 
 # === SCOPED ALLOW CLEANUP (SessionStart) ===
@@ -3422,71 +3415,3 @@ def _register_command_mappings() -> None:
 
 
 _register_command_mappings()
-
-
-# ============================================================================
-# AI MONITOR INTEGRATION (External Tmux Observer)
-# ============================================================================
-
-# Import ai_monitor with fallback
-try:
-    from . import ai_monitor
-except ImportError:
-    ai_monitor = None
-
-
-def _manage_monitor(ctx: EventContext, action: str) -> Optional[int]:
-    """
-    Centralized helper for ai-monitor process management.
-
-    Args:
-        ctx: EventContext with session state
-        action: "start" or "stop"
-
-    Returns:
-        int | None: PID of started monitor, or None
-    """
-    if ai_monitor is None:
-        return None
-
-    session_id = ctx.session_id
-
-    if action == "start":
-        if ctx.ai_monitor_pid:
-            ai_monitor.stop_monitor(session_id)
-
-        pid = ai_monitor.start_monitor(
-            session_id=session_id, prompt="continue working", stop_marker=CONFIG["stage3_message"], max_cycles=20, prompt_on_start=True
-        )
-        ctx.ai_monitor_pid = pid
-        return pid
-
-    elif action == "stop":
-        if ctx.ai_monitor_pid:
-            ai_monitor.stop_monitor(session_id)
-            ctx.ai_monitor_pid = None
-
-    return None
-
-
-def start_external_monitor(ctx: EventContext) -> Optional[int]:
-    """Start AI monitor for external tmux-based observation."""
-    return _manage_monitor(ctx, "start")
-
-
-def stop_external_monitor(ctx: EventContext):
-    """Stop AI monitor subprocess if running."""
-    _manage_monitor(ctx, "stop")
-
-
-def get_injection_method(ctx: EventContext) -> str:
-    """
-    Determine injection method based on ai_monitor state.
-
-    Returns:
-    - "TMUX_INJECTION": ai_monitor subprocess will send keys via tmux
-    - "HOOK_INTEGRATION": daemon hook will return injection prompt
-    """
-    if ai_monitor and ctx.ai_monitor_pid:
-        return "TMUX_INJECTION"
-    return "HOOK_INTEGRATION"

@@ -464,27 +464,6 @@ class TestPlanManagementPlugin:
 
 
 # ============================================================================
-# AI Monitor Integration Tests
-# ============================================================================
-
-class TestAIMonitorIntegration:
-    """Tests for AI monitor integration."""
-
-    def test_get_injection_method_default(self):
-        """get_injection_method should return HOOK_INTEGRATION by default."""
-        ctx = EventContext(session_id="test", event="Stop")
-        result = plugins.get_injection_method(ctx)
-        assert result == "HOOK_INTEGRATION"
-
-    @patch.object(plugins, 'ai_monitor', None)
-    def test_manage_monitor_returns_none_without_ai_monitor(self):
-        """_manage_monitor should return None when ai_monitor not available."""
-        ctx = EventContext(session_id="test", event="Stop")
-        result = plugins._manage_monitor(ctx, 'start')
-        assert result is None
-
-
-# ============================================================================
 # Handler Registration Tests
 # ============================================================================
 

@@ -44,7 +44,6 @@ _PATH_CONSTRUCTORS = {"Path", "expanduser", "joinpath", "_expand_home"}
 ALLOWED_LITERAL_FILES = {
     # Reads another tool's fixed layout rather than deploying autorun assets.
     "plan_export.py": "plan export reads Claude Code's own fixed config paths",
-    "ai_monitor.py": "session state dir, already overridable via AUTORUN_TEST_STATE_DIR",
 }
 
 def _python_sources() -> list[Path]:

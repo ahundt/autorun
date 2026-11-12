@@ -49,20 +49,6 @@ def test_the_default_is_unchanged(monkeypatch):
     assert sm.state_directory() == Path.home() / ".claude" / "sessions"
 
 
-@pytest.mark.parametrize("module_name", ["autorun.ai_monitor"])
-def test_every_module_agrees_with_the_resolver(module_name, monkeypatch):
-    """The modules that keep their own STATE_DIR must not disagree with it."""
-    import importlib
-
-    module = importlib.import_module(module_name)
-    monkeypatch.delenv("AUTORUN_TEST_STATE_DIR", raising=False)
-    importlib.reload(module)
-    assert Path(module.STATE_DIR) == sm.state_directory(), (
-        f"{module_name} resolved a different state directory than "
-        "session_manager.state_directory"
-    )
-
-
 def test_no_module_rederives_the_default_path():
     """Spec check: one owner, enforced against a fifth copy appearing.
 

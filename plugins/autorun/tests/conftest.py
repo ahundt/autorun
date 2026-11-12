@@ -227,7 +227,7 @@ _SERIAL_DAEMON_TESTS = {
 }
 
 _SERIAL_TMUX_TESTS = {
-    "test_tmux_injector", "test_tmux_workflows_integration",
+    "test_tmux_workflows_integration",
     "test_tmux_automation_agents", "test_tmux_compliance",
     "test_tmux_utils_enhanced", "test_session_targeting_diagnostic",
     "test_session_targeting_regression", "test_bang_syntax",

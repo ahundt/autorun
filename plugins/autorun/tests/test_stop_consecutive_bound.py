@@ -24,7 +24,8 @@ from autorun.core import (
     dispatch_timeout_for_event,
     format_command_for_cli,
 )
-from autorun.platforms import PLATFORMS
+from autorun.config import CONFIG
+from autorun.platforms import PLATFORMS, hook_platforms
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 from task_tool_evidence import task_tool_evidence
 
@@ -536,6 +537,39 @@ def test_all_registered_harnesses_encode_block_then_bounded_allow(
     else:
         assert protocol.requires_json_for_unhandled_hook
     assert manager.get_incomplete_tasks(exclude_blocking=True)[0]["id"] == "plan-1"
+
+
+@pytest.mark.parametrize("cli_type", sorted(p.name for p in hook_platforms()))
+@pytest.mark.parametrize("stop_marker", ["", "stage1_message"])
+def test_an_active_autorun_run_answers_a_stop_by_continuing(tmp_path, cli_type, stop_marker):
+    """A Stop during an active run continues it, with no tmux observer.
+
+    The Stop hook's continuation is the only re-prompt path: nothing starts an
+    external process to type into the pane. A premature stop and a stage
+    transition must both come back as the harness's own blocking decision.
+    """
+    transcript = CONFIG[stop_marker] if stop_marker else "I am done for now."
+    ctx = EventContext(
+        session_id=f"autorun-continue-{tmp_path.name}-{cli_type}",
+        event="Stop",
+        tool_name="",
+        tool_input={},
+        tool_result="",
+        session_transcript=[{"role": "assistant", "content": transcript}],
+        store=ThreadSafeDB(),
+        cli_type=cli_type,
+        deadline_monotonic=time.monotonic() + dispatch_timeout_for_event("Stop"),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_1
+
+    response = plugins.autorun_injection(ctx)
+
+    protocol = PLATFORMS[cli_type].hook_protocol
+    assert response is not None, "an active run let the session stop"
+    assert response["decision"] == protocol.stop_blocking_decision
+    assert response["reason"]
+    assert ctx.autorun_active is True
 
 
 def test_user_prompt_reset_failure_is_logged_and_prompt_dispatch_continues(

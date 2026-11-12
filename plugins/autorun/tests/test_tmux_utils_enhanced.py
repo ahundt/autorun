@@ -450,7 +450,7 @@ class TestSendKeysArgv:
         [
             "C-m", "C-c", "C-u",          # named in the old branch's list
             "Enter", "Escape", "Tab", "BTab",  # key names it did not name
-            "C-a C-k", "Escape 0 d",      # multi-key sequences from tmux_injector
+            "C-a C-k", "Escape 0 d",      # multi-key sequences
             "export TEST_VAR=1",          # literal text
             "",                           # empty send
         ],
@@ -895,7 +895,7 @@ class TestOnlyACursorOnAnOptionIsAChoicePrompt:
 class TestEnvironmentDetectionAsksTmuxForNames:
     """detect_tmux_environment parsed TMUX=socket,server_pid,session_id and
     returned the server PID as the session name and the session id as the
-    pane, so TmuxInjector targeted (and auto-created) a session named after
+    pane, so a caller targeted (and auto-created) a session named after
     the PID."""
 
     def test_session_window_pane_come_from_display_message(self, monkeypatch):

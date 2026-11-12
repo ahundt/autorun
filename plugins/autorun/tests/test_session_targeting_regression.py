@@ -489,7 +489,7 @@ if __name__ == '__main__':
 
 class TestACallersTargetIsTheOnlyTarget:
     """tmux obeys the last -t. execute_tmux_command appended its own
-    `-t <instance session>` after a caller's, so ai_monitor's
+    `-t <instance session>` after a caller's, so a caller's
     `list-windows -t <session>` listed the "autorun" session instead."""
 
     @pytest.mark.parametrize(

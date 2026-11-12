@@ -1909,7 +1909,6 @@ class EventContext:
         "session_allowed_patterns": [],
         "recheck_count": 0,
         "hook_call_count": 0,
-        "ai_monitor_pid": None,
         "plan_active": False,
         "plan_type": "",
         "plan_arguments": "",  # v0.7: Store original user request from $ARGUMENTS

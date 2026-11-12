@@ -190,10 +190,7 @@ omit = [
     "**/diagnostics.py",
     "**/__main__.py",
     # External system integration (requires tmux)
-    "**/tmux_injector.py",
     "**/tmux_utils.py",
-    # AI monitoring (requires running sessions)
-    "**/ai_monitor.py",
 ]
 
 [tool.coverage.report]

@@ -13,8 +13,6 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from autorun.tmux_utils import get_tmux_utilities, TmuxUtilities, TmuxControlState
-from autorun.ai_monitor import get_tmux as get_ai_monitor_tmux
-from autorun.tmux_injector import TmuxInjector, DualChannelInjector
 
 
 def test_default_session_naming():
@@ -23,16 +21,6 @@ def test_default_session_naming():
     tmux_utils = get_tmux_utilities()
     assert tmux_utils.DEFAULT_SESSION_NAME == "autorun", \
         f"Default session name incorrect: {tmux_utils.DEFAULT_SESSION_NAME}"
-
-    # Test injector default naming
-    injector = TmuxInjector()
-    assert injector.session_id == "autorun", \
-        f"TmuxInjector default session incorrect: {injector.session_id}"
-
-    # Test dual channel injector default naming
-    dual_injector = DualChannelInjector()
-    assert dual_injector.session_id == "autorun", \
-        f"DualChannelInjector default session incorrect: {dual_injector.session_id}"
 
 
 def test_win_ops_completeness():
@@ -104,22 +92,6 @@ def test_win_ops_completeness():
             f"WIN_OPS mapping incorrect for {op}: {tmux_utils.WIN_OPS[op]} != {expected_cmd}"
 
 
-def test_dry_compliance():
-    """Test DRY principles across tmux implementations"""
-
-    # All implementations should use the same centralized utilities
-    # get_global_tmux_utils was removed from main.py — canonical replacement
-    # is tmux_utils.get_tmux_utilities() directly (see main.py:52, :94)
-    tmux_utils1 = get_tmux_utilities()
-    tmux_utils2 = get_ai_monitor_tmux()
-
-    # They should all be the same instance or have the same session name
-    assert tmux_utils1 is not None, "get_tmux_utilities() returned None"
-    assert tmux_utils2 is not None, "get_ai_monitor_tmux() returned None"
-    assert tmux_utils1.session_name == tmux_utils2.session_name, \
-        "DRY violation: Different tmux utilities instances or session names"
-
-
 def test_session_environment_detection():
     """Test session environment detection and fallback"""
 
@@ -133,42 +105,6 @@ def test_session_environment_detection():
     assert session_info is not None, "Session info retrieval returned None"
     assert "session" in session_info, "Session info missing 'session' key"
     assert "available_sessions" in session_info, "Session info missing 'available_sessions' key"
-
-
-def test_ai_monitor_integration():
-    """Test ai_monitor.py integration with centralized utilities"""
-
-    # Test ai_monitor uses centralized utilities
-    ai_monitor_tmux = get_ai_monitor_tmux()
-    assert ai_monitor_tmux is not None, "ai_monitor tmux utilities not available"
-
-    # Test window operations
-    assert hasattr(ai_monitor_tmux, 'WIN_OPS'), "ai_monitor missing WIN_OPS"
-    assert len(ai_monitor_tmux.WIN_OPS) >= 4, \
-        f"ai_monitor WIN_OPS incomplete: {len(ai_monitor_tmux.WIN_OPS)} operations"
-
-
-def test_tmux_injector_integration():
-    """Test tmux_injector.py integration with centralized utilities"""
-
-    # Test injector uses centralized utilities
-    injector = TmuxInjector("test_injector_session")
-    assert injector.tmux_utils is not None, "TmuxInjector missing centralized utilities"
-
-    # Test default session naming
-    default_injector = TmuxInjector()
-    assert default_injector.session_id == "autorun", \
-        f"TmuxInjector default session: {default_injector.session_id}"
-
-    # Test dual channel injector
-    dual_injector = DualChannelInjector("test_dual_session")
-    assert dual_injector.tmux_injector.tmux_utils is not None, \
-        "DualChannelInjector missing centralized utilities"
-
-    # Test default dual channel session naming
-    default_dual = DualChannelInjector()
-    assert default_dual.session_id == "autorun", \
-        f"DualChannelInjector default session: {default_dual.session_id}"
 
 
 def test_error_handling_and_fallbacks():
@@ -261,14 +197,6 @@ def test_custom_session_naming():
     assert tmux.session_name == custom_name, \
         f"get_tmux_utilities should accept custom name: {tmux.session_name}"
 
-    injector = TmuxInjector(custom_name)
-    assert injector.session_id == custom_name, \
-        f"TmuxInjector should accept custom name: {injector.session_id}"
-
-    dual = DualChannelInjector(custom_name)
-    assert dual.session_id == custom_name, \
-        f"DualChannelInjector should accept custom name: {dual.session_id}"
-
 
 def test_control_state_enum():
     """Test TmuxControlState enum has required states."""
@@ -282,33 +210,3 @@ def test_control_state_enum():
     assert tmux.control_state == TmuxControlState.NORMAL
     tmux.control_state = TmuxControlState.ESCAPE
     assert tmux.control_state == TmuxControlState.ESCAPE
-
-
-def test_start_monitor_spawns_argv_the_parser_accepts(monkeypatch, tmp_path):
-    """The window passed to start_monitor must reach the child. The spawn built
-    ``--start <win>``, a flag parse_cli never had (it takes ``--prompt-on-start
-    [win]``), so the window was silently dropped and the monitor prompted the
-    wrong pane."""
-    import sys
-
-    from autorun import ai_monitor
-
-    spawned: list[list[str]] = []
-
-    class _Proc:
-        pid = 4242
-
-    monkeypatch.setattr(ai_monitor.sp, "Popen", lambda argv, **_kw: spawned.append(argv) or _Proc())
-    monkeypatch.setattr(ai_monitor.Path, "exists", lambda self: False)
-
-    ai_monitor.start_monitor("s1", prompt="go", stop_marker="DONE", max_cycles=2, start_window="3")
-    assert spawned, "nothing spawned"
-    argv = spawned[0]
-
-    # Round-trip the child's argv through the real parser and require the window survives.
-    monkeypatch.setattr(sys, "argv", ["ai_monitor.py", *argv[2:]])
-    session_id, config = ai_monitor.parse_cli()
-    assert session_id == "s1"
-    assert config["prompt"] == "go" and config["stop_marker"] == "DONE" and config["max_cycles"] == 2
-    assert config["prompt_on_start"] is True and config["start_window"] == "3", config
-    assert "--start" not in argv

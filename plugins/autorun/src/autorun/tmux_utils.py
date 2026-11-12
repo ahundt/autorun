@@ -490,7 +490,7 @@ class TmuxUtilities:
         base_cmd = [self.tmux_binary]
 
         # tmux obeys the last -t, so a target the caller wrote must be the only
-        # one; appending ours after it sent ai_monitor's `list-windows -t <s>`
+        # one; appending ours after it sent a caller's `list-windows -t <s>`
         # to the "autorun" session. For send-keys only a leading -t is a flag;
         # later arguments are keys to type.
         caller_target = len(cmd) > 2 and (
