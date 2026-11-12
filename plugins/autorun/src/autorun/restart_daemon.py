@@ -68,16 +68,35 @@ def _process_matches_runtime(proc) -> bool:
     return Path(runtime).resolve() == ipc.AUTORUN_CONFIG_DIR.resolve()
 
 
+def _owns_this_runtime(proc) -> bool:
+    """Whether ``proc`` is the daemon of this AUTORUN_HOME, proven by its lock.
+
+    Proof is the birth-checked PID record in ``daemon.lock`` naming it, or the
+    process holding ``daemon.flock`` open. A command line naming autorun.daemon
+    proves nothing: every runtime's daemon has one, and a home whose daemon
+    died leaves a flock with no record, which once sent the live daemon of
+    another home a SIGTERM from an uninstall's teardown.
+    """
+    if ipc.daemon_record_pid(LOCK_PATH) == proc.pid:
+        return True
+    flock = ipc.daemon_flock_path(LOCK_PATH)
+    try:
+        return any(os.path.samefile(f.path, flock) for f in proc.open_files())
+    except (psutil.Error, OSError):
+        return False
+
+
 def get_daemon_pid(
     *, src_dir: Path | None = None, runtime_only: bool = False
 ) -> int | None:
     """Get daemon PID from lock file, with process discovery fallback.
 
     Primary: Read PID from daemon.lock (written by _acquire_daemon_lock).
-    Fallback: If daemon.lock missing but daemon.flock exists, search for
-    daemon process by cmdline pattern. This handles the case where the
-    daemon acquired the flock but failed to write daemon.lock (OSError,
-    race condition, or Gemini extension venv mismatch).
+    Fallback: If daemon.lock names no live daemon but daemon.flock exists,
+    return the daemon process that holds that flock open. This handles the
+    case where the daemon acquired the flock but failed to write daemon.lock
+    (OSError, race condition, or Gemini extension venv mismatch). A process
+    that only looks like a daemon is never returned (_owns_this_runtime).
 
     Args:
         src_dir: Optional source-tree filter for fallback discovery. Normal
@@ -106,6 +125,8 @@ def get_daemon_pid(
                 if src_dir is not None and str(src_dir) not in cmdline_str:
                     continue
                 if runtime_only and not _process_matches_runtime(proc):
+                    continue
+                if not _owns_this_runtime(proc):
                     continue
                 return proc.info['pid']
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -506,8 +527,34 @@ def _all_daemon_processes() -> list:
     ]
 
 
+def _signal_owned_daemon(pid: int, *, kill: bool = False) -> bool:
+    """Terminate (or kill) ``pid`` only if this runtime owns it; the only signaller.
+
+    Everything that stops a daemon by PID comes through here, so a PID that
+    was misresolved -- another home's daemon, a reused number -- is refused
+    rather than signalled. ``--restart-all-daemons`` is the one deliberate
+    exception and does not call this.
+    """
+    try:
+        proc = psutil.Process(pid)
+        if not _owns_this_runtime(proc):
+            print(f"  ✗ Not signalling PID {pid}: it is not the daemon of {ipc.AUTORUN_CONFIG_DIR}")
+            return False
+        proc.kill() if kill else proc.terminate()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+    return True
+
+
 def _stop_daemon(pid: int, *, src_dir: Path | None = None) -> None:
     """Stop through authenticated IPC, falling back to terminate then kill."""
+    try:
+        owned = _owns_this_runtime(psutil.Process(pid))
+    except psutil.Error:
+        owned = True  # already gone: nothing will be signalled
+    if not owned:
+        print(f"  ✗ Not stopping PID {pid}: it is not the daemon of {ipc.AUTORUN_CONFIG_DIR}")
+        return
     print(f"  Requesting graceful shutdown of PID {pid}")
     timeout = float(CONFIG["daemon_shutdown_timeout_seconds"])
     shutdown_clean = ipc.request_shutdown(pid) and wait_for_shutdown(
@@ -516,22 +563,14 @@ def _stop_daemon(pid: int, *, src_dir: Path | None = None) -> None:
 
     if not shutdown_clean:
         print(f"  Sending terminate to PID {pid}")
-        try:
-            proc = psutil.Process(pid)
-            proc.terminate()  # SIGTERM on Unix, TerminateProcess on Windows
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+        _signal_owned_daemon(pid)  # SIGTERM on Unix, TerminateProcess on Windows
         shutdown_clean = wait_for_shutdown(max_wait=timeout, src_dir=src_dir)
 
     if not shutdown_clean:
         # Daemon didn't shut down cleanly - force it
         print("  ⚠️ Timeout, forcing shutdown")
-        try:
-            proc = psutil.Process(pid)
-            proc.kill()  # SIGKILL on Unix, TerminateProcess on Windows
+        if _signal_owned_daemon(pid, kill=True):  # SIGKILL on Unix
             time.sleep(0.5)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
         # Only cleanup stale files if daemon failed to clean up
         cleanup_stale_files()
     else:

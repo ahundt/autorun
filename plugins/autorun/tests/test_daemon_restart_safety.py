@@ -390,7 +390,8 @@ class TestPsutilProcessLifecycle:
                 with mock.patch('autorun.restart_daemon.ipc') as mock_ipc:
                     mock_ipc.request_shutdown.return_value = False
                     mock_ipc.SOCKET_PATH.exists.return_value = False
-                    with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
+                    with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock, \
+                            mock.patch('autorun.restart_daemon._owns_this_runtime', return_value=True):
                         mock_lock.exists.return_value = False
                         _stop_daemon(12345)
 
@@ -404,7 +405,8 @@ class TestPsutilProcessLifecycle:
         mock_proc = mock.MagicMock()
         with mock.patch('psutil.Process', return_value=mock_proc):
             with mock.patch('autorun.restart_daemon.wait_for_shutdown', return_value=False):
-                with mock.patch('autorun.restart_daemon.cleanup_stale_files'):
+                with mock.patch('autorun.restart_daemon.cleanup_stale_files'), \
+                        mock.patch('autorun.restart_daemon._owns_this_runtime', return_value=True):
                     _stop_daemon(12345)
 
             mock_proc.terminate.assert_called_once()
@@ -491,7 +493,7 @@ class TestPsutilProcessLifecycle:
                 assert restart_mod._daemon_python_for_src(src_dir) == tool_python
 
     def test_get_daemon_pid_fallback_process_discovery(self):
-        """get_daemon_pid() discovers daemon by cmdline when daemon.lock is missing."""
+        """get_daemon_pid() finds the daemon holding the flock when daemon.lock is missing."""
         from autorun.restart_daemon import get_daemon_pid
 
         # daemon.lock doesn't exist but daemon.flock does
@@ -504,7 +506,8 @@ class TestPsutilProcessLifecycle:
                 'pid': 12345,
                 'cmdline': ['python', '-c', 'from autorun.daemon import main; main()'],
             }
-            with mock.patch('psutil.process_iter', return_value=[mock_proc]):
+            with mock.patch('psutil.process_iter', return_value=[mock_proc]), \
+                    mock.patch('autorun.restart_daemon._owns_this_runtime', return_value=True):
                 result = get_daemon_pid()
                 assert result == 12345
 
@@ -536,7 +539,8 @@ class TestPsutilProcessLifecycle:
             ],
         }
 
-        with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
+        with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock, \
+                mock.patch('autorun.restart_daemon._owns_this_runtime', return_value=True):
             mock_lock.exists.return_value = False
             mock_lock.with_suffix.return_value = mock.MagicMock(exists=mock.MagicMock(return_value=True))
             with mock.patch('psutil.process_iter', return_value=[other_proc, current_proc]):
@@ -1004,3 +1008,113 @@ class TestDaemonMainLifecycleCleanup:
                 FileLock(str(flock_path), timeout=0).acquire()
         finally:
             successor.release()
+
+
+#: Appears in a stand-in's command line, so the restart module's
+#: ``from autorun.daemon import main`` scan matches it exactly as it matched
+#: the live daemon.
+_DAEMON_MARKER = "from autorun.daemon import main; main()"
+
+
+class TestOnlyThisRuntimesDaemonIsSignalled:
+    """A daemon is signalled only when this AUTORUN_HOME proves it owns it.
+
+    The live daemon logged "Received SIGTERM" with no shutdown request before
+    it: an uninstall's teardown asked ``get_daemon_pid()`` for its own daemon,
+    found ``daemon.flock`` with no valid ``daemon.lock`` (what a SIGKILLed or
+    still-starting daemon leaves), and the fallback returned the first process
+    on the machine whose command line named ``autorun.daemon``. ``_stop_daemon``
+    then sent the shutdown request to its own socket, got no answer, and
+    terminated that PID.
+
+    The scan is restricted to the stand-in so no other daemon on the machine
+    can be chosen even by code without the fix.
+    """
+
+    @pytest.fixture
+    def stale_home(self, tmp_path, monkeypatch):
+        import autorun.restart_daemon as restart_mod
+
+        home = tmp_path / "ar-home"
+        home.mkdir()
+        (home / "daemon.flock").touch()  # left behind by a SIGKILLed daemon
+        monkeypatch.setattr(restart_mod, "LOCK_PATH", home / "daemon.lock")
+        monkeypatch.setattr(restart_mod.ipc, "SOCKET_PATH", home / "daemon.sock")
+        monkeypatch.setattr(restart_mod.ipc, "AUTORUN_CONFIG_DIR", home)
+        return home
+
+    @staticmethod
+    def _only(monkeypatch, pid):
+        import autorun.restart_daemon as restart_mod
+
+        real = restart_mod.psutil.process_iter
+        monkeypatch.setattr(
+            restart_mod.psutil,
+            "process_iter",
+            lambda *a, **k: [p for p in real(*a, **k) if p.pid == pid],
+        )
+
+    @pytest.fixture
+    def other_runtimes_daemon(self, monkeypatch):
+        """A process shaped like another runtime's daemon, holding no lock here."""
+        import subprocess
+
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", _DAEMON_MARKER]
+        )
+        self._only(monkeypatch, proc.pid)
+        yield proc
+        proc.kill()
+        proc.wait(timeout=10)
+
+    def test_unscoped_lookup_ignores_a_daemon_that_holds_no_lock_here(
+        self, stale_home, other_runtimes_daemon
+    ):
+        from autorun.restart_daemon import get_daemon_pid
+
+        assert get_daemon_pid() is None
+
+    def test_uninstall_teardown_leaves_another_runtimes_daemon_running(
+        self, stale_home, other_runtimes_daemon
+    ):
+        from autorun.installer import teardown
+
+        assert teardown.stop_daemon() is None
+        time.sleep(0.3)
+        assert other_runtimes_daemon.poll() is None, "teardown signalled a daemon it does not own"
+
+    def test_stop_refuses_a_pid_this_runtime_does_not_own(
+        self, stale_home, other_runtimes_daemon, capsys
+    ):
+        from autorun.restart_daemon import _stop_daemon
+
+        _stop_daemon(other_runtimes_daemon.pid)
+        time.sleep(0.3)
+        assert other_runtimes_daemon.poll() is None, "_stop_daemon signalled a daemon it does not own"
+        assert "not the daemon of" in capsys.readouterr().out
+
+    def test_the_process_holding_this_homes_flock_is_still_found(
+        self, stale_home, monkeypatch
+    ):
+        """The fallback's purpose survives: a daemon that took the flock but
+        wrote no PID record is found, because it holds this home's lock."""
+        import subprocess
+
+        from autorun.restart_daemon import get_daemon_pid
+
+        hold = (
+            "import sys, time; from filelock import FileLock; "
+            "lock = FileLock(sys.argv[1], timeout=0); lock.acquire(); "
+            "print('held', flush=True); time.sleep(60)"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-c", hold, str(stale_home / "daemon.flock"), _DAEMON_MARKER],
+            stdout=subprocess.PIPE, text=True,
+        )
+        try:
+            assert proc.stdout.readline().strip() == "held"
+            self._only(monkeypatch, proc.pid)
+            assert get_daemon_pid() == proc.pid
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)

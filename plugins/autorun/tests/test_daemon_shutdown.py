@@ -142,6 +142,7 @@ def test_stop_daemon_uses_ipc_then_terminate_kill_fallback(acknowledged, waits, 
             mock.patch.object(restart_daemon.psutil, "Process") as process, \
             mock.patch.object(restart_daemon, "wait_for_shutdown", side_effect=waits), \
             mock.patch.object(restart_daemon, "cleanup_stale_files"), \
+            mock.patch.object(restart_daemon, "_owns_this_runtime", return_value=True), \
             mock.patch.object(restart_daemon.time, "sleep"):
         restart_daemon._stop_daemon(12345)
     shutdown.assert_called_once_with(12345)
