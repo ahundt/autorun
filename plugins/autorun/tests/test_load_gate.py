@@ -14,6 +14,10 @@ SPEC = importlib.util.spec_from_file_location(
 )
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
+LOAD_BENCHMARK = pytest.mark.skipif(
+    os.environ.get("AUTORUN_ENABLE_LOAD_BENCHMARK") != "1",
+    reason="Set AUTORUN_ENABLE_LOAD_BENCHMARK=1 to measure concurrent hook load",
+)
 
 
 def test_cleanup_signals_only_the_started_daemon_and_its_descendants(tmp_path, monkeypatch):
@@ -85,18 +89,23 @@ def test_load_failure_stops_its_daemon_and_removes_its_sandbox(monkeypatch, erro
     assert not observed["daemon"].is_running()
 
 
-def test_small_hook_process_load():
+@pytest.mark.parametrize("sessions", [
+    1,
+    pytest.param(20, marks=(pytest.mark.benchmark, pytest.mark.slow, LOAD_BENCHMARK)),
+])
+def test_small_hook_process_load(sessions):
     # Inside the worker's runtime root: conftest refuses to signal a daemon
     # whose AUTORUN_HOME is anywhere else, and run_load stops its own daemon.
-    result = gate.run_load(ROOT, sessions=20, rounds=1, cli_type="claude",
+    result = gate.run_load(ROOT, sessions=sessions, rounds=1, cli_type="claude",
                            sandbox_parent=os.environ["AUTORUN_TEST_RUNTIME_DIR"])
+    assert len(result["calls"]) <= 20 * sessions
     assert result["calls"]
     assert not gate.failures(result), result["outcomes"]
     assert result["outcomes"]["intended_denial"] > 0
     assert result["daemon_peak_rss_bytes"] > 0
     assert result["daemon_peak_open_files"] > 0
     assert result["cleanup_remaining_pids"] == []
-    assert result["task_status_counts"] == {"completed": 5}
+    assert result["task_status_counts"] == {"completed": len(range(0, sessions, gate.TASK_SESSION_MODULUS))}
 
 
 @pytest.mark.parametrize("stdout,stderr,code,expected,outcome", [
@@ -128,10 +137,8 @@ def test_task_workload_uses_registered_tools(platform):
 
 @pytest.mark.benchmark
 @pytest.mark.slow
+@LOAD_BENCHMARK
 def test_paired_release_load(tmp_path):
-    # The explicitly requested opt-in follows test_state_store_benchmark.py.
-    if os.environ.get("AUTORUN_ENABLE_LOAD_BENCHMARK") != "1":
-        pytest.skip("Set AUTORUN_ENABLE_LOAD_BENCHMARK=1 and AUTORUN_TEST_LOAD_BASELINE_TREE")
     baseline = Path(os.environ["AUTORUN_TEST_LOAD_BASELINE_TREE"])
     rows = gate.run_paired(baseline, ROOT, sessions=(60, 100, 200), repetitions=5,
                            rounds=1, cli_type="claude", output_dir=tmp_path)
