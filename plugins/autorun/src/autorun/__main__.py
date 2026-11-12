@@ -1128,6 +1128,7 @@ def run_direct(payload: dict | None = None) -> int:
         session_crons=normalized["session_crons"],
         server_url=payload.get("server_url", ""),
         harness_pid=payload.get("_pid"),
+        harness_started_at_units=payload.get("_pid_started_at_units"),
     )
 
     response = app.dispatch(ctx)
@@ -1357,7 +1358,12 @@ def _main(argv: Sequence[str] | None = None) -> int:
         slash = format_command_for_cli(slash, identity.platform_name)
 
         # The same state access the /ar:file handler makes: ctx.file_policy.
-        ctx = EventContext(session_id=session_id, event="UserPromptSubmit", store=ThreadSafeDB())
+        ctx = EventContext(
+            session_id=session_id,
+            event="UserPromptSubmit",
+            store=ThreadSafeDB(),
+            harness_started_at_units=None,
+        )
         if policy != "STATUS":
             if USE_DAEMON:
                 # The daemon serves session state from memory once a session

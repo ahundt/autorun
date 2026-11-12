@@ -595,7 +595,11 @@ def resolve_launcher_pid(payload: dict) -> None:
     """
     pid = payload.get("_pid")
     if isinstance(pid, int) and pid > 0 and "_pid_started_at_units" not in payload:
-        payload["_pid"] = launcher_pid(pid)
+        resolved_pid = launcher_pid(pid)
+        payload["_pid"] = resolved_pid
+        started_at_units = ipc.process_start_units(resolved_pid)
+        if started_at_units > 0:
+            payload["_pid_started_at_units"] = started_at_units
 
 
 def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:

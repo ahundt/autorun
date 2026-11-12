@@ -910,6 +910,7 @@ def _transcript_policy_context(ctx: EventContext, prompt: str) -> EventContext:
         session_identity_authority=ctx.session_identity_authority,
         server_url=ctx.server_url,
         harness_pid=ctx.harness_pid,
+        harness_started_at_units=ctx.harness_started_at_units,
         store=getattr(ctx, "_store", None),
     )
 

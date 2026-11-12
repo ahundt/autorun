@@ -6,7 +6,7 @@ harness process that ran the subagent having exited (``pending`` with a
 notice); the harness's own running-agents list once captured; a task update.
 ``delegation_ttl_seconds`` is removed. A delegation records
 ``metadata.delegation = {agent_id, cli_type, parent_session_id, harness_pid,
-mode, delegated_at}``. A legacy row from before the upgrade has no
+harness_started_at_units, mode, delegated_at}``. A legacy row from before the upgrade has no
 ``harness_pid`` and becomes ``delegation-returned`` so the agent verifies it
 (decisions file, default 3).
 
@@ -54,6 +54,7 @@ def test_delegation_records_the_agent_and_the_harness_process(gate_env, cli_type
     assert record.get("cli_type") == cli_type
     assert record.get("parent_session_id") == session.session_id
     assert record.get("harness_pid") == os.getpid(), "harness_pid must come from the ctx that consumed the marker"
+    assert record.get("harness_started_at_units") == session.harness_started_at_units
     if cli_type == "claude":
         assert record.get("mode") == "async", "an async_launched spawn must be recorded as mode async"
 
@@ -93,6 +94,56 @@ def test_dead_harness_pid_reverts_at_session_start(gate_env, cli_type):
         f"{cli_type}: the harness process that ran the subagent is gone, yet #7 stayed {resumed.status('7')!r}"
     )
     assert "back to pending" in text(response), f"{cli_type}: no notice at SessionStart: {response}"
+
+
+def test_reused_harness_pid_with_different_birth_reverts_delegation(gate_env, monkeypatch):
+    """A live unrelated process that reused the recorded PID is end evidence."""
+    from autorun import ipc
+    import psutil
+
+    reused_pid = 424_242
+    recorded_birth = 1_700_000_000_000_000
+    session = _session(
+        "codex",
+        "pid-reused",
+        harness_pid=reused_pid,
+        harness_started_at_units=recorded_birth,
+    )
+    session.seed("7", "Sweep the fixtures")
+    session.delegate("7")
+
+    real_pid_exists = psutil.pid_exists
+    monkeypatch.setattr(psutil, "pid_exists", lambda pid: True if pid == reused_pid else real_pid_exists(pid))
+    monkeypatch.setattr(ipc, "process_start_units", lambda pid: recorded_birth + 1 if pid == reused_pid else 0)
+    resumed = Session(session.session_id, "codex", store=session.store)
+    resumed.stop("Waiting for the subagent.")
+
+    assert resumed.status("7") == "pending", "a different process instance with the same PID kept the delegation alive"
+
+
+def test_same_harness_pid_and_birth_keeps_delegation_open(gate_env, monkeypatch):
+    """The exact recorded process identity remains valid while that process lives."""
+    from autorun import ipc
+    import psutil
+
+    harness_pid = 424_243
+    recorded_birth = 1_700_000_000_000_000
+    session = _session(
+        "codex",
+        "pid-same",
+        harness_pid=harness_pid,
+        harness_started_at_units=recorded_birth,
+    )
+    session.seed("7", "Sweep the fixtures")
+    session.delegate("7")
+
+    real_pid_exists = psutil.pid_exists
+    monkeypatch.setattr(psutil, "pid_exists", lambda pid: True if pid == harness_pid else real_pid_exists(pid))
+    monkeypatch.setattr(ipc, "process_start_units", lambda pid: recorded_birth if pid == harness_pid else 0)
+    resumed = Session(session.session_id, "codex", store=session.store)
+    resumed.stop("Waiting for the subagent.")
+
+    assert resumed.status("7") == "delegated", "the same live process identity ended the delegation"
 
 
 def _seed_open_receipts(count: int, *, harness_pid: int, newer_than: float) -> None:

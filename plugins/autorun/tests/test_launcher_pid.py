@@ -132,14 +132,18 @@ def test_a_vanished_pid_is_kept_as_reported():
 
 def test_a_payload_with_birth_evidence_is_left_alone():
     """get_stable_process_identity already walked to the harness."""
+    from autorun import ipc
+
     shell = _shell_child()
     try:
         payload = {"_pid": shell.pid, "_pid_started_at_units": 1}
         resolve_launcher_pid(payload)
         assert payload["_pid"] == shell.pid
+        assert payload["_pid_started_at_units"] == 1
         payload = {"_pid": shell.pid}
         resolve_launcher_pid(payload)
         assert payload["_pid"] == os.getpid()
+        assert payload["_pid_started_at_units"] == ipc.process_start_units(os.getpid())
     finally:
         shell.kill()
         shell.wait()

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from autorun import plugins
+from autorun import ipc, plugins
 from autorun import session_manager as sm
 from autorun import task_lifecycle
 from autorun.config import CONFIG
@@ -137,6 +137,11 @@ class Session:
     cli_type: str
     store: ThreadSafeDB = field(default_factory=ThreadSafeDB)
     harness_pid: int = field(default_factory=os.getpid)
+    harness_started_at_units: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.harness_started_at_units is None and self.harness_pid == os.getpid():
+            self.harness_started_at_units = ipc.process_start_units(self.harness_pid) or None
 
     def context(self, event: str, **fields) -> EventContext:
         if PLATFORMS[self.cli_type].policy_commands_arrive_in_transcript:
@@ -145,6 +150,7 @@ class Session:
         fields.setdefault("tool_input", {})
         fields.setdefault("active_tools", task_tool_evidence(self.cli_type))
         fields.setdefault("harness_pid", self.harness_pid)
+        fields.setdefault("harness_started_at_units", self.harness_started_at_units)
         fields.setdefault("deadline_monotonic", time.monotonic() + dispatch_timeout_for_event(event))
         autorun_stage = fields.pop("autorun_stage", None)
         try:

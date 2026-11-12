@@ -712,6 +712,34 @@ def _agent_receipt_key(cli_type: str, agent_id: str) -> str:
     return f"{cli_type}:{agent_id}"
 
 
+def _recorded_harness_is_live(
+    record: dict,
+    *,
+    starts_by_pid: dict[int, int],
+    legacy_alive_by_pid: dict[int, bool],
+) -> bool:
+    """Check the one process-identity scheme shared with daemon records.
+
+    New records pair the PID with ``client.get_stable_process_identity``'s
+    microsecond birth stamp and compare it through ``ipc.process_start_units``.
+    PID-only records predate that field and retain their original
+    ``psutil.pid_exists`` behavior.
+    """
+    pid = record.get("harness_pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return True
+    started_at_units = record.get("harness_started_at_units")
+    if isinstance(started_at_units, int) and not isinstance(started_at_units, bool) and started_at_units > 0:
+        if pid not in starts_by_pid:
+            starts_by_pid[pid] = ipc.process_start_units(pid)
+        return starts_by_pid[pid] == started_at_units
+    if pid not in legacy_alive_by_pid:
+        import psutil
+
+        legacy_alive_by_pid[pid] = psutil.pid_exists(pid)
+    return legacy_alive_by_pid[pid]
+
+
 def _bounded_delegation_receipts(receipts: dict[str, dict], *, reclaim: bool = False) -> dict[str, dict]:
     """Every open receipt, plus bounded returned history.
 
@@ -719,19 +747,21 @@ def _bounded_delegation_receipts(receipts: dict[str, dict], *, reclaim: bool = F
     (Codex) reaches its parent, so no count drops it. With ``reclaim``, which
     only SubagentStop passes, one whose recorded parent harness process is
     gone is dropped: the child ran inside that process and cannot report.
-    One ``pid_exists`` per distinct recorded pid; a receipt without one stays.
+    One process-identity check per distinct recorded pid; a receipt without one
+    stays. PID-only receipts keep their legacy existence check.
     """
-    alive: dict[int, bool] = {}
+    starts_by_pid: dict[int, int] = {}
+    legacy_alive_by_pid: dict[int, bool] = {}
 
     def harness_gone(receipt: dict) -> bool:
         pid = receipt.get("harness_pid")
         if not reclaim or not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
             return False
-        if pid not in alive:
-            import psutil
-
-            alive[pid] = psutil.pid_exists(pid)
-        return not alive[pid]
+        return not _recorded_harness_is_live(
+            receipt,
+            starts_by_pid=starts_by_pid,
+            legacy_alive_by_pid=legacy_alive_by_pid,
+        )
 
     unresolved = {
         key: value
@@ -2835,9 +2865,9 @@ class TaskLifecycle:
           stays delegated until it is updated: there is nothing to check.
         - The recorded parent harness process is gone, so the subagent it ran
           died with it: the task goes back to ``pending``. The hook's own
-          harness is alive by definition and is not checked; every other
-          recorded pid is checked once (one ``pid_exists`` per distinct pid).
-          A reused pid can only delay this, as in plan_export.
+          harness identity is alive by definition and is not checked; every
+          other recorded pid and birth stamp is checked once. PID-only records
+          from older builds fall back to existence checks.
 
         A SubagentStop (``_return_delegations``) and the agent's or user's own
         update of the task are the other evidence, handled where they arrive.
@@ -2847,7 +2877,8 @@ class TaskLifecycle:
         # The exact record each pid check was about: the check runs outside
         # the state lock, so the write applies only to a task still carrying it.
         checked: Dict[str, Dict] = {}
-        alive: Dict[int, bool] = {}
+        starts_by_pid: Dict[int, int] = {}
+        legacy_alive_by_pid: Dict[int, bool] = {}
         for task_id, task in tasks.items():
             if task.get("status") != "delegated":
                 continue
@@ -2858,13 +2889,20 @@ class TaskLifecycle:
                     legacy.append(task_id)
                 continue
             pid = record.get("harness_pid")
-            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or pid == ctx.harness_pid:
+            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
                 continue
-            if pid not in alive:
-                import psutil
-
-                alive[pid] = psutil.pid_exists(pid)
-            if not alive[pid]:
+            recorded_start = record.get("harness_started_at_units")
+            same_current_identity = pid == ctx.harness_pid and (
+                recorded_start is None
+                or recorded_start == ctx.harness_started_at_units
+            )
+            if same_current_identity:
+                continue
+            if not _recorded_harness_is_live(
+                record,
+                starts_by_pid=starts_by_pid,
+                legacy_alive_by_pid=legacy_alive_by_pid,
+            ):
                 exited[task_id] = str(record.get("agent_id") or "with no recorded id")
                 checked[task_id] = copy.deepcopy(record)
         if not legacy and not exited:
@@ -3390,6 +3428,7 @@ class TaskLifecycle:
                             "at": float(ledger_entry.get("at") or now),
                             "returned": bool(ledger_entry.get("returned")),
                             "harness_pid": ctx.harness_pid,
+                            "harness_started_at_units": ctx.harness_started_at_units,
                         }
                         receipt_state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(receipts)
         except Exception as exc:  # noqa: BLE001 - capture must never break the hook
@@ -3587,6 +3626,9 @@ class TaskLifecycle:
                 "cli_type": self._cli_type,
                 "parent_session_id": self.session_id,
                 "harness_pid": self.ctx.harness_pid if self.ctx is not None else None,
+                "harness_started_at_units": (
+                    self.ctx.harness_started_at_units if self.ctx is not None else None
+                ),
                 "mode": claimed_entry.get("mode", "unrecognized") if claimed_entry else "manual",
                 "delegated_at": now,
             }

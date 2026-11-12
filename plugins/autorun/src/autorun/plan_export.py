@@ -1525,7 +1525,8 @@ def export_plan(plan_path, project_dir, session_id: str = None) -> dict:
         event="PostToolUse",
         tool_name=next(iter(PLAN_TOOLS)),
         tool_input={"cwd": str(project_dir)},
-        store=store
+        store=store,
+        harness_started_at_units=None,
     )
     config = PlanExportConfig.load(project_dir)
     exporter = PlanExport(ctx, config)
@@ -1564,7 +1565,8 @@ def export_rejected_plan(plan_path, project_dir, session_id: str = None) -> dict
         event="PostToolUse",
         tool_name=next(iter(PLAN_TOOLS)),
         tool_input={"cwd": str(project_dir)},
-        store=store
+        store=store,
+        harness_started_at_units=None,
     )
     config = PlanExportConfig.load(project_dir)
     exporter = PlanExport(ctx, config)
@@ -1618,6 +1620,7 @@ def handle_session_start(hook_input: dict) -> None:
         tool_input={"cwd": cwd},
         store=store,
         transcript_path=_expanded_transcript_path,
+        harness_started_at_units=hook_input.get("_pid_started_at_units"),
     )
 
     config = PlanExportConfig.load(cwd)

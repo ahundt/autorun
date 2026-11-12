@@ -1894,6 +1894,7 @@ class EventContext:
         "_session_crons",
         "_server_url",
         "_harness_pid",
+        "_harness_started_at_units",
     )
 
     # Stage constants for type consistency
@@ -1965,6 +1966,7 @@ class EventContext:
         session_identity_authority: SessionIdentityAuthority = "unresolved",
         server_url: str = "",
         harness_pid: Optional[int] = None,
+        harness_started_at_units: Optional[int] = None,
     ):
         object.__setattr__(self, "_session_id", session_id)
         object.__setattr__(
@@ -2010,6 +2012,19 @@ class EventContext:
         except (TypeError, ValueError):
             pid = None
         object.__setattr__(self, "_harness_pid", pid if pid and pid > 0 else None)
+        try:
+            started_at_units = (
+                int(harness_started_at_units)
+                if harness_started_at_units is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            started_at_units = None
+        object.__setattr__(
+            self,
+            "_harness_started_at_units",
+            started_at_units if started_at_units and started_at_units > 0 else None,
+        )
         # Session start source from hook payload (startup/resume/clear/compact)
         object.__setattr__(self, "_source", source)
         object.__setattr__(self, "_agent_id", agent_id or None)
@@ -2084,6 +2099,16 @@ class EventContext:
         left behind.
         """
         return self._harness_pid
+
+    @property
+    def harness_started_at_units(self) -> Optional[int]:
+        """Birth stamp paired with :attr:`harness_pid`, or None.
+
+        The client captures both values from the same ``psutil.Process`` so a
+        reused PID cannot impersonate the harness process that launched a
+        delegation. Older hook payloads omit the stamp.
+        """
+        return self._harness_started_at_units
 
     @property
     def stop_hook_active(self) -> bool:
@@ -3630,6 +3655,7 @@ class AutorunDaemon:
                 session_crons=normalized["session_crons"],
                 server_url=payload.get("server_url", ""),
                 harness_pid=payload.get("_pid"),
+                harness_started_at_units=payload.get("_pid_started_at_units"),
             )
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.
