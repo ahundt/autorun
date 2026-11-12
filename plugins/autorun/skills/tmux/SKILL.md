@@ -2,7 +2,7 @@
 name: tmux
 description: List the AI coding sessions running in your tmux windows and send text to the ones you choose. Use when asked "which sessions are waiting", "list my agent sessions", "what is running in my tmux windows", "continue the waiting sessions", "send this to session B", or "/ar:tmux". Finds Claude Code, Codex, Pi, Prime Agent, Antigravity, Gemini CLI, Qwen Code, OpenCode and ForgeCode panes.
 allowed-tools: Bash(autorun tmux list*), Bash(tmux list-*), Bash(tmux capture-pane *), Bash(tmux display-message *)
-argument-hint: "[list] or [send --to A -- TEXT]"
+argument-hint: "[list] or [send --to %3 -- TEXT]"
 ---
 
 # AI Sessions in tmux
@@ -10,11 +10,12 @@ argument-hint: "[list] or [send --to A -- TEXT]"
 <purpose>
 
 `autorun tmux list` prints each AI coding session running in a tmux window,
-lettered A, B, C, with its target (`session:window.pane`), harness, directory,
-purpose and state. It only reads.
+lettered A, B, C, with its pane id (`%3`), target (`session:window.pane`),
+harness, directory, purpose and state. It only reads.
 
-`autorun tmux send --to <targets> -- <text>` types the text into the sessions
-named, then presses Enter in a second call, then reads each pane back.
+`autorun tmux send --to <targets> -- <text>` types the text into the panes
+named by pane id, then presses Enter in a second call, then reads each pane
+back.
 
 The user's request is the task. With no request beyond the skill name, list
 the sessions and ask what to do.
@@ -58,20 +59,23 @@ the sessions and ask what to do.
    autorun tmux list --json    # the same data as JSON
    ```
 
-2. Show the user the letter, target, harness, directory and status of each
-   session, and ask which sessions should receive what text.
-3. After the user confirms, list again (letters follow the current windows,
-   so they shift when a window opens or closes) and send:
+2. Show the user the letter, pane id, target, harness, directory and status
+   of each session, and ask which sessions should receive what text.
+3. After the user confirms, send to the pane ids that listing showed. A pane
+   id names the same pane until it closes; `send` refuses a letter, because
+   letters shift when a window opens or closes, and refuses a pane id that is
+   gone, printing the current listing:
 
    ```bash
-   autorun tmux send --to A -- continue
-   autorun tmux send --to A,C -- git status
+   autorun tmux send --to %3 -- continue
+   autorun tmux send --to %3,%7 -- git status
    autorun tmux send --to awaiting-input -- continue
    ```
 
 4. Read the output: one line per target naming its session, window, pane,
-   directory and harness, then `[ok]` or `[FAIL]` per target. The exit status
-   is 1 when any send failed or nothing was sent.
+   pane id, directory and harness, then `[ok]`, `[refused]` or `[FAIL]` per
+   target. The exit status is 1 when any target was refused or failed, or
+   nothing was sent.
 5. Capture each pane (its target from the list) and tell the user what it shows:
 
    ```bash
@@ -82,15 +86,15 @@ the sessions and ask what to do.
 
 | `--to` | Types into |
 |--------|------------|
-| `A` | session A of the list |
-| `A,C` | sessions A and C |
+| `%3` | the pane with id `%3` (the Pane column of the list) |
+| `%3,%7` | panes `%3` and `%7` |
 | `all` | every session listed |
 | `awaiting-input` (`awaiting` is accepted) | sessions listed at their plain input prompt, not mid-turn |
 
 Every send reads the pane just before typing. A pane showing a permission
 dialog, plan approval or question menu (status `dialog`), a pane mid-turn,
 and a pane with text already on its input line are refused: nothing is typed
-into them, the output names each by letter with the reason
+into them, the output names each by letter and target with the reason
 (`[refused] B work:2.0: not sent: ...`), and the exit status is 1. Enter in a
 dialog answers it, so a `dialog` session needs the user in that pane; tell
 them, never answer it with `send`.
@@ -98,7 +102,7 @@ them, never answer it with `send`.
 autorun reads only Claude Code's prompts. Every other harness shows status
 `unknown`: `awaiting-input` skips it and `all` refuses it, because its
 dialogs cannot be told from its input prompt. Name such a session by its
-letter to send to it, after the user has looked at it.
+pane id to send to it, after the user has looked at it.
 
 With no `--to`, or no text after `--`, `send` types nothing and exits 1.
 
@@ -109,7 +113,9 @@ with target `session:window.pane`. A window split into a shell and a
 harness lists only the harness pane; a window with two harness panes lists
 both, each with its own letter. `send` types into the pane the target
 names, whichever pane of the window is active. Letters follow tmux's order:
-sessions by name, windows by index, panes by index.
+sessions by name, windows by index, panes by index. A pane is a session only
+while the harness is its foreground process: a harness a shell runs in the
+background, behind an editor, is not listed, since typed keys reach the editor.
 
 ## Keys other than text
 

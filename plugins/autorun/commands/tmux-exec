@@ -3,7 +3,7 @@
 
 A Claude Code install made through the marketplace alone puts no `autorun`
 command on PATH; this script runs the same subcommand from the plugin's own
-source: `tmux-exec list`, `tmux-exec send --to A -- <text>`.
+source: `tmux-exec list`, `tmux-exec send --to %3 -- <text>`.
 """
 import sys
 from pathlib import Path

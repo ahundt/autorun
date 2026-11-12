@@ -770,8 +770,10 @@ class TmuxUtilities:
 
         A pane runs a harness when its own process (`tmux new-window codex`)
         or one of its child processes (a shell that started it) is a
-        registered harness executable (see _process_harness). Fails safe:
-        any error reports no harness.
+        registered harness executable (see _process_harness) in the
+        foreground of the pane's terminal, which is what receives typed keys.
+        A harness a shell put in the background (`codex exec ... &` with vim
+        in front) does not count. Fails safe: any error reports no harness.
         """
         try:
             result = self.execute_tmux_command(
@@ -793,7 +795,8 @@ class TmuxUtilities:
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2
                 )
                 candidates = (children.stdout.split() if children.returncode == 0 else []) + [pid]
-                harness = next(filter(None, map(_process_harness, candidates)), None)
+                harness = next((h for c in candidates
+                                if (h := _process_harness(c)) and _in_foreground(c)), None)
                 if harness:
                     found.append((index, harness))
             return found
@@ -843,6 +846,12 @@ def _harness_fields(harness: Optional[str]) -> Dict[str, Any]:
 
     return {'harness': harness, 'is_ai_session': harness is not None,
             'is_claude_session': harness == CLAUDE.name}
+
+
+def _in_foreground(pid: str) -> bool:
+    """The process is in its terminal's foreground process group: ps marks
+    its state with '+' (macOS and procps alike)."""
+    return '+' in _ps_field(pid, 'stat')
 
 
 def _process_harness(pid: str) -> Optional[str]:
@@ -2404,13 +2413,15 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
 
     Each such pane is one entry, so a window split into a shell and a
     harness, or into two harnesses, is targeted pane by pane. 'tmux_target'
-    is 'session:window.pane', which execute_session_selections() and
-    send_to_session() type into, so the pane named is the pane that receives
-    the keys, whichever pane of the window is active. Order, which fixes the
+    is 'session:window.pane' and 'pane_id' tmux's '%N' id for the pane, which
+    tmux never reuses while the server runs; execute_session_selections() and
+    send_to_session() type into the pane by that id (by tmux_target when it
+    is missing), so the pane named is the pane that receives the keys,
+    whichever pane of the window is active and whatever moved since. Order, which fixes the
     letters `autorun tmux list` shows: sessions as tmux lists them (by name),
     windows by index, panes by index. The caller's own pane is left out.
 
-    Returns list of session dicts with tmux_target, session_name, window_id,
+    Returns list of session dicts with tmux_target, pane_id, session_name, window_id,
     pane, harness, content and content_preview (that pane's last
     DEFAULT_CAPTURE_LINES lines), path (that pane's directory), prompt_type
     and is_active (read from that pane), and the window's title, cmd, pid,
@@ -2427,13 +2438,17 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
                 ['capture-pane', '-p', '-S', f'-{DEFAULT_CAPTURE_LINES}'], win['session'], window_id, pane)
             content = capture['stdout'] if capture and capture.get('returncode') == 0 else ''
             where = tmux.execute_tmux_command(
-                ['display-message', '-p', '-t', f"{win['session']}:{window_id}.{pane}", '#{pane_current_path}'])
-            path = where['stdout'].strip() if where and where.get('returncode') == 0 else win.get('path', '')
+                ['display-message', '-p', '-t', f"{win['session']}:{window_id}.{pane}",
+                 '#{pane_id} #{pane_current_path}'])
+            pane_id, _, path = (where['stdout'].strip() if where and where.get('returncode') == 0
+                                else '').partition(' ')
+            path = path or win.get('path', '')
             sessions.append({
                 'session_name': win['session'],
                 'window_id': window_id,
                 'pane': pane,
                 'tmux_target': f"{win['session']}:{window_id}.{pane}",
+                'pane_id': pane_id if pane_id.startswith('%') else None,
                 'content': content,
                 'content_preview': content[:CONTENT_PREVIEW_LENGTH],
                 'title': win.get('title', ''),
@@ -2454,13 +2469,16 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
 def _send_result(session: dict, command: str, send: Callable[..., bool]) -> dict:
     """Run send(session_name, window_id, pane) for session['tmux_target'] and report it.
 
-    The target is 'session:window.pane' (pane None for a bare 'session:window',
-    which tmux resolves to the window's active pane). send returns a bool, or
+    The pane is session['pane_id'] ('%N') when discovery recorded one, else
+    'session:window.pane' (pane None for a bare 'session:window', which tmux
+    resolves to the window's active pane). send returns a bool, or
     (sent, reason) as send_message_to_claude does.
     """
     target = session['tmux_target']
     session_name, window_id = target.split(':', 1)
     window_id, _, pane = window_id.partition('.')
+    if session.get('pane_id'):
+        session_name, window_id, pane = session['pane_id'], None, None
     try:
         outcome = send(session_name, window_id, pane or None)
     except Exception as e:

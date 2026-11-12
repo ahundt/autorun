@@ -59,6 +59,7 @@ class TestIsClaudeSession:
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),  # pgrep -P
                 Mock(returncode=0, stdout='/usr/local/bin/claude\n'),  # ps -p
+                Mock(returncode=0, stdout='S+\n'),  # ps -o stat=: in the foreground
             ]
 
             assert tmux.is_claude_session('test-session', '0') is True
@@ -73,6 +74,7 @@ class TestIsClaudeSession:
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),
                 Mock(returncode=0, stdout='/usr/local/bin/happy-dev\n'),
+                Mock(returncode=0, stdout='S+\n'),
             ]
 
             assert tmux.is_claude_session('test-session', '0') is True
@@ -117,8 +119,10 @@ def _fake_process_table(children, procs):
     """subprocess.run stand-in for pgrep -P and ps -p, keyed on the arguments.
 
     children maps a parent pid to its child pids; procs maps a pid to
-    (comm, args). pgrep rejects a ppid list that is not comma-separated
-    digits with exit 2, as the real macOS and procps pgrep do.
+    (comm, args) or (comm, args, stat); stat defaults to 'S+', in the
+    terminal's foreground process group. pgrep rejects a ppid list that is
+    not comma-separated digits with exit 2, as the real macOS and procps
+    pgrep do.
     """
     import re
 
@@ -129,8 +133,9 @@ def _fake_process_table(children, procs):
             kids = [k for p in cmd[2].split(',') for k in children.get(p, [])]
             return Mock(returncode=0 if kids else 1, stdout=''.join(f'{k}\n' for k in kids))
         if cmd[0] == 'ps':
-            comm, args = procs[cmd[2]]
-            return Mock(returncode=0, stdout=(comm if cmd[4] == 'comm=' else args) + '\n')
+            comm, args, stat = (*procs[cmd[2]], 'S+')[:3]
+            field = {'comm=': comm, 'args=': args, 'stat=': stat}[cmd[4]]
+            return Mock(returncode=0, stdout=field + '\n')
         raise AssertionError(f'unexpected command {cmd}')
     return run
 
@@ -175,6 +180,18 @@ class TestIsClaudeSessionMatchesTheProcessNotItsArguments:
                 patch('autorun.tmux_utils.subprocess.run',
                       side_effect=_fake_process_table({'111': ['333']}, {**procs, '444': ('/bin/sh', 'sh')})):
             assert tmux.pane_harnesses('test-session', '0') == [('0', 'claude'), ('1', 'codex')]
+
+    def test_a_harness_in_the_background_of_a_shell_is_not_an_ai_session(self):
+        """`codex exec ... &` in a shell whose foreground is vim: typing into
+        that pane types into vim, so the pane is not an AI session."""
+        tmux = TmuxUtilities(session_name="test-session")
+        procs = {'111': ('-zsh', '-zsh', 'Ss'), '333': ('/usr/local/bin/codex', 'codex exec x', 'S'),
+                 '444': ('/usr/bin/vim', 'vim notes.md', 'S+')}
+        with patch.object(tmux, 'execute_tmux_command',
+                          return_value={'returncode': 0, 'stdout': '0 111\n'}), \
+                patch('autorun.tmux_utils.subprocess.run',
+                      side_effect=_fake_process_table({'111': ['333', '444']}, procs)):
+            assert tmux.pane_harnesses('test-session', '0') == []
 
     def test_node_running_the_claude_script_is_detected(self):
         assert self._detect(

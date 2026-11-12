@@ -220,8 +220,9 @@ def format_output(sessions: List[Dict]) -> str:
     Truncation uses '~' suffix to signal cut content.
     """
     term_width = shutil.get_terminal_size((120, 24)).columns
-    # Fixed: ID(3) + Target(14) + Harness(11) + Status(10) + Awaiting(8) + Actions(18) + separators(7) = 71
-    fixed_width = 71
+    # Fixed: ID(3) + Pane(5) + Target(14) + Harness(11) + Status(10) + Awaiting(8) + Actions(18)
+    # + separators(8) = 77
+    fixed_width = 77
     remaining = max(term_width - fixed_width, 45)
     dir_width = max(remaining * 2 // 5, 15)
     purpose_width = max(remaining - dir_width, 20)
@@ -230,9 +231,9 @@ def format_output(sessions: List[Dict]) -> str:
         f"\n{'=' * term_width}",
         f' AI sessions in tmux ({len(sessions)} found)',
         f"{'=' * term_width}\n",
-        f"{'ID':<3} {'Target':<14} {'Harness':<11} {'Directory':<{dir_width}} "
+        f"{'ID':<3} {'Pane':<5} {'Target':<14} {'Harness':<11} {'Directory':<{dir_width}} "
         f"{'Purpose':<{purpose_width}} {'Status':<10} {'Awaiting':<8} Actions",
-        f"{'-' * 3} {'-' * 14} {'-' * 11} {'-' * dir_width} {'-' * purpose_width} "
+        f"{'-' * 3} {'-' * 5} {'-' * 14} {'-' * 11} {'-' * dir_width} {'-' * purpose_width} "
         f"{'-' * 10} {'-' * 8} {'-' * 18}",
     ]
     for i, s in enumerate(sessions):
@@ -248,15 +249,17 @@ def format_output(sessions: List[Dict]) -> str:
         status = s.get('status', 'unknown')[:9]
         harness = (s.get('harness') or 'unknown')[:11]
         lines.append(
-            f"{letter:<3} {s['tmux_target']:<14} {harness:<11} {directory:<{dir_width}} "
+            f"{letter:<3} {s.get('pane_id') or '?':<5} {s['tmux_target']:<14} {harness:<11} "
+            f"{directory:<{dir_width}} "
             f"{purpose:<{purpose_width}} {status:<10} {awaiting:<8} {actions}"
         )
 
     lines += [
         f"\n{'-' * term_width}",
-        'Selection syntax (types the text, then Enter):',
-        "  autorun tmux send --to A -- <text>               into session A",
-        "  autorun tmux send --to A,C -- <text>             into A and C",
+        'Selection syntax (types the text, then Enter). Name panes by the Pane column,',
+        'which stays put when windows open or close; the letters do not:',
+        "  autorun tmux send --to %3 -- <text>              into the pane with id %3",
+        "  autorun tmux send --to %3,%7 -- <text>           into %3 and %7",
         "  autorun tmux send --to all -- <text>             into every session listed",
         "  autorun tmux send --to awaiting-input -- <text>  into sessions at their plain input prompt",
         "Nothing is typed into a session showing a dialog, mid-turn or with text typed;",
@@ -301,14 +304,15 @@ def execute_selections(selection_str: str, sessions: List[Dict], command: str = 
 # Command entrypoints: autorun tmux list | send
 # ---------------------------------------------------------------------------
 
-SEND_TARGETS = ("letters from `autorun tmux list` (--to A, --to A,C), --to all, "
-                "or --to awaiting-input (awaiting is accepted)")
+SEND_TARGETS = ("pane ids from the Pane column of `autorun tmux list` (--to %3, --to %3,%7), "
+                "--to all, or --to awaiting-input (awaiting is accepted)")
 
 
 def describe_target(session: Dict) -> str:
     """One line naming where a send to this session lands."""
     return (f"  {session['tmux_target']}: session {session.get('session_name', '?')}, "
-            f"window {session.get('window_id', '?')}, pane {session.get('pane') or '?'}, "
+            f"window {session.get('window_id', '?')}, pane {session.get('pane') or '?'} "
+            f"(id {session.get('pane_id') or '?'}), "
             f"directory {session.get('path') or session.get('directory') or 'unknown'}, "
             f"harness {session.get('harness') or 'unknown'}")
 
@@ -368,11 +372,29 @@ def list_sessions(as_json: bool = False) -> int:
     return 0
 
 
+def _letters_for_pane_ids(to: str, sessions: List[Dict]) -> str:
+    """The letters, in this discovery, of the pane ids `to` names ('%3,%7'),
+    or '' when any entry is not a pane id this discovery found.
+
+    Letters are not accepted here: `send` discovers the panes again, so a
+    window opened or closed since `list` would shift every letter after it
+    onto another pane. A pane id ('%N') names one pane for the life of the
+    tmux server and is never reused, so the pane named is the pane listed.
+    """
+    letters = {s.get('pane_id'): chr(65 + i) for i, s in enumerate(sessions) if s.get('pane_id')}
+    wanted = [part.strip() for part in to.split(',') if part.strip()]
+    if not wanted or any(part not in letters for part in wanted):
+        return ''
+    return ','.join(letters[part] for part in wanted)
+
+
 def send_text(to: str, text: str) -> int:
     """`autorun tmux send --to <targets> -- <text>`: type text, then Enter, into the targets.
 
-    Letters refer to the order `autorun tmux list` prints, discovered again
-    here. With no --to or no text, nothing is typed and the result is 1.
+    Targets are pane ids ('%3', as `autorun tmux list` prints them), all, or
+    awaiting-input, resolved against the panes discovered here. A letter, a
+    pane id no longer present, or anything else is refused with the current
+    listing. With no --to or no text, nothing is typed and the result is 1.
     """
     if not to:
         print(f'Nothing sent: name the panes with {SEND_TARGETS}. '
@@ -386,8 +408,17 @@ def send_text(to: str, text: str) -> int:
     if not sessions:
         print('Nothing sent: no AI coding sessions found in tmux.')
         return 1
-    return handle_execute_mode({'selections': to, 'command': text,
-                                'sessions': analyze_sessions(sessions)})
+    sessions = analyze_sessions(sessions)
+    selection = to.strip()
+    if selection.lower() not in ('all', 'awaiting', 'awaiting-input'):
+        selection = _letters_for_pane_ids(to, sessions)
+        if not selection:
+            print(f"Nothing sent: '{to}' is not a pane id in the current listing. Name panes "
+                  f"by pane id, the Pane column (--to %3,%7): letters shift when a window "
+                  f"opens or closes, a pane id does not. Current listing:")
+            print(format_output(sessions))
+            return 1
+    return handle_execute_mode({'selections': selection, 'command': text, 'sessions': sessions})
 
 
 def run_tmux_command(args, tmux_parser) -> int:

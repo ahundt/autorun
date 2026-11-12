@@ -578,7 +578,7 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 |---|---|
 | `/ar:commit` | the 17-step commit process: `<files>:` or `type(scope):` subjects, concrete wording, a secrets check |
 | `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
-| `/ar:tmux` | list the AI coding sessions running in your tmux windows, lettered A, B, C, with harness, directory and status, and type text into the ones you name (`autorun tmux list`, `autorun tmux send --to A -- continue`) |
+| `/ar:tmux` | list the AI coding sessions running in your tmux windows, lettered A, B, C, with pane id, harness, directory and status, and type text into the ones you name by pane id (`autorun tmux list`, `autorun tmux send --to %3 -- continue`) |
 | `/ar:cache` | warns before a prompt re-sends an expired prompt cache of 100,000 tokens or more (Claude Code; Pi and Prime Agent when `age` is set): `on` blocks it until the same text is sent again, `warn` (the default) only tells, `off` stops it; each takes `[5m\|1h\|perm]`. `set expired-min-tokens <tokens>` sets the floor. Optional tool-time thresholds: `set ratio\|read\|age <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>`. Details: [commands/cache.md](plugins/autorun/commands/cache.md) |
 | `/ar:restart-daemon` | restart the daemon for this install |
 
@@ -586,7 +586,7 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 harnesses, and shows each session's status as `idle`, `active`, `dialog`,
 `error`, `completed` or `unknown`; only Claude Code's prompts can be read, so
 every other harness shows `unknown`. `dialog` is a permission, plan or question
-prompt: Enter there answers it, so it needs you in that pane. `autorun tmux send --to <A | A,C | all | awaiting-input>
+prompt: Enter there answers it, so it needs you in that pane. `autorun tmux send --to <%3 | %3,%7 | all | awaiting-input>
 -- <text>` prints each target's session, window, pane, directory and harness,
 types the text, presses Enter in a second call, and reports text still on the
 input line as `typed, not submitted` and a pane it could not read back as
@@ -594,7 +594,11 @@ input line as `typed, not submitted` and a pane it could not read back as
 and refuses, typing nothing, a pane in a dialog, mid-turn or with text already
 typed, naming it by letter with the reason and exiting 1. `awaiting-input`
 selects only sessions at their plain input prompt; it and `all` never type into
-an `unknown` session, which only its letter reaches.
+an `unknown` session, which only its pane id reaches. Panes are named by the
+pane id `list` prints (`%3`), which tmux never reuses; a letter is refused,
+because letters shift when a window opens or closes between `list` and `send`.
+A pane counts as an AI session only while the harness is the pane's
+foreground process.
 
 ### Renamed commands
 
@@ -720,15 +724,15 @@ sessions with no unfinished tasks, archives them before deleting, and refuses
 **AI sessions in tmux** (`/ar:tmux` in a session):
 
 ```bash
-autorun tmux list                          # read only: letter, target, harness, directory, status
+autorun tmux list                          # read only: letter, pane id, target, harness, directory, status
 autorun tmux list --json
-autorun tmux send --to A -- continue       # type into session A, then Enter
-autorun tmux send --to A,C -- git status
-autorun tmux send --to awaiting-input -- continue   # Claude Code sessions waiting at a prompt
+autorun tmux send --to %3 -- continue      # type into the pane with id %3, then Enter
+autorun tmux send --to %3,%7 -- git status
+autorun tmux send --to awaiting-input -- continue   # sessions at their plain input prompt
 ```
 
 `send` with no `--to` or no text types nothing and exits 1; it also exits 1
-when any target failed. A Claude Code install made through the marketplace
+when any target was refused or failed. A Claude Code install made through the marketplace
 alone has no `autorun` on PATH; `commands/tmux-exec` in the plugin takes the
 same arguments.
 

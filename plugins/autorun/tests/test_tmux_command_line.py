@@ -24,10 +24,10 @@ from autorun.__main__ import main
 
 SESSIONS = [
     {'tmux_target': 'work:1.0', 'session_name': 'work', 'window_id': '1', 'pane': '0',
-     'path': '~/src/one', 'harness': 'claude', 'content': '❯ \n', 'prompt_type': 'input',
+     'pane_id': '%3', 'path': '~/src/one', 'harness': 'claude', 'content': '❯ \n', 'prompt_type': 'input',
      'is_active': False, 'title': 'one'},
     {'tmux_target': 'work:2.1', 'session_name': 'work', 'window_id': '2', 'pane': '1',
-     'path': '~/src/two', 'harness': 'codex', 'content': '', 'prompt_type': 'unknown',
+     'pane_id': '%7', 'path': '~/src/two', 'harness': 'codex', 'content': '', 'prompt_type': 'unknown',
      'is_active': False, 'title': 'two'},
 ]
 
@@ -85,7 +85,7 @@ def test_list_types_nothing(discovered, tmux):
 
 def test_send_reaches_the_one_sender_with_that_selection(discovered, capsys):
     with patch.object(status, 'execute_session_selections', return_value=[]) as sender:
-        main(['tmux', 'send', '--to', 'A', '--', 'x'])
+        main(['tmux', 'send', '--to', '%3', '--', 'x'])
 
     selection, sessions = sender.call_args.args[:2]
     assert selection == 'A'
@@ -98,12 +98,13 @@ def test_send_types_into_the_named_pane_only_after_naming_it(discovered, tmux, c
     tmux.send_literal.side_effect = tmux.send_keys.side_effect = lambda keys, *a, **k: (
         printed_before_typing.append(capsys.readouterr().out) or True)
 
-    assert main(['tmux', 'send', '--to', 'B', '--', 'hello', 'there']) == 0
+    assert main(['tmux', 'send', '--to', '%7', '--', 'hello', 'there']) == 0
 
+    # Addressed by pane id, which tmux never reuses, not by session:window.pane.
     typed = [(name, args[:4]) for name, args, _ in tmux.method_calls
              if name in ('send_literal', 'send_keys')]
-    assert typed == [('send_literal', ('hello there', 'work', '2', '1')),
-                     ('send_keys', ('C-m', 'work', '2', '1'))]
+    assert typed == [('send_literal', ('hello there', '%7', None, None)),
+                     ('send_keys', ('C-m', '%7', None, None))]
     before = printed_before_typing[0]
     assert 'session work' in before and 'window 2' in before and 'pane 1' in before
     assert '~/src/two' in before and 'codex' in before
@@ -113,8 +114,8 @@ def test_send_types_into_the_named_pane_only_after_naming_it(discovered, tmux, c
 @pytest.mark.parametrize('argv', [
     ['tmux', 'send', '--', 'x'],
     ['tmux', 'send', 'x'],
-    ['tmux', 'send', '--to', 'A'],
-    ['tmux', 'send', '--to', 'A', '--'],
+    ['tmux', 'send', '--to', '%3'],
+    ['tmux', 'send', '--to', '%3', '--'],
 ])
 def test_send_without_a_target_or_text_types_nothing_and_fails(argv, discovered, tmux, capsys):
     assert main(argv) != 0
@@ -123,41 +124,57 @@ def test_send_without_a_target_or_text_types_nothing_and_fails(argv, discovered,
     tmux.send_literal.assert_not_called()
     out = capsys.readouterr().out
     if '--to' not in argv:
-        assert 'all' in out and 'awaiting-input' in out and 'A' in out, out
+        assert 'all' in out and 'awaiting-input' in out and '%' in out, out
 
 
 def test_send_awaiting_input_skips_a_pane_whose_state_is_unknown(discovered, tmux, capsys):
     assert main(['tmux', 'send', '--to', 'awaiting-input', '--', 'go']) == 0
 
-    assert {c.args[1:4] for c in tmux.send_keys.call_args_list} == {('work', '1', '0')}
+    assert {c.args[1:4] for c in tmux.send_keys.call_args_list} == {('%3', None, None)}
 
 
 def test_send_accepts_awaiting_for_awaiting_input(discovered, tmux):
     assert main(['tmux', 'send', '--to', 'awaiting', '--', 'go']) == 0
 
-    assert {c.args[1:4] for c in tmux.send_keys.call_args_list} == {('work', '1', '0')}
+    assert {c.args[1:4] for c in tmux.send_keys.call_args_list} == {('%3', None, None)}
 
 
 def test_a_failed_send_exits_nonzero(discovered, tmux, capsys):
     tmux.send_keys.return_value = False
 
-    assert main(['tmux', 'send', '--to', 'A', '--', 'x']) == 1
+    assert main(['tmux', 'send', '--to', '%3', '--', 'x']) == 1
     assert '[FAIL]' in capsys.readouterr().out
 
 
 def test_a_send_that_cannot_be_read_back_is_not_ok_and_exits_nonzero(discovered, tmux, capsys):
     with patch('autorun.tmux_utils._text_on_cursor_line', return_value=None):
-        assert main(['tmux', 'send', '--to', 'A', '--', 'x']) == 1
+        assert main(['tmux', 'send', '--to', '%3', '--', 'x']) == 1
 
     out = capsys.readouterr().out
     assert 'sent, not confirmed' in out and '[ok]' not in out, out
 
 
-def test_an_invalid_selection_types_nothing_and_exits_nonzero(discovered, tmux):
-    assert main(['tmux', 'send', '--to', 'Z', '--', 'x']) == 1
+@pytest.mark.parametrize('to', ['Z', '%99', '%3,%99', 'work:1.0'])
+def test_an_invalid_or_gone_target_types_nothing_and_exits_nonzero(to, discovered, tmux, capsys):
+    assert main(['tmux', 'send', '--to', to, '--', 'x']) == 1
 
     tmux.send_keys.assert_not_called()
     tmux.send_literal.assert_not_called()
+    assert '%3' in capsys.readouterr().out, 'the current listing, with its pane ids'
+
+
+@pytest.mark.parametrize('to', ['A', 'A,B', 'b'])
+def test_a_letter_is_refused_because_letters_shift_between_list_and_send(
+        to, discovered, tmux, capsys):
+    """send re-discovers the panes, so a letter can name another pane than
+    the one the user saw in `list` when a window opened or closed between
+    them. Only the pane id names the same pane both times."""
+    assert main(['tmux', 'send', '--to', to, '--', 'x']) == 1
+
+    tmux.send_keys.assert_not_called()
+    tmux.send_literal.assert_not_called()
+    out = capsys.readouterr().out
+    assert 'pane id' in out and '%3' in out and '%7' in out, out
 
 
 def test_status_module_main_takes_argv(discovered, capsys, monkeypatch):
@@ -334,6 +351,13 @@ def _autorun_tmux(env, *args):
                           text=True, encoding='utf-8', env=env, timeout=120)
 
 
+def _pane_ids(env):
+    """{tmux_target: pane id} from `autorun tmux list --json`, the ids `send --to` takes."""
+    result = _autorun_tmux(env, 'list', '--json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    return {s['tmux_target']: s['pane_id'] for s in json.loads(result.stdout)['sessions']}
+
+
 @pytest.mark.tmux
 class TestTmuxCommandOnAPrivateServer:
     """`autorun tmux list` and `send`, run as a separate process the way a user
@@ -375,14 +399,15 @@ class TestTmuxCommandOnAPrivateServer:
 
         assert result.returncode == 0, result.stdout + result.stderr
         rows = [line.split() for line in result.stdout.splitlines() if line[:2] in ('A ', 'B ', 'E ')]
-        assert [(r[0], r[1], r[2]) for r in rows] == [
+        assert [(r[0], r[2], r[3]) for r in rows] == [
             ('A', 'h9:0.0', 'claude'), ('B', 'h9:1.0', 'codex'), ('E', 'h9:4.0', 'antigravity')]
+        assert all(r[1].startswith('%') for r in rows), rows
 
-    def test_send_to_a_types_into_the_first_pane_only(self, server):
+    def test_send_to_the_first_pane_id_types_into_that_pane_only(self, server):
         tmux, env = server
         before = self._screens(tmux)
 
-        result = self._autorun(env, 'send', '--to', 'A', '--', 'hello')
+        result = self._autorun(env, 'send', '--to', _pane_ids(env)['h9:0.0'], '--', 'hello')
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert 'h9:0.0: session h9, window 0, pane 0' in result.stdout
@@ -399,7 +424,7 @@ class TestTmuxCommandOnAPrivateServer:
         letter = chr(ord('A') + stuck)
         before = self._screens(tmux)
 
-        result = self._autorun(env, 'send', '--to', letter, '--', 'stays')
+        result = self._autorun(env, 'send', '--to', _pane_ids(env)[f'h9:{stuck}.0'], '--', 'stays')
 
         assert result.returncode == 1, result.stdout + result.stderr
         assert f'[FAIL] {letter} h9:{stuck}.0: typed, not submitted' in result.stdout
@@ -469,7 +494,7 @@ class TestSplitWindowsOnAPrivateServer:
         tmux, env = server
         before = self._screens(tmux)
 
-        result = _autorun_tmux(env, 'send', '--to', 'A', '--', 'hello')
+        result = _autorun_tmux(env, 'send', '--to', _pane_ids(env)['sp:0.0'], '--', 'hello')
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert 'sp:0.0: session sp, window 0, pane 0' in result.stdout
@@ -482,7 +507,7 @@ class TestSplitWindowsOnAPrivateServer:
         tmux, env = server
         before = self._screens(tmux)
 
-        result = _autorun_tmux(env, 'send', '--to', 'C', '--', 'hi')
+        result = _autorun_tmux(env, 'send', '--to', _pane_ids(env)['sp:1.1'], '--', 'hi')
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert 'sp:1.1: session sp, window 1, pane 1' in result.stdout and 'harness pi' in result.stdout
@@ -491,11 +516,44 @@ class TestSplitWindowsOnAPrivateServer:
         assert {t: after[t] for t in self.PANES if t != 'sp:1.1'} == \
             {t: before[t] for t in self.PANES if t != 'sp:1.1'}
 
+    def test_a_pane_id_still_names_the_listed_pane_after_a_window_closes(self, server):
+        """Letters follow the current windows: with sp:0 gone, the codex pane
+        listed as B is A. The pane id the listing showed still reaches it,
+        and the letter the user saw is refused instead of typed elsewhere."""
+        tmux, env = server
+        codex = _pane_ids(env)['sp:1.0']
+        assert tmux('kill-window', '-t', 'sp:0').returncode == 0
+        before = {t: tmux('capture-pane', '-p', '-t', t).stdout for t in self.PANES[2:]}
+
+        by_letter = _autorun_tmux(env, 'send', '--to', 'B', '--', 'wrong')
+        by_id = _autorun_tmux(env, 'send', '--to', codex, '--', 'right')
+
+        assert by_letter.returncode == 1 and 'pane id' in by_letter.stdout, by_letter.stdout
+        assert by_id.returncode == 0, by_id.stdout + by_id.stderr
+        after = {t: tmux('capture-pane', '-p', '-t', t).stdout for t in self.PANES[2:]}
+        assert 'got: right' in after['sp:1.0'] and 'wrong' not in after['sp:1.0'], after['sp:1.0']
+        assert {t: after[t] for t in self.PANES[3:]} == {t: before[t] for t in self.PANES[3:]}
+
+    def test_a_harness_a_shell_runs_in_the_background_is_not_listed(self, private_tmux):
+        """The pane's foreground is `cat`; a harness started with `&` there
+        does not receive typed keys, so the pane is not an AI session."""
+        tmux, env, _ = private_tmux
+        launch = 'set -m; exec -a codex sleep 60 & exec cat'
+        assert tmux('new-session', '-d', '-s', 'bg', 'bash', '-c', launch).returncode == 0
+        _wait_for_screens(tmux, ['bg:0'])
+        import time
+        time.sleep(0.5)  # let the background job exec
+
+        result = _autorun_tmux(env, 'list', '--json')
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert 'bg:0.0' not in result.stdout, result.stdout
+
     def test_an_unsplit_window_is_unchanged(self, server):
         tmux, env = server
         before = self._screens(tmux)
 
-        result = _autorun_tmux(env, 'send', '--to', 'D', '--', 'yo')
+        result = _autorun_tmux(env, 'send', '--to', _pane_ids(env)['sp:2.0'], '--', 'yo')
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert 'sp:2.0: session sp, window 2, pane 0' in result.stdout
@@ -555,12 +613,13 @@ class TestNoSendTypesIntoADialogOnAPrivateServer:
         assert '[ok] A dg:0.0' in result.stdout
         self._assert_untouched(before, after, result)
 
-    def test_letters_naming_each_such_pane_type_into_none_of_them(self, server):
+    def test_pane_ids_naming_each_such_pane_type_into_none_of_them(self, server):
         tmux, env = server
         before = self._screens(tmux)
-        letters = ','.join(chr(ord('A') + i) for i in range(1, len(self.NOT_READY) + 1))
+        ids = _pane_ids(env)
+        targets = ','.join(ids[f'dg:{i}.0'] for i in range(1, len(self.NOT_READY) + 1))
 
-        result = _autorun_tmux(env, 'send', '--to', letters, '--', 'continue')
+        result = _autorun_tmux(env, 'send', '--to', targets, '--', 'continue')
 
         assert result.returncode == 1, result.stdout + result.stderr
         after = self._screens(tmux)

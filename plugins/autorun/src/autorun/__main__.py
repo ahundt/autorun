@@ -261,7 +261,8 @@ def add_tmux_arguments(tmux_parser: argparse.ArgumentParser) -> None:
     tmux_subparsers = tmux_parser.add_subparsers(dest="tmux_command", help="tmux operations")
     tmux_list_parser = tmux_subparsers.add_parser(
         "list",
-        help="Show each AI session with its letter, target, directory, harness and state; types nothing",
+        help="Show each AI session with its letter, pane id, target, directory, harness and state; "
+        "types nothing",
         description="Show the AI coding sessions running in your tmux windows, lettered A, B, C. "
         "Reads only: nothing is typed into any pane.",
     )
@@ -283,8 +284,9 @@ def add_tmux_arguments(tmux_parser: argparse.ArgumentParser) -> None:
     tmux_send_parser.add_argument(
         "--to",
         metavar="TARGETS",
-        help="Letters from `autorun tmux list` (A, or A,C), all, or awaiting-input "
-        "(panes listed at their plain input prompt; awaiting is accepted)",
+        help="Pane ids from the Pane column of `autorun tmux list` (%%3, or %%3,%%7), all, or "
+        "awaiting-input (panes listed at their plain input prompt; awaiting is accepted). "
+        "Letters are refused: they shift when a window opens or closes",
     )
     tmux_send_parser.add_argument(
         "text",
