@@ -56,3 +56,6 @@ Legacy `/ar:task on`, `/ar:task off`, and `/ar:task N` are aliases for
 `prompts on`, `prompts off`, and `prompts N`. They change reminder prompting
 only; task-based Stop enforcement remains active. Use `pause` when discussion
 should temporarily suspend both.
+
+`pause` and `ignore` take effect only when the user types them; sent by the
+model or a subagent, they change nothing. Other operations run for anyone.

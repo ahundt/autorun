@@ -12,4 +12,5 @@ guards stay active either way.
 
 See also: `/ar:status` to view the current rules before clearing.
 
-UserPromptSubmit hook processes this command and clears the selected rules.
+This command takes effect only when the user types it. Sent by the model or
+a subagent, it changes nothing and autorun answers that only the user can run it.

@@ -20,4 +20,5 @@ Editing existing files is always allowed.
 `/ar:status` shows the current policy. From a shell:
 `autorun file allow|justify|existing-only --session SESSION_ID`.
 
-UserPromptSubmit hook has updated the session policy.
+This command takes effect only when the user types it. Sent by the model or
+a subagent, it changes nothing and autorun answers that only the user can run it.

@@ -32,4 +32,5 @@ applies to this session only.
 
 `/ar:status` lists the current allows.
 
-UserPromptSubmit hook processes this command and updates session or global state.
+This command takes effect only when the user types it. Sent by the model or
+a subagent, it changes nothing and autorun answers that only the user can run it.

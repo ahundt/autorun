@@ -11,6 +11,8 @@ Blocks tool use when the Claude Code prompt cache is cold (cache hit ratio low,
 cache-read tokens below floor, or cache age above ceiling), using the same
 `5m | 5 | perm` override grammar as `/ar:ok`. **Off by default** — enable with
 `/ar:cache on`.
+Every `/ar:cache` form takes effect only when the user types it; sent by the
+model or a subagent, it changes nothing.
 
 ## Usage
 
