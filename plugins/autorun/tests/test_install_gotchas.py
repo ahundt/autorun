@@ -1548,6 +1548,110 @@ def test_successful_claude_registration_expands_the_cached_hook_root(tmp_path, m
     assert outcomes and all(outcome.ok for outcome in outcomes)
 
 
+def test_plain_claude_registration_repairs_same_version_cache_payload(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+    )
+    (plugin / "skills" / "commit").mkdir(parents=True)
+    (plugin / "skills" / "commit" / "SKILL.md").write_text("current\n", encoding="utf-8")
+    cached = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
+    cached.parent.mkdir(parents=True)
+    shutil.copytree(plugin, cached)
+    (cached / "skills" / "moved-away").mkdir()
+    (cached / "skills" / "moved-away" / "SKILL.md").write_text("stale\n", encoding="utf-8")
+    runtime = cached / ".venv" / "keep.txt"
+    runtime.parent.mkdir()
+    runtime.write_text("runtime\n", encoding="utf-8")
+    calls = []
+
+    def native_update(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
+        removing=False, run=native_update, available=("claude",),
+    )
+
+    assert calls == [("claude", "plugin", "update", "ar@autorun"), ("claude", "plugin", "enable", "ar@autorun")]
+    assert outcomes and all(outcome.ok for outcome in outcomes)
+    assert not (cached / "skills" / "moved-away").exists()
+    assert (cached / "skills" / "commit" / "SKILL.md").read_text(encoding="utf-8") == "current\n"
+    assert runtime.read_text(encoding="utf-8") == "runtime\n"
+
+
+def test_claude_upgrade_retires_superseded_owned_cache_versions(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "ar", "version": "1.2.4"}), encoding="utf-8"
+    )
+    old = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
+    current = old.parent / "1.2.4"
+    old.parent.mkdir(parents=True)
+    shutil.copytree(plugin, old)
+
+    def native_update(argv):
+        if tuple(argv[:3]) == ("claude", "plugin", "update"):
+            shutil.copytree(plugin, current)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
+        removing=False, run=native_update, available=("claude",),
+    )
+
+    assert outcomes and all(outcome.ok for outcome in outcomes)
+    assert current.is_dir()
+    assert not old.exists()
+
+
+def test_claude_uninstall_retires_owned_cache_and_keeps_unproven_tree(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "ar", "version": "1.2.4"}), encoding="utf-8"
+    )
+    root = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar"
+    owned = root / "1.2.4"
+    unproven = root / "handmade"
+    root.mkdir(parents=True)
+    shutil.copytree(plugin, owned)
+    unproven.mkdir()
+    (unproven / "notes.txt").write_text("keep me\n", encoding="utf-8")
+
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
+        removing=True,
+        run=lambda argv: subprocess.CompletedProcess(argv, 0, "", ""),
+        available=("claude",),
+    )
+
+    assert any("cache" in outcome.step for outcome in outcomes)
+    assert not owned.exists()
+    assert (unproven / "notes.txt").is_file()
+
+
 def test_failed_registration_never_replaces_an_existing_claude_runtime(
     tmp_path, monkeypatch
 ):

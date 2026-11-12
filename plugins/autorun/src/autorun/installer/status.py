@@ -23,8 +23,10 @@ reports nothing. Every check here is a question the walk cannot ask.
 Each check returns a finding rather than printing, so the same data serves
 ``--status``, an install summary and a test.
 
-Complexity: O(harnesses) stats plus one subprocess per runnable check, and only
-when asked. Nothing here walks a tree.
+Complexity: O(harnesses) stats plus one subprocess per runnable check. Claude
+cache checks fingerprint each current shipped/cache payload once, O(files +
+bytes); superseded versions are inventoried by directory name and are not
+hashed by status.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping, Sequence
 
-from . import codex, discovery, memory
+from . import claude, codex, discovery, memory
 from .fs import Verdict, atomic_write
 from .runtime import Runner, _spawn
 
@@ -162,6 +164,23 @@ def _duplicate_skills(routes: Mapping[str, Sequence[Path]]) -> Iterator[Finding]
                 )
 
 
+def _claude_caches(entries: Mapping[str, tuple[Path, Path]]) -> Iterator[Finding]:
+    """Same-version cache payloads that no longer match what this build ships."""
+    for label, (source, cached) in entries.items():
+        mismatches = claude.cache_mismatches(source, cached)
+        if not mismatches:
+            continue
+        shown = ", ".join(mismatches[:5])
+        if len(mismatches) > 5:
+            shown += f", and {len(mismatches) - 5} more"
+        yield Finding(
+            f"Claude cache {label}",
+            Level.BROKEN,
+            shown,
+            "run a plain install; it refreshes stale cache payloads automatically",
+        )
+
+
 def _codex_files(codex_dir: Path, guidance: memory.Block | None) -> Iterator[Finding]:
     """Failures Codex turns into silent absence rather than an error."""
     agents = codex_dir / "AGENTS.md"
@@ -211,6 +230,7 @@ def health(
     known_slugs: Sequence[str] = (),
     registry_entries: Mapping[str, Sequence[str]] | None = None,
     skill_routes: Mapping[str, Sequence[Path]] | None = None,
+    claude_cache_entries: Mapping[str, tuple[Path, Path]] | None = None,
     codex_dir: Path | None = None,
     codex_guidance: memory.Block | None = None,
     run: Runner = _spawn,
@@ -225,6 +245,7 @@ def health(
     findings.extend(_foreign_blocks(memory_files, known_slugs))
     findings.extend(_duplicate_products(registry_entries or {}))
     findings.extend(_duplicate_skills(skill_routes or {}))
+    findings.extend(_claude_caches(claude_cache_entries or {}))
     if codex_dir is not None:
         findings.extend(_codex_files(codex_dir, codex_guidance))
     return tuple(findings)

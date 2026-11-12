@@ -18,6 +18,7 @@ from typing import Iterable, Mapping, Sequence
 
 from ..platforms import PLATFORMS
 from . import (
+    claude,
     discovery,
     extension,
     memory,
@@ -881,12 +882,35 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
             )
             for platform in harnesses
         }
+        claude_cache_entries = {}
+        for harness in harnesses:
+            platform = getattr(harness, "platform", harness)
+            flavor = getattr(platform, "install_flavor", "") or getattr(platform, "name", "")
+            if flavor != "claude":
+                continue
+            market = str(getattr(platform, "marketplace", "") or "autorun")
+            for plugin_name in plugins:
+                source = discovery.plugin_dir(root, plugin_name)
+                if source is None:
+                    continue
+                cached = claude.cache_dir(
+                    platform,
+                    market=market,
+                    plugin=plugin_name,
+                    version=steps._version(source),
+                )
+                if cached is not None and cached.is_dir():
+                    claude_cache_entries[f"{plugin_name}@{market} {steps._version(source)}"] = (
+                        source,
+                        cached,
+                    )
         findings = status.health(
             hook_command=command.argv(),
             memory_files=memory_files,
             known_slugs=tuple(platform.memory_sentinel_slug for platform in PLATFORMS.values() if platform.memory_sentinel_slug),
             registry_entries=_registry_entries(),
             skill_routes=skill_routes,
+            claude_cache_entries=claude_cache_entries,
             codex_dir=(discovery.config_dir(PLATFORMS["codex"]) if PLATFORMS["codex"] in harnesses else None),
             codex_guidance=memory.Block(PLATFORMS["codex"].memory_sentinel_slug),
             run=_run,

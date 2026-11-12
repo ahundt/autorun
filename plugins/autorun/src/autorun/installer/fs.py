@@ -110,6 +110,7 @@ __all__ = [
     "withdraw_files",
     "dereference_links",
     "fill_tree",
+    "refresh_unmarked_tree",
     "json_document",
     "render_json_like",
     "read_text_exact",
@@ -1026,6 +1027,45 @@ def published(
             staged / OWNED_MARKER_NAME,
             json.dumps(TreeManifest.of(staged, plugin, **settings).as_payload(), indent=2) + "\n",
         )
+
+
+def refresh_unmarked_tree(
+    source: Path,
+    target: Path,
+    *,
+    ownership_proof: Callable[[Path], bool],
+    preserve_names: Iterable[str] = (),
+) -> bool:
+    """Atomically refresh a proven harness cache without claiming it.
+
+    Harness caches cannot carry ``.autorun-owned`` because the harness manages
+    their registration metadata.  The caller supplies the exact ownership
+    proof, and named harness-managed children such as ``.venv`` survive the
+    payload refresh.  A failed publication restores the previous tree through
+    :func:`_swapped`.
+    """
+    if not source.is_dir() or not target.is_dir() or target.is_symlink():
+        return False
+    try:
+        if not ownership_proof(target):
+            return False
+    except (OSError, RuntimeError, ValueError):
+        return False
+    try:
+        with _swapped(target) as staged:
+            try:
+                if not ownership_proof(target):
+                    raise _PublicationRefused(Decision(Verdict.KEEP, target, "ownership proof failed"))
+            except (OSError, RuntimeError, ValueError) as error:
+                raise _PublicationRefused(Decision(Verdict.KEEP, target, str(error))) from error
+            shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
+            for name in preserve_names:
+                preserved = target / name
+                if preserved.exists() or preserved.is_symlink():
+                    _copy_path(preserved, staged / name)
+    except _PublicationRefused:
+        return False
+    return True
 
 
 def fill_tree(source: Path, target: Path) -> Path | None:

@@ -313,11 +313,12 @@ The GitHub-backed Claude marketplace follows the repository's default branch,
 not a release asset. Requiring `origin/main`, the CI run, and the later tag to
 name the same SHA keeps a fresh marketplace install identical to the RC.
 
-All eleven jobs must be green, not just the matrix. The seven-entry matrix
-covers Python 3.10-3.14 on Ubuntu plus macOS 3.13 and Windows 3.13; four more
-run once each: `coverage` (75% floor), `release-artifacts` (`-m release`),
-`tmux-integration` (`-m tmux`), and `state-benchmark` (`-m benchmark`). Those
-four are the only place their markers run, since the matrix deselects them.
+All twelve expanded jobs must be green, not just the matrix. The seven-entry
+matrix covers Python 3.10-3.14 on Ubuntu plus macOS 3.13 and Windows 3.13; five
+more expanded jobs run: `coverage` (75% floor), `release-artifacts` on Ubuntu
+and Windows (`-m release`), `tmux-integration` (`-m tmux`), and
+`state-benchmark` (`-m benchmark`). Those dedicated jobs are the only place
+their markers run, since the matrix deselects them.
 
 Two CI failures look like something else. A job that dies in "Install
 dependencies" with "Unable to find lockfile at `uv.lock`" means the lockfile is
@@ -347,9 +348,9 @@ run_id=$(gh run list --workflow ci.yml --commit "$release_sha" --event push \
 test -n "$run_id"
 test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$release_sha"
 
-# Wait for completion and require all eleven expanded jobs to succeed.
+# Wait for completion and require all twelve expanded jobs to succeed.
 gh run watch "$run_id" --exit-status
-test "$(gh run view "$run_id" --json jobs --jq '.jobs | length')" = 11
+test "$(gh run view "$run_id" --json jobs --jq '.jobs | length')" = 12
 test "$(gh run view "$run_id" --json jobs --jq \
   '[.jobs[] | select(.conclusion != "success")] | length')" = 0
 
@@ -710,6 +711,43 @@ env HOME="$verify_root/home" USERPROFILE="$verify_root/home" \
 The installed plugin's version must equal `$release_version`, and the plugin
 must register as `ar` in marketplace `autorun`. Remove the scratch directory once
 its contents have been inspected.
+
+### Roll back a live install to the designated recovery commit
+
+The designated known-good code is local tag `recovery/live-known-good`, commit
+`bdcdb9ac`. Do not substitute an earlier release candidate. Every command and
+interactive check in this recipe changes or exercises a live installation and
+is therefore a **RELEASER live recovery action**, never an automated release
+step.
+
+1. **RELEASER live recovery action — install the pinned distribution:**
+
+   ```bash
+   uv tool install --force 'git+https://github.com/ahundt/autorun.git@bdcdb9ac#subdirectory=plugins/autorun'
+   ```
+
+2. **RELEASER live recovery action — republish every detected harness asset:**
+
+   ```bash
+   autorun --install --force
+   ```
+
+3. **RELEASER live recovery action — restart the daemon from the recovery code:**
+
+   ```bash
+   autorun --restart-daemon
+   ```
+
+4. **RELEASER live recovery action — verify the installed build and asset health:**
+
+   ```bash
+   test "$(autorun --version)" = "autorun 1.0.0"
+   autorun --status
+   ```
+
+   Require `--status` to exit zero, name commit `bdcdb9ac`, and report the hook
+   command healthy. Then start a new Claude Code conversation and run
+   `/ar:status`; require an autorun status reply before resuming release work.
 
 ### Recovery table
 

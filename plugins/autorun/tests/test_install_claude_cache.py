@@ -36,6 +36,10 @@ class Harness:
 def source(tmp_path):
     plugin = tmp_path / "plugin"
     (plugin / "hooks").mkdir(parents=True)
+    (plugin / ".claude-plugin").mkdir()
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+    )
     (plugin / "hooks" / "hooks.json").write_text(
         json.dumps({"hooks": {"PreToolUse": ["${CLAUDE_PLUGIN_ROOT}/hooks/entry.py"]}}),
         encoding="utf-8",
@@ -73,6 +77,51 @@ def test_the_fallback_leaves_no_ownership_marker(source, home):
 
     assert not (written / OWNED_MARKER_NAME).exists()
     assert read_marker(written) is None
+
+
+def test_same_version_cache_mismatch_names_stale_and_changed_files(source, home):
+    written = install(source, home)
+    (written / "skills" / "stale-skill").mkdir(parents=True)
+    (written / "skills" / "stale-skill" / "SKILL.md").write_text("stale\n", encoding="utf-8")
+    (written / "hooks" / "hook_entry.py").write_text("old hook\n", encoding="utf-8")
+
+    mismatches = claude.cache_mismatches(source, written)
+
+    assert "skills/stale-skill/SKILL.md" in mismatches
+    assert "hooks/hook_entry.py" in mismatches
+
+
+def test_refresh_replaces_plugin_payload_and_preserves_managed_runtime(source, home):
+    written = install(source, home)
+    runtime = written / ".venv" / "lib" / "python" / "site-packages"
+    runtime.mkdir(parents=True)
+    (runtime / "keep.txt").write_text("managed runtime\n", encoding="utf-8")
+    (written / "stale.txt").write_text("old payload\n", encoding="utf-8")
+
+    assert claude.refresh_cache(source, written) == written
+
+    assert not (written / "stale.txt").exists()
+    assert (runtime / "keep.txt").read_text(encoding="utf-8") == "managed runtime\n"
+    assert claude.cache_mismatches(source, written) == ()
+
+
+def test_retirement_removes_only_proven_plugin_cache_versions(source, home):
+    current = install(source, home, version="1.2.4")
+    old = install(source, home, version="1.2.3")
+    unproven = claude.cache_dir(Harness(), market="autorun", plugin="ar", version="0.9.0", home=home)
+    assert unproven is not None
+    unproven.mkdir(parents=True)
+    (unproven / "mine.txt").write_text("not proven\n", encoding="utf-8")
+
+    removed, kept = claude.retire_cache_versions(
+        Harness(), market="autorun", plugin="ar", keep=("1.2.4",), home=home
+    )
+
+    assert removed == (old,)
+    assert kept == (unproven,)
+    assert current.is_dir()
+    assert not old.exists()
+    assert (unproven / "mine.txt").is_file()
 
 
 def test_fallback_never_replaces_a_harness_managed_cache(source, home):
@@ -114,9 +163,7 @@ def test_native_cache_creation_wins_a_fallback_publication_race(
     assert (runtime / "__init__.py").read_text(encoding="utf-8") == "native = True\n"
 
 
-def test_versions_sit_beside_each_other_and_none_is_pruned(source, home):
-    """Claude loads the newest and manages the rest, so this reports rather
-    than deletes."""
+def test_versions_are_reported_for_lifecycle_reconciliation(source, home):
     install(source, home, version="1.2.3")
     install(source, home, version="1.2.4")
 

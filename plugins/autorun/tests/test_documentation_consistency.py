@@ -1211,6 +1211,21 @@ def test_ci_actions_are_pinned_to_full_commits():
     assert not mutable, "CI actions use mutable refs:\n  " + "\n  ".join(mutable)
 
 
+def test_releasing_pins_recovery_commit_and_expanded_ci_job_count():
+    releasing = (REPO_ROOT / "RELEASING.md").read_text(encoding="utf-8")
+
+    assert "bdcdb9ac" in releasing
+    assert "recovery/live-known-good" in releasing
+    assert "git+https://github.com/ahundt/autorun.git@bdcdb9ac#subdirectory=plugins/autorun" in releasing
+    assert "autorun --install --force" in releasing
+    assert "autorun --restart-daemon" in releasing
+    assert "all twelve expanded jobs" in releasing
+    assert "length')\" = 12" in releasing
+    assert not re.search(r"(?i)(rollback.{0,100}rc3|rc3.{0,100}rollback)", releasing), (
+        "RELEASING.md must not name rc3 as a rollback target"
+    )
+
+
 def test_setup_bun_pins_the_runtime_not_only_the_action():
     """Pinning the action is weaker than pinning the toolchain it installs.
 

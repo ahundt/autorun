@@ -100,12 +100,15 @@ that need it. No disk access: stage generated content to a temp dir and point th
   it in `Platform.retired_config_dirs` (Antigravity's
   `~/.gemini/antigravity-cli/`), or its trees leak forever carrying our
   marker and no decision names them.
-- **Versioned harness caches belong to the harness.**
-  `<config>/plugins/cache/<market>/<plugin>/<version>/` may copy an ownership
-  marker from the registered source tree. The retirement sweep ignores that
-  path: deleting it would remove state Claude or Codex still tracks. Claude's
-  fallback cache writer proves ownership by path and deliberately writes no
-  marker.
+- **Claude cache payloads use cache-specific ownership.**
+  `<config>/plugins/cache/<market>/<plugin>/<version>/` deliberately carries no
+  `.autorun-owned` marker because it is not part of the general publication
+  sweep. For the `autorun` marketplace, the exact path plus a cached plugin
+  manifest naming the requested plugin proves the generated payload. A plain
+  install refreshes a mismatched current payload while preserving `.venv`, an
+  upgrade retires proven superseded versions, and uninstall retires every
+  proven selected-plugin version. A malformed or foreign same-name tree is
+  left and reported; caches under another market or plugin are never visited.
 - **Never `uv tool uninstall` a name whose console script is also ours.** uv
   removes scripts by *name*, not by owner, and every uv tool shares one bin
   directory. Measured, with `autorun-ai` installed and providing all three:

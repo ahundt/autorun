@@ -113,6 +113,30 @@ def test_a_registry_listing_one_product_once_is_clean():
     assert not any("duplicate" in f.detail for f in found)
 
 
+def test_stale_claude_cache_payload_is_reported_as_broken(tmp_path):
+    source = tmp_path / "source"
+    cached = tmp_path / "cache"
+    for root in (source, cached):
+        (root / ".claude-plugin").mkdir(parents=True)
+        (root / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+        )
+    (source / "current.txt").write_text("current\n", encoding="utf-8")
+    (cached / "current.txt").write_text("current\n", encoding="utf-8")
+    (cached / "stale.txt").write_text("stale\n", encoding="utf-8")
+
+    found = status.health(
+        hook_command=("x",),
+        claude_cache_entries={"ar@autorun 1.2.3": (source, cached)},
+        run=runner(0),
+    )
+
+    mismatch = next(finding for finding in found if finding.check.startswith("Claude cache"))
+    assert mismatch.level is Level.BROKEN
+    assert "stale.txt" in mismatch.detail
+    assert "plain install" in mismatch.fix
+
+
 def test_two_real_copies_of_a_skill_are_reported(tmp_path):
     shared = tmp_path / ".agents" / "skills"
     native = tmp_path / ".qwen" / "skills"

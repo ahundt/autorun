@@ -746,6 +746,7 @@ def _registrations(
                                 if filled is not None:
                                     cached = filled
                             if cached is not None:
+                                claude.refresh_cache(source, cached)
                                 claude.substitute_root(cached)
                                 manifest = cached / "hooks" / "hooks.json"
                                 if manifest.is_file():
@@ -782,6 +783,35 @@ def _registrations(
                                 outcomes = (Outcome(
                                     f"{name}: cache fallback", True, failed
                                 ),)
+                cache_lifecycle_ok = (
+                    flavor == "claude"
+                    and (
+                        (removing and (not outcomes or all(outcome.ok for outcome in outcomes)))
+                        or (not removing and outcomes and all(outcome.ok for outcome in outcomes))
+                    )
+                )
+                if cache_lifecycle_ok:
+                    source = registration_plugins.get(plugin)
+                    keep = () if removing or source is None else (steps._version(source),)
+                    removed, unproven = claude.retire_cache_versions(
+                        platform,
+                        market=registration_market,
+                        plugin=plugin,
+                        keep=keep,
+                        home=ctx.home,
+                    )
+                    if removed:
+                        outcomes = (*outcomes, Outcome(
+                            f"{name}: {plugin} cache retirement",
+                            True,
+                            ", ".join(str(path) for path in removed),
+                        ))
+                    if unproven:
+                        outcomes = (*outcomes, Outcome(
+                            f"{name}: {plugin} cache retirement",
+                            False,
+                            "left unproven cache tree(s): " + ", ".join(str(path) for path in unproven),
+                        ))
                 done.extend(outcomes)
                 if outcomes and all(outcome.ok for outcome in outcomes):
                     commit_registration()
