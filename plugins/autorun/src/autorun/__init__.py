@@ -64,9 +64,7 @@ __all__ = [
     "check_uv_environment",
     "show_uv_environment_status",
     "CONFIG",
-    "log_info",
-    "build_hook_response",
-    # Removed (see main.py module docstring for canonical replacements):
+    # Removed:
     # "COMMAND_HANDLERS" — use plugins.app.commands + app.dispatch()
     # "claude_code_handler" — use __main__.run_direct() → app.dispatch()
     # "stop_handler" — use plugins.autorun_injection (@app.on("Stop"))
@@ -137,42 +135,12 @@ except ImportError:
         """Fallback UV status shower"""
         print("UV environment check not available")
 
-# Export CONFIG and log_info for tests
 # COMMAND_HANDLERS removed — use plugins.app.commands + app.dispatch() (canonical)
 # CONFIG has one source, config.py, which imports only the stdlib at module
 # level and so needs no fallback. A hand-copied fallback CONFIG used to stand
 # in whenever `.main` failed to import, and it had drifted from config.py.
 from .config import CONFIG
 
-COMMAND_HANDLERS = {}  # Removed: use plugins.app.commands + app.dispatch()
-
-try:
-    # Import log_info from main.py (thin shim → logging_utils)
-    from .main import log_info
-except ImportError:
-    def log_info(message):
-        """Fallback log_info function"""
-        pass
-
-# Export additional imports needed for tests
-try:
-    from .main import build_hook_response
-except ImportError:
-    def build_hook_response(continue_execution=True, stop_reason="", system_message="",
-                            decision=None, reason=None, event_name="unknown", ctx=None):
-        """Fallback build_hook_response function - matches main.py signature.
-
-        DRY: This is a fallback for tests if main.py import fails.
-        Source of truth: main.py build_hook_response()
-        """
-        response = {"continue": continue_execution, "stopReason": stop_reason,
-                    "suppressOutput": False, "systemMessage": system_message}
-        # Stop-hook-specific fields for blocking stops
-        if decision is not None:
-            response["decision"] = decision
-        if reason is not None:
-            response["reason"] = reason
-        return response
 
 # claude_code_handler — REMOVED: __main__.run_direct() → app.dispatch() → plugins.py
 # pretooluse_handler — REMOVED: plugins.py enforce_file_policy(ctx) + check_blocked_commands(ctx)

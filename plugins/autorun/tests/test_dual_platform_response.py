@@ -4,7 +4,6 @@
 import pytest
 
 from autorun.core import EventContext, normalize_hook_payload, validate_hook_response
-from autorun.main import build_hook_response
 
 
 HARNESSES = ("claude", "gemini", "qwen", "antigravity", "codex")
@@ -391,22 +390,6 @@ class TestDualPlatformResponse:
     )
     def test_subagent_stop_block_matrix_exact(self, cli_type, expected):
         assert EventContext("subagent-stop-matrix", "SubagentStop", cli_type=cli_type).respond("block", "Reason") == expected
-
-    @pytest.mark.parametrize(
-        ("cli_type", "stop_decision"),
-        [
-            ("claude", "block"),
-            ("gemini", "deny"),
-            ("qwen", "block"),
-            ("antigravity", "continue"),
-            ("codex", "block"),
-        ],
-    )
-    def test_legacy_stop_response_builder_uses_native_stop_decision(self, cli_type, stop_decision):
-        """The compatibility shim must use Stop semantics, not tool-deny words."""
-        ctx = EventContext("legacy-stop-builder", "Stop", cli_type=cli_type)
-        response = build_hook_response(decision="block", reason="Reason", event_name="Stop", ctx=ctx)
-        assert response["decision"] == stop_decision
 
     @pytest.mark.parametrize("cli_type", HARNESSES)
     def test_stop_allow_never_blocks_or_stops_agent(self, cli_type):

@@ -28,9 +28,7 @@ from unittest.mock import patch, Mock
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun.main import (
-    CONFIG, build_hook_response, log_info,
-)
+from autorun.config import CONFIG
 from autorun.config import CONFIG as CONFIG_DIRECT
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
@@ -47,35 +45,6 @@ def _pretooluse(ctx):
     if result is not None:
         return result
     return ctx.allow()
-
-
-class TestBuildHookResponse:
-    """Test build_hook_response function (still in main.py)"""
-
-    def test_default_response(self):
-        """Test default hook response"""
-        response = build_hook_response()
-        assert response["continue"]
-        assert response["stopReason"] == ""
-        assert not response["suppressOutput"]
-        assert response["systemMessage"] == ""
-
-    def test_custom_response(self):
-        """Test custom hook response"""
-        response = build_hook_response(
-            continue_execution=False,
-            stop_reason="test reason",
-            system_message="test message"
-        )
-        assert not response["continue"]
-        assert response["stopReason"] == "test reason"
-        assert response["systemMessage"] == "test message"
-
-    def test_partial_custom_response(self):
-        """Test partial custom response"""
-        response = build_hook_response(system_message="only message")
-        assert response["continue"]
-        assert response["systemMessage"] == "only message"
 
 
 class TestBuildPretoolUseResponse:
@@ -429,15 +398,6 @@ class TestStopHandler:
         # Active autorun sessions should inject a continue prompt
         if response is not None:
             assert response.get("continue", True) is True
-
-
-class TestLogInfo:
-    """Test log_info function (still in main.py)"""
-
-    def test_log_info_no_error(self):
-        """Test log_info doesn't raise errors"""
-        log_info("Test message")
-        log_info("Another test message with special chars: !@#$%^&*()")
 
 
 class TestCommandHandlersRegistry:

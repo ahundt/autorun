@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import uuid
-from autorun import CONFIG, log_info
+from autorun import CONFIG
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
 
@@ -315,15 +315,6 @@ def test_handler_variations_available():
 
     print("✅ All required handler variations available in plugins.app.command_handlers")
 
-def test_log_function():
-    """Test log_info function writes to correct log files"""
-    try:
-        log_info("Test log message")
-        print("✅ Log info function works correctly")
-    except Exception as e:
-        print(f"❌ Log info function error: {e}")
-        raise
-
 def main():
     """Run all compatibility tests"""
     print("🧪 Testing autorun three-stage system compatibility")
@@ -340,7 +331,6 @@ def main():
     test_config_values()
     test_command_handlers()
     test_handler_variations_available()
-    test_log_function()
 
     print("\n🎯 All tests passed! autorun three-stage system verified")
     print("📋 Verification complete:")

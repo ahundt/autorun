@@ -392,13 +392,6 @@ class TestOneRegexGuard:
         plugins._match("a" * 24 + "c", "((a+))+b", "regex")
         assert time.monotonic() - started < 0.5
 
-    def test_main_no_longer_carries_parallel_copies(self):
-        from autorun import main
-
-        for stale in ("parse_pattern_and_description", "is_safe_regex_pattern",
-                      "command_matches_pattern", "has_valid_justification"):
-            assert not hasattr(main, stale), stale
-
 
 class TestRegexPatternsAreTakenVerbatim:
     """E7: shlex ate regex backslashes (`terraform\\s+destroy` was stored as

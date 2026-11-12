@@ -171,19 +171,6 @@ def test_tmux_injector_integration():
         f"DualChannelInjector default session: {default_dual.session_id}"
 
 
-def test_main_py_integration():
-    """Test main.py integration with tmux standards"""
-
-    # get_global_tmux_utils was removed from main.py (Phase 2, Task #13)
-    # Canonical replacement: tmux_utils.get_tmux_utilities() directly
-    tmux = get_tmux_utilities()
-    assert tmux is not None, "get_tmux_utilities() returned None"
-
-    # Verify main.py can still import tmux utilities
-    from autorun.main import TMUX_UTILS_AVAILABLE
-    assert TMUX_UTILS_AVAILABLE, "main.py tmux utilities not available"
-
-
 def test_error_handling_and_fallbacks():
     """Test error handling and graceful fallbacks"""
 

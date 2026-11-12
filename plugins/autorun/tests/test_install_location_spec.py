@@ -117,9 +117,8 @@ def test_no_source_file_hardcodes_a_harness_config_directory():
     harness keeps its files, and a relocated config_dir is silently ignored.
     """
     harness_dirs = {".claude", ".codex", ".gemini", ".qwen", ".forge"}
-    # main.py has one fixed Claude cache lookup. Installer destinations have no
-    # literal budget: discovery owns every deploy root.
-    budget = {"main.py": 1}
+    # No module has a literal budget: discovery owns every deploy root.
+    budget: dict[str, int] = {}
 
     counts: dict[str, int] = {}
     detail: dict[str, list[str]] = {}

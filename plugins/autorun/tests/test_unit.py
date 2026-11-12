@@ -190,54 +190,6 @@ class TestCommandHandlers:
         assert result["continue"] is True
 
 
-class TestSessionState:
-    """Test session state management - simplified tests without complex fixtures"""
-
-    @pytest.mark.unit
-    def test_session_state_basic_functionality(self):
-        """Test basic session state functionality using mock"""
-        # Mock the session_state to avoid database creation
-        with patch('autorun.main.session_state') as mock_session:
-            mock_state = {}
-            mock_session.return_value.__enter__.return_value = mock_state
-            mock_session.return_value.__exit__.return_value = None
-
-            # Test that session state context manager works
-            with mock_session("test_basic_session") as state:
-                # Should be able to set and get values
-                state["test_key"] = "test_value"
-                assert state.get("test_key") == "test_value"
-
-                # Should be able to check existence
-                assert "test_key" in state
-                assert "nonexistent_key" not in state
-
-            # Session should close without errors
-            assert True  # If we reach here, the context manager worked
-
-    @pytest.mark.unit
-    def test_multiple_sessions_basic(self):
-        """Test basic multiple session functionality"""
-        # Mock the session_state to avoid database creation
-        with patch('autorun.main.session_state') as mock_session:
-            # Test that different session IDs don't interfere
-            mock_state_1 = {}
-            mock_session.return_value.__enter__.return_value = mock_state_1
-            mock_session.return_value.__exit__.return_value = None
-
-            with mock_session("session_one") as state1:
-                state1["data"] = "from_session_one"
-
-            mock_state_2 = {}
-            mock_session.return_value.__enter__.return_value = mock_state_2
-            mock_session.return_value.__exit__.return_value = None
-
-            with mock_session("session_two") as state2:
-                state2["data"] = "from_session_two"
-                # Should only see data from session two
-                assert state2.get("data") == "from_session_two"
-
-
 class TestCommandDetection:
     """Test command detection logic.
 

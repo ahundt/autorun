@@ -317,37 +317,6 @@ class TestSecurityFunctions:
     """Test security-related functions"""
 
     @pytest.mark.unit
-    def test_sanitize_log_message_newlines(self):
-        """Test that newlines are escaped in log messages"""
-        from autorun.main import sanitize_log_message
-
-        # Test newline injection attack
-        malicious = "normal\n[FAKE] Injected log entry\nmore"
-        result = sanitize_log_message(malicious)
-        assert "\n" not in result, "Newlines should be escaped"
-        assert "\\n" in result, "Newlines should be replaced with \\n"
-
-    @pytest.mark.unit
-    def test_sanitize_log_message_carriage_return(self):
-        """Test that carriage returns are escaped"""
-        from autorun.main import sanitize_log_message
-
-        malicious = "normal\r\n[FAKE]\rmore"
-        result = sanitize_log_message(malicious)
-        assert "\r" not in result, "Carriage returns should be escaped"
-        assert "\n" not in result, "Newlines should be escaped"
-
-    @pytest.mark.unit
-    def test_sanitize_log_message_truncation(self):
-        """Test that long messages are truncated"""
-        from autorun.main import sanitize_log_message
-
-        long_message = "a" * 20000
-        result = sanitize_log_message(long_message, max_length=100)
-        assert len(result) < 150, "Message should be truncated"
-        assert "truncated" in result, "Should indicate truncation"
-
-    @pytest.mark.unit
     def test_is_safe_regex_rejects_nested_quantifiers(self):
         """Test ReDoS protection rejects dangerous patterns"""
         from autorun.plugins import _is_safe_regex as is_safe_regex_pattern

@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun.core import EventContext, ThreadSafeDB
-from autorun import plugins, build_hook_response
+from autorun import plugins
 
 
 def _make_ctx(prompt: str, session_id: str = None, event: str = "UserPromptSubmit") -> EventContext:
@@ -199,57 +199,6 @@ class TestHookErrorHandling:
             # Result may be None (pass-through) or a dict
             assert result is None or isinstance(result, dict), \
                 f"Event {event!r} should return None or dict, got {type(result)}"
-
-
-class TestHookResponseBuilder:
-    """Test hook response builder function — unchanged from old tests."""
-
-    @pytest.mark.hook
-    def test_build_hook_response_defaults(self):
-        """Test build_hook_response with default values."""
-        response = build_hook_response()
-
-        assert response["continue"] is True
-        assert response["stopReason"] == ""
-        assert response["suppressOutput"] is False
-        assert response["systemMessage"] == ""
-
-    @pytest.mark.hook
-    def test_build_hook_response_custom_values(self):
-        """Test build_hook_response with custom values."""
-        response = build_hook_response(
-            continue_execution=False,
-            stop_reason="test reason",
-            system_message="test message"
-        )
-
-        assert response["continue"] is False
-        assert response["stopReason"] == "test reason"
-        assert response["suppressOutput"] is False
-        assert response["systemMessage"] == "test message"
-
-    @pytest.mark.hook
-    def test_build_hook_response_partial_values(self):
-        """Test build_hook_response with partial custom values."""
-        response = build_hook_response(
-            continue_execution=False,
-            system_message="only custom message"
-        )
-
-        assert response["continue"] is False
-        assert response["stopReason"] == ""
-        assert response["suppressOutput"] is False
-        assert response["systemMessage"] == "only custom message"
-
-    @pytest.mark.hook
-    def test_build_hook_response_types(self):
-        """Test build_hook_response returns correct types."""
-        response = build_hook_response()
-
-        assert isinstance(response["continue"], bool)
-        assert isinstance(response["stopReason"], str)
-        assert isinstance(response["suppressOutput"], bool)
-        assert isinstance(response["systemMessage"], str)
 
 
 class TestHookPerformance:

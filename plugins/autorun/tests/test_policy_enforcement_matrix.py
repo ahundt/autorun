@@ -13,7 +13,7 @@ from unittest.mock import patch
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun.main import session_state
+from autorun.session_manager import session_state
 from autorun.plugins import has_valid_justification
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
