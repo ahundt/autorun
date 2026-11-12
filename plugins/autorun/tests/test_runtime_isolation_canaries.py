@@ -108,11 +108,13 @@ _PROBE = textwrap.dedent(
 
     sys.path.insert(0, %(src)r)
     import autorun
+    from autorun import ipc
     from autorun.session_manager import get_session_manager
 
     print(json.dumps({
         "before": before,
         "state_dir": str(get_session_manager().state_dir.resolve()),
+        "config_dir": str(ipc.AUTORUN_CONFIG_DIR),
     }))
     """
 )
@@ -162,10 +164,11 @@ class TestImportOrdering:
         pass even when isolation was broken.
 
         The child gets a stand-in HOME. Both defaults hang off it: state
-        resolves to ~/.claude/sessions, and importing autorun creates
-        ~/.autorun (core.py calls ipc.ensure_config_dir() at import). With the
-        real HOME this control created the developer's live ~/.autorun on every
-        run; the stand-in keeps the same fallback observable without that write.
+        resolves to ~/.claude/sessions and the config directory
+        (ipc.AUTORUN_CONFIG_DIR) to ~/.autorun. With the real HOME this control
+        could create the developer's live ~/.autorun (core.py calls
+        ipc.ensure_config_dir() at import); the stand-in keeps the fallback
+        observable without that write.
         """
         stand_in_home = tmp_path / "home"
         stand_in_home.mkdir()
@@ -183,6 +186,7 @@ class TestImportOrdering:
             f"Without the variables state resolved to {resolved}, not the "
             f"home-directory default under {stand_in_home}."
         )
-        assert (stand_in_home / ".autorun").is_dir(), (
-            "the import-time default directory was expected under the stand-in home"
+        assert Path(result["config_dir"]) == stand_in_home / ".autorun", (
+            f"Without the variables the config directory resolved to "
+            f"{result['config_dir']}, not {stand_in_home / '.autorun'}."
         )
