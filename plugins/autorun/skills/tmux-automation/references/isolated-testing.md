@@ -1,119 +1,79 @@
-# CLI Testing Workflow
+# Testing a Terminal Program on a Private tmux Server
 
-Active test sessions:
+`tmux -L <name>` starts or reaches a tmux server with its own socket. Its
+sessions are invisible to the user's server, and `kill-server` on it cannot
+touch the user's sessions. `-f /dev/null` makes it ignore the user's tmux
+configuration, so results do not depend on it.
 
-Run `tmux list-sessions` and read its output first.
+Every command below goes through the function `t`, so none can reach the
+user's server by accident.
 
-## Your Task
-
-The user's request is the task description for everything below.
-
-- If argument is `basic`: run the basic test sequence below.
-- If argument is `help`: run the help test sequence below.
-- If argument is a quoted shell command (e.g. `"npm test"`): run that command in an isolated session.
-- If no argument: show usage and ask the user what to test.
+```bash
+S="autorun-test-$$"                         # server and session name, unique per run
+t() { tmux -L "$S" -f /dev/null "$@"; }
+trap 't kill-server 2>/dev/null' EXIT       # removes only this private server
+```
 
 ## Run a Custom Command in Isolation
 
-Replace `COMMAND_HERE` with the actual command from arguments, then execute:
+Replace `COMMAND_HERE` with the command to test.
 
 ```bash
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from autorun.tmux_utils import get_tmux_utilities
-import time, sys
+S="autorun-test-$$"
+t() { tmux -L "$S" -f /dev/null "$@"; }
+trap 't kill-server 2>/dev/null' EXIT
 
-tmux = get_tmux_utilities()
-session = 'autorun-test'
-cmd = 'COMMAND_HERE'  # replace with actual command from arguments
+t new-session -d -s "$S" -x 120 -y 40
+t send-keys -t "$S" -l -- 'COMMAND_HERE'
+t send-keys -t "$S" Enter
 
-try:
-    # Create isolated session (safe: never targets current session)
-    tmux.ensure_session_exists(session)
-
-    # Send command then Enter as SEPARATE send-keys calls (required by tmux protocol)
-    tmux.send_keys(cmd, session)
-    tmux.send_keys('C-m', session)
-
-    # Wait for output (adjust sleep if command is slow)
-    time.sleep(3)
-
-    # Capture full pane content (not capture_current_input which returns only last line)
-    # Correct: session= positional arg; execute_tmux_command auto-appends -t for capture-pane
-    r = tmux.execute_tmux_command(['capture-pane', '-p'], session)
-    output = r['stdout'].strip() if r and r['returncode'] == 0 else '(no output captured)'
-
-    print('Command: ' + cmd)
-    print('Output:')
-    print(output)
-finally:
-    # Always cleanup, even if an exception occurs above
-    # CORRECT: session= param, not inline -t (avoids duplicate -t in execute_tmux_command)
-    tmux.execute_tmux_command(['kill-session'], session=session)
-"
+# Wait until the screen stops changing, at most 15 seconds.
+prev=""
+for _ in $(seq 1 30); do
+  sleep 0.5
+  cur=$(t capture-pane -p -t "$S")
+  [ "$cur" = "$prev" ] && break
+  prev=$cur
+done
+t capture-pane -p -t "$S" -S -200
 ```
 
 ## Basic Test Sequence
 
-```bash
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from autorun.tmux_utils import get_tmux_utilities
-import time
-
-tmux = get_tmux_utilities()
-session = 'autorun-test'
-results = []
-
-for cmd in ['echo hello', 'pwd', 'which python3']:
-    try:
-        tmux.ensure_session_exists(session)
-        tmux.send_keys(cmd, session)
-        tmux.send_keys('C-m', session)
-        time.sleep(1)
-        r = tmux.execute_tmux_command(['capture-pane', '-p'], session)
-        output = r['stdout'].strip() if r and r['returncode'] == 0 else '(capture failed)'
-        results.append((cmd, output, True))
-    except Exception as e:
-        results.append((cmd, str(e), False))
-    finally:
-        # CORRECT: session= param, not inline -t (avoids duplicate -t in execute_tmux_command)
-        tmux.execute_tmux_command(['kill-session'], session=session)
-        time.sleep(0.5)  # brief pause between kill and re-create to avoid race condition
-
-for cmd, out, ok in results:
-    status = 'PASS' if ok and out and 'capture failed' not in out else 'FAIL'
-    print(status + ': ' + cmd)
-    print('  ' + out[:120])
-"
-```
-
-## Help Test Sequence
+Checks that the private server runs commands and returns their output.
 
 ```bash
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from autorun.tmux_utils import get_tmux_utilities
-import time
+S="autorun-test-$$"
+t() { tmux -L "$S" -f /dev/null "$@"; }
+trap 't kill-server 2>/dev/null' EXIT
 
-tmux = get_tmux_utilities()
-session = 'autorun-test'
-try:
-    tmux.ensure_session_exists(session)
-    tmux.send_keys('autorun --help', session)
-    tmux.send_keys('C-m', session)
-    time.sleep(2)
-    r = tmux.execute_tmux_command(['capture-pane', '-p'], session)
-    output = r['stdout'].strip() if r and r['returncode'] == 0 else '(no output)'
-    print(output)
-finally:
-    # CORRECT: session= param, not inline -t (avoids duplicate -t in execute_tmux_command)
-    tmux.execute_tmux_command(['kill-session'], session=session)
-"
+t new-session -d -s "$S" -x 120 -y 40
+for cmd in 'echo hello' 'pwd' 'command -v python3'; do
+  t send-keys -t "$S" -l -- "$cmd"
+  t send-keys -t "$S" Enter
+  sleep 1
+done
+t capture-pane -p -t "$S"
 ```
+
+## Testing a Terminal UI
+
+AI coding harnesses and other full-screen programs hide the cursor, draw a
+bordered input box and redraw the screen.
+
+- Give the session a size (`-x 120 -y 40`); some programs refuse a tiny one.
+- Wait for the program's input prompt in `capture-pane` before typing.
+- After `Enter`, read the input line, not the whole screen: the row is
+  `t display-message -p -t "$S" '#{cursor_y}'` even while the cursor is
+  hidden. Text still on that row was typed but not submitted.
+- Start the program as the pane's own process to watch it alone:
+  `t new-session -d -s "$S" -x 120 -y 40 'PROGRAM ARGS'`.
 
 ## Safety
 
-- All tests run in a dedicated `autorun-test` session, **never** your current session.
-- Session is always killed after each test (try/finally ensures cleanup even on errors).
-- No file changes are made unless the command itself writes files.
-- Note: long-running commands are not automatically killed — avoid `sleep` or hanging processes.
-
-**Full tmux/byobu syntax**: See skill `ar:tmux-automation`.
+- Every command passes `-L "$S"`; `kill-server` without it would end the
+  user's tmux server.
+- The `trap` removes the private server when the script exits, including on
+  an error.
+- Nothing is written outside the program's own effects.
+- A program that never exits keeps its pane; the `trap` still removes it.

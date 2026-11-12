@@ -290,7 +290,8 @@ class TmuxUtilities:
     - Format: session:window.pane for precise targeting
     """
 
-    # Default session name as required by skills/tmux-automation/SKILL.md
+    # Session a command reaches when the caller names none, so it never lands
+    # in the caller's own session (see execute_tmux_command)
     DEFAULT_SESSION_NAME = "autorun"
 
     # Complete WIN_OPS dispatch dictionary as required by documentation

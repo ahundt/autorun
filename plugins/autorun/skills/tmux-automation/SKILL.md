@@ -1,316 +1,166 @@
 ---
 name: tmux-automation
-description: Drive CLI tests inside isolated tmux/byobu sessions. Use when asked to "test this CLI", "run it in tmux", "automate a terminal session", "capture the output of an interactive command", "send keystrokes to a session", or to exercise a plugin or terminal app without touching the current session. Covers session lifecycle, keystroke control, and output capture.
+description: Run, watch and type into terminal programs in tmux or byobu panes without disturbing the user's other sessions. Use when asked to "test this CLI in tmux", "run it in a tmux session", "send keystrokes to a pane", "capture a pane's output", "restart the agent in that window", "resume Claude Code, Codex or Pi in its pane", or to test a terminal app on a private tmux server. Covers read-only discovery, checking the target, sending text and Enter in two calls, verifying by capture, and the resume command of each AI coding harness.
 ---
 
-# Automated CLI Testing with Session Management
+# tmux and byobu Automation
 
 <purpose>
 
-**autorun-specific procedures** (read the one you need, not both):
-`references/session-management.md` creates, lists, and cleans up isolated
-sessions, including the rule that cleanup only ever touches names starting with
-`autorun-test`. `references/isolated-testing.md` runs a command inside the
-dedicated `autorun-test` session so the caller's own session is never touched.
+How to drive programs in tmux panes so that the intended pane receives the
+input and the user's other work is left alone.
 
-This skill provides comprehensive capabilities for automated testing of CLI applications, plugins, and terminal workflows using tmux/byobu sessions. Perfect for testing Claude Code plugins, command-line tools, and automated workflows.
+byobu is a front end to tmux. Its sessions live on the tmux server, and
+`byobu <tmux-command> ...` passes the command to tmux, so every `tmux`
+command below also works on byobu sessions, written either way.
+
+To test a program on a private tmux server, read
+`references/isolated-testing.md`. To create, list and remove test sessions on
+the user's server, read `references/session-management.md`.
 
 </purpose>
 
+<safety_rules>
+
+## Rules
+
+1. Discover read-only first. `list-sessions`, `list-windows`, `list-panes`,
+   `capture-pane -p` and `display-message -p` change nothing.
+2. Check the target before acting. Tell the user the session, window, pane,
+   working directory and the program running there.
+3. Ask the user before changing state in a session you did not create:
+   typing, pressing keys, opening or closing windows and panes.
+4. Never kill a tmux session or the tmux server to restart one program. The
+   other windows hold other work. Exit or interrupt the program in its own
+   pane and start it again there.
+5. Send text and Enter as two separate `send-keys` calls, and send text with
+   `-l` so it is typed literally.
+6. Verify every send by capturing the pane. Text echoed on screen is not
+   proof it was submitted. If the text still sits on the input line, report
+   it; do not press Enter again, because a second Enter can submit a
+   half-edited line.
+7. Test on a private tmux server (`tmux -L <name>`), never on the user's.
+
+</safety_rules>
+
 <commands>
 
-## Core Commands
+## Discover (read-only)
 
-### Session Management
-- `byobu new-session -d -s <session-name>` - Create new detached session
-- `byobu list-sessions` - List all active sessions
-- `byobu attach-session -t <session-name>` - Attach to existing session
-- `byobu detach-session` - Detach from session (F6)
-- `byobu kill-session -t <session-name>` - Terminate session
-- `tmux list-sessions` - List tmux sessions
+```bash
+tmux list-sessions -F '#{session_name}: #{session_windows} windows'
+tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} active=#{pane_active} pid=#{pane_pid} #{pane_current_command} #{pane_current_path}'
+tmux capture-pane -p -t work:3.1 -S -50          # last 50 lines of that pane
+tmux display-message -p -t work:3.1 '#{cursor_y}' # row of the cursor (the input line)
+```
 
-### Window Management
-- `byobu new-window -t <session-name>` - Create new window
-- `byobu list-windows -t <session-name>` - List windows in session
-- `byobu kill-window -t <session-name>:<window-index>` - Kill specific window
-- `byobu select-window -t <session-name>:<window-index>` - Select window
+A target is `session:window.pane`, for example `work:3.1`. Without `.pane`
+it means the window's active pane.
 
-### Input and Output Control
-- `byobu send-keys -t <session-name> <keys>` - Send keystrokes to window
-- `byobu send-keys -t <session-name> C-m` - Send Enter/Return key
-- `byobu send-keys -t <session-name> C-c` - Send Ctrl+C interrupt
-- `byobu capture-pane -t <session-name>` - Capture window output
-- `byobu capture-pane -t <session-name> -p -S -<lines>` - Capture last N lines
+An AI coding harness started from a shell shows the shell, or `node`, as
+`pane_current_command`. To see what runs in the pane, list the children of
+the pane's process:
 
-### Tmux Commands (direct)
-- `tmux new-session -d -s <session-name>` - Create new detached tmux session
-- `tmux list-sessions` - List all tmux sessions
-- `tmux attach-session -t <session-name>` - Attach to tmux session
-- `tmux detach` - Detach from tmux session
+```bash
+pgrep -l -P <pane_pid>
+```
 
-## Specific Keystroke Commands
+## Send text, then Enter
 
-### Control Sequences
-- `C-c` - Ctrl+C (interrupt/stop current command)
-- `C-m` - Ctrl+M (Enter/Return)
-- `C-d` - Ctrl+D (EOF/end of input)
-- `C-l` - Ctrl+L (clear screen)
-- `C-a` - Ctrl+A (tmux prefix, then command)
-- `C-z` - Ctrl+Z (suspend current process)
-- `Tab` - Tab completion
-- `Esc` - Escape key
+```bash
+tmux send-keys -t work:3.1 -l -- 'git status'
+tmux send-keys -t work:3.1 Enter
+```
 
-### Byobu Specific Keys
-- `F2` - Create new window
-- `Shift+F2` - Split window horizontally
-- `Ctrl+F2` - Split window vertically
-- `F3` - Previous window
-- `F4` - Next window
-- `F5` - Reload profile
-- `F6` - Detach session
-- `F7` - Search scrollback buffer
-- `F8` - Enter scrollback mode
-- `F9` - Configure byobu
-- `Shift+F3`/`Shift+F4` - Move window left/right
-- `Ctrl+F3`/`Ctrl+F4` - Focus pane left/right
+Without `-l`, text that is exactly a key name (`Enter`, `Up`, `Escape`) is
+sent as that key. Other keys, each in its own call: `Enter` (also `C-m`),
+`C-c`, `Escape`, `C-d`, `Tab`, `BTab` (Shift+Tab), `Up`, `Down`.
 
-### Tmux Prefix Commands (default Ctrl+B)
-- `Ctrl+B c` - Create new window
-- `Ctrl+B &` - Kill current window
-- `Ctrl+B ,` - Rename window
-- `Ctrl+B n` - Next window
-- `Ctrl+B p` - Previous window
-- `Ctrl+B %` - Split window horizontally
-- `Ctrl+B "` - Split window vertically
-- `Ctrl+B o` - Switch panes
-- `Ctrl+B d` - Detach session
-- `Ctrl+B s` - List sessions
+## byobu
+
+`byobu list-sessions`, `byobu send-keys ...` and `byobu capture-pane ...`
+are the same commands. byobu's function keys (F2 new window, F3 and F4
+previous and next window, F6 detach, F8 rename) are for a person at the
+keyboard; scripts use the commands.
 
 </commands>
 
-<integrations>
+<workflow>
 
-## autorun Command Integration
+## Send and verify
 
-autorun provides convenient commands for tmux session automation:
+1. Capture the pane. Confirm the program is at its input prompt and not in
+   the middle of a task.
+2. Send the text with `-l`, wait briefly, send `Enter` in a second call.
+3. Read the cursor line again. If it still ends with the text, the text was
+   typed but not submitted: tell the user.
 
-### Session Discovery
-- The `tmux` skill (`autorun tmux list`, `autorun tmux send`) lists the AI
-  coding sessions in your tmux windows and types text into the ones you name.
-
-Creating, listing and cleaning up isolated sessions, and testing a CLI in
-one: `references/session-management.md` and `references/isolated-testing.md`
-in this skill. autorun ships no slash command for them.
-
-</integrations>
-
-<examples>
-
-## Usage Examples
-
-### Automated Plugin Testing Workflow
 ```bash
-# Create session for autorun testing (default: autorun)
-byobu new-session -d -s "autorun"
-
-# Navigate to project (replace with your autorun directory)
-byobu send-keys -t "autorun" "cd \$HOME/.claude/autorun" C-m
-
-# Start Claude Code
-byobu send-keys -t "autorun" "claude" C-m
-sleep 5
-
-# Set model to haiku for efficiency
-byobu send-keys -t "autorun" "/model haiku" C-m
-sleep 2
-
-# Install plugin locally (replace with your autorun directory)
-byobu send-keys -t "autorun" "/plugin marketplace add \$HOME/.claude/autorun" C-m
-sleep 3
-
-# Install plugin
-byobu send-keys -t "autorun" "/plugin install ar@autorun" C-m
-sleep 5
-
-# Test commands
-byobu send-keys -t "autorun" "/ar:file existing-only" C-m
-sleep 3
-
-byobu send-keys -t "autorun" "/ar:status" C-m
-sleep 3
-
-# Capture output for verification
-byobu capture-pane -t "autorun" -p -S -20
+T=work:3.1
+tmux send-keys -t "$T" -l -- 'continue'
+sleep 0.2
+tmux send-keys -t "$T" Enter
+sleep 1
+row=$(tmux display-message -p -t "$T" '#{cursor_y}')
+tmux capture-pane -p -t "$T" | sed -n "$((row + 1))p"   # the input line now
 ```
 
-### Error Handling and Recovery
-```bash
-# Check if session exists before operations
-if byobu list-sessions | grep -q "test-session"; then
-    echo "Session exists, proceeding..."
-else
-    echo "Session not found, creating..."
-    byobu new-session -d -s "test-session"
-fi
+## Restart one AI coding harness in its own pane
 
-# Interrupt hanging commands
-byobu send-keys -t "test-session" C-c
+1. Ask the user, naming the session, window, pane and directory.
+2. Note the directory, model and session the harness shows.
+3. Exit the harness in its pane with its own exit command, or `C-c`.
+   Capture the pane until the shell prompt is back.
+4. Type the resume command (text, then `Enter` in a second call).
+5. Capture the pane and check the directory, model and session match what
+   step 2 noted.
 
-# Kill and recreate session if needed
-byobu kill-session -t "test-session"
-byobu new-session -d -s "test-session"
-```
+| Harness | Continue the latest session | Resume a named session |
+|---------|-----------------------------|------------------------|
+| Claude Code | `claude --continue` | `claude --resume <id>` |
+| Codex | `codex resume --last` | `codex resume <id>` |
+| Pi | `pi -c` | `pi --session <path or id>` |
+| Prime Agent | `prime-agent -c` | `prime-agent -r <path or id>` |
+| Qwen Code | `qwen -c` | `qwen -r <id>` |
+| Gemini CLI | `gemini -r latest` | `gemini -r <index>` |
+| Antigravity | `agy -c` | `agy --conversation <id>` |
+| OpenCode | `opencode -c` | `opencode -s <id>` |
+| ForgeCode | none | `forge --conversation-id <id>` |
 
-</examples>
+The commands come from each tool's `--help`; check it if a flag is refused.
+
+</workflow>
 
 <pitfalls>
 
-## Common Mistakes and Solutions
+## Common Mistakes
 
-### CRITICAL: Control Sequence Syntax Errors
-
-**❌ Common Mistake: Incorrect Enter Key Syntax**
-```bash
-# WRONG - This will NOT work as expected
-byobu send-keys -t "session_name" "command" "C-m"  # WRONG syntax
-byobu send-keys -t "session_name" "command C-m"     # WRONG syntax
-```
-
-**✅ CORRECT: Proper Control Sequence Syntax**
-```bash
-# CORRECT - Each operation is ALWAYS a separate byobu send-keys command
-byobu send-keys -t "session_name" "command"   # Step 1: Type the command text
-byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to execute
-
-byobu send-keys -t "session_name" "cd /path"  # Step 1: Type "cd /path"
-byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to execute
-
-# EFFICIENCY TIP: Chain operations with && for single-line execution
-byobu send-keys -t "session_name" C-c && byobu send-keys -t "session_name" C-m  # Interrupt + confirm
-
-byobu send-keys -t "session_name" C-c         # Step 1: Press Ctrl+C interrupt
-byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (if needed)
-```
-
-**Key Rules:**
-- Control sequences (C-m, C-c, C-d) must be **separate arguments**, not inside quotes
-- Commands go in quotes, control sequences go outside quotes as separate args
-- `C-m` = Enter/Return, `C-c` = Ctrl+C, `C-d` = EOF, `C-l` = Clear screen
-- **CRITICAL**: Text input and Enter key are ALWAYS separate byobu send-keys operations
-- **CRITICAL**: Enter key (C-m) must ALWAYS be sent as a separate operation after typing text
-- **CRITICAL**: Ctrl+C (C-c) and Enter (C-m) are different operations and must be sent separately when needed
-
-### Command Execution Issues
-
-**Problem:** Commands appear to execute but fail silently
-- **Cause:** Missing proper Enter key sequence (C-m)
-- **Solution:** Always add `C-m` as separate argument after command
-
-**Problem:** Commands hang or timeout
-- **Cause:** Missing sleep intervals for Claude Code processing
-- **Solution:** Add `sleep 2-5` between commands, especially after Claude Code startup
-
-**Problem:** Session becomes unresponsive
-- **Cause:** Commands failing without proper error handling
-- **Solution:** Use Ctrl+C (`C-c`) to interrupt, recreate session if needed
-
-### Plugin Installation Issues
-
-**Problem:** Marketplace addition fails with "not found"
-- **Cause:** Incorrect path syntax or marketplace already exists
-- **Solution:** Use absolute paths and check existing marketplaces first
-
-**Problem:** Plugin installation fails after marketplace addition
-- **Cause:** Timing issues or plugin name mismatch
-- **Solution:** Wait for marketplace addition to complete, use correct plugin identifier
-
-**Discovery: Slash Commands vs Plugin Installation**
-- Some functionality may be installed as slash commands in `~/.claude/commands/` rather than formal plugins
-- Check slash commands first: `ls -la ~/.claude/commands/`
-- Slash commands work immediately without plugin installation
-
-## Best Practices
-
-1. **Session Naming**: Always use "autorun" as the default session name unless user specifies another tmux session name
-2. **Default Session**: Use "autorun" as the default session name for all autorun testing workflows
-3. **Existence Checks**: Always verify session existence before operations using `byobu list-sessions`
-4. **Error Recovery**: Implement Ctrl+C handling for stuck commands and session recreation when needed
-5. **Output Verification**: Use capture-pane for command result verification and testing validation
-6. **Resource Management**: Clean up sessions after testing with `byobu kill-session`
-7. **Timing**: Add appropriate sleep intervals between commands (2-5 seconds for Claude Code startup)
-8. **Model Selection**: Use haiku for automated tasks to reduce resource usage and improve performance
-9. **Byobu vs Tmux**: Prefer byobu commands for user-friendly interface, tmux commands for scripting
-10. **Control Sequences**: Always use proper control sequence syntax - commands in quotes, C-m/C-c as separate arguments
-11. **Error Prevention**: Test control sequences manually before automation scripts
-12. **Efficiency Operations**: Use `&&` to chain byobu commands for single-line execution: `byobu send-keys C-c && byobu send-keys C-m`
-13. **Debugging Strategy**: Test functionality step-by-step instead of assuming installation state
-14. **Slash Command Priority**: Check `~/.claude/commands/` first before plugin installation attempts
+- **Text and Enter in one call** (the text and `C-m` as two arguments of
+  one `send-keys`). A terminal UI can receive the Enter before it has
+  processed the text, or treat the burst as a paste, and the text is left
+  unsubmitted. Send them in two calls.
+- **A key name sent as text.** `send-keys -t T Up` recalls history. Use `-l`
+  for text.
+- **Killing the session to restart a program.** It closes every window in
+  that session. Restart in the pane.
+- **A fixed session name** such as `test` can already exist and belong to the
+  user. Use a unique name, for example `autorun-test-$$`, and check with
+  `tmux has-session -t "=<name>"` first (`=` matches the name exactly).
+- **The wrong server.** Inside tmux, `$TMUX` picks the server; a script
+  started elsewhere talks to the default server. `-L <name>` picks a named
+  server explicitly.
+- **Fixed sleeps.** A slow start makes `sleep 2` too short. Poll
+  `capture-pane` until the expected prompt or output appears, with a limit.
 
 </pitfalls>
 
 <reference>
 
-## Implementation Notes
+## References
 
-- This skill uses tmux as the primary backend (byobu is a tmux wrapper providing user-friendly interface)
-- Byobu provides enhanced F-key shortcuts and session management over tmux
-- All tmux commands work with both byobu and tmux sessions (byobu with tmux backend)
-- Control sequences (C-m for Enter, C-c for interrupt) are critical for proper command execution
-- Proper timing and error handling ensure reliable automated testing workflows
-- Byobu sessions can be managed with both byobu commands and direct tmux commands
-
-## External Resources and References
-
-### Documentation Links
-- **Byobu Official Documentation** - https://www.byobu.org/
-  - Use when learning byobu-specific features and configuration
-  - Essential for understanding F-key shortcuts and byobu workflow
-  - Visit when setting up new byobu environments
-
-- **Tmux Manual** - https://github.com/tmux/tmux/wiki
-  - Reference for advanced tmux commands and scripting
-  - Use when creating complex session automation scripts
-  - Essential for understanding tmux prefix commands and scripting
-
-- **Claude Code Skills Documentation** - https://docs.claude.com/en/docs/claude-code/skills
-  - Learn how to create and structure Claude Code skills
-  - Use when creating additional skills or extending this one
-  - Essential for understanding skill YAML frontmatter and formatting
-
-- **Claude Code Plugin Documentation** - https://docs.claude.com/en/docs/claude-code/plugins
-  - Reference for Claude Code plugin development
-  - Use when developing or debugging Claude Code plugins
-  - Essential for understanding plugin architecture and hook systems
-
-- **Claude Code Plugin Examples** - https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/plugins/README.md
-  - Official examples and patterns for Claude Code plugins
-  - Use when implementing plugin features or debugging issues
-  - Essential for understanding best practices from official plugins
-
-### Testing and Automation Resources
-- **Bash Scripting Guide** - https://www.gnu.org/software/bash/manual/
-  - Reference for creating automated test scripts
-  - Use when writing complex test automation scripts
-  - Essential for proper error handling and process control
-
-### When to Use Each Resource
-
-**Setup Phase:**
-- Visit Byobu Documentation when first setting up your testing environment
-- Check Claude Code Skills Documentation when creating new skills
-- Review tmux Manual when learning advanced session management
-
-**Development Phase:**
-- Reference Claude Code Plugin Examples when developing plugins
-- Consult Bash Scripting Guide for complex automation scripts
-
-**Debugging Phase:**
-- Check Claude Code Plugin Documentation when troubleshooting plugin issues
-- Review tmux Manual when debugging session management problems
-
-**Best Practices:**
-- Always reference official Claude Code Plugin Examples for patterns
-- Keep Byobu Documentation handy for session management shortcuts
-- Use tmux Manual for scripting complex automation scenarios
+- tmux manual: https://man.openbsd.org/tmux.1 (targets, `send-keys -l`,
+  formats such as `#{cursor_y}`)
+- tmux wiki: https://github.com/tmux/tmux/wiki
+- byobu: https://www.byobu.org/
 
 </reference>

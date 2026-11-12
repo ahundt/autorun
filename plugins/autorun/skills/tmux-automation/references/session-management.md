@@ -1,108 +1,62 @@
-# Tmux Session Management
+# Test Session Management on the User's tmux Server
 
-Current tmux sessions:
+Use a private server (`references/isolated-testing.md`) when you can. When a
+test session has to live on the user's server, for example so the user can
+attach to it, name it `autorun-test-<suffix>`. Cleanup only ever removes
+sessions whose names start with `autorun-test`.
 
-Run `tmux list-sessions` and read its output first.
-
-## Your Task
-
-The user's request is the task description for everything below.
-
-If no arguments provided, show the session list above and ask the user what to do.
+Each command works the same with `byobu` in place of `tmux`.
 
 ## Actions
 
-### `create <name>` — Create Isolated Session
+### Create
 
 ```bash
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from autorun.tmux_utils import get_tmux_utilities
-tmux = get_tmux_utilities()
-name = 'SESSION_NAME'  # replace with actual name from arguments
-
-# Pre-check: does it already exist? (ensure_session_exists cannot distinguish create vs. exists)
-# CORRECT: use session= param, NOT inline -t (execute_tmux_command auto-appends -t for has-session)
-check = tmux.execute_tmux_command(['has-session'], session=name)
-already_existed = check and check['returncode'] == 0
-
-tmux.ensure_session_exists(name)
-
-r = tmux.execute_tmux_command(['list-sessions', '-F', '  #{session_name}: #{session_windows} windows'])
-sessions_out = r['stdout'].strip() if r and r['returncode'] == 0 else '  (none)'
-status = 'already existed' if already_existed else 'created'
-print('Session ' + repr(name) + ' ' + status + '.')
-print('Active sessions:')
-print(sessions_out)
-"
+name="autorun-test-$(date +%s)"
+if tmux has-session -t "=$name" 2>/dev/null; then
+  echo "$name already exists; choose another name"
+else
+  tmux new-session -d -s "$name" -x 120 -y 40 && echo "created $name"
+fi
 ```
 
-### `list` — Show Sessions with Status
+`=` makes the target match the session name exactly; without it `autorun-test`
+would also match `autorun-test-old`.
+
+### List
 
 ```bash
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from autorun.tmux_utils import get_tmux_utilities
-tmux = get_tmux_utilities()
-# NOTE: #{session_created_string} is NOT a standard tmux format; #{session_created} returns unix timestamp
-# Use #{session_created} and format it in Python, or omit timestamp to avoid format errors
-r = tmux.execute_tmux_command(['list-sessions', '-F', '  #{session_name}: #{session_windows} windows'])
-print(r['stdout'].strip() if r and r['returncode'] == 0 else 'No active sessions.')
-"
+tmux list-sessions -F '#{session_name}: #{session_windows} windows, created #{t:session_created}'
 ```
 
-### `cleanup` — Remove autorun-test Sessions Older Than 1 Hour
+### Clean Up Test Sessions Older Than One Hour
 
 ```bash
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from autorun.tmux_utils import get_tmux_utilities
-import time
-tmux = get_tmux_utilities()
-r = tmux.execute_tmux_command(['list-sessions', '-F', '#{session_name} #{session_created}'])
-if not r or r['returncode'] != 0:
-    print('No sessions to clean up.')
-else:
-    now = time.time()
-    killed = []
-    for line in r['stdout'].strip().splitlines():
-        parts = line.rsplit(' ', 1)
-        if len(parts) == 2:
-            sname, created_str = parts[0], parts[1]
-            try:
-                # SAFE: only autorun-test sessions, never the user's work sessions
-                if sname.startswith('autorun-test') and now - int(created_str) > 3600:
-                    # CORRECT: session= param, not inline -t (avoids duplicate -t in execute_tmux_command)
-                    tmux.execute_tmux_command(['kill-session'], session=sname)
-                    killed.append(sname)
-            except ValueError:
-                pass  # skip malformed lines
-    print('Cleaned up: ' + ', '.join(killed) if killed else 'No autorun-test sessions older than 1 hour.')
-"
+now=$(date +%s)
+tmux list-sessions -F '#{session_name} #{session_created}' 2>/dev/null |
+while read -r name created; do
+  case "$name" in
+    autorun-test*)
+      if [ $((now - created)) -gt 3600 ]; then
+        tmux kill-session -t "=$name" && echo "removed $name"
+      fi ;;
+  esac
+done
 ```
 
-### `cleanup --all` — Remove All autorun-test Sessions
+Session names that contain a space are skipped by `read`; the names created
+above have none.
 
-> **Safety**: Only removes sessions matching `autorun-test*` prefix. Never removes user work sessions.
+### Remove One Test Session
 
 ```bash
-uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from autorun.tmux_utils import get_tmux_utilities
-tmux = get_tmux_utilities()
-r = tmux.execute_tmux_command(['list-sessions', '-F', '#{session_name}'])
-if not r or r['returncode'] != 0:
-    print('No sessions to remove.')
-else:
-    killed = []
-    for sname in r['stdout'].strip().splitlines():
-        sname = sname.strip()
-        if sname.startswith('autorun-test'):  # SAFE: only test sessions, not work sessions
-            # CORRECT: session= param, not inline -t (avoids duplicate -t in execute_tmux_command)
-            tmux.execute_tmux_command(['kill-session'], session=sname)
-            killed.append(sname)
-    print('Removed: ' + ', '.join(killed) if killed else 'No autorun-test sessions found.')
-"
+tmux kill-session -t "=autorun-test-1731300000"
 ```
 
 ## Safety
 
-Commands always target isolated sessions and **never** affect your current Claude Code session.
-
-**Full tmux/byobu syntax reference**: See skill `ar:tmux-automation`.
+- Only sessions whose names start with `autorun-test` are removed. The user's
+  own sessions are never removed, and never to restart a program running in
+  them.
+- Ask the user before removing a test session this run did not create.
+- Never run `tmux kill-server` on the user's server.

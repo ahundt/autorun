@@ -425,5 +425,74 @@ class TestTmuxCommandDocumentsPointAtOneSkill:
         assert "autorun-test" in cleanup, "the cleanup safety rule was lost in the move"
 
 
+def tmux_automation_defects(texts):
+    """Lines of the tmux-automation skill that break its own rules.
+
+    `texts` maps a file name to its text. The skill moves to a plugin of its
+    own, so it may not run anything from the `ar` plugin directory
+    (${CLAUDE_PLUGIN_ROOT}, `uv run --project`, `autorun.` imports) or name
+    the retired monitor; a `send-keys` call may not carry text and Enter
+    together; and no example may use the fixed session name `autorun`.
+    """
+    import re
+    import shlex
+
+    defects = []
+    for name, text in texts.items():
+        for number, line in enumerate(text.splitlines(), 1):
+            where = f"{name}:{number}: {line.strip()}"
+            if any(word in line for word in ("CLAUDE_PLUGIN_ROOT", "ai_monitor", "uv run --project", "from autorun")):
+                defects.append(where)
+            if re.search(r"""(?:-[st]|has-session -t)\s+["'=]*autorun["']?(?:\s|$)""", line):
+                defects.append(where)
+            if not re.search(r"send-keys\s+-t\s", line):
+                continue
+            try:
+                words = shlex.split(line.split("send-keys", 1)[1], comments=True)
+            except ValueError:
+                words = line.split("send-keys", 1)[1].split()
+            keys, skip = [], False
+            for word in words:
+                if skip:
+                    skip = False
+                elif word == "-t":
+                    skip = True
+                elif word not in ("-l", "--"):
+                    keys.append(word)
+            if len(keys) > 1 and any(k in ("C-m", "Enter") for k in keys):
+                defects.append(where)
+    return list(dict.fromkeys(defects))
+
+
+def _skill_texts(root):
+    return {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8")
+            for p in sorted(root.rglob("*.md"))}
+
+
+def test_tmux_automation_skill_needs_nothing_from_the_ar_plugin_and_sends_enter_alone():
+    skill = Path(__file__).resolve().parents[1] / "skills" / "tmux-automation"
+
+    assert tmux_automation_defects(_skill_texts(skill)) == []
+
+
+def test_tmux_automation_defect_scan_catches_each_kind():
+    bad = {"x.md": "\n".join([
+        'uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "from autorun.tmux_utils import x"',
+        "python -m autorun.ai_monitor",
+        'byobu send-keys -t "autorun" "claude" C-m',
+        "tmux send-keys -t work:1 -l -- 'git status' Enter",
+        "byobu new-session -d -s autorun",
+    ])}
+    good = {"y.md": "\n".join([
+        "tmux send-keys -t work:3.1 -l -- 'git status'",
+        "tmux send-keys -t work:3.1 Enter",
+        't send-keys -t "$S" Enter',
+        'tmux has-session -t "=autorun-test-1"',
+    ])}
+
+    assert len(tmux_automation_defects(bad)) == 5
+    assert tmux_automation_defects(good) == []
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
