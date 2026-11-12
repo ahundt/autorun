@@ -807,6 +807,7 @@ inside the `autorun-ai` distribution as `pdf_extraction` behind the `pdf` extra.
 | `plugins/pdf-extractor/src/pdf_extraction/__init__.py` | `__version__ = "X.Y.Z"` | Do NOT change `pdfplumber>=0.10.0` in `plugins/autorun/pyproject.toml` — that's a third-party dep! |
 | `plugins/pdf-extractor/.claude-plugin/plugin.json` | `"version": "X.Y.Z"` | |
 | `plugins/pdf-extractor/gemini-extension.json` | `"version": "X.Y.Z"` | |
+| `plugins/pdf-extractor/.codex-plugin/plugin.json` | `"version": "X.Y.Z"` | Codex package manifest |
 
 ### Documentation (5 files)
 

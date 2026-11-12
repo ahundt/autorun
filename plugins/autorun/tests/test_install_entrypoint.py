@@ -226,7 +226,8 @@ def test_custom_cli_specs_override_same_named_config_without_dropping_others(
     ]
 
 
-def test_install_all_for_codex_registers_only_the_codex_capable_plugin(monkeypatch, isolated):
+def test_install_all_for_codex_registers_only_the_codex_capable_plugins(monkeypatch, isolated):
+    """Codex gets exactly the marketplace plugins that ship a Codex manifest."""
     from autorun.installer import entrypoint
 
     calls = []
@@ -235,13 +236,80 @@ def test_install_all_for_codex_registers_only_the_codex_capable_plugin(monkeypat
         calls.append(tuple(argv))
         return subprocess.CompletedProcess(argv, 0, "", "")
 
+    from autorun.installer.discovery import plugin_dir
+
+    plugins = _marketplace_plugins()
+    capable = {
+        name for name in plugins
+        if (plugin_dir(REPO, name) / ".codex-plugin" / "plugin.json").is_file()
+    }
+    assert "ar" in capable, "the Codex manifest check matches nothing"
+
     monkeypatch.setattr(entrypoint, "_run", record)
     monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
     assert entrypoint.install_plugins("all", codex_only=True, conductor=False, tool=False) == 0
-    assert (isolated / "plugins" / "ar" / ".codex-plugin" / "plugin.json").is_file()
-    assert not (isolated / "plugins" / "pdf-extractor").exists()
-    assert ("codex", "plugin", "add", "ar@personal") in calls
-    assert not any("pdf-extractor@personal" in part for call in calls for part in call)
+    for name in plugins:
+        packaged = (isolated / "plugins" / name / ".codex-plugin" / "plugin.json").is_file()
+        registered = ("codex", "plugin", "add", f"{name}@personal") in calls
+        assert packaged is (name in capable), name
+        assert registered is (name in capable), name
+
+
+def _marketplace_plugins() -> tuple[str, ...]:
+    manifest = json.loads((REPO / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    return tuple(entry["name"] for entry in manifest["plugins"])
+
+
+@pytest.mark.parametrize("harness", sorted(__import__("autorun.platforms", fromlist=["PLATFORMS"]).PLATFORMS))
+def test_every_marketplace_plugin_reaches_every_harness(harness, tmp_path, monkeypatch):
+    """Stated as the violation: a plugin the marketplace lists never arrives.
+
+    A plugin reaches a harness when the install either publishes a tree it
+    owns (its ownership marker names the plugin) or tells the harness's own
+    plugin CLI about it (an argv naming the plugin, its ``name@market`` or its
+    staged directory).
+    """
+    from autorun.installer import fs, orchestrate
+    from autorun.platforms import PLATFORMS
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar"))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    plugins = _marketplace_plugins()
+    calls: list[tuple[str, ...]] = []
+
+    def run(argv, **kwargs):
+        calls.append(tuple(str(part) for part in argv))
+        result = _cache_aware_runner(argv, **kwargs)
+        if tuple(argv)[:3] == ("agy", "plugin", "list"):
+            result = subprocess.CompletedProcess(argv, 0, "\n".join(plugins) + "\n", "")
+        return result
+
+    platform = PLATFORMS[harness]
+    result = orchestrate.install(
+        marketplace_root=REPO, plugins=plugins, settings={}, home=home,
+        harnesses=(platform,), available=(platform.binary,), run_command=run,
+        state_dir=home / ".state",
+    )
+    assert result.ok, result.lines()
+
+    def reached(plugin: str) -> bool:
+        owned = any(
+            decision.target.is_dir() and fs.owns(fs.read_marker(decision.target), plugin)
+            for decision in result.decisions
+        )
+        told = any(
+            token == plugin or token.startswith(f"{plugin}@") or Path(token).name == plugin
+            for call in calls for token in call
+        )
+        return owned or told
+
+    missing = [plugin for plugin in plugins if not reached(plugin)]
+    assert not missing, f"{harness} never received {missing}"
 
 
 def test_source_independent_uninstall_withdraws_hooks_marketplace_and_package(monkeypatch, isolated, tmp_path):

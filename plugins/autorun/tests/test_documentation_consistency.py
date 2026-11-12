@@ -787,6 +787,7 @@ RELEASE_IDENTITY_FIELDS = (
     ("plugins/pdf-extractor/.claude-plugin/plugin.json", "version"),
     ("plugins/pdf-extractor/plugin.json", "version"),
     ("plugins/pdf-extractor/gemini-extension.json", "version"),
+    ("plugins/pdf-extractor/.codex-plugin/plugin.json", "version"),
 )
 
 

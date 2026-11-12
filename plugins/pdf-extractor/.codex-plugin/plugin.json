@@ -1,0 +1,36 @@
+{
+  "name": "pdf-extractor",
+  "version": "1.0.0rc4",
+  "description": "PDF data extraction with multi-backend support (markitdown, docling, pdfplumber, etc.)",
+  "author": {
+    "name": "Andrew Hundt",
+    "email": "ATHundt@gmail.com",
+    "url": "https://github.com/ahundt/autorun"
+  },
+  "homepage": "https://github.com/ahundt/autorun#readme",
+  "repository": "https://github.com/ahundt/autorun",
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex",
+    "skills",
+    "pdf",
+    "extraction",
+    "ocr",
+    "markdown"
+  ],
+  "commands": [],
+  "skills": [
+    "./skills/"
+  ],
+  "interface": {
+    "displayName": "PDF Extractor",
+    "shortDescription": "Extract text and data from PDF files.",
+    "longDescription": "A skill that extracts text from PDF files and directories to markdown, choosing among installed backends (markitdown, docling, pdfplumber, pdftotext and others) and handling scanned documents.",
+    "developerName": "Andrew Hundt",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills"
+    ],
+    "websiteURL": "https://github.com/ahundt/autorun"
+  }
+}
