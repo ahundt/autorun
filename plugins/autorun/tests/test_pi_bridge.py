@@ -443,6 +443,60 @@ console.log(JSON.stringify({ sent, users, notices }));
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 @pytest.mark.parametrize("cli_type", ["pi", "prime"])
+def test_pi_family_delivers_session_start_context_and_allowed_stop_notice(tmp_path, cli_type):
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [
+            {"_autorun_bridge": {"operation": "task_reproject_v1", "tasks": []}},
+            {"systemMessage": "Session policy loaded"},
+            {"systemMessage": "Waiting on you: approve the release"},
+        ],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map();
+const sent = [], notices = [];
+const pi = {
+  registerCommand() {}, registerTool() {}, on(name, handler) { handlers.set(name, handler); },
+  getActiveTools() { return []; },
+  sendMessage(message, options) { sent.push({ message, options }); },
+  sendUserMessage() {},
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "interactive", isIdle: () => true,
+  hasPendingMessages: () => false,
+  ui: { notify(message, level) { notices.push({ message, level }); } },
+  sessionManager: {
+    getSessionId: () => "main-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }), getBranch: () => [],
+  },
+};
+await handlers.get("session_start")({ reason: "startup" }, ctx);
+await handlers.get("agent_settled")({}, ctx);
+console.log(JSON.stringify({ sent, notices }));
+''',
+        cli_type=cli_type,
+    )
+
+    assert [frame["hook_event_name"] for frame in frames] == [
+        "AutorunOperation", "SessionStart", "Stop",
+    ]
+    assert result["sent"] == [
+        {
+            "message": {
+                "customType": "autorun-session-start",
+                "content": "Session policy loaded",
+                "display": True,
+            },
+            "options": {"triggerTurn": False, "deliverAs": "nextTurn"},
+        }
+    ]
+    assert result["notices"] == [
+        {"message": "Waiting on you: approve the release", "level": "info"}
+    ]
+
+
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
 def test_restricted_child_frames_effective_tools_identity_and_subagent_stop(tmp_path, cli_type):
     result, frames = _run_pi_adapter_driver(
         tmp_path,

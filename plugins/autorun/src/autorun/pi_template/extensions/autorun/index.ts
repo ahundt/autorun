@@ -380,7 +380,15 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (event, ctx) => {
     continuationInFlight = false;
     await reprojectTaskReceipts(ctx, event.reason);
-    await bridge.askDaemon({ ...frame(ctx, "SessionStart", pi), source: event.reason });
+    const response = await bridge.askDaemon({
+      ...frame(ctx, "SessionStart", pi), source: event.reason,
+    });
+    const content = responseMessage(response);
+    if (!content) return;
+    pi.sendMessage(
+      { customType: "autorun-session-start", content, display: true },
+      { triggerTurn: false, deliverAs: "nextTurn" },
+    );
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
@@ -491,8 +499,11 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     if (continuationInFlight || ctx.hasPendingMessages()) return;
     const event = process.env.PI_SUBAGENT_CHILD === "1" ? "SubagentStop" : "Stop";
     const response = await bridge.askDaemon(frame(ctx, event, pi));
-    if (response?.decision !== "block") return;
     const reason = responseMessage(response);
+    if (response?.decision !== "block") {
+      if (event === "Stop" && reason) ctx.ui.notify(reason, "info");
+      return;
+    }
     if (!reason || ctx.hasPendingMessages()) return;
     continuationInFlight = true;
     pi.sendMessage(
