@@ -976,6 +976,7 @@ def run_direct(payload: dict | None = None) -> int:
         source=normalized["source"],
         agent_id=normalized["agent_id"],
         agent_type=normalized["agent_type"],
+        prompt_author=normalized["prompt_author"],
         active_tools=normalized["active_tools"],
         transcript_path=normalized.get("transcript_path"),
         agent_transcript_path=normalized.get("agent_transcript_path"),

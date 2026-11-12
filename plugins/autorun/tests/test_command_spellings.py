@@ -388,6 +388,7 @@ class TestCodexTranscriptScannerSharesTheSameNormalization:
             source="resume",
             agent_id="child-7",
             agent_type="worker",
+            prompt_author="automation",
             active_tools=frozenset({"apply_patch"}),
             transcript_path="/tmp/parent.jsonl",
             agent_transcript_path="/tmp/child.jsonl",
@@ -405,7 +406,7 @@ class TestCodexTranscriptScannerSharesTheSameNormalization:
         assert fallback.prompt == "ar:tasks off"
         for name in (
             "session_id", "cli_type", "cwd", "permission_mode", "source",
-            "agent_id", "agent_type", "active_tools", "transcript_path",
+            "agent_id", "agent_type", "prompt_author", "active_tools", "transcript_path",
             "agent_transcript_path", "stop_hook_active", "last_assistant_message",
             "background_tasks", "session_crons", "session_identity_authority",
             "server_url",

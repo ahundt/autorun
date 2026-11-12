@@ -693,6 +693,9 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         # session, so it must never be used alone as the discriminator.
         "agent_id": payload.get("agent_id"),
         "agent_type": payload.get("agent_type"),
+        # Who wrote the prompt, from a bridge frame (resolve_prompt_author).
+        # A hook harness's typed prompt carries no such field.
+        "prompt_author": payload.get("prompt_author"),
         # Effective model-facing tools when an in-process bridge can report
         # them. None means unknown; an empty frozenset means known-empty.
         "active_tools": active_tools,
@@ -1904,6 +1907,7 @@ class EventContext:
         "_source",
         "_agent_id",
         "_agent_type",
+        "_prompt_author",
         "_active_tools",
         "_agent_transcript_path",
         "_chain_notifications",
@@ -1975,6 +1979,7 @@ class EventContext:
         source: str = "startup",
         agent_id: str | None = None,
         agent_type: str | None = None,
+        prompt_author: str | None = None,
         active_tools: "frozenset[str] | None" = None,
         transcript_path: str = None,
         agent_transcript_path: str = None,
@@ -2034,6 +2039,7 @@ class EventContext:
         object.__setattr__(self, "_source", source)
         object.__setattr__(self, "_agent_id", agent_id or None)
         object.__setattr__(self, "_agent_type", agent_type or None)
+        object.__setattr__(self, "_prompt_author", prompt_author or None)
         object.__setattr__(
             self,
             "_active_tools",
@@ -2193,6 +2199,16 @@ class EventContext:
     def agent_type(self) -> "str | None":
         """Harness agent type; not by itself proof that this is a subagent."""
         return self._agent_type
+
+    @property
+    def prompt_author(self) -> "str | None":
+        """Who wrote the prompt, as the sender reported it; None when it did not.
+
+        Only the in-process bridges send it. Read the author through
+        ``resolve_prompt_author``, which also weighs ``agent_id`` and the
+        harness's own prompt wrappers.
+        """
+        return self._prompt_author
 
     @property
     def active_tools(self) -> "frozenset[str] | None":
@@ -2890,6 +2906,34 @@ class EventContext:
     block = continue_running
 
 
+# === WHO WROTE A PROMPT ===
+PROMPT_AUTHORS = ("user", "subagent", "model", "automation", "harness")
+
+
+def resolve_prompt_author(ctx: EventContext) -> str:
+    """Who wrote ``ctx.prompt``: the one place autorun decides it.
+
+    - ``subagent``: ``ctx.agent_id`` is set (Claude Code and Codex send it only
+      for hooks fired inside a subagent). Checked first, so no frame field can
+      turn a subagent's turn into the user's.
+    - ``model`` or ``automation``: the bridge's ``prompt_author`` frame field
+      (OpenCode's model-callable tool; Pi's ``rpc`` and ``extension`` input
+      sources). A value autorun does not know counts as ``automation``.
+    - ``harness``: the prompt starts with one of the platform's
+      ``harness_authored_prompt_prefixes``.
+    - ``user``: otherwise. A typed prompt on a hook harness carries no
+      ``prompt_author`` field at all, so an absent field is the user's.
+    """
+    if ctx.agent_id:
+        return "subagent"
+    reported = ctx.prompt_author
+    if reported and reported != "user":
+        return reported if reported in PROMPT_AUTHORS else "automation"
+    if (ctx.prompt or "").lstrip().startswith(platform_for(ctx.cli_type).harness_authored_prompt_prefixes):
+        return "harness"
+    return "user"
+
+
 # === AUTORUN APP (Click-style Registration + Unified Dispatch) ===
 class AutorunApp:
     """
@@ -3496,6 +3540,7 @@ class AutorunDaemon:
                 source=normalized["source"],
                 agent_id=normalized["agent_id"],
                 agent_type=normalized["agent_type"],
+                prompt_author=normalized["prompt_author"],
                 active_tools=normalized["active_tools"],
                 transcript_path=normalized.get("transcript_path"),
                 agent_transcript_path=normalized.get("agent_transcript_path"),

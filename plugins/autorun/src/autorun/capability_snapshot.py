@@ -93,6 +93,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "fingerprint_ignores_session_id": platform.fingerprint_ignores_session_id,
         "command_prefixes": list(platform.command_prefixes),
         "command_display_prefix": platform.command_display_prefix,
+        "harness_authored_prompt_prefixes": list(platform.harness_authored_prompt_prefixes),
         "has_exit2_workaround": platform.has_exit2_workaround,
         "drops_additional_context": platform.drops_additional_context,
         "gates_mutable_task_tools": platform.gates_mutable_task_tools,

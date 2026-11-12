@@ -876,6 +876,7 @@ def _transcript_policy_context(ctx: EventContext, prompt: str) -> EventContext:
         source=ctx.source,
         agent_id=ctx.agent_id,
         agent_type=ctx.agent_type,
+        prompt_author=ctx.prompt_author,
         active_tools=ctx.active_tools,
         transcript_path=ctx.transcript_path,
         agent_transcript_path=ctx.agent_transcript_path,

@@ -1071,6 +1071,11 @@ class Platform:
     # autocomplete keep each harness's own spelling.
     command_prefixes: tuple[str, ...] = ("/ar:", "ar:", "ar ", "/ar-", "ar-")
     command_display_prefix: str = "/ar:"
+    #: Text the harness writes into the prompt event itself, for turns no one
+    #: typed: a prompt starting with one of these is the harness's, never the
+    #: user's (core.resolve_prompt_author). Empty where every prompt event
+    #: carries typed text or the harness marks its own turns another way.
+    harness_authored_prompt_prefixes: tuple[str, ...] = ()
     # One line telling a user how commands reach autorun on THIS harness, shown
     # as the header of `/ar:help`. Written in canonical /ar: form and rendered
     # through format_commands_for_cli, so the display prefix stays the only
@@ -1396,6 +1401,10 @@ CLAUDE = register(
         # development build, which run Claude Code inside them.
         process_names=("claude-code", "happy", "happy-dev"),
         command_invocation_hint="Type /ar to autocomplete, or /ar:<command> directly.",
+        # Claude Code runs the prompt hook for background-task notifications,
+        # subagent hand-backs and messages from other sessions, and wraps each
+        # in one of these.
+        harness_authored_prompt_prefixes=("<task-notification>", "<agent-message ", "<cross-session-message "),
         standalone_session_env_vars=("CLAUDE_SESSION_ID",),
         # Checked after every other platform's payload signals and before the
         # environment: Claude is the default, but its own transcript path
