@@ -17,8 +17,9 @@
 """The user-facing autorun command spelling contract, in three layers.
 
 1. What you are taught: each harness shows only its own native spelling.
-   Claude autocompletes ``/ar:st``; Codex messages say ``ar:st``; ForgeCode and
-   OpenCode command files advertise ``/ar-st``. One datum encodes that —
+   Claude autocompletes ``/ar:status``; Codex messages say ``ar:status``;
+   ForgeCode and OpenCode command files advertise ``/ar-status``. One datum
+   encodes that —
    ``Platform.command_display_prefix``.
 2. What you can type: every harness accepts the same superset, so a spelling
    carried over from another harness still works wherever the harness lets the
@@ -80,7 +81,7 @@ class TestSpellingSupersetIsSharedByEveryPlatform:
     @pytest.mark.parametrize("platform_name", ALL_PLATFORMS)
     @pytest.mark.parametrize("prefix", SUPERSET_PREFIXES)
     def test_every_spelling_dispatches_on_every_platform(self, platform_name, prefix):
-        prompt = f"{prefix}st"
+        prompt = f"{prefix}status"
         assert app._find_command(prompt, platform_name) is not None, (
             f"{prompt!r} does not dispatch on {platform_name}"
         )
@@ -97,7 +98,7 @@ class TestSpellingSupersetIsSharedByEveryPlatform:
     def test_unknown_cli_type_still_normalizes_the_superset(self, platform_name):
         """Payloads that arrive before cli_type is known fall back to the union
         of hook-platform prefixes; the superset must survive that path too."""
-        assert app._find_command("ar-st") is not None
+        assert app._find_command("ar-status") is not None
 
 
 class TestOneOwnerForTheArgumentTail:
@@ -239,8 +240,8 @@ class TestDisplaySpellingStaysNative:
     @pytest.mark.parametrize("platform_name", ALL_PLATFORMS)
     def test_rendered_guidance_shows_only_the_local_spelling(self, platform_name):
         native = NATIVE_DISPLAY_PREFIXES[platform_name]
-        rendered = format_commands_for_cli("Run /ar:ok git push then /ar:st", platform_name)
-        assert rendered == f"Run {native}ok git push then {native}st"
+        rendered = format_commands_for_cli("Run /ar:ok git push then /ar:status", platform_name)
+        assert rendered == f"Run {native}ok git push then {native}status"
         foreign = {"/ar:", "ar:", "/ar-"} - {native}
         for spelling in foreign:
             if spelling == "ar:" and native == "/ar:":

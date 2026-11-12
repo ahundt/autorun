@@ -557,7 +557,7 @@ const ctx = {
   sessionManager: { getSessionId: () => "pi-session", getSessionFile: () => undefined },
 };
 const prose = await handlers.get("input")({ text: "ar-archive the release notes" }, ctx);
-const command = await handlers.get("input")({ text: "ar-st" }, ctx);
+const command = await handlers.get("input")({ text: "ar-status" }, ctx);
 console.log(JSON.stringify({ prose, command, notices }));
 ''',
     )
@@ -1329,7 +1329,7 @@ def test_shared_daemon_client_maps_every_bare_ar_spelling_to_the_help_prompt(tmp
     prompt, which the dispatcher answers with help. A regex that requires a
     separator after ``ar`` sends ``/ar`` through as the prompt ``ar:/ar`` and
     the user sees nothing."""
-    spellings = ["/ar", "ar:", "/ar:", "ar-", "/ar ", "/ar st", "ar:st", "ar-st", "AR:ST"]
+    spellings = ["/ar", "ar:", "/ar:", "ar-", "/ar ", "/ar status", "ar:status", "ar-status", "AR:STATUS"]
     daemon = _SyntheticDaemon(tmp_path, backlog=8)
     frames: list[dict] = []
 
@@ -1371,7 +1371,7 @@ for (const spelling of {json.dumps(spellings)}) {{
 
     assert result.returncode == 0, result.stderr
     prompts = [frame["prompt"] for frame in frames]
-    assert prompts == ["ar:", "ar:", "ar:", "ar:", "ar:", "ar:st", "ar:st", "ar:st", "ar:ST"], prompts
+    assert prompts == ["ar:", "ar:", "ar:", "ar:", "ar:", "ar:status", "ar:status", "ar:status", "ar:STATUS"], prompts
 
 
 # --- Prime Agent: Pi variant through the same pathway ------------------------
