@@ -329,7 +329,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("ar", {
-    description: "Run an autorun control command, for example /ar st or /ar go <task>",
+    description: "Run an autorun control command, for example /ar status or /ar go <task>",
     handler: async (args, ctx) => {
       const response = await bridge.runCommandResponse(
         args, ctx.cwd, sessionId(ctx), runtimeMetadata(ctx, pi),

@@ -1,6 +1,6 @@
 ---
 name: ar
-description: "autorun control commands, stated as prose after $ar: status; allow/justify/find file-creation policy; ok/no/blocks/clear command guards; global variants; stop/estop; task tracking and pause; cache-miss gate; planexport settings; reload; help lists everything."
+description: "autorun control commands, stated as prose after $ar: status; file allow/justify/existing-only new-file policy; ok/no/clear command guards, each with --global; go/goprocess/stop/estop; task tracking and pause; cache-miss gate; planexport settings; reload; help lists everything."
 ---
 
 # autorun commands (ar)
@@ -17,12 +17,13 @@ command.
 
 <commands>
 
-## File-creation policy (AutoFile)
+## New-file policy (AutoFile)
 
-- `ar:status` (`ar:st`) — show the current policy and settings.
-- `ar:allow` (`ar:a`) — allow all file creation.
-- `ar:justify` (`ar:j`) — require a justification for each new file.
-- `ar:find` (`ar:f`) — modify existing files only (strictest).
+- `ar:status` — show the file policy, this session's and the global command
+  rules, and whether task enforcement is paused.
+- `ar:file allow` — allow all file creation.
+- `ar:file justify` — require a justification for each new file.
+- `ar:file existing-only` — modify existing files only (strictest).
 
 ## Command guards
 
@@ -30,18 +31,19 @@ command.
 - `ar:ok <pattern> [N|5m|perm]` — allow a blocked pattern: N uses, a
   duration such as `5m`, `2h30m`, or `2d`, or `perm` for the rest of the session.
   Default is one use, then auto-revoke.
-- `ar:blocks` — show active session blocks and allows.
-- `ar:clear` — clear all session blocks and allows.
-- Global variants persist across sessions: `ar:globalno <pattern>`,
-  `ar:globalok <pattern> [N|5m|perm]`, `ar:globalstatus`, `ar:globalclear`.
+- `ar:clear` — remove this session's blocks and allows.
+- `--global` as the first argument applies to every session instead:
+  `ar:no --global <pattern>`, `ar:ok --global <pattern> [N|5m|perm]`,
+  `ar:clear --global`. `ar:status` lists both.
 
 ## Run control
 
-- `ar:go <task>` (`ar:run`) — start autonomous execution with three-stage
+- `ar:go <task>` — start autonomous execution with three-stage
   verification.
-- `ar:gp <task>` (`ar:proc`) — procedural mode with the wait process.
-- `ar:stop` (`ar:x`) — graceful stop after the current task.
-- `ar:estop` (`ar:sos`) — emergency stop, cancels the current autorun.
+- `ar:goprocess <task>` — the same with the plan, critique and wait process
+  at every step.
+- `ar:stop` — graceful stop after the current task.
+- `ar:estop` — emergency stop, cancels the current autorun.
 
 ## Task tracking
 
@@ -66,16 +68,17 @@ command.
 
 ## Plan export
 
-- `ar:pe [on|off|globalon|globaloff]` — status or toggles; a per-project
-  pin beats the global default.
-- `ar:pe dir <path>` — set the export directory.
-- `ar:pe pattern <template>` — set the filename pattern.
-- `ar:pe rejected [on|off|dir <path>]` — rejected-plan export.
-- `ar:pe reset` — restore defaults and clear project pins.
+- `ar:planexport [on|off|globalon|globaloff]` — status or toggles; a
+  per-project pin beats the global default.
+- `ar:planexport dir <path>` — set the export directory.
+- `ar:planexport pattern <template>` — set the filename pattern.
+- `ar:planexport rejected [on|off|dir <path>]` — rejected-plan export.
+- `ar:planexport reset` — restore defaults and clear project pins.
 
 ## Admin
 
-- `ar:reload` — force-reload integration rules from config files.
+- `ar:reload` — reload the guard rules from autorun's defaults and your
+  integration files.
 - `ar:help` — list every command with what it does.
 
 </commands>
