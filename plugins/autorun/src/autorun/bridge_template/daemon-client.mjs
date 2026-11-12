@@ -250,7 +250,10 @@ export function createDaemonBridge({
     return askHookEntry(payload, deadline);
   }
 
-  async function runCommandResponse(command, cwd, sessionId, metadata = {}) {
+  // promptAuthor is who wrote the command: "user", "model" or "automation"
+  // (= autorun.core.PROMPT_AUTHORS). Commands that change permissions run only
+  // for "user", so a caller that cannot say is taken as "automation".
+  async function runCommandResponse(command, cwd, sessionId, metadata = {}, promptAuthor = "automation") {
     // Strip any spelling of the ar prefix, including a bare "/ar" (Pi's
     // registered command with no arguments), so every form reaches the
     // dispatcher as "ar:<name>" and an empty name gets help, not silence.
@@ -260,6 +263,7 @@ export function createDaemonBridge({
       hook_event_name: "UserPromptSubmit",
       session_id: sessionId,
       prompt: "ar:" + name,
+      prompt_author: promptAuthor,
       cwd: String(cwd ?? ""),
     });
     if (response) return response;
@@ -273,8 +277,8 @@ export function createDaemonBridge({
     };
   }
 
-  async function runCommand(command, cwd, sessionId) {
-    return responseMessage(await runCommandResponse(command, cwd, sessionId));
+  async function runCommand(command, cwd, sessionId, metadata = {}, promptAuthor = "automation") {
+    return responseMessage(await runCommandResponse(command, cwd, sessionId, metadata, promptAuthor));
   }
 
   return { askDaemon, askToolGate, runCommand, runCommandResponse };

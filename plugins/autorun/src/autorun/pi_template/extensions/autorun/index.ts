@@ -203,8 +203,18 @@ function operationFrame(
   };
 }
 
+// Pi's input event says where a prompt came from. Only a prompt the user
+// typed is the user's (= autorun.core.resolve_prompt_author); one sent over
+// RPC or by another extension is automation, and so is a missing source.
+function promptAuthorOf(source: unknown): "user" | "automation" {
+  return source === "interactive" ? "user" : "automation";
+}
+
 export default function autorunPiExtension(pi: ExtensionAPI) {
   let continuationInFlight = false;
+  // Author of the prompt the latest input event carried, for the
+  // before_agent_start frame that follows it.
+  let pendingPromptAuthor: "user" | "automation" | undefined;
 
   async function reprojectTaskReceipts(ctx: ExtensionContext): Promise<void> {
     const taskRecords: Record<string, unknown>[] = [];
@@ -331,17 +341,23 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   pi.registerCommand("ar", {
     description: "Run an autorun control command, for example /ar status or /ar go <task>",
     handler: async (args, ctx) => {
+      // Pi runs a registered command before any input handler and passes it
+      // no source, so a typed /ar and one sent over RPC look the same here.
+      // It is taken as the user's; the README states that limit.
       const response = await bridge.runCommandResponse(
-        args, ctx.cwd, sessionId(ctx), runtimeMetadata(ctx, pi),
+        args, ctx.cwd, sessionId(ctx), runtimeMetadata(ctx, pi), "user",
       );
       deliverCommandResponse(response, ctx);
     },
   });
 
   pi.on("input", async (event, ctx) => {
+    // Recorded before the prefix test: `ar ok` (a space) fails it and reaches
+    // autorun only through before_agent_start, which has no source of its own.
+    pendingPromptAuthor = promptAuthorOf(event.source);
     if (!/^\/?ar[:\-]/i.test(event.text.trim())) return { action: "continue" };
     const response = await bridge.runCommandResponse(
-      event.text, ctx.cwd, sessionId(ctx), runtimeMetadata(ctx, pi),
+      event.text, ctx.cwd, sessionId(ctx), runtimeMetadata(ctx, pi), pendingPromptAuthor,
     );
     // A prefix is not a command. `ar-` is a registered spelling here, so the
     // guard is right to look, but claiming the input on the prefix alone
@@ -352,6 +368,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     // `response_projection_v2` attaches `_autorun_bridge` exactly when
     // `_find_command` matched, so its absence means this was just text.
     if (response?._autorun_bridge === undefined) return { action: "continue" };
+    pendingPromptAuthor = undefined;
     deliverCommandResponse(response, ctx);
     return { action: "handled" };
   });
@@ -363,9 +380,14 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    // Used once: a prompt that arrives without its own input event is not
+    // credited to the user who typed the one before.
+    const promptAuthor = pendingPromptAuthor ?? "automation";
+    pendingPromptAuthor = undefined;
     const response = await bridge.askDaemon({
       ...frame(ctx, "UserPromptSubmit", pi),
       prompt: event.prompt,
+      prompt_author: promptAuthor,
     });
     const content = responseMessage(response);
     if (!content) return undefined;

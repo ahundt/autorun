@@ -11,8 +11,10 @@ const bridge = createDaemonBridge({
   hookEntryCommand: __AUTORUN_HOOK_ENTRY_COMMAND__,
 })
 
-export async function runArCommand(command, directory) {
-  return bridge.runCommand(command, directory, undefined)
+// The model calls this through the `autorun` tool, so it runs as the model:
+// commands that change permissions answer that only the user can run them.
+export async function runArCommand(command, directory, sessionId) {
+  return bridge.runCommand(command, directory, sessionId, {}, "model")
 }
 
 export const AutorunPlugin = async ({ serverUrl, directory }) => {
@@ -75,8 +77,8 @@ export const AutorunPlugin = async ({ serverUrl, directory }) => {
             .string()
             .describe("command and arguments, e.g. 'st' or 'ok git push 5m'"),
         },
-        async execute({ command }) {
-          return runArCommand(command, directory)
+        async execute({ command }, context) {
+          return runArCommand(command, directory, context?.sessionID)
         },
       }),
     }
