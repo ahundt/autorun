@@ -2902,8 +2902,8 @@ class AutorunApp:
     - Automatic command matching via CONFIG + aliases
 
     Usage:
-        @app.command("/ar:a", "/ar:allow", "/afa", "ALLOW")
-        def handle_allow(ctx): ctx.file_policy = "ALLOW"; return "Done"
+        @app.command("/ar:stop")
+        def handle_stop(ctx): ctx.autorun_active = False; return "Stopped"
 
         @app.on("PreToolUse")
         def enforce_policy(ctx): return ctx.deny("Blocked") if blocked else None

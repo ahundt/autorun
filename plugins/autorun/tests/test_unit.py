@@ -11,8 +11,9 @@ from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
 
 # COMMAND_HANDLERS removed — canonical path: EventContext + plugins.app.dispatch(ctx)
-# Aliases: SEARCH→/ar:f, ALLOW→/ar:a, JUSTIFY→/ar:j, STATUS→/ar:st,
-#          STOP→/ar:x, EMERGENCY_STOP→/ar:sos, activate→/ar:go <task>
+# Commands: /ar:file allow|justify|existing-only, /ar:status, /ar:stop,
+#           /ar:estop, /ar:go <task>. Old names (/ar:f, /ar:st, /ar:x, /ar:sos)
+#           still dispatch through core._RETIRED_COMMAND_SPELLINGS.
 
 
 def _dispatch(prompt: str, session_id: str = None) -> dict:
@@ -80,7 +81,7 @@ class TestConfiguration:
         mappings = CONFIG["command_mappings"]
 
         # Check essential commands
-        essential_commands = ["/afs", "/afa", "/afj", "/afst", "/autostop", "/estop"]
+        essential_commands = ["/ar:status", "/ar:go", "/ar:stop", "/ar:estop"]
         for cmd in essential_commands:
             assert cmd in mappings, f"Missing command mapping: {cmd}"
             assert mappings[cmd], f"Command {cmd} should map to an action"
@@ -117,15 +118,11 @@ class TestCommandHandlers:
     @pytest.mark.unit
     def test_command_handlers_exist(self):
         """Test all required command handlers exist in plugins.app.command_handlers."""
-        # Canonical replacements for deleted COMMAND_HANDLERS dict:
-        # SEARCH→/ar:f (and /afs), ALLOW→/ar:a (and /afa), etc.
         required_aliases = {
-            "SEARCH": "/ar:f",
-            "ALLOW": "/ar:a",
-            "JUSTIFY": "/ar:j",
-            "STATUS": "/ar:st",
-            "STOP": "/ar:x",
-            "EMERGENCY_STOP": "/ar:sos",
+            "file policy": "/ar:file",
+            "STATUS": "/ar:status",
+            "STOP": "/ar:stop",
+            "EMERGENCY_STOP": "/ar:estop",
             "activate": "/ar:go",
         }
         handlers = plugins.app.command_handlers
@@ -195,39 +192,17 @@ class TestCommandDetection:
 
     COMMAND_HANDLERS removed — canonical path: EventContext + plugins.app.dispatch(ctx).
     Logical names (SEARCH/ALLOW/activate/etc.) from command_mappings values map to
-    canonical aliases in plugins.app.command_handlers (e.g. SEARCH→/ar:f, activate→/ar:go).
+    canonical aliases in plugins.app.command_handlers; detection is
+    plugins.app._find_command, the lookup dispatch uses.
     """
-
-    # Logical name → canonical /ar: alias (replaces COMMAND_HANDLERS key lookup)
-    _LOGICAL_TO_CANONICAL = {
-        "SEARCH": "/ar:f", "ALLOW": "/ar:a", "JUSTIFY": "/ar:j", "STATUS": "/ar:st",
-        "stop": "/ar:x", "emergency_stop": "/ar:sos", "activate": "/ar:go",
-    }
 
     @pytest.mark.unit
     def test_command_mapping_detection(self, sample_commands):
-        """Test command detection works correctly"""
-        mappings = CONFIG["command_mappings"]
-        handlers = plugins.app.command_handlers
-
-        # Test policy commands
-        for cmd in sample_commands["policy_commands"]:
-            found = next((v for k, v in mappings.items() if k == cmd), None)
-            assert found is not None, f"Command {cmd} should be detected"
-            canonical = self._LOGICAL_TO_CANONICAL.get(found)
-            assert canonical in handlers, \
-                f"Command {cmd} (→{found}→{canonical}) should have handler in app.command_handlers"
-
-        # Test control commands (note: some have trailing spaces in mapping)
-        for cmd in sample_commands["control_commands"]:
-            found = next((v for k, v in mappings.items() if k == cmd), None)
-            if found is None:
-                # Try with trailing space
-                found = next((v for k, v in mappings.items() if k == f"{cmd} "), None)
-            assert found is not None, f"Command {cmd} should be detected (with or without trailing space)"
-            canonical = self._LOGICAL_TO_CANONICAL.get(found)
-            assert canonical in handlers, \
-                f"Command {cmd} (→{found}→{canonical}) should have handler in app.command_handlers"
+        """Policy and control commands are found by the dispatcher's lookup."""
+        for cmd in sample_commands["policy_commands"] + sample_commands["control_commands"]:
+            match = plugins.app._find_command(cmd)
+            assert match is not None, f"Command {cmd} should be detected"
+            assert callable(match.handler), f"Command {cmd} should reach a callable handler"
 
     @pytest.mark.unit
     def test_normal_commands_not_detected(self, sample_commands):
@@ -241,10 +216,7 @@ class TestCommandDetection:
     @pytest.mark.unit
     def test_autorun_command_detection(self, sample_commands):
         """Test autorun command detection"""
-        mappings = CONFIG["command_mappings"]
-
-        cmd = sample_commands["autorun_command"]
-        found = next((v for k, v in mappings.items() if cmd.startswith(k)), None)
-        assert found == "activate", "Autorun command should be detected as 'activate'"
-        # Canonical replacement for COMMAND_HANDLERS["activate"]: /ar:go in app.command_handlers
-        assert "/ar:go" in plugins.app.command_handlers, "Activate handler (/ar:go) should exist"
+        match = plugins.app._find_command(sample_commands["autorun_command"])
+        assert match is not None and match.handler is plugins.handle_activate, \
+            "Autorun command should reach the activate handler"
+        assert match.arguments == "test task description"

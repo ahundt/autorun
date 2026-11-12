@@ -42,6 +42,7 @@ from typing import Optional, Dict, Callable
 from .core import (
     app,
     apply_command_match,
+    canonicalize_command_prompt,
     command_starts_agent_turn,
     EventContext,
     logger,
@@ -173,28 +174,16 @@ def _make_policy_handler(policy_name: str):
     return handler
 
 
-# Data-driven registration: easy to add new policies.
-#
-# The `/ar:af*` spellings are not cosmetic. `commands/afa.md` and its siblings
-# ship as plugin command documents, and every harness that surfaces them
-# advertises the namespaced form — `/ar:afa` in Claude, `ar:afa` in Codex —
-# while the documents end by asserting "UserPromptSubmit hook has updated the
-# session policy". Registering only `/afa` made that sentence false for the
-# spelling users are actually shown.
-_POLICY_ALIASES = {
-    "ALLOW": ("/ar:a", "/ar:allow", "/afa", "/ar:afa"),
-    "JUSTIFY": ("/ar:j", "/ar:justify", "/afj", "/ar:afj"),
-    "SEARCH": ("/ar:f", "/ar:find", "/afs", "/ar:afs"),
-}
-
 # Internal ids that CONFIG["command_mappings"] values name. They are NOT
 # registered as prompt aliases: the matcher accepts any prompt that starts
 # with an alias plus a space, so "stop using sed" ran /ar:stop and "activate
 # the venv" started autorun. _register_command_mappings resolves them.
 _INTERNAL_COMMANDS: Dict[str, Callable] = {}
 
-for policy, aliases in _POLICY_ALIASES.items():
-    _INTERNAL_COMMANDS[policy] = app.command(*aliases)(_make_policy_handler(policy))
+# One handler per policy, reached through `/ar:file <word>` (and any spelling
+# a user maps to the id in autorun.config.json).
+for policy in CONFIG["policies"]:
+    _INTERNAL_COMMANDS[policy] = _make_policy_handler(policy)
 
 # `/ar:file <word>`: the advertised words, plus `search` (the command line's
 # older word) and `find` (the older slash name) for the strictest policy.
@@ -216,7 +205,7 @@ def handle_file_policy(ctx: EventContext) -> str:
     return _INTERNAL_COMMANDS[policy](ctx)
 
 
-@app.command("/ar:st", "/ar:status", "/afst", "/ar:afst")
+@app.command("/ar:status")
 def handle_status(ctx: EventContext) -> str:
     """
     Unified status: Shows file policy + session/global blocks and allows.
@@ -738,16 +727,16 @@ def _command_line_arguments(ctx: EventContext) -> str:
 
 
 # MEGA DRY: Single factory for ALL block operations
-def _make_block_op(scope: str, op: str):
+def _make_block_op(op: str):
     """
     Factory: Generate block operation handler.
 
     Args:
-        scope: "session" or "global"
-        op: "block", "allow", "clear", or "status"
+        op: "block", "allow" or "clear"; the session rules unless the first
+            argument is `--global`
 
     Returns:
-        Callable: Handler function for the specified scope/operation combination
+        Callable: Handler function for the operation
     """
 
     def handler(ctx: EventContext) -> str:
@@ -756,14 +745,13 @@ def _make_block_op(scope: str, op: str):
         args = _command_line_arguments(ctx)
         # `--global` as the first argument selects the global rules:
         # `/ar:ok --global 'git push'`, `/ar:clear --global`.
-        rule_scope = scope
+        rule_scope = "session"
         words = args.split(maxsplit=1)
         if words and words[0] == "--global":
             rule_scope, args = "global", (words[1] if len(words) > 1 else "")
         flag = " --global" if rule_scope == "global" else ""
 
         accessor = ScopeAccessor(ctx, rule_scope)
-        blocks = accessor.get()
 
         if op == "block":
             if not args:
@@ -824,13 +812,6 @@ def _make_block_op(scope: str, op: str):
             accessor.set_allowed([])
             return f"✅ Cleared {rule_scope} blocks and allows"
 
-        if op == "status":
-            allows = accessor.get_allowed()
-            lines = _format_pattern_list(blocks, f"{rule_scope.title()} Blocks", "🚫") + _format_pattern_list(
-                allows, f"{rule_scope.title()} Allows", "✅", show_scope=True
-            )
-            return "\n".join(lines) if lines else f"ℹ️ No {rule_scope} blocks or allows"
-
         return ""
 
     return handler
@@ -838,28 +819,20 @@ def _make_block_op(scope: str, op: str):
 
 # DRY: Data-driven registration
 _BLOCK_COMMANDS = [
-    ("session", "/ar:no", "block"),
-    ("session", "/ar:ok", "allow"),
-    ("session", "/ar:clear", "clear"),
-    ("session", "/ar:blocks", "status"),
-    ("global", "/ar:globalno", "block"),
-    ("global", "/ar:globalok", "allow"),
-    ("global", "/ar:globalclear", "clear"),
-    ("global", "/ar:globalstatus", "status"),
+    ("/ar:no", "block"),
+    ("/ar:ok", "allow"),
+    ("/ar:clear", "clear"),
 ]
 
-for scope, cmd, op in _BLOCK_COMMANDS:
-    app.command(cmd)(_make_block_op(scope, op))
+for cmd, op in _BLOCK_COMMANDS:
+    app.command(cmd)(_make_block_op(op))
 
 
 _TRANSCRIPT_POLICY_COMMANDS = frozenset(
     {
         "/ar:ok",
-        "/ar:globalok",
         "/ar:no",
-        "/ar:globalno",
         "/ar:clear",
-        "/ar:globalclear",
         "/ar:task",
         "/ar:tasks",
     }
@@ -1575,20 +1548,12 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 
 
 def _is_procedural_mode(prompt: str) -> bool:
-    """Check if command indicates procedural mode."""
-    return any(x in prompt for x in ["/ar:goprocess", "/ar:gp", "/ar:proc", "/autoproc"])
+    """Whether the command typed is /ar:goprocess (or an old name for it)."""
+    words = canonicalize_command_prompt(prompt).split(maxsplit=1)
+    return bool(words) and words[0] == "/ar:goprocess"
 
 
-@app.command(
-    "/ar:go",
-    "/ar:goprocess",
-    "/ar:run",
-    "/ar:gp",
-    "/ar:proc",
-    "/autorun",
-    "/autoproc",
-    starts_agent_turn=True,
-)
+@app.command("/ar:go", "/ar:goprocess", starts_agent_turn=True)
 def handle_activate(ctx: EventContext) -> str:
     """Activate autorun with task description."""
     # The matcher already sliced the tail off the spelling it matched; re-splitting
@@ -1628,14 +1593,14 @@ def _deactivate(ctx: EventContext, msg: str) -> str:
     return msg
 
 
-@app.command("/ar:x", "/ar:stop", "/autostop")
+@app.command("/ar:stop")
 def handle_stop(ctx: EventContext) -> str:
     """Graceful stop."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, "✅ Stopped")
 
 
-@app.command("/ar:sos", "/ar:estop", "/estop")
+@app.command("/ar:estop")
 def handle_sos(ctx: EventContext) -> str:
     """Emergency stop."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
@@ -3326,17 +3291,17 @@ def _make_plan_handler(skill_name: str):
     return handler
 
 
-# Data-driven registration: every spelling of each plan command reaches the
-# skill that carries the procedure.
-_PLAN_ALIASES = {
-    "NEW_PLAN": ("/ar:pn", "/ar:plannew", "plannew"),
-    "REFINE_PLAN": ("/ar:pr", "/ar:planrefine", "planrefine"),
-    "UPDATE_PLAN": ("/ar:pu", "/ar:planupdate", "planupdate"),
-    "PROCESS_PLAN": ("/ar:pp", "/ar:planprocess", "planprocess"),
+# Data-driven registration: each plan command reaches the skill that carries
+# the procedure.
+_PLAN_SKILLS = {
+    "NEW_PLAN": "plannew",
+    "REFINE_PLAN": "planrefine",
+    "UPDATE_PLAN": "planupdate",
+    "PROCESS_PLAN": "planprocess",
 }
 
-for plan_type, (short_cmd, long_cmd, skill) in _PLAN_ALIASES.items():
-    _INTERNAL_COMMANDS[plan_type] = app.command(short_cmd, long_cmd, starts_agent_turn=True)(
+for plan_type, skill in _PLAN_SKILLS.items():
+    _INTERNAL_COMMANDS[plan_type] = app.command(f"/ar:{skill}", starts_agent_turn=True)(
         _make_plan_handler(skill)
     )
 

@@ -85,11 +85,11 @@ def test_capability_snapshot_records_command_turn_behavior_without_replacing_han
     snapshot = build_capability_snapshot()
     turn_behavior = snapshot["command_starts_agent_turn"]
 
-    for alias in ("/ar:go", "/ar:run", "/ar:gp", "/ar:proc"):
+    for alias in ("/ar:go", "/ar:goprocess"):
         assert turn_behavior[alias] is True
-    for alias in ("/ar:pn", "/ar:pr", "/ar:pu", "/ar:pp"):
+    for alias in ("/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/ar:planprocess"):
         assert turn_behavior[alias] is True
-    for alias in ("/ar:st", "/ar:stop", "/ar:sos", "/ar:reload"):
+    for alias in ("/ar:status", "/ar:stop", "/ar:estop", "/ar:reload", "/ar:file"):
         assert turn_behavior[alias] is False
 
 

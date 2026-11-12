@@ -54,7 +54,7 @@ class TestPluginIntegration:
     @pytest.mark.integration
     def test_plugin_handles_policy_commands(self):
         """Test plugin correctly handles file policy commands."""
-        result = _dispatch("/afs")
+        result = _dispatch("/ar:file existing-only")
 
         assert result["continue"] is True, "Policy command should continue to AI"
         assert "strict-search" in result["systemMessage"], \
@@ -75,10 +75,10 @@ class TestPluginIntegration:
     def test_plugin_handles_all_policy_commands(self):
         """Test plugin handles all different policy commands."""
         policy_commands = [
-            ("/afs", "strict-search"),
-            ("/afa", "allow-all"),
-            ("/afj", "justify-create"),
-            ("/afst", "AutoFile policy:"),  # Fresh session default policy shown
+            ("/ar:file existing-only", "strict-search"),
+            ("/ar:file allow", "allow-all"),
+            ("/ar:file justify", "justify-create"),
+            ("/ar:status", "AutoFile policy:"),  # Fresh session default policy shown
         ]
 
         for command, expected_content in policy_commands:
@@ -95,12 +95,12 @@ class TestPluginIntegration:
         """Test plugin handles control commands.
 
         Canonical string changes:
-          - /autostop → "✅ Stopped" (canonical handle_stop response)
-          - /estop → "⚠️ EMERGENCY STOP\n..." (canonical handle_sos response)
+          - /ar:stop → "✅ Stopped" (canonical handle_stop response)
+          - /ar:estop → "⚠️ EMERGENCY STOP\n..." (canonical handle_sos response)
         """
         control_commands = [
-            ("/autostop", "Stopped"),       # canonical: "✅ Stopped"
-            ("/estop", "EMERGENCY STOP"),   # canonical: "⚠️ EMERGENCY STOP"
+            ("/ar:stop", "Stopped"),       # canonical: "✅ Stopped"
+            ("/ar:estop", "EMERGENCY STOP"),   # canonical: "⚠️ EMERGENCY STOP"
         ]
 
         for command, expected_content in control_commands:
@@ -114,7 +114,7 @@ class TestPluginIntegration:
     @pytest.mark.integration
     def test_plugin_handles_autorun_command(self):
         """Test plugin handles autorun activation command."""
-        result = _dispatch("/autorun test task description")
+        result = _dispatch("/ar:go test task description")
 
         assert result["continue"] is True, \
             "Autorun command should continue to AI with injection template"
@@ -131,11 +131,11 @@ class TestPluginIntegration:
         session_id = f"plugin-test-{uuid.uuid4().hex[:8]}"
 
         # First command: set strict-search policy
-        result1 = _dispatch("/afs", session_id)
+        result1 = _dispatch("/ar:file existing-only", session_id)
         assert "strict-search" in result1["systemMessage"], "Policy must be set"
 
         # Second command: check status — should reflect the set policy
-        result2 = _dispatch("/afst", session_id)
+        result2 = _dispatch("/ar:status", session_id)
         assert "strict-search" in result2["systemMessage"], \
             "Status should reflect previously set policy"
 

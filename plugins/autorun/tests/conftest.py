@@ -1085,10 +1085,10 @@ def policy_responses():
 def sample_commands():
     """Sample commands for testing"""
     return {
-        "policy_commands": ["/afs", "/afa", "/afj", "/afst"],
-        "control_commands": ["/autostop", "/estop"],
+        "policy_commands": ["/ar:file existing-only", "/ar:file allow", "/ar:file justify", "/ar:status"],
+        "control_commands": ["/ar:stop", "/ar:estop"],
         "normal_commands": ["help me", "what is this", "test file"],
-        "autorun_command": "/autorun test task description"
+        "autorun_command": "/ar:go test task description"
     }
 
 

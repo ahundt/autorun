@@ -22,7 +22,7 @@ from autorun.config import CONFIG
 
 # ─── Bug 1: Plan Commands ─────────────────────────────────────────────────────
 
-PLAN_COMMANDS = ["/ar:pn", "/ar:pr", "/ar:pu", "/ar:pp", "/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/ar:planprocess"]
+PLAN_COMMANDS = ["/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/ar:planprocess"]
 
 
 @pytest.mark.parametrize("cmd", PLAN_COMMANDS)

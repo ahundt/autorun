@@ -269,20 +269,19 @@ def test_readme_workflow_compliance():
     assert "max_recheck_count" in CONFIG
     assert CONFIG["max_recheck_count"] == 3
 
-    # Legacy command mappings
-    required_legacy_mappings = {
-        "/autorun": "activate",
-        "/autoproc": "activate",
-        "/autostop": "stop",
-        "/estop": "emergency_stop",
-        "/afs": "SEARCH",
-        "/afa": "ALLOW",
-        "/afj": "JUSTIFY",
-        "/afst": "STATUS",
+    # Command mappings: advertised names only; the unprefixed pre-2026 names
+    # (/autorun, /autoproc, /autostop, /estop, /afs, /afa, /afj, /afst) are gone.
+    required_mappings = {
+        "/ar:go": "activate",
+        "/ar:goprocess": "activate",
+        "/ar:stop": "stop",
+        "/ar:estop": "emergency_stop",
+        "/ar:status": "STATUS",
     }
-    for cmd, expected_action in required_legacy_mappings.items():
-        assert cmd in CONFIG["command_mappings"], f"Missing legacy command: {cmd}"
-        assert CONFIG["command_mappings"][cmd] == expected_action
+    for cmd, expected_action in required_mappings.items():
+        assert CONFIG["command_mappings"].get(cmd) == expected_action, f"Missing command: {cmd}"
+    for retired in ("/autorun", "/autoproc", "/autostop", "/estop", "/afs", "/afa", "/afj", "/afst"):
+        assert retired not in CONFIG["command_mappings"], f"Retired spelling still mapped: {retired}"
 
     # File policies
     expected_policies = {

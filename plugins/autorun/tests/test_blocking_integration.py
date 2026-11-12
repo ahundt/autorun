@@ -356,15 +356,15 @@ class TestCommandHandlerIntegration:
         """Test that all blocking handlers are registered as app commands."""
         # Canonical: plugins.app.command_handlers dict (not COMMAND_HANDLERS)
         registered_commands = set(plugins.app.command_handlers.keys())
-        required = ["/ar:no", "/ar:ok", "/ar:clear", "/ar:blocks",
-                    "/ar:globalno", "/ar:globalok", "/ar:globalclear", "/ar:globalstatus"]
+        # The global rules are `--global` arguments of these three; the list
+        # of rules is part of /ar:status.
+        required = ["/ar:no", "/ar:ok", "/ar:clear", "/ar:status"]
         for cmd in required:
             assert cmd in registered_commands, f"Missing command: {cmd}"
 
     def test_handlers_are_callable(self):
         """Test that all registered blocking handlers are callable."""
-        for cmd in ["/ar:no", "/ar:ok", "/ar:clear", "/ar:blocks",
-                    "/ar:globalno", "/ar:globalok", "/ar:globalclear", "/ar:globalstatus"]:
+        for cmd in ["/ar:no", "/ar:ok", "/ar:clear", "/ar:status"]:
             handler = plugins.app.command_handlers.get(cmd)
             assert handler is not None and callable(handler), f"Handler for {cmd} not callable"
 

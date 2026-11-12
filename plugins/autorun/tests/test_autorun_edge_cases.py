@@ -273,7 +273,7 @@ class TestHandleActivateEdgeCases:
     @pytest.mark.unit
     @pytest.mark.parametrize(
         "spelling",
-        ("/ar:go", "/ar:run", "/ar:gp", "/ar:proc", "/autorun", "/autoproc"),
+        ("/ar:go", "/ar:goprocess", "/ar:run", "/ar:gp", "/ar:proc", "/ar:autorun", "/ar:autoproc"),
     )
     def test_activation_records_the_task_through_the_dispatcher(self, spelling):
         """Every activation spelling stores the same task, via the real route.
@@ -281,7 +281,7 @@ class TestHandleActivateEdgeCases:
         The task comes from the matcher's argument tail, and only `dispatch`
         fills that in — so a test that calls the handler with a hand-set
         `activation_prompt` proves the handler works while saying nothing
-        about the path a user's prompt actually takes. Six spellings share one
+        about the path a user's prompt actually takes. Seven spellings share one
         handler, so an extraction that reads the wrong thing shows up here
         rather than on whichever alias nobody tried.
         """
@@ -300,7 +300,7 @@ class TestHandleActivateEdgeCases:
         assert ctx.autorun_active is True, "Should activate"
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("spelling", ("/ar:go", "/autorun"))
+    @pytest.mark.parametrize("spelling", ("/ar:go", "/ar:run"))
     def test_activation_without_a_task_records_an_empty_one(self, spelling):
         ctx = EventContext(
             session_id=f"activate-no-task-{spelling}",

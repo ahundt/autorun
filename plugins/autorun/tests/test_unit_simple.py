@@ -93,7 +93,7 @@ class TestConfiguration:
         mappings = CONFIG["command_mappings"]
 
         # Check essential commands
-        essential_commands = ["/afs", "/afa", "/afj", "/afst", "/autostop", "/estop"]
+        essential_commands = ["/ar:status", "/ar:go", "/ar:stop", "/ar:estop"]
         for cmd in essential_commands:
             assert cmd in mappings, f"Missing command mapping: {cmd}"
             assert mappings[cmd], f"Command {cmd} should map to an action"
@@ -207,22 +207,20 @@ class TestCommandHandlers:
 class TestCommandDetection:
     """Test command detection logic.
 
-    Commands migrated to /ar: prefix (legacy /afs, /afa, /afj, /afst, /autorun, /autostop, /estop
-    now exist as aliases in command_mappings but canonical forms are /ar:f, /ar:a, /ar:j, /ar:st,
-    /ar:go, /ar:x, /ar:sos).
+    Each command has one advertised name (/ar:file <word>, /ar:status, /ar:go,
+    /ar:stop, /ar:estop); old names such as /ar:f, /ar:st, /ar:run, /ar:x and
+    /ar:sos still reach the same handler through
+    core._RETIRED_COMMAND_SPELLINGS. Detection is plugins.app._find_command.
     """
 
     @pytest.mark.unit
     def test_policy_commands_detected(self):
-        """Test canonical policy commands are in command_mappings and dispatch correctly."""
-        mappings = CONFIG["command_mappings"]
-        # Canonical /ar: commands (primary) — old /afs etc. are legacy aliases
-        policy_commands = ["/ar:f", "/ar:a", "/ar:j", "/ar:st"]
-
-        for cmd in policy_commands:
-            found = next((v for k, v in mappings.items() if k == cmd), None)
-            assert found is not None, f"Command {cmd} should be in command_mappings"
-            # Verify daemon-path dispatch works (handler registered in plugins.app)
+        """Policy commands, advertised and old names, dispatch to one handler each."""
+        for cmd, old in (("/ar:file existing-only", "/ar:f"), ("/ar:file allow", "/ar:a"),
+                         ("/ar:file justify", "/ar:j"), ("/ar:status", "/ar:st")):
+            match = plugins.app._find_command(cmd)
+            assert match is not None, f"Command {cmd} should be detected"
+            assert plugins.app._find_command(old).handler is match.handler, f"{old} should reach {cmd}"
             result = _dispatch(cmd)
             sm = result.get("systemMessage", "")
             assert len(sm) > 0, f"Command {cmd} should produce non-empty systemMessage"
@@ -230,14 +228,10 @@ class TestCommandDetection:
     @pytest.mark.unit
     def test_control_commands_detected(self):
         """Test control commands are detected correctly"""
-        mappings = CONFIG["command_mappings"]
-        # Canonical commands (check both new /ar: and legacy aliases if present)
-        control_commands = ["/ar:x", "/ar:sos"]
-
-        for cmd in control_commands:
-            found = next((v for k, v in mappings.items() if k == cmd), None)
-            assert found is not None, f"Command {cmd} should be detected"
-            assert found in ["stop", "emergency_stop"], f"Command {cmd} should map to stop or emergency_stop"
+        for cmd, old, handler in (("/ar:stop", "/ar:x", plugins.handle_stop),
+                                  ("/ar:estop", "/ar:sos", plugins.handle_sos)):
+            assert plugins.app._find_command(cmd).handler is handler, f"Command {cmd} should be detected"
+            assert plugins.app._find_command(old).handler is handler, f"Command {old} should be detected"
 
     @pytest.mark.unit
     def test_normal_commands_not_detected(self):
@@ -251,17 +245,13 @@ class TestCommandDetection:
 
     @pytest.mark.unit
     def test_autorun_command_detection(self):
-        """Test activate command detection via /ar:go (canonical) and /ar:run (alias)."""
-        mappings = CONFIG["command_mappings"]
-        # Canonical activate command
+        """Test activate command detection via /ar:go and its old name /ar:run."""
         for autorun_cmd in ["/ar:go test task description", "/ar:run test task"]:
-            found = next((v for k, v in mappings.items() if autorun_cmd.startswith(k)), None)
-            assert found == "activate", f"Command '{autorun_cmd}' should map to 'activate'; got: {found}"
-        # Verify daemon-path dispatch works for /ar:go
-        ch = plugins.app.command_handlers
-        assert any("/ar:go" in k for k in ch) or any(k.startswith("/ar:go") for k in ch) or "/ar:go" in ch, (
-            f"/ar:go should be registered in plugins.app.command_handlers; got: {sorted(ch.keys())}"
-        )
+            match = plugins.app._find_command(autorun_cmd)
+            assert match is not None and match.handler is plugins.handle_activate, (
+                f"Command '{autorun_cmd}' should reach the activate handler"
+            )
+        assert "/ar:go" in plugins.app.command_handlers
 
 
 class TestBasicFunctionality:

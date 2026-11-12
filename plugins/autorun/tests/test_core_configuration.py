@@ -134,62 +134,44 @@ def test_injection_template():
     print("✅ Injection template contains all three-stage system components")
 
 def test_command_mappings():
-    """Test command mappings are correctly configured"""
+    """CONFIG["command_mappings"] holds the advertised names whose id has a handler."""
     expected_mappings = {
-        "/autorun": "activate",
-        "/autoproc": "activate",
-        "/autostop": "stop",
-        "/estop": "emergency_stop",
-        "/afs": "SEARCH",
-        "/afa": "ALLOW",
-        "/afj": "JUSTIFY",
-        "/afst": "STATUS"  # uppercase to match COMMAND_HANDLERS keys
+        "/ar:status": "STATUS",
+        "/ar:go": "activate",
+        "/ar:goprocess": "activate",
+        "/ar:stop": "stop",
+        "/ar:estop": "emergency_stop",
+        "/ar:plannew": "NEW_PLAN",
+        "/ar:planrefine": "REFINE_PLAN",
+        "/ar:planupdate": "UPDATE_PLAN",
+        "/ar:planprocess": "PROCESS_PLAN",
     }
-
-    for cmd, expected_action in expected_mappings.items():
-        actual_action = CONFIG["command_mappings"][cmd]
-        assert actual_action == expected_action, f"Command mapping {cmd} mismatch: expected {expected_action}, got {actual_action}"
+    assert CONFIG["command_mappings"] == expected_mappings
 
     print("✅ All command mappings correctly configured")
 
 
 def test_new_ar_command_mappings():
-    """Test new /ar: prefix commands with short and long forms"""
-    # Short forms
-    short_mappings = {
-        "/ar:a": "ALLOW",
-        "/ar:j": "JUSTIFY",
-        "/ar:f": "SEARCH",
-        "/ar:st": "STATUS",
-        "/ar:go": "activate",
-        "/ar:gp": "activate",
-        "/ar:x": "stop",
-        "/ar:sos": "emergency_stop",
+    """Old /ar: short and long forms reach the handler of their advertised form."""
+    old_to_new = {
+        "/ar:a": "/ar:file allow",
+        "/ar:j": "/ar:file justify",
+        "/ar:f": "/ar:file existing-only",
+        "/ar:st": "/ar:status",
+        "/ar:gp": "/ar:goprocess",
+        "/ar:x": "/ar:stop",
+        "/ar:sos": "/ar:estop",
+        "/ar:allow": "/ar:file allow",
+        "/ar:justify": "/ar:file justify",
+        "/ar:find": "/ar:file existing-only",
+        "/ar:run": "/ar:go",
+        "/ar:proc": "/ar:goprocess",
     }
-
-    # Long forms
-    long_mappings = {
-        "/ar:allow": "ALLOW",
-        "/ar:justify": "JUSTIFY",
-        "/ar:find": "SEARCH",
-        "/ar:status": "STATUS",
-        "/ar:run": "activate",
-        "/ar:proc": "activate",
-        "/ar:stop": "stop",
-        "/ar:estop": "emergency_stop",
-    }
-
-    # Test short forms
-    for cmd, expected_action in short_mappings.items():
-        assert cmd in CONFIG["command_mappings"], f"Missing short command: {cmd}"
-        actual_action = CONFIG["command_mappings"][cmd]
-        assert actual_action == expected_action, f"Short command {cmd} mismatch: expected {expected_action}, got {actual_action}"
-
-    # Test long forms
-    for cmd, expected_action in long_mappings.items():
-        assert cmd in CONFIG["command_mappings"], f"Missing long command: {cmd}"
-        actual_action = CONFIG["command_mappings"][cmd]
-        assert actual_action == expected_action, f"Long command {cmd} mismatch: expected {expected_action}, got {actual_action}"
+    for old, new in old_to_new.items():
+        old_match, new_match = plugins.app._find_command(old), plugins.app._find_command(new)
+        assert new_match is not None, f"Missing advertised command: {new}"
+        assert old_match is not None and old_match.handler is new_match.handler, f"{old} does not reach {new}"
+        assert old_match.activation_prompt == new_match.activation_prompt, f"{old} changes the command line"
 
     print("✅ All /ar: prefix commands correctly configured (short + long forms)")
 
@@ -275,43 +257,23 @@ def test_command_handlers():
     print("✅ All command handlers produce correct responses")
 
 def test_handler_variations_available():
-    """Test that required handler variations are registered in canonical daemon-path.
+    """Each command is registered once, under its advertised name.
 
-    Canonical replacement for COMMAND_HANDLERS dict:
-      Handlers are now registered in plugins.app.command_handlers via @app.command() decorator.
-      Both short (/ar:*) and legacy (/afs, /afa, etc.) aliases are registered.
+    Old names (/ar:f, /ar:st, /ar:x, /ar:sos, /ar:run) are not registry keys:
+    they reach these handlers through core._RETIRED_COMMAND_SPELLINGS, and the
+    unprefixed pre-2026 names (/afs, /autostop, /estop, /autorun) reach nothing.
     """
     handlers = plugins.app.command_handlers
 
-    # Policy commands — short and legacy aliases must be registered
-    policy_aliases = {
-        "SEARCH": ["/ar:f", "/ar:find", "/afs"],
-        "ALLOW":  ["/ar:a", "/ar:allow", "/afa"],
-        "JUSTIFY": ["/ar:j", "/ar:justify", "/afj"],
-    }
-    for policy, aliases in policy_aliases.items():
-        for alias in aliases:
-            assert alias in handlers, f"Missing policy handler alias: {alias} (policy: {policy})"
+    for alias in ["/ar:file", "/ar:status", "/ar:stop", "/ar:estop", "/ar:go", "/ar:goprocess"]:
+        assert alias in handlers, f"Missing handler: {alias}"
 
-    # Status command — multiple aliases
-    for alias in ["/ar:st", "/ar:status", "/afst"]:
-        assert alias in handlers, f"Missing status handler alias: {alias}"
-
-    # Stop commands
-    for alias in ["/ar:x", "/ar:stop", "/autostop"]:
-        assert alias in handlers, f"Missing stop handler alias: {alias}"
-
-    # Emergency stop
-    for alias in ["/ar:sos", "/ar:estop", "/estop"]:
-        assert alias in handlers, f"Missing emergency_stop handler alias: {alias}"
+    for retired in ["/ar:f", "/ar:st", "/ar:x", "/ar:sos", "/ar:run", "/afs", "/afst", "/autostop", "/estop", "/autorun"]:
+        assert retired not in handlers, f"Retired spelling still registered: {retired}"
 
     # Internal ids are not prompt aliases: "stop using sed" must reach the model.
     for internal_id in ["STATUS", "stop", "emergency_stop", "activate", "ALLOW"]:
         assert internal_id not in handlers, f"Internal id registered as a prompt alias: {internal_id}"
-
-    # Activation command
-    for alias in ["/ar:go", "/ar:run", "/autorun"]:
-        assert alias in handlers, f"Missing activate handler alias: {alias}"
 
     print("✅ All required handler variations available in plugins.app.command_handlers")
 

@@ -1100,53 +1100,15 @@ After every step and substep you must say "Wait," and execute this sequential th
     # no handler there is skipped, so its spelling does nothing.
     # Commands support /ar: prefix with short and long forms
     "command_mappings": {
-        # ─── New Short Forms (/ar: prefix) ────────────────────────────────────
-        "/ar:a": "ALLOW",  # Allow all file creation
-        "/ar:j": "JUSTIFY",  # Justify new files
-        "/ar:f": "SEARCH",  # Find existing files only
-        "/ar:st": "STATUS",  # Show status
+        "/ar:status": "STATUS",  # File policy, session and global rules
         "/ar:go": "activate",  # Start autorun
-        "/ar:gp": "activate",  # Start autoproc (procedural)
-        "/ar:x": "stop",  # Graceful stop
-        "/ar:sos": "emergency_stop",  # Emergency stop
-        "/ar:tm": "tmux_session",  # Tmux session management
-        "/ar:tt": "tmux_test",  # Tmux test workflow
-        # ─── New Long Forms (/ar: prefix) ─────────────────────────────────────
-        "/ar:allow": "ALLOW",  # Allow all file creation
-        "/ar:justify": "JUSTIFY",  # Justify new files
-        "/ar:find": "SEARCH",  # Find existing files only
-        "/ar:status": "STATUS",  # Show status
-        "/ar:run": "activate",  # Start autorun
-        "/ar:proc": "activate",  # Start autoproc (procedural)
+        "/ar:goprocess": "activate",  # Start autorun with the plan and wait process
         "/ar:stop": "stop",  # Graceful stop
         "/ar:estop": "emergency_stop",  # Emergency stop
-        "/ar:tmux": "tmux_session",  # Tmux session management
-        "/ar:ttest": "tmux_test",  # Tmux test workflow (ttest to avoid collision with test.md)
-        # ─── Plan Commands ─────────────────────────────────────────────────────
-        "/ar:pn": "NEW_PLAN",
-        "/ar:pr": "REFINE_PLAN",
-        "/ar:pu": "UPDATE_PLAN",
-        "/ar:pp": "PROCESS_PLAN",
         "/ar:plannew": "NEW_PLAN",
         "/ar:planrefine": "REFINE_PLAN",
         "/ar:planupdate": "UPDATE_PLAN",
         "/ar:planprocess": "PROCESS_PLAN",
-        # ─── Legacy Commands (backward compatibility) ─────────────────────────
-        "/autorun": "activate",
-        "/autoproc": "activate",
-        "/autostop": "stop",
-        "/estop": "emergency_stop",
-        "/afs": "SEARCH",
-        "/afa": "ALLOW",
-        "/afj": "JUSTIFY",
-        "/afst": "STATUS",
-        # ─── Command Blocking (NEW in v0.6.0) ───────────────────────────────────────
-        "/ar:no": "BLOCK_PATTERN",
-        "/ar:ok": "ALLOW_PATTERN",
-        "/ar:clear": "CLEAR_PATTERN",
-        "/ar:globalno": "GLOBAL_BLOCK_PATTERN",
-        "/ar:globalok": "GLOBAL_ALLOW_PATTERN",
-        "/ar:globalstatus": "GLOBAL_BLOCK_STATUS",
     },
     # Built-in command integrations (suggestions for dangerous commands)
     "default_integrations": DEFAULT_INTEGRATIONS,

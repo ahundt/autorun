@@ -53,7 +53,7 @@ class TestHookIntegration:
     @pytest.mark.integration
     def test_hook_handles_policy_commands(self):
         """Test hook correctly handles file policy commands."""
-        result = _dispatch("/ar:a")  # canonical: /afa alias also registered
+        result = _dispatch("/ar:a")  # old name for /ar:file allow
 
         assert result["continue"] is True, "Policy command should continue to AI"
         assert "allow-all" in result["systemMessage"], "Response should contain policy info"
@@ -71,7 +71,7 @@ class TestHookIntegration:
     @pytest.mark.integration
     def test_hook_response_format(self):
         """Test hook response format matches Claude Code expectations."""
-        result = _dispatch("/ar:f")  # canonical: /afs alias also registered
+        result = _dispatch("/ar:f")  # old name for /ar:file existing-only
 
         # Check required Claude Code hook response fields
         required_fields = ["continue", "stopReason", "suppressOutput", "systemMessage"]
@@ -91,15 +91,15 @@ class TestHookIntegration:
         Canonical strings after migration:
           - Stop: "Stopped" (was "Autorun stopped")
           - Emergency stop: "EMERGENCY STOP" (was "Emergency stop activated")
-        All legacy aliases (/afs, /afa, /afj, /afst, /autostop, /estop) still registered.
+        The unprefixed pre-2026 names (/afs, /autostop, ...) are gone; these are the advertised names.
         """
         test_cases = [
-            ("/afs", True, "strict-search"),
-            ("/afa", True, "allow-all"),
-            ("/afj", True, "justify-create"),
-            ("/afst", True, "AutoFile policy:"),
-            ("/autostop", False, "Stopped"),       # canonical: "✅ Stopped"
-            ("/estop", False, "EMERGENCY STOP"),   # canonical: "⚠️ EMERGENCY STOP"
+            ("/ar:file existing-only", True, "strict-search"),
+            ("/ar:file allow", True, "allow-all"),
+            ("/ar:file justify", True, "justify-create"),
+            ("/ar:status", True, "AutoFile policy:"),
+            ("/ar:stop", False, "Stopped"),       # canonical: "✅ Stopped"
+            ("/ar:estop", False, "EMERGENCY STOP"),   # canonical: "⚠️ EMERGENCY STOP"
             ("normal command", True, ""),
             ("help me please", True, ""),
             ("what is this", True, ""),
@@ -125,11 +125,11 @@ class TestHookIntegration:
         session_id = f"hook-session-{uuid.uuid4().hex[:8]}"
 
         # First command: set strict-search policy
-        result1 = _dispatch("/ar:f", session_id)  # /afs alias
+        result1 = _dispatch("/ar:f", session_id)  # old name for /ar:file existing-only
         assert "strict-search" in result1["systemMessage"], "Policy must be set to strict-search"
 
         # Second command: check status — should reflect the set policy
-        result2 = _dispatch("/ar:st", session_id)  # /afst alias
+        result2 = _dispatch("/ar:st", session_id)  # old name for /ar:status
         assert "strict-search" in result2["systemMessage"], \
             "Status should reflect previously set policy"
 
@@ -137,7 +137,7 @@ class TestHookIntegration:
     @pytest.mark.integration
     def test_hook_handles_autorun_command(self):
         """Test hook handles autorun activation command."""
-        result = _dispatch("/autorun create a new python module")
+        result = _dispatch("/ar:go create a new python module")
 
         assert result["continue"] is True, \
             "Autorun activation should continue to AI with injection template"
@@ -242,7 +242,7 @@ class TestHookPerformance:
     def test_hook_handles_multiple_commands_quickly(self):
         """Test hook handles multiple commands quickly using canonical dispatch."""
         commands = [
-            "/afs", "/afa", "/afj", "/afst", "/autostop", "/estop",
+            "/ar:file existing-only", "/ar:file allow", "/ar:file justify", "/ar:status", "/ar:stop", "/ar:estop",
             "normal command 1", "normal command 2"
         ]
 

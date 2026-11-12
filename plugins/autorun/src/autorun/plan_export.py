@@ -735,7 +735,7 @@ def plan_export_command(
     return render(_PLAN_EXPORT_USAGE)
 
 
-@app.command("/ar:pe", "/ar:planexport")
+@app.command("/ar:planexport")
 def handle_plan_export_toggle(ctx: EventContext) -> str:
     """Dispatch `/ar:planexport` subcommands (status/on/off/globalon/globaloff)."""
     prompt = ctx.activation_prompt or ctx.prompt or ""

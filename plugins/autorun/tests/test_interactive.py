@@ -12,8 +12,7 @@ from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
 
 # COMMAND_HANDLERS removed — canonical path: EventContext + plugins.app.dispatch(ctx)
-# Legacy command mappings: /afs→/ar:f, /afa→/ar:a, /afj→/ar:j, /afst→/ar:st,
-#   /autostop→/ar:x, /estop→/ar:sos
+# Commands: /ar:file allow|justify|existing-only, /ar:status, /ar:stop, /ar:estop
 
 
 def test_command_processing():
@@ -21,7 +20,7 @@ def test_command_processing():
 
     Canonical replacement for COMMAND_HANDLERS-based dispatch:
     Uses EventContext + plugins.app.dispatch(ctx) directly.
-    All legacy command aliases (/afs, /afa, etc.) are still registered
+    Uses the advertised command names
     in plugins.app.command_handlers.
     """
     print("🧪 Testing autorun command processing")
@@ -31,12 +30,12 @@ def test_command_processing():
 
     # Test all commands via canonical dispatch
     test_commands = [
-        ("/afs", "strict-search", True),
-        ("/afa", "allow-all", True),
-        ("/afj", "justify-create", True),
-        ("/afst", "AutoFile policy:", True),
-        ("/autostop", "Stopped", False),
-        ("/estop", "EMERGENCY STOP", False),
+        ("/ar:file existing-only", "strict-search", True),
+        ("/ar:file allow", "allow-all", True),
+        ("/ar:file justify", "justify-create", True),
+        ("/ar:status", "AutoFile policy:", True),
+        ("/ar:stop", "Stopped", False),
+        ("/ar:estop", "EMERGENCY STOP", False),
     ]
 
     for cmd, expected_content, should_continue in test_commands:
@@ -71,12 +70,12 @@ def test_command_detection():
 
     # Test cases
     test_cases = [
-        ("/afs", True),
-        ("/afa", True),
-        ("/afj", True),
-        ("/afst", True),
-        ("/autostop", True),
-        ("/estop", True),
+        ("/ar:file existing-only", True),
+        ("/ar:file allow", True),
+        ("/ar:file justify", True),
+        ("/ar:status", True),
+        ("/ar:stop", True),
+        ("/ar:estop", True),
         ("/not_a_command", False),
         ("hello world", False),
         ("", False)

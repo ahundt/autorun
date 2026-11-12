@@ -19,32 +19,20 @@ class TestPlanCommandHandlers:
 
     @pytest.mark.unit
     def test_plan_command_mappings_exist(self):
-        """Test plan command mappings are in CONFIG"""
+        """Plan commands are in CONFIG under their advertised names only"""
         mappings = CONFIG["command_mappings"]
 
-        # Check short forms
-        assert "/ar:pn" in mappings, "Missing /ar:pn mapping"
-        assert "/ar:pr" in mappings, "Missing /ar:pr mapping"
-        assert "/ar:pu" in mappings, "Missing /ar:pu mapping"
-        assert "/ar:pp" in mappings, "Missing /ar:pp mapping"
-
-        # Check long forms
-        assert "/ar:plannew" in mappings, "Missing /ar:plannew mapping"
-        assert "/ar:planrefine" in mappings, "Missing /ar:planrefine mapping"
-        assert "/ar:planupdate" in mappings, "Missing /ar:planupdate mapping"
-        assert "/ar:planprocess" in mappings, "Missing /ar:planprocess mapping"
+        for name in ("/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/ar:planprocess"):
+            assert name in mappings, f"Missing {name} mapping"
+        # The short forms dispatch through core._RETIRED_COMMAND_SPELLINGS.
+        for short in ("/ar:pn", "/ar:pr", "/ar:pu", "/ar:pp"):
+            assert short not in mappings, f"{short} is a retired spelling, not a mapping"
 
     @pytest.mark.unit
     def test_plan_command_handler_names(self):
         """Test plan commands map to correct handler names"""
         mappings = CONFIG["command_mappings"]
 
-        assert mappings["/ar:pn"] == "NEW_PLAN"
-        assert mappings["/ar:pr"] == "REFINE_PLAN"
-        assert mappings["/ar:pu"] == "UPDATE_PLAN"
-        assert mappings["/ar:pp"] == "PROCESS_PLAN"
-
-        # Long forms should map to same handlers
         assert mappings["/ar:plannew"] == "NEW_PLAN"
         assert mappings["/ar:planrefine"] == "REFINE_PLAN"
         assert mappings["/ar:planupdate"] == "UPDATE_PLAN"

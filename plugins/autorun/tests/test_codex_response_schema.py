@@ -147,15 +147,15 @@ def _codex_context(event: str, **kwargs) -> EventContext:
 
 def _sample_prompt(alias: str) -> str:
     """Return a safe prompt for a registered command alias."""
-    if alias in {"/ar:ok", "/ar:globalok"}:
+    if alias == "/ar:ok":
         return f"{alias} autorun-matrix-allow-pattern 1"
-    if alias in {"/ar:no", "/ar:globalno"}:
+    if alias == "/ar:no":
         return f"{alias} regex:test-block test block"
     if alias == "/ar:tasks":
         return "/ar:tasks 3"
     if alias == "/ar:cache":
         return "/ar:cache status"
-    if alias in {"/ar:go", "/ar:run", "/ar:gp", "/ar:proc", "/autorun", "/autoproc", "activate"}:
+    if alias in {"/ar:go", "/ar:goprocess", "activate"}:
         return f"{alias} test task"
     if alias in {"NEW_PLAN", "REFINE_PLAN", "UPDATE_PLAN", "PROCESS_PLAN"}:
         return alias

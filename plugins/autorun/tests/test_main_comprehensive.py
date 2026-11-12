@@ -227,7 +227,7 @@ class TestCONFIGStructure:
     def test_command_mappings_structure(self):
         """Test command mappings structure"""
         assert "command_mappings" in CONFIG
-        expected_commands = ["/afs", "/afa", "/afj", "/afst", "/autostop", "/estop", "/autorun"]
+        expected_commands = ["/ar:status", "/ar:go", "/ar:stop", "/ar:estop"]
         for cmd in expected_commands:
             assert cmd in CONFIG["command_mappings"]
 
@@ -408,14 +408,11 @@ class TestCommandHandlersRegistry:
         # Canonical: plugins.app.command_handlers (replaces deleted COMMAND_HANDLERS)
         registered = set(plugins.app.command_handlers.keys())
         required = [
-            "/ar:a", "/ar:allow", "/afa",          # ALLOW policy
-            "/ar:j", "/ar:justify", "/afj",          # JUSTIFY policy
-            "/ar:f", "/ar:find", "/afs",              # SEARCH policy
-            "/ar:st", "/ar:status", "/afst",          # STATUS
-            "/ar:x", "/ar:stop", "/autostop",         # STOP
-            "/ar:sos", "/ar:estop", "/estop",         # EMERGENCY_STOP
-            "/ar:no", "/ar:ok", "/ar:clear",          # Session block ops
-            "/ar:globalno", "/ar:globalok",            # Global block ops
+            "/ar:file",                               # ALLOW, JUSTIFY, SEARCH policies
+            "/ar:status",                             # STATUS
+            "/ar:stop",                               # STOP
+            "/ar:estop",                              # EMERGENCY_STOP
+            "/ar:no", "/ar:ok", "/ar:clear",          # Block ops; `--global` selects the global rules
         ]
         for cmd in required:
             assert cmd in registered, f"Missing command: {cmd}"
@@ -426,11 +423,13 @@ class TestCommandHandlersRegistry:
             assert callable(handler), f"Handler {name} is not callable"
 
     def test_policy_commands_share_handler(self):
-        """Test policy alias commands share the same underlying handler"""
-        # /ar:a and /ar:allow and /afa all map to ALLOW policy handler
-        assert plugins.app.command_handlers.get("/ar:a") == plugins.app.command_handlers.get("/ar:allow")
-        assert plugins.app.command_handlers.get("/ar:j") == plugins.app.command_handlers.get("/ar:justify")
-        assert plugins.app.command_handlers.get("/ar:f") == plugins.app.command_handlers.get("/ar:find")
+        """Old policy names reach the /ar:file handler with the same command line"""
+        find = plugins.app._find_command
+        for old, new in (("/ar:a", "/ar:file allow"), ("/ar:allow", "/ar:file allow"),
+                         ("/ar:j", "/ar:file justify"), ("/ar:justify", "/ar:file justify"),
+                         ("/ar:f", "/ar:file existing-only"), ("/ar:find", "/ar:file existing-only")):
+            assert find(old) is not None and find(old).handler is plugins.handle_file_policy
+            assert find(old).activation_prompt == find(new).activation_prompt
 
 
 class TestIsPrematureStop:

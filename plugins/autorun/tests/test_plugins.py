@@ -467,6 +467,19 @@ class TestPlanManagementPlugin:
 # Handler Registration Tests
 # ============================================================================
 
+def _run_command(prompt: str, ctx: EventContext) -> str:
+    """Run ``prompt`` the way dispatch does: match, prepare ctx, call the handler.
+
+    Old names (``/ar:f``, ``/ar:globalok``) are not registry keys; they reach
+    the advertised handler through ``core._RETIRED_COMMAND_SPELLINGS``, which
+    only the matcher applies.
+    """
+    match = app._find_command(prompt)
+    assert match is not None, f"{prompt!r} does not dispatch"
+    apply_command_match(ctx, match)
+    return match.handler(ctx)
+
+
 class TestHandlerRegistration:
     """Tests for plugin handler registration."""
 
@@ -478,13 +491,14 @@ class TestHandlerRegistration:
             assert internal_id not in app.command_handlers
 
     def test_block_handlers_registered(self):
-        """Block handlers should be registered in app."""
+        """Block handlers should be registered in app; the global forms are
+        `--global` arguments of the same three commands."""
         assert "/ar:no" in app.command_handlers
         assert "/ar:ok" in app.command_handlers
         assert "/ar:clear" in app.command_handlers
-        assert "/ar:globalno" in app.command_handlers
-        assert "/ar:globalok" in app.command_handlers
-        assert "/ar:globalstatus" in app.command_handlers
+        for old, new in (("/ar:globalno", "/ar:no"), ("/ar:globalok", "/ar:ok"), ("/ar:globalstatus", "/ar:status")):
+            assert old not in app.command_handlers
+            assert app._find_command(old).handler is app.command_handlers[new]
 
     def test_autorun_handlers_registered(self):
         """Autorun ids resolve to handlers but are never prompt aliases
@@ -494,11 +508,11 @@ class TestHandlerRegistration:
             assert internal_id not in app.command_handlers
 
     def test_plan_handlers_registered(self):
-        """Plan handlers should be registered in app."""
-        assert "/ar:pn" in app.command_handlers
-        assert "/ar:pr" in app.command_handlers
-        assert "/ar:pu" in app.command_handlers
-        assert "/ar:pp" in app.command_handlers
+        """Plan handlers should be registered in app under their skill names."""
+        for name in ("/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/ar:planprocess"):
+            assert name in app.command_handlers
+        for short, name in (("/ar:pn", "/ar:plannew"), ("/ar:pp", "/ar:planprocess")):
+            assert app._find_command(short).handler is app.command_handlers[name]
 
     def test_pretooluse_chain_has_handlers(self):
         """PreToolUse chain should have handlers."""
@@ -1080,18 +1094,16 @@ class TestAllowPatternsSystem:
         assert "Cleared" in result
 
     def test_ar_blocks_status_shows_allows(self):
-        """/ar:blocks status command shows allowed patterns."""
+        """/ar:blocks (now /ar:status) shows allowed patterns."""
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-blocks-status", event="UserPromptSubmit",
                            prompt="/ar:blocks", store=store)
-        ctx.activation_prompt = "/ar:blocks"
         ctx.session_allowed_patterns = [{"pattern": "git push", "pattern_type": "literal"}]
 
-        handler = app.command_handlers.get("/ar:blocks")
-        result = handler(ctx)
+        result = _run_command("/ar:blocks", ctx)
 
         assert "git push" in result
-        assert "Allows" in result
+        assert "Session allows" in result
 
     def test_ar_no_usage_error_without_args(self):
         """/ar:ok without args returns usage error."""
@@ -1175,22 +1187,16 @@ class TestFormatPatternList:
 class TestPolicyAliasesRegistered:
     """All policy command aliases must be registered and map to the same handler."""
 
-    # Ground truth from _POLICY_ALIASES in plugins.py
-    ALLOW_ALIASES  = ("/ar:a", "/ar:allow", "/afa", "ALLOW")
-    JUSTIFY_ALIASES = ("/ar:j", "/ar:justify", "/afj", "JUSTIFY")
-    SEARCH_ALIASES  = ("/ar:f", "/ar:find", "/afs", "SEARCH")
-
     def _run_alias(self, alias: str, prompt: str):
-        """Helper: call handler for alias, return (result_str, ctx)."""
+        """Helper: run alias as dispatch would, return (result_str, ctx)."""
         store = ThreadSafeDB()
         ctx = EventContext(session_id=f"test-alias-{alias.strip('/')}", event="UserPromptSubmit",
                            prompt=prompt, store=store)
-        ctx.activation_prompt = prompt
         # Internal ids (ALLOW, ...) are reachable only through command_mappings.
-        handler = app.command_handlers.get(alias) or plugins._INTERNAL_COMMANDS.get(alias)
-        assert handler is not None, f"Handler for '{alias}' not registered"
-        result = handler(ctx)
-        return result, ctx
+        if alias in plugins._INTERNAL_COMMANDS:
+            ctx.activation_prompt = prompt
+            return plugins._INTERNAL_COMMANDS[alias](ctx), ctx
+        return _run_command(prompt, ctx), ctx
 
     # ── ALLOW aliases ──────────────────────────────────────────────────────
 
@@ -1204,9 +1210,10 @@ class TestPolicyAliasesRegistered:
         assert ctx.file_policy == "ALLOW"
         assert "allow-all" in result.lower()
 
-    def test_afa_sets_allow_policy(self):
-        result, ctx = self._run_alias("/afa", "/afa")
-        assert ctx.file_policy == "ALLOW"
+    def test_afa_no_longer_dispatches_unprefixed(self):
+        """`/afa` (no `ar:` prefix) was retired; `/ar:afa` still works."""
+        assert app._find_command("/afa") is None
+        assert app._find_command("/ar:afa") is not None
 
     def test_allow_key_sets_allow_policy(self):
         result, ctx = self._run_alias("ALLOW", "ALLOW")
@@ -1223,9 +1230,10 @@ class TestPolicyAliasesRegistered:
         result, ctx = self._run_alias("/ar:justify", "/ar:justify")
         assert ctx.file_policy == "JUSTIFY"
 
-    def test_afj_sets_justify_policy(self):
-        result, ctx = self._run_alias("/afj", "/afj")
-        assert ctx.file_policy == "JUSTIFY"
+    def test_afj_no_longer_dispatches_unprefixed(self):
+        """`/afj` (no `ar:` prefix) was retired; `/ar:afj` still works."""
+        assert app._find_command("/afj") is None
+        assert app._find_command("/ar:afj") is not None
 
     def test_justify_key_sets_justify_policy(self):
         result, ctx = self._run_alias("JUSTIFY", "JUSTIFY")
@@ -1242,9 +1250,10 @@ class TestPolicyAliasesRegistered:
         result, ctx = self._run_alias("/ar:find", "/ar:find")
         assert ctx.file_policy == "SEARCH"
 
-    def test_afs_sets_search_policy(self):
-        result, ctx = self._run_alias("/afs", "/afs")
-        assert ctx.file_policy == "SEARCH"
+    def test_afs_no_longer_dispatches_unprefixed(self):
+        """`/afs` (no `ar:` prefix) was retired; `/ar:afs` still works."""
+        assert app._find_command("/afs") is None
+        assert app._find_command("/ar:afs") is not None
 
     def test_search_key_sets_search_policy(self):
         result, ctx = self._run_alias("SEARCH", "SEARCH")
@@ -1255,9 +1264,7 @@ class TestPolicySwitching:
     """Switching between policies updates ctx.file_policy correctly."""
 
     def _switch(self, ctx, alias: str, prompt: str) -> str:
-        ctx.activation_prompt = prompt
-        handler = app.command_handlers.get(alias)
-        return handler(ctx)
+        return _run_command(prompt, ctx)
 
     def test_allow_to_search(self):
         store = ThreadSafeDB()
@@ -1288,8 +1295,7 @@ class TestPolicySwitching:
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-switch-status", event="UserPromptSubmit",
                            prompt="/ar:f", store=store)
-        ctx.activation_prompt = "/ar:f"
-        app.command_handlers["/ar:f"](ctx)
+        _run_command("/ar:f", ctx)
         assert ctx.file_policy == "SEARCH"
 
         ctx.activation_prompt = "/ar:st"
@@ -1404,67 +1410,64 @@ class TestBlockingCommandBehavior:
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-blocks-show", event="UserPromptSubmit",
                            prompt="/ar:blocks", store=store)
-        ctx.activation_prompt = "/ar:blocks"
         ctx.session_blocked_patterns = [{"pattern": "mytool", "suggestion": "s", "pattern_type": "literal"}]
 
-        result = app.command_handlers["/ar:blocks"](ctx)
+        result = _run_command("/ar:blocks", ctx)
         assert "mytool" in result
 
     def test_ar_blocks_empty_shows_no_blocks(self):
+        """/ar:blocks is /ar:status, which lists no rule section when there are none."""
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-blocks-empty", event="UserPromptSubmit",
                            prompt="/ar:blocks", store=store)
-        ctx.activation_prompt = "/ar:blocks"
 
-        result = app.command_handlers["/ar:blocks"](ctx)
-        assert "No session blocks or allows" in result
+        result = _run_command("/ar:blocks", ctx)
+        assert "AutoFile policy" in result
+        assert "Session blocks" not in result
 
 
 class TestGlobalBlockingCommands:
-    """/ar:globalno, /ar:globalok, /ar:globalstatus, /ar:globalclear."""
+    """/ar:globalno, /ar:globalok, /ar:globalstatus, /ar:globalclear: old names
+    for /ar:no --global, /ar:ok --global, /ar:status, /ar:clear --global."""
 
     def test_globalno_registered(self):
-        assert "/ar:globalno" in app.command_handlers
+        assert app._find_command("/ar:globalno x").activation_prompt == "/ar:no --global x"
 
     def test_globalok_registered(self):
-        assert "/ar:globalok" in app.command_handlers
+        assert app._find_command("/ar:globalok x").activation_prompt == "/ar:ok --global x"
 
     def test_globalstatus_registered(self):
-        assert "/ar:globalstatus" in app.command_handlers
+        assert app._find_command("/ar:globalstatus").handler is app.command_handlers["/ar:status"]
 
     def test_globalclear_registered(self):
-        assert "/ar:globalclear" in app.command_handlers
+        assert app._find_command("/ar:globalclear").activation_prompt == "/ar:clear --global"
 
     def test_globalno_empty_args_returns_usage(self):
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-globalno-empty", event="UserPromptSubmit",
                            prompt="/ar:globalno", store=store)
-        ctx.activation_prompt = "/ar:globalno"
-        result = app.command_handlers["/ar:globalno"](ctx)
+        result = _run_command("/ar:globalno", ctx)
         assert "Usage" in result
 
     def test_globalok_empty_args_returns_usage(self):
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-globalok-empty", event="UserPromptSubmit",
                            prompt="/ar:globalok", store=store)
-        ctx.activation_prompt = "/ar:globalok"
-        result = app.command_handlers["/ar:globalok"](ctx)
+        result = _run_command("/ar:globalok", ctx)
         assert "Usage" in result
 
     def test_globalstatus_returns_string(self):
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-globalstatus", event="UserPromptSubmit",
                            prompt="/ar:globalstatus", store=store)
-        ctx.activation_prompt = "/ar:globalstatus"
-        result = app.command_handlers["/ar:globalstatus"](ctx)
+        result = _run_command("/ar:globalstatus", ctx)
         assert isinstance(result, str)
 
     def test_globalclear_returns_cleared_message(self):
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-globalclear", event="UserPromptSubmit",
                            prompt="/ar:globalclear", store=store)
-        ctx.activation_prompt = "/ar:globalclear"
-        result = app.command_handlers["/ar:globalclear"](ctx)
+        result = _run_command("/ar:globalclear", ctx)
         assert "Cleared" in result or "cleared" in result.lower()
 
 
@@ -1639,8 +1642,8 @@ class TestGlobalAllowsSystem:
     """Global allows added via /ar:globalok override DEFAULT_INTEGRATIONS."""
 
     def test_globalok_registered_as_handler(self):
-        """/ar:globalok command is registered."""
-        assert "/ar:globalok" in app.command_handlers
+        """/ar:globalok reaches the /ar:ok handler with `--global`."""
+        assert app._find_command("/ar:globalok git").handler is app.command_handlers["/ar:ok"]
 
     def test_globalok_adds_to_global_allowed_patterns(self):
         """/ar:globalok 'git push' adds pattern to global_allowed_patterns."""
@@ -1651,10 +1654,7 @@ class TestGlobalAllowsSystem:
             event="UserPromptSubmit",
             prompt="/ar:globalok 'git push'", store=store
         )
-        ctx.activation_prompt = "/ar:globalok 'git push'"
-
-        handler = app.command_handlers.get("/ar:globalok")
-        result = handler(ctx)
+        result = _run_command("/ar:globalok 'git push'", ctx)
 
         assert "Allowed" in result or "allowed" in result.lower()
 
@@ -1928,7 +1928,8 @@ class TestLegacyAutoFileCommandsDispatchInEveryAdvertisedSpelling:
     }
 
     @pytest.mark.parametrize("stem,policy", sorted(LEGACY_TO_POLICY.items()))
-    @pytest.mark.parametrize("prefix", ["/", "/ar:"])
+    # The unprefixed "/" forms were retired outright (they match nothing now).
+    @pytest.mark.parametrize("prefix", ["/ar:"])
     def test_legacy_policy_command_sets_the_policy(self, stem, policy, prefix):
         prompt = f"{prefix}{stem}"
         match = app._find_command(prompt)
@@ -1948,7 +1949,7 @@ class TestLegacyAutoFileCommandsDispatchInEveryAdvertisedSpelling:
 
         assert ctx.file_policy == policy
 
-    @pytest.mark.parametrize("prompt", ["/afst", "/ar:afst"])
+    @pytest.mark.parametrize("prompt", ["/ar:afst"])
     def test_legacy_status_command_reports_the_policy(self, prompt):
         match = app._find_command(prompt)
         assert match is not None, f"{prompt} resolves to no handler"
