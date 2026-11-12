@@ -144,7 +144,7 @@ Each event cell states whether the harness emits the event and what its output c
 
 | Event | Contract, autorun behavior, and gap |
 |---|---|
-| SessionStart | No supported lifecycle hook API was found. AR supplies `AGENTS.md`, skills, and command files. [F1][AR1] |
+| SessionStart | ForgeCode 2.13.21 has internal lifecycle machinery but no user-configurable hook or plugin surface; proposal #2562 was closed as not planned. AR therefore supplies only `AGENTS.md`, skills, and command files. The negative enforcement contract is pinned in `forgecode-2.13.21-enforcement.json`. [F1][AR1] |
 | Prompt | No supported prompt hook. Guidance is advisory through memory and commands. [F1][AR1] |
 | PreToolUse | No supported tool hook; guards cannot be enforced. The lifecycle-hook proposal was closed as not planned. [F1][AR1] |
 | PostToolUse | No supported hook. [F1] |
@@ -177,4 +177,4 @@ Each event cell states whether the harness emits the event and what its output c
 6. OpenCode 1.18.31's V1 API provides `chat.message`, `session.idle`, `experimental.session.compacting`, `session.compacted`, and `client.session.promptAsync`; V1 object entrypoints remain supported from 1.18.29. AR now uses those routes for prompt policy, Stop continuation, and compaction while feature-detecting promptAsync for older clients. The pinned source fixture is `tests/fixtures/hook_contracts/opencode-1.18.31-plugin-api.json`. [O1]
 7. Pi 1.5.2 removed `session_switch` and `session_fork` in favor of `session_start.reason`, and added `aborted` to `agent_settled`. Autorun already consumes `session_start.reason`; it now suppresses Stop dispatch for an aborted settle so cancellation remains cancellation. [P1][P2]
 8. Prime Agent 0.10.2 replaced the Pi-derived TypeScript package with a Rust workspace and does not expose the Pi extension API. The Prime platform records `runtime_version_max_exclusive=(0, 10, 0)`; real installs probe `prime-agent --version` and skip the integration outside that proven range. [R1]
-9. ForgeCode still has no documented lifecycle hook API, and the lifecycle-hook proposal was closed as not planned. Continue using memory, skills, and commands; do not claim enforced guards or a Stop gate. [F1]
+9. ForgeCode 2.13.21 still has no user-configurable lifecycle hook API; internal hooks are not an extension surface, and proposal #2562 was closed as not planned. AR keeps `has_hooks=false` and pins the advisory-only boundary in `tests/fixtures/hook_contracts/forgecode-2.13.21-enforcement.json`. [F1]

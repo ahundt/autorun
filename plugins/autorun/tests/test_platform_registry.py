@@ -9,6 +9,7 @@ ForgeCode.
 from __future__ import annotations
 
 import dataclasses
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -46,6 +47,21 @@ def test_registry_contains_supported_platforms():
         "claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "pi"
     ):
         assert name in PLATFORMS, f"PLATFORMS missing {name!r}"
+
+
+def test_forgecode_21321_has_no_user_configurable_enforcement_hooks():
+    fixture = (
+        Path(__file__).parent
+        / "fixtures/hook_contracts/forgecode-2.13.21-enforcement.json"
+    )
+    contract = json.loads(fixture.read_text(encoding="utf-8"))
+    forge = PLATFORMS["forgecode"]
+
+    assert contract["user_configurable_lifecycle_hooks"] is False
+    assert contract["internal_hooks_are_extension_api"] is False
+    assert forge.has_hooks is False
+    assert forge.installed_hook_events == frozenset()
+    assert forge.hook_protocol.name == "none"
 
 
 def test_platform_lookup_returns_same_instance():

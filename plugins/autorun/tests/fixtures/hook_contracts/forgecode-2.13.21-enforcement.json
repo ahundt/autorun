@@ -1,0 +1,12 @@
+{
+  "harness": "ForgeCode",
+  "version": "2.13.21",
+  "read_date": "2026-11-12",
+  "commands_docs": "https://forgecode.dev/docs/commands/",
+  "permissions_docs": "https://forgecode.dev/docs/permissions/",
+  "lifecycle_hook_proposal": "https://github.com/tailcallhq/forgecode/issues/2562",
+  "proposal_state": "closed as not planned",
+  "user_configurable_lifecycle_hooks": false,
+  "internal_hooks_are_extension_api": false,
+  "enforcement_contract": "Autorun can publish memory, commands, and skills, but receives no prompt, tool, Stop, or compaction callbacks and cannot claim blocking enforcement."
+}
