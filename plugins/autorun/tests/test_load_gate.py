@@ -3,6 +3,7 @@ import importlib.util
 import os
 import statistics
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from autorun.platforms import hook_platforms
@@ -13,6 +14,75 @@ SPEC = importlib.util.spec_from_file_location(
 )
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
+
+
+def test_cleanup_signals_only_the_started_daemon_and_its_descendants(tmp_path, monkeypatch):
+    (tmp_path / "ar").mkdir()
+    (tmp_path / "ar/daemon.lock").write_text("11")
+    held = {11, 12, 13}
+    signaled = []
+    monkeypatch.setattr(gate, "holders", lambda _: sorted(held))
+    monkeypatch.setattr(gate.psutil, "Process", lambda _: SimpleNamespace(
+        children=lambda recursive: [SimpleNamespace(pid=12)]))
+    monkeypatch.setattr(gate, "checked", lambda *a, **kw: SimpleNamespace(stdout="daemon"))
+
+    def terminate(pid, sig):
+        signaled.append(pid)
+        held.remove(pid)
+
+    monkeypatch.setattr(gate.os, "kill", terminate)
+    _, remaining = gate.stop_owned(tmp_path, None)
+    assert signaled == [11, 12]
+    assert held == {13}
+    assert remaining == []
+
+
+def test_cleanup_treats_permission_denied_as_not_owned(tmp_path, monkeypatch):
+    (tmp_path / "ar").mkdir()
+    (tmp_path / "ar/daemon.lock").write_text("11")
+    monkeypatch.setattr(gate, "holders", lambda _: [11])
+    monkeypatch.setattr(gate.psutil, "Process", lambda _: SimpleNamespace(children=lambda recursive: []))
+    monkeypatch.setattr(gate, "checked", lambda *a, **kw: SimpleNamespace(stdout="daemon"))
+
+    def denied(*_):
+        raise PermissionError("not ours")
+
+    monkeypatch.setattr(gate.os, "kill", denied)
+    assert gate.stop_owned(tmp_path, None)[1] == []
+
+
+def test_load_gate_protects_the_configured_outer_daemon(tmp_path, monkeypatch):
+    outer = tmp_path / "outer"
+    monkeypatch.setenv("AUTORUN_HOME", str(outer))
+    paths = []
+    monkeypatch.setattr(gate, "record_pid", lambda path: paths.append(path))
+    monkeypatch.setattr(gate, "holders", lambda _: [])
+
+    def fail(*_):
+        raise RuntimeError("before startup")
+
+    monkeypatch.setattr(gate, "registry", fail)
+    with pytest.raises(RuntimeError, match="before startup"):
+        gate.run_load(ROOT, sandbox_parent=tmp_path)
+    assert paths[0] == outer / "daemon.lock"
+    assert not list(tmp_path.glob("arlg.*"))
+
+
+@pytest.mark.parametrize("error", [RuntimeError, KeyboardInterrupt])
+def test_load_failure_stops_its_daemon_and_removes_its_sandbox(monkeypatch, error):
+    observed = {}
+
+    async def fail(python, tree, env, sandbox, platform, sessions, rounds, cli_type,
+                   call_timeout_seconds, sample_interval_seconds, daemon_pid):
+        observed.update(sandbox=sandbox, daemon=gate.psutil.Process(daemon_pid))
+        assert observed["daemon"].is_running()
+        raise error("mid-run")
+
+    monkeypatch.setattr(gate, "exercise", fail)
+    with pytest.raises(error, match="mid-run"):
+        gate.run_load(ROOT, sessions=1, sandbox_parent=os.environ["AUTORUN_TEST_RUNTIME_DIR"])
+    assert not observed["sandbox"].exists()
+    assert not observed["daemon"].is_running()
 
 
 def test_small_hook_process_load():

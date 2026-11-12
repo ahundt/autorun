@@ -188,7 +188,15 @@ def holders(sandbox):
 
 
 def stop_owned(sandbox, live_pid):
-    pids = holders(sandbox)
+    daemon_pid = record_pid(sandbox / "ar/daemon.lock")
+    if daemon_pid is None:
+        return "", []
+    owned = {daemon_pid}
+    try:
+        owned.update(child.pid for child in psutil.Process(daemon_pid).children(recursive=True))
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+    pids = sorted(owned.intersection(holders(sandbox)))
     if os.getpid() in pids or (live_pid is not None and live_pid in pids):
         raise RuntimeError(f"Refusing cleanup: unexpected file holder {pids}")
     if pids:
@@ -199,12 +207,12 @@ def stop_owned(sandbox, live_pid):
         for pid in pids:
             try:
                 os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            except (ProcessLookupError, PermissionError):
+                owned.discard(pid)
         deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
-        while time.monotonic() < deadline and holders(sandbox):
+        while time.monotonic() < deadline and owned.intersection(holders(sandbox)):
             time.sleep(SAMPLE_INTERVAL_SECONDS)
-        remaining = holders(sandbox)
+        remaining = sorted(owned.intersection(holders(sandbox)))
         if remaining:
             raise RuntimeError(f"Sandbox processes did not stop; retained {sandbox}: {remaining}")
         return commands, remaining
@@ -280,26 +288,26 @@ def run_load(tree, *, sessions=DEFAULT_SESSIONS, rounds=DEFAULT_ROUNDS, cli_type
         raise ValueError("Session/round counts and time intervals must be positive")
     tree = Path(tree).resolve()
     python = target_python(tree)
-    live_pid = record_pid(Path.home() / ".autorun/daemon.lock")
+    live_pid = record_pid(Path(os.environ.get("AUTORUN_HOME", Path.home() / ".autorun")) / "daemon.lock")
     sandbox = Path(tempfile.mkdtemp(
         prefix="arlg.", dir=sandbox_parent or ("/tmp" if os.name != "nt" else None)))
-    env = {"PATH": os.defpath, "HOME": str(sandbox / "home"),
-           "USERPROFILE": str(sandbox / "home"), "AUTORUN_HOME": str(sandbox / "ar"),
-           "AUTORUN_TEST_STATE_DIR": str(sandbox / "state"),
-           "PI_CODING_AGENT_DIR": str(sandbox / "home/.pi/agent"),
-           "PYTHONPATH": str(tree / "plugins/autorun/src"),
-           "AUTORUN_PLUGIN_ROOT": str(tree / "plugins/autorun"),
-           "CLAUDE_PLUGIN_ROOT": str(tree / "plugins/autorun")}
-    env["UV_CACHE_DIR"] = str(sandbox / "uv-cache")
-    for name in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP"):
-        if name in os.environ:
-            env[name] = os.environ[name]
-    for directory in ("home", "ar", "state"):
-        (sandbox / directory).mkdir(mode=0o700)
-    (sandbox / "ar/autorun.config.json").write_text(json.dumps({"state_backend": "sqlite"}))
-    (sandbox / "fixture.txt").write_text("load gate fixture\n")
     result = None
     try:
+        env = {"PATH": os.defpath, "HOME": str(sandbox / "home"),
+               "USERPROFILE": str(sandbox / "home"), "AUTORUN_HOME": str(sandbox / "ar"),
+               "AUTORUN_TEST_STATE_DIR": str(sandbox / "state"),
+               "PI_CODING_AGENT_DIR": str(sandbox / "home/.pi/agent"),
+               "PYTHONPATH": str(tree / "plugins/autorun/src"),
+               "AUTORUN_PLUGIN_ROOT": str(tree / "plugins/autorun"),
+               "CLAUDE_PLUGIN_ROOT": str(tree / "plugins/autorun")}
+        env["UV_CACHE_DIR"] = str(sandbox / "uv-cache")
+        for name in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP"):
+            if name in os.environ:
+                env[name] = os.environ[name]
+        for directory in ("home", "ar", "state"):
+            (sandbox / directory).mkdir(mode=0o700)
+        (sandbox / "ar/autorun.config.json").write_text(json.dumps({"state_backend": "sqlite"}))
+        (sandbox / "fixture.txt").write_text("load gate fixture\n")
         platform = registry(python, tree, env, cli_type)
         load_average_start = os.getloadavg() if hasattr(os, "getloadavg") else None
         # Normal CLI hook dispatch starts this runtime without scanning or stopping
