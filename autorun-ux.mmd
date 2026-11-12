@@ -12,7 +12,7 @@ flowchart TD
         direction TB
         Note_MD[Command docs:<br/>commands/*.md describe each /ar: command;<br/>the hooks enforce them]:::file
         
-        Files_Pol[commands/f.md<br/>commands/a.md]:::file
+        Files_Pol[commands/file.md]:::file
         Files_Cmd[commands/no.md<br/>commands/go.md]:::file
         
         Note_MD --- Files_Pol & Files_Cmd
@@ -23,9 +23,9 @@ flowchart TD
         direction TB
         
         subgraph File_Pol [File Policy - Mutually Exclusive]
-            P_Find(State: SEARCH<br/>Cmd: /ar:f / /ar:find<br/>Modify existing only):::state
-            P_Just(State: JUSTIFY<br/>Cmd: /ar:j / /ar:justify<br/>Explain changes):::state
-            P_Allow(State: ALLOW<br/>Cmd: /ar:a / /ar:allow<br/>Create freely):::state
+            P_Find(State: SEARCH<br/>Cmd: /ar:file existing-only<br/>Modify existing only):::state
+            P_Just(State: JUSTIFY<br/>Cmd: /ar:file justify<br/>Explain changes):::state
+            P_Allow(State: ALLOW<br/>Cmd: /ar:file allow<br/>Create freely):::state
         end
 
         subgraph Cmd_Block [Command Guard - Block & Redirect]
@@ -42,8 +42,8 @@ flowchart TD
         direction TB
         
         subgraph Plan_Phase [1. Planning]
-            W_PN(/ar:pn 'task'<br/>-> plannew skill):::cmd
-            W_PR(/ar:pr 'feedback'<br/>-> planrefine skill):::cmd
+            W_PN(/ar:plannew 'task'<br/>-> plannew skill):::cmd
+            W_PR(/ar:planrefine 'feedback'<br/>-> planrefine skill):::cmd
             W_Export[[Auto-Export to notes/]]:::file
             
             W_PN --> W_PR
@@ -51,7 +51,7 @@ flowchart TD
         end
         
         subgraph Exec_Phase [2. Execution]
-            W_PP(/ar:pp / /ar:go<br/>-> planprocess skill):::cmd
+            W_PP(/ar:planprocess / /ar:go<br/>-> planprocess skill):::cmd
             AI_Loop(AI Implementation Loop):::state
             
             W_PP --> AI_Loop

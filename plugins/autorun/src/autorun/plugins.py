@@ -1070,7 +1070,7 @@ def handle_help(ctx: EventContext) -> str:
 
     lines.extend(_render_command_list(entries))
     lines.extend(_render_skill_list(skills, ctx.cli_type))
-    lines.append("\n/ar:help <command> for arguments and alternative spellings.")
+    lines.append("\n/ar:help <command> for its arguments.")
     return format_commands_for_cli("\n".join(lines), ctx.cli_type)
 
 

@@ -98,7 +98,11 @@ built from the same extension template.
 | `plugins/pdf-extractor/` | Manifests, command, skill, `CLAUDE.md` (full docs), and `src/pdf_extraction` (symlinked into `plugins/autorun/src/` so it ships in the `autorun-ai` distribution; backends beyond `pdftotext` need the `pdf` extra) |
 | `README.md` | User documentation: installation, every `/ar:` command, three-stage markers, safety-guard defaults, tmux integration, troubleshooting |
 
-`/ar:help` lists every command in the current harness's spelling. Stage
+`/ar:help` lists every command in the current harness's spelling. Each
+command has one name, one registration and one document in `commands/`; a
+name autorun used to advertise keeps working only through
+`core._RETIRED_COMMAND_SPELLINGS` (input tolerance), and nothing autorun
+prints or ships may name it (`tests/test_command_surface_one_name.py`). Stage
 markers: `AUTORUN_INITIAL_TASKS_COMPLETED` →
 `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED` →
 `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` (`config.py`).

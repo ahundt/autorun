@@ -23,11 +23,10 @@ Autorun ships these commands in `forgecode_template/commands/`:
 | Command       | Purpose                                                      |
 |---------------|--------------------------------------------------------------|
 | `ar-go`       | Start an autorun task with three-stage verification          |
-| `ar-st`       | Show current AutoFile policy and tasks                       |
-| `ar-allow`    | Set AutoFile policy to ALLOW                                 |
-| `ar-find`     | Set AutoFile policy to FIND (existing files only)            |
+| `ar-status`   | Show current AutoFile policy and tasks                       |
+| `ar-file`     | Set the new-file policy: allow, justify or existing-only     |
 | `ar-commit`   | Refresh git commit guidelines                                |
-| `ar-ph`       | Refresh system design philosophy                             |
+| `ar-philosophy` | Refresh system design philosophy                           |
 
 Invocation: `forge cmd execute <name>` (CLI) or `:<name>` (zsh plugin).
 
@@ -44,7 +43,7 @@ autorun template provides advisory safety guidance covering:
 - Prefer `trash` over `rm` for paths you did not just create
 - No `git reset --hard`, `git push --force`, `git clean -f` without
   explicit user instruction in the current turn
-- Stop semantics: only the user can type `/ar:sos` or
+- Stop semantics: only the user can type `/ar:estop` or
   `/ar:task ignore <id>` to unblock incomplete-task stops
 
 ## Base path resolution
@@ -55,9 +54,14 @@ Per `crates/forge_config/src/reader.rs:58-84`:
 2. `~/forge/` (legacy, only if it already exists)
 3. `~/.forge/` (default)
 
-autorun's installer (`installer.discovery.config_dir`) uses
-`CONFIG["harness_config_dirs"]["forgecode"]`, then `FORGE_CONFIG`, then
-`~/.forge/`; it does not fall back to the legacy `~/forge/`.
+autorun's installer (`installer.discovery.config_dir`) follows the same order
+after its own override: `CONFIG["harness_config_dirs"]["forgecode"]`, then
+`FORGE_CONFIG`, then `~/forge/` when it exists
+(`Platform.config_dirs_preferred_when_present`), then `~/.forge/`. When
+`~/forge/` is the base, command files autorun wrote earlier to
+`~/.forge/commands/` are retired (`Platform.retired_config_dirs`); files it
+did not write are left alone. Skills always go to `~/forge/skills/`, so after
+an install `~/forge/` exists.
 
 ## What autorun cannot do for ForgeCode
 

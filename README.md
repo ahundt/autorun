@@ -13,7 +13,7 @@ It works with Claude Code, Codex, Qwen Code, Pi and five more agents, from one i
 |---|---|---|
 | stops mid-task and waits for you to type "continue" | refuses the stop while tracked tasks are open and sends the agent back to them | `/ar:tasks` |
 | says "done" after a first draft | makes it implement, then critically evaluate, then verify before it may stop | `/ar:go <task>` |
-| leaves scratch files all over the repository | limits it to editing existing files, or to new files it justifies | `/ar:f`, `/ar:j` |
+| leaves scratch files all over the repository | limits it to editing existing files, or to new files it justifies | `/ar:file existing-only`, `/ar:file justify` |
 | runs `rm -rf`, `git reset --hard`, or `curl … \| sh` | blocks the command and names the safer one: `trash`, `git stash`, download-read-run | `/ar:no`, `/ar:ok` |
 | pushes, opens a PR, or bumps a version | blocks each one until you allow it | `/ar:ok 'git push'` |
 | runs in a terminal you need to close | run it in byobu so it survives; `/ar:tabs` lists and steers those sessions | `/ar:tabs` |
@@ -32,14 +32,14 @@ autorun --install            # adds hooks, commands and skills to every agent it
 Start a new agent session (agents read hooks when a session starts), then:
 
 ```text
-/ar:st                                  # prints "AutoFile policy: allow-all": hooks are live
+/ar:status                              # prints "AutoFile policy: allow-all": hooks are live
 /ar:help                                # every command, spelled the way this agent accepts it
 /ar:go Build a login form with tests    # implement, evaluate, verify
-/ar:f                                   # this session: edit existing files only
-/ar:sos                                 # emergency stop
+/ar:file existing-only                  # this session: edit existing files only
+/ar:estop                               # emergency stop
 ```
 
-Codex hides slash commands it does not know, so type `ar:st` there. Every
+Codex hides slash commands it does not know, so type `ar:status` there. Every
 agent's spelling is in [Command spelling](#command-spelling).
 
 From now on autorun blocks commands such as `rm`, `sed -i`, and `cat` or `grep`
@@ -89,15 +89,15 @@ Preview the writes with `autorun --install-dry-run` and check them with `autorun
 
 | Agent | How autorun connects | Install only this one | Type commands as |
 |---|---|---|---|
-| Claude Code | native hooks | `--claude` | `/ar:st` |
-| Google Antigravity | native hooks (plugin bundle) | `--antigravity` | `/ar:st` |
-| Qwen Code | native hooks (extension) | `--qwen` | `/ar:st` |
-| Codex CLI | native hooks | `--codex` | `ar:st` |
-| Pi | in-process extension that vetoes tool calls | `--pi` | `/ar st` |
-| Prime Agent | the Pi extension | `--prime` | `/ar st` |
-| OpenCode | in-process plugin that vetoes tool calls; no prompt or Stop hooks | when found | `/ar-st` |
-| ForgeCode | installed guidance only; ForgeCode sends autorun no events | when found | `/ar-st` |
-| Gemini CLI (legacy) | native hooks; never installed unless you pass the flag | `--gemini` | `/ar:st` |
+| Claude Code | native hooks | `--claude` | `/ar:status` |
+| Google Antigravity | native hooks (plugin bundle) | `--antigravity` | `/ar:status` |
+| Qwen Code | native hooks (extension) | `--qwen` | `/ar:status` |
+| Codex CLI | native hooks | `--codex` | `ar:status` |
+| Pi | in-process extension that vetoes tool calls | `--pi` | `/ar status` |
+| Prime Agent | the Pi extension | `--prime` | `/ar status` |
+| OpenCode | in-process plugin that vetoes tool calls; no prompt or Stop hooks | when found | `/ar-status` |
+| ForgeCode | installed guidance only; ForgeCode sends autorun no events | when found | `/ar-status` |
+| Gemini CLI (legacy) | native hooks; never installed unless you pass the flag | `--gemini` | `/ar:status` |
 
 ### Other ways to install
 
@@ -163,7 +163,7 @@ skills into slash commands such as `/mermaid`. Hook schema:
 ```bash
 autorun --install --pi --force    # or --prime for Prime Agent
 pi
-/ar st
+/ar status
 ```
 
 The extension in `~/.pi/agent/extensions/ar/` (`~/.prime/agent/extensions/ar/`
@@ -172,7 +172,7 @@ the same autorun daemon the other agents use. A blocked tool call comes back as
 Pi's `{ block: true, reason }`. When autorun keeps the agent from finishing
 (`agent_settled`), it starts the next turn with a hidden
 `autorun-continuation` message, so the transcript never shows it as something
-you typed. Pi also accepts `ar:st`, `ar-st` and `/ar:st`, and loads skills with
+you typed. Pi also accepts `ar:status`, `ar-status` and `/ar:status`, and loads skills with
 `/skill:<name>`.
 
 Pi gets `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet` tools backed by
@@ -302,10 +302,11 @@ autorun --install --claude --claude-agents-skills none  # default: leave ~/.clau
 
 ## Commands
 
-`ar` is the command prefix: short forms such as `/ar:st` for speed, long forms
-such as `/ar:status` for reading. `/ar:help` lists every command with its
-description, `/ar:help <command>` shows one command's arguments, and typing
-`ar` alone opens the same list.
+`ar` is the command prefix, and each command has one name, such as
+`/ar:status`. `/ar:help` lists every command with its description,
+`/ar:help <command>` shows one command's arguments, and typing `ar` alone
+opens the same list. Older names still work where the agent passes the text
+to autorun; see [Renamed commands](#renamed-commands).
 
 ### Command spelling
 
@@ -314,29 +315,29 @@ spellings they pass to autorun:
 
 | You type | Claude Code, Antigravity, Qwen Code | Pi, Prime Agent | Codex CLI | ForgeCode, OpenCode |
 |---|---|---|---|---|
-| `/ar:st` | runs, and appears in the slash menu | runs | never arrives | never arrives |
-| `ar:st`, `ar st`, `ar-st` | runs | runs | runs | never arrives |
-| `/ar-st` | never arrives | runs | never arrives | runs, for the installed files named below |
+| `/ar:status` | runs, and appears in the slash menu | runs | never arrives | never arrives |
+| `ar:status`, `ar status`, `ar-status` | runs | runs | runs | never arrives |
+| `/ar-status` | never arrives | runs | never arrives | runs, for the installed files named below |
 | `ar:task-status`, `ar:task-ignore`, under any prefix above | runs as `ar:task status` and `ar:task ignore` | same | same | never arrives |
 
-"Never arrives" means the agent handles the text itself and it never reaches autorun. Codex keeps its slash menu closed; Claude Code and Qwen Code answer with their own "Unknown skill" or "Unknown command" error; ForgeCode sends autorun no events. On ForgeCode and OpenCode the installed files `ar-go`, `ar-st`, `ar-allow`, `ar-find`, `ar-commit` and `ar-ph` are the commands.
+"Never arrives" means the agent handles the text itself and it never reaches autorun. Codex keeps its slash menu closed; Claude Code and Qwen Code answer with their own "Unknown skill" or "Unknown command" error; ForgeCode sends autorun no events. On ForgeCode and OpenCode the installed files `ar-go`, `ar-status`, `ar-file`, `ar-commit` and `ar-philosophy` are the commands.
 
 autorun's replies use each agent's spelling: `/ar:` on Claude Code, Gemini CLI, Qwen Code and Antigravity, `/ar ` on Pi, `ar:` on Codex, and `/ar-` on ForgeCode and OpenCode. Examples below use the Claude spelling.
 
 ### File policies
 
-Every session starts at allow-all; `/ar:st` reports it as the AutoFile policy.
+Every session starts at allow-all; `/ar:status` reports it as the AutoFile policy.
 Tighten it when an agent fills the repository with experiments:
 
 | Command | Policy | Effect |
 |---|---|---|
-| `/ar:a`, `/ar:allow` | allow-all | create files freely (default) |
-| `/ar:j`, `/ar:justify` | justify-create | search existing files first; a new file needs an `<AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION>` tag |
-| `/ar:f`, `/ar:find` | strict-search | edit existing files only; the agent is pointed at its own search tools (`Glob`/`Grep` on Claude, `glob`/`grep_search` on Gemini, `rg --files`/`rg -n` on Codex) |
-| `/ar:st`, `/ar:status` | | show the policy, plus session and global guards |
+| `/ar:file allow` | allow-all | create files freely (default) |
+| `/ar:file justify` | justify-create | search existing files first; a new file needs an `<AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION>` tag |
+| `/ar:file existing-only` | strict-search | edit existing files only; the agent is told to search existing file names and contents first. `search` and `find` are accepted for this word |
+| `/ar:status` | | show the policy, plus session and global guards |
 
 ```text
-/ar:f
+/ar:file existing-only
 /ar:go Refactor the auth module to use the new database schema
 ```
 
@@ -365,14 +366,15 @@ in a variable (`R=rm; $R -rf x`), ANSI-C quoting (`$'rm' -rf x`), `env -S`,
 `trap`, `alias`, or syntax the shell parser cannot read. Run an agent you do
 not trust in a container or a virtual machine.
 
-Add, allow and list guards per session or for every session:
+Add, allow and list guards for this session, or with `--global` as the first
+argument for every session:
 
 | This session | Every session | Effect |
 |---|---|---|
-| `/ar:no <pattern>`, `/ar:no "<pattern>" <message>` | `/ar:globalno` with the same arguments | block; a message needs a quoted, `regex:` or `glob:` pattern, or it becomes part of the pattern |
-| `/ar:ok <pattern> [N\|5m\|perm]` | `/ar:globalok <pattern> [N\|5m\|perm]` | allow `N` times, for a duration (`5m`, `2h30m`, `2d`), or `perm` (session: until it ends; global: until cleared); default one use |
-| `/ar:blocks` | `/ar:globalstatus` | list blocks and allows |
-| `/ar:clear` | `/ar:globalclear` | remove all blocks and allows |
+| `/ar:no <pattern>`, `/ar:no "<pattern>" <message>` | `/ar:no --global` with the same arguments | block; a message needs a quoted, `regex:` or `glob:` pattern, or it becomes part of the pattern |
+| `/ar:ok <pattern> [N\|5m\|perm]` | `/ar:ok --global <pattern> [N\|5m\|perm]` | allow `N` times, for a duration (`5m`, `2h30m`, `2d`), or `perm` (session: until it ends; global: until cleared); default one use |
+| `/ar:status` | `/ar:status` | list blocks and allows; one view shows both |
+| `/ar:clear` | `/ar:clear --global` | remove all blocks and allows |
 
 ```text
 /ar:no rm                                         # block, with the built-in suggestion
@@ -380,7 +382,7 @@ Add, allow and list guards per session or for every session:
 /ar:no regex:eval\( dangerous eval usage: blocked for security
 /ar:no glob:*.tmp temporary files are not allowed in this session
 /ar:no /eval\(.*assert/ no eval( followed by assert
-/ar:globalno "git reset --hard" PERMANENTLY DESTRUCTIVE: use git stash instead
+/ar:no --global "git reset --hard" PERMANENTLY DESTRUCTIVE: use git stash instead
 /ar:ok 'git push' 1h
 ```
 
@@ -388,7 +390,7 @@ A pattern is a literal substring by default; `regex:` and `glob:` change that,
 and `/.../` is read as a regular expression when it contains metacharacters.
 The first match in this order decides:
 
-1. allows: `/ar:ok`, `/ar:globalok`
+1. allows: `/ar:ok`, `/ar:ok --global`
 2. session blocks (a deny overrides a warning)
 3. global blocks
 4. rule files: `.claude/autorun.*.local.md` in the working directory and each
@@ -402,7 +404,7 @@ The first match in this order decides:
 
 ### Autonomous runs
 
-`/ar:go <task>` (`/ar:run`) starts a run that may not end at the first "done".
+`/ar:go <task>` starts a run that may not end at the first "done".
 The agent must print each stage's marker before moving on:
 
 1. **Implement**, then print `AUTORUN_INITIAL_TASKS_COMPLETED`.
@@ -418,19 +420,19 @@ Code's plan mode starts the same run.
 
 | Command | Effect |
 |---|---|
-| `/ar:go <task>`, `/ar:run` | start a three-stage run |
-| `/ar:gp <task>`, `/ar:proc` | the same, plus a "Wait," review after every step: critique, failure modes, several fixes, pick the best |
-| `/ar:x`, `/ar:stop` | stop the run |
-| `/ar:sos`, `/ar:estop` | stop the run and print `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` |
+| `/ar:go <task>` | start a three-stage run |
+| `/ar:goprocess <task>` | the same, plus a "Wait," review after every step: critique, failure modes, several fixes, pick the best |
+| `/ar:stop` | stop the run |
+| `/ar:estop` | stop the run and print `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` |
 
 ### Plans
 
 | Command | Effect |
 |---|---|
-| `/ar:pn`, `/ar:plannew` | write a plan with checkbox steps, dependencies, and how each step is verified |
-| `/ar:pr`, `/ar:planrefine` | critique the plan against the code and fill its gaps |
-| `/ar:pu`, `/ar:planupdate` | fold new requirements into the plan |
-| `/ar:pp`, `/ar:planprocess` | carry the plan out in a three-stage run, reviewing after each step |
+| `/ar:plannew` | write a plan with checkbox steps, dependencies, and how each step is verified |
+| `/ar:planrefine` | critique the plan against the code and fill its gaps |
+| `/ar:planupdate` | fold new requirements into the plan |
+| `/ar:planprocess` | carry the plan out in a three-stage run, reviewing after each step |
 
 ```text
 /ar:plannew Design a REST API with authentication and tests
@@ -441,17 +443,17 @@ Code's plan mode starts the same run.
 Plan export saves your plans as files in your project, so they outlive the
 session that wrote them. It is on by default. Each plan you accept goes to
 `notes/`, each plan you reject to `notes/rejected/`, named
-`{datetime}_{name}.md`; `/ar:pe off` stops it for this project.
+`{datetime}_{name}.md`; `/ar:planexport off` stops it for this project.
 
 | Command | Effect |
 |---|---|
-| `/ar:pe`, `/ar:planexport` | show whether export is on and which setting decided it |
-| `/ar:pe on\|off` | pin export for this project; the pin overrides the global default |
-| `/ar:pe globalon\|globaloff` | set the default for every project |
-| `/ar:pe dir <path>` | export folder (template variables allowed) |
-| `/ar:pe pattern <template>` | file name pattern |
-| `/ar:pe <component> [on\|off\|dir <path>]` | per-component switch and folder for `accepted` and `rejected` plans; a bare name toggles it, and a component writes only when export is also on |
-| `/ar:pe reset` | restore defaults and clear project pins |
+| `/ar:planexport` | show whether export is on and which setting decided it |
+| `/ar:planexport on\|off` | pin export for this project; the pin overrides the global default |
+| `/ar:planexport globalon\|globaloff` | set the default for every project |
+| `/ar:planexport dir <path>` | export folder (template variables allowed) |
+| `/ar:planexport pattern <template>` | file name pattern |
+| `/ar:planexport <component> [on\|off\|dir <path>]` | per-component switch and folder for `accepted` and `rejected` plans; a bare name toggles it, and a component writes only when export is also on |
+| `/ar:planexport reset` | restore defaults and clear project pins |
 
 ### Task tracking
 
@@ -464,7 +466,7 @@ stay as they are.
 |---|---|
 | `/ar:task`, `/ar:tasks` | show tasks, pause, reminder and recovery status |
 | `/ar:task pause [N] [duration] [reason]` | pause for `N` Stop attempts, a duration (`s`, `m`, `h`), or both, whichever ends first. Bare `pause` lasts five minutes; a reason alone lasts until the agent prints the recovery marker autorun gives it, or you resume |
-| `/ar:task resume` | resume now; `/ar:go` and `/ar:proc` also resume |
+| `/ar:task resume` | resume now; `/ar:go` and `/ar:goprocess` also resume |
 | `/ar:task ignore <id> [reason]` | stop one task from blocking Stop |
 | `/ar:task prompts on\|off\|<N>` | turn staleness reminders on or off, or set both intervals to `N` (legacy `/ar:task on\|off\|<N>`); Stop enforcement is unaffected |
 | `/ar:task prompts initial <N>`, `subsequent <N>` | set one interval for this session |
@@ -514,23 +516,44 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 
 | Command | Effect |
 |---|---|
-| `/ar:gc`, `/ar:commit` | the 17-step commit process: `<files>:` or `type(scope):` subjects, concrete wording, a secrets check |
-| `/ar:ph`, `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
-| `/ar:tm`, `/ar:tmux` | create, list and clean up isolated tmux sessions |
-| `/ar:tt`, `/ar:ttest` | test a CLI or plugin in an isolated tmux session |
+| `/ar:commit` | the 17-step commit process: `<files>:` or `type(scope):` subjects, concrete wording, a secrets check |
+| `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
 | `/ar:tabs` | list the agent sessions running in your tmux windows, lettered A, B, C, with directory, purpose and status |
 | `/ar:tabw` | type into those sessions after stating what it will send, e.g. `/ar:tabw awaiting:continue` or `/ar:tabw A:git status, B:pwd` |
 | `/ar:cache` | off by default; blocks tool use while Claude Code's prompt cache is cold or the context is near compaction, so a resumed session does not pay to rebuild it: `on\|off [5m\|1h\|perm]` (a timed one reverts when it ends), `set ratio\|read\|age\|full <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`, `2d`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>` |
 | `/ar:restart-daemon` | restart the daemon for this install |
-| `/ar:gemini` | when to hand a task to Gemini: images, PDFs, video, search |
-| `/ar:test` | check that autorun's commands are loaded |
 
 `/ar:tabs` shows each session as `awaiting input`, `working`, `plan approval`,
 `tool permission`, `idle`, or `error`. Answer with selections such as `A, B:git
 status, all:continue`; `all:escape` interrupts every working session.
 
-The commands from before the `ar` prefix still work: `/afa`, `/afj`, `/afs`,
-`/afst`, `/autorun`, `/autoproc`, `/estop`.
+### Renamed commands
+
+Each command has one name. An old name still runs the new command wherever
+the agent passes the text to autorun: on Pi, Prime Agent and Gemini CLI in
+any spelling, and on Codex as `ar:<name>` or `ar <name>`. Claude Code and Qwen
+Code answer an old `/ar:` name with "Unknown command"; ForgeCode, Antigravity
+and OpenCode have no route for it.
+
+| Old name | Use instead |
+|---|---|
+| `st`, `afst`, `blocks`, `globalstatus` | `/ar:status` |
+| `a`, `allow`, `afa` | `/ar:file allow` |
+| `j`, `justify`, `afj` | `/ar:file justify` |
+| `f`, `find`, `afs` | `/ar:file existing-only` |
+| `run`, `autorun` | `/ar:go` |
+| `gp`, `proc`, `autoproc` | `/ar:goprocess` |
+| `x` | `/ar:stop` |
+| `sos` | `/ar:estop` |
+| `pn`, `pr`, `pu`, `pp` | `/ar:plannew`, `/ar:planrefine`, `/ar:planupdate`, `/ar:planprocess` |
+| `pe` | `/ar:planexport` |
+| `globalok`, `globalno`, `globalclear` | `/ar:ok --global`, `/ar:no --global`, `/ar:clear --global` |
+| `gc`, `ph` | the `commit` and `philosophy` skills (`/ar:commit`, `/ar:philosophy` on Claude Code); the old names never ran anything and are gone |
+| `gemini`, `test`, `claude-code-plugin-help`, `tm`, `tmux`, `tt`, `ttest` | removed; the tmux procedures are in the `tmux-automation` skill |
+| unprefixed `/afs`, `/afa`, `/afj`, `/afst`, `/autorun`, `/autoproc`, `/autostop`, `/estop` | removed; use the names above |
+
+If your own instruction files (`CLAUDE.md`, `AGENTS.md`, saved prompts) name an
+old command, change them to the new name.
 
 ## Keep sessions alive with byobu
 
@@ -593,14 +616,14 @@ autorun --no-bootstrap               # hooks stop installing missing dependencie
 autorun --enable-bootstrap           # turn that back on
 ```
 
-**File policy** (`/ar:a`, `/ar:j`, `/ar:f`, `/ar:st` in a session):
+**File policy** (`/ar:file allow|justify|existing-only` and `/ar:status` in a session):
 
 ```bash
 autorun file status                  # aliases st, s
 autorun file status --session ID
 autorun file allow                   # alias a
 autorun file justify                 # alias j
-autorun file search                  # aliases find, f
+autorun file existing-only           # aliases search, find, f
 ```
 
 Each session starts at allow-all, and there is no global policy; `--global` says

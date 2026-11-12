@@ -125,7 +125,7 @@ Claude Code and Gemini CLI, but adapts model-facing guidance to Codex:
   follow-mode `tail`, and prefixed forms such as `sudo cat` remain blocked.
 
 Examples written for Claude and Gemini show `/ar:*`. In Codex, prefer `ar:*` or
-`ar <command>` (for example `ar:st` or `ar:ok git push`) because unknown slash
+`ar <command>` (for example `ar:status` or `ar:ok git push`) because unknown slash
 commands can be intercepted before `UserPromptSubmit` hooks see them.
 When Codex does not deliver `UserPromptSubmit`, autorun's transcript fallback
 processes exact `ar:*` policy commands on the first later `PreToolUse` and

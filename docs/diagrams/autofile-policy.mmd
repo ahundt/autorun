@@ -2,8 +2,8 @@
 graph TD
     A[Agent calls a file-writing tool] --> B{Session policy}
     B -->|allow-all| OK[Allowed]
-    B -->|strict-search /ar:f| E1{Target file exists?}
-    B -->|justify-create /ar:j| E2{Target file exists?}
+    B -->|strict-search /ar:file existing-only| E1{Target file exists?}
+    B -->|justify-create /ar:file justify| E2{Target file exists?}
     E1 -->|Yes| OK
     E1 -->|No| X1[Blocked: search for an existing file to edit]
     E2 -->|Yes| OK

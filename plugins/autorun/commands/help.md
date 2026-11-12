@@ -6,10 +6,11 @@ argument-hint: "[command]"
 # autorun help
 
 Lists the autorun commands this harness understands, grouped into the ones
-autorun answers itself and the ones the model reads as a document. Each entry
-shows the recommended spelling first and any shorter spelling after it.
+autorun answers itself and the ones the model reads as a document, followed by
+the skills this harness loads. Each command has one name; `/ar:task` and
+`/ar:tasks` are the one pair of names for the same command.
 
-`/ar:help <command>` shows one command's arguments and alternative spellings.
+`/ar:help <command>` shows one command's arguments.
 
 The header line states how commands reach autorun here, because that differs
 per harness: Claude Code autocompletes them, Codex keeps its slash menu closed

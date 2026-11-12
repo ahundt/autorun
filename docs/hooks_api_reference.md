@@ -1177,7 +1177,7 @@ if __name__ == "__main__":
 │    • decision: "deny" + reason → Prompt shown to AI with rejection reason       │
 │    • additionalContext → Inject extra context into AI's view                    │
 │                                                                                 │
-│  USE CASE: Intercept commands like /autorun, /estop, custom slash commands      │
+│  USE CASE: Intercept commands like /ar:go, /ar:estop, custom slash commands     │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 

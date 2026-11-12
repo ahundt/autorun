@@ -9,14 +9,14 @@ autorun is a Claude Code plugin with hooks — requires a live TUI session via t
 1. `rm project_data.csv` — blocked, redirected to `trash`
 2. `sed -n '/TODO/p' main.py` — blocked (always), redirected to Edit
 3. `git clean -f` — blocked (always), suggests `git clean -n` preview
-4. `/ar:f` (strict-search policy) — new file creation blocked
+4. `/ar:file existing-only` (strict-search policy) — new file creation blocked
 5. `/ar:no git push` — custom block; `/ar:ok git push` — unblock
 6. `/ar:plannew` — structured plan created, auto-saved to `notes/`
 7. `/ar:go` — autonomous 3-stage task execution
 
 ## Acts Skipped
 
-`/ar:pe` (uses `! bash exec` which does not work in TUI); daemon status (invisible); byobu/tmux (requires multiplexer setup).
+`/ar:planexport` (uses `! bash exec` which does not work in TUI); daemon status (invisible); byobu/tmux (requires multiplexer setup).
 
 ## Prompt Evolution for Act 2
 

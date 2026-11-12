@@ -318,7 +318,7 @@ class PlanApprovalAutorunTest:
         """Send a simple plan request using /ar:plannew command which includes PLAN ACCEPTED instructions."""
         self.log("Sending plan request using /ar:plannew command...")
 
-        # Use the full command path - /ar:plannew (not /ar:pn alias which may not be registered)
+        # Use the advertised command name, /ar:plannew
         # Also explicitly tell Claude to enter plan mode in case the manual Shift+Tab didn't work
         plan_request = "/ar:plannew Enter plan mode and create a simple 2-step plan to write hello.py that prints Hello World. Do not ask any questions, just create the plan and submit for approval."
 
