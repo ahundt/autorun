@@ -157,6 +157,30 @@ def test_gemini_hooks_json_is_gemini_format():
         "Gemini hooks should NOT use ${CLAUDE_PLUGIN_ROOT}"
 
 
+@pytest.mark.parametrize(
+    ("hooks_path", "event"),
+    [
+        (get_claude_hooks_path, "UserPromptSubmit"),
+        (get_gemini_hooks_path, "BeforeAgent"),
+    ],
+)
+def test_prompt_hooks_have_no_matcher_and_receive_ordinary_prompts(hooks_path, event):
+    """Prompt lifecycle events must not be narrowed to autorun commands.
+
+    Claude Code and Qwen do not define matchers for their prompt event. Codex
+    strips the group matcher while translating the Claude manifest. Gemini
+    0.51.0 calls BeforeAgent without a matcher context, so a matcher is ignored;
+    omitting it states the actual catch-all contract and remains compatible.
+    """
+    with open(hooks_path(), encoding="utf-8") as f:
+        groups = json.load(f)["hooks"][event]
+
+    assert groups, f"{event} must have at least one handler group"
+    assert all("matcher" not in group for group in groups), (
+        f"{event} must receive every ordinary prompt, not only /ar: commands: {groups}"
+    )
+
+
 def test_gemini_hooks_json_has_gemini_events():
     """Test that hooks.json uses Gemini CLI event names."""
     hooks_file = get_gemini_hooks_path()

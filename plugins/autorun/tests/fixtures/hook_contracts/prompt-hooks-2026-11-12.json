@@ -1,0 +1,41 @@
+{
+  "read_date": "2026-11-12",
+  "ordinary_prompt_reaches_autorun": {
+    "claude": {
+      "version": "2.1.322",
+      "official_docs": "https://code.claude.com/docs/en/hooks",
+      "event": "UserPromptSubmit",
+      "matcher_contract": "The event has no matcher filter; it fires when the user submits a prompt.",
+      "autorun_manifest": "plugins/autorun/hooks/hooks.json"
+    },
+    "codex": {
+      "version": "0.167.0",
+      "official_docs": "https://developers.openai.com/codex/hooks",
+      "event": "UserPromptSubmit",
+      "matcher_contract": "The generated Codex hook entry has no matcher and receives the event for each prompt.",
+      "autorun_generator": "plugins/autorun/src/autorun/installer/codex.py:stage_plugin"
+    },
+    "gemini": {
+      "version": "0.51.0",
+      "official_docs": "https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md",
+      "event": "BeforeAgent",
+      "installed_parser_source": "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle/chunk-OW353XI3.js:357485-357498,357590-357599",
+      "quote": "matchesContext returns true when no matcher context is supplied; fireBeforeAgentEvent calls executeHooks without a context. Omitting matcher is the explicit catch-all form."
+    },
+    "qwen": {
+      "version": "0.21.15",
+      "upstream_tag": "v0.21.15",
+      "upstream_commit": "5dce251",
+      "official_docs": "https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/",
+      "event": "UserPromptSubmit",
+      "matcher_contract": "UserPromptSubmit has no matcher target.",
+      "autorun_registry": "plugins/autorun/src/autorun/platforms.py:QWEN_HOOKS manifest_events_without_matchers"
+    }
+  },
+  "ordinary_prompt_cost_invariants": {
+    "test": "plugins/autorun/tests/test_stop_gate_hot_path.py::test_prompt_with_nothing_awaiting_the_user_reads_and_writes_nothing",
+    "task_row_reads": 0,
+    "task_row_writes": 0,
+    "sqlite_transactions": "less than 2; currently one cache-toggle state read and no writer-slot task transaction"
+  }
+}

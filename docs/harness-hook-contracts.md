@@ -41,7 +41,7 @@ Each event cell states whether the harness emits the event and what its output c
 | Event | Contract, autorun behavior, and gap |
 |---|---|
 | SessionStart | Emits on `startup`, `resume`, `clear`, `compact`, and `fork`. `N=systemMessage`; `C=hookSpecificOutput.additionalContext`; startup is advisory. AR subscribes and treats `fork` as a fork source. No gap found for the outputs autorun uses. [C1][AR1] |
-| UserPromptSubmit | Emits before prompt processing, including harness-authored turns. `B=decision:block`; `N=systemMessage`; `C=additionalContext`. AR subscribes, distinguishes harness-authored wrappers, and can block the cache-expiry prompt check. [C1][AR1] |
+| UserPromptSubmit | Emits before prompt processing, including harness-authored turns. The event has no matcher filter, so ordinary prompts reach AR; the former `/ar:` field in AR's manifest was ignored and has been removed. `B=decision:block`; `N=systemMessage`; `C=additionalContext`. AR distinguishes harness-authored wrappers and can block the cache-expiry prompt check. [C1][AR1] |
 | PreToolUse | Emits before each tool. `B=hookSpecificOutput.permissionDecision=deny` with `permissionDecisionReason`; `ask` is supported. AR subscribes and preserves the nested denial even when the Claude exit-2 workaround suppresses duplicate JSON text. [C1][AR1] |
 | PostToolUse | Emits after successful tools. `N=systemMessage`; `C=additionalContext`; blocking cannot undo the tool. AR subscribes and uses it for task reminders and context. [C1][AR1] |
 | Stop | Emits when the main agent finishes. `B=decision:block` plus `reason`; `N=systemMessage`; `C=additionalContext`. AR subscribes; blocked Stops use one reason channel and allowed Stops keep notices. Stop input now includes `background_tasks` and `session_crons`; AR parses both but does not yet treat either as proof of a running subagent. [C1][AR1] |
@@ -54,7 +54,7 @@ Each event cell states whether the harness emits the event and what its output c
 | Event | Contract, autorun behavior, and gap |
 |---|---|
 | SessionStart | Emits on session start/resume. `N=systemMessage`; `C=hook-specific additionalContext`; common fields are strict. AR subscribes through the shared manifest and filters to Codex's event schema. [X1][AR1] |
-| UserPromptSubmit | Emits during a turn. `B` is supported; `N=systemMessage`; `C=additionalContext`. AR subscribes and also replays policy commands from the rollout when prompt hooks are absent. [X1][AR1] |
+| UserPromptSubmit | Emits during a turn. AR's generated hook entry has no matcher, so ordinary prompts reach the daemon. `B` is supported; `N=systemMessage`; `C=additionalContext`. AR also replays policy commands from the rollout when prompt hooks are absent. [X1][AR1] |
 | PreToolUse | Emits before tools. `B=decision:block` and nested `permissionDecision=deny`; the reason stays in the nested field so Codex does not render duplicate rows. AR subscribes and fails closed on malformed denial output. [X1][AR1] |
 | PostToolUse | Emits after tools. `N=systemMessage`; `C=additionalContext`; a block is feedback only. AR subscribes and strips fields Codex rejects. [X1][AR1] |
 | Stop | Emits at main-thread completion. `B=decision:block`; `N=systemMessage`; common output is strict. AR subscribes and uses compact block output or allowed notices. [X1][AR1] |
@@ -67,7 +67,7 @@ Each event cell states whether the harness emits the event and what its output c
 | Event | Contract, autorun behavior, and gap |
 |---|---|
 | SessionStart | Emits and accepts `systemMessage` plus `additionalContext`. AR subscribes. [G1][AR1] |
-| BeforeAgent | Prompt event. `B=decision:deny`; `C=additionalContext`; notices use common output. AR subscribes, but its manifest matcher is `/ar:`. Gap: ordinary prompts may not reach the prompt-time cache warning on clients that enforce the matcher. Change to a documented catch-all after verifying 0.51.0 and 0.68.0 matcher behavior. [G1][AR1] |
+| BeforeAgent | Prompt event. Gemini 0.51.0 invokes it without matcher context, so the old `/ar:` matcher was ignored; AR now omits the matcher to state the catch-all contract explicitly. Every ordinary prompt reaches the awaiting-user restore and prompt-time cache handlers. `B=decision:deny`; `C=additionalContext`; notices use common output. [G1][AR1] |
 | BeforeTool | `B=decision:deny`; reason and context are supported. AR subscribes and normalizes unsupported `ask` to deny. [G1][AR1] |
 | AfterTool | Emits after tools; `C=additionalContext`; output cannot undo the tool. AR subscribes. [G1][AR1] |
 | AfterAgent | Stop event. `B=decision:deny` triggers retry; allowed common output can carry a notice. AR subscribes. [G1][AR1] |
@@ -80,7 +80,7 @@ Each event cell states whether the harness emits the event and what its output c
 | Event | Contract, autorun behavior, and gap |
 |---|---|
 | SessionStart | Emits. `N=systemMessage`; `C=additionalContext`. AR subscribes. [Q1][AR1] |
-| UserPromptSubmit | Emits before the prompt. `C=additionalContext`; standard fields remain available. AR subscribes, but the translated matcher comes from Gemini's `/ar:` matcher. Gap: ordinary prompts may miss the prompt-time cache warning; use a verified catch-all matcher. [Q1][AR1] |
+| UserPromptSubmit | Emits before the prompt and has no matcher target. AR's Qwen protocol strips matcher fields, so every ordinary prompt reaches the awaiting-user restore and prompt-time cache handlers; the shared source manifest now omits the stale matcher too. `C=additionalContext`; standard fields remain available. [Q1][AR1] |
 | PreToolUse | Emits before tools. The official output is nested `permissionDecision` plus `permissionDecisionReason`; `allow`, `deny`, and `ask` are supported. AR subscribes and converts malformed or unknown decisions to deny. [Q1][AR1] |
 | PostToolUse | Emits after tools. `C=additionalContext`; common `systemMessage` is available. AR subscribes. [Q1][AR1] |
 | Stop | Emits before the response ends. `B=decision:block`; `N=systemMessage`; `C=additionalContext`. AR now preserves common fields on allowed Stops and keeps blocking responses compact. Waiting-user, delegation, fork, and loop-guard notices therefore appear as Qwen hook system messages. [Q1][AR1] |
@@ -159,8 +159,8 @@ Each event cell states whether the harness emits the event and what its output c
 |---|---|---|---|---|---|
 | Claude Code | Enforced by Stop `decision:block`. [C1][AR1] | `systemMessage`. [C1][AR1] | PreToolUse nested denial; reason retained for the model and user workaround channel. [C1][AR1] | PostToolUse/Stop/SessionStart. [C1][AR1] | UserPromptSubmit can block or warn. [C1][AR1] |
 | Codex | Enforced by Stop `decision:block`. [X1][AR1] | `systemMessage`. [X1][AR1] | PreToolUse denial with nested reason; malformed denials fail closed. [X1][AR1] | PostToolUse/Stop/SessionStart. [X1][AR1] | UserPromptSubmit can block or warn. [X1][AR1] |
-| Gemini CLI | Enforced by AfterAgent `decision:deny`. [G1][AR1] | Common notice field. [G1][AR1] | BeforeTool denial reason. [G1][AR1] | AfterTool/AfterAgent/SessionStart. [G1][AR1] | Handler exists, but the `/ar:` matcher may omit ordinary prompts. [G1][AR1] |
-| Qwen Code | Enforced by Stop `decision:block`. [Q1][AR1] | Fixed in `942cddd2`: `systemMessage`. [Q1][AR1] | Nested PreToolUse denial; invalid shape becomes deny. [Q1][AR1] | PostToolUse/Stop/SessionStart. [Q1][AR1] | Handler exists, but the translated `/ar:` matcher may omit ordinary prompts. [Q1][AR1] |
+| Gemini CLI | Enforced by AfterAgent `decision:deny`. [G1][AR1] | Common notice field. [G1][AR1] | BeforeTool denial reason. [G1][AR1] | AfterTool/AfterAgent/SessionStart. [G1][AR1] | Every BeforeAgent prompt reaches the warning; AR installs no matcher. [G1][AR1] |
+| Qwen Code | Enforced by Stop `decision:block`. [Q1][AR1] | Fixed in `942cddd2`: `systemMessage`. [Q1][AR1] | Nested PreToolUse denial; invalid shape becomes deny. [Q1][AR1] | PostToolUse/Stop/SessionStart. [Q1][AR1] | Every UserPromptSubmit reaches the warning; the protocol emits no matcher. [Q1][AR1] |
 | Antigravity | Enforced by Stop `decision:continue`. [A1][AR1] | Not supported by the allowed-Stop schema; `reason` is defined only for continue. [A1] | PreToolUse denial reason; invalid shape becomes deny. [A1][AR1] | Stop blocks and SessionStart context; PostToolUse is observational. [A1][AR1] | No prompt hook; proposed BeforeModel policy route requires author/turn tests. [A1][AR1] |
 | OpenCode | No Stop route. [O1][AR2] | No Stop route. [O1][AR2] | `tool.execute.before` throws the daemon reason. [O1][AR2] | Task reminders only through todo updates and memory. [O1][AR2] | Supported plugin prompt route is unused; proposal above. [O1][AR2] |
 | Pi | Enforced by an `agent_settled` continuation message. [P1][AR2] | Fixed in `7f642ff2`: `ctx.ui.notify`. [P1][AR2] | `tool_call` returns `{block:true, reason}`. [P1][AR2] | Tool result, prompt, SessionStart, and Stop routes. [P1][AR2] | Warning only; before_agent_start cannot reject the prompt. [P1][AR2] |

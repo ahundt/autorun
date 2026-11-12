@@ -13,7 +13,6 @@
     ],
     "BeforeAgent": [
       {
-        "matcher": "/ar:",
         "hooks": [{
           "name": "autorun-command",
           "type": "command",
