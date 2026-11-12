@@ -218,6 +218,8 @@ def restart_lock():
     lock = FileLock(str(RESTART_LOCK_PATH), timeout=0)
     acquired = False
     try:
+        # FileLock would create the lock's directory with the umask's mode.
+        ipc.ensure_config_dir(RESTART_LOCK_PATH.parent)
         lock.acquire()
         acquired = True
     except Timeout:

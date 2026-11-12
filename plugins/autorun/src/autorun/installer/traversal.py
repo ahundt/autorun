@@ -43,6 +43,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
+from ..ipc import ensure_config_dir
 from .discovery import process_home, redirected_home
 from .fs import (
     Decision,
@@ -441,6 +442,10 @@ def run(
     # published tree once instead of once per harness; the second identical
     # intent could only ever have concluded "already current".
     decided: set[tuple] = set()
+    if mode is Mode.INSTALL:
+        # Steps publish under it (extension staging, backups, switches) with
+        # plain mkdir(parents=True); create it owner-only before any of them.
+        ensure_config_dir(autorun_state_dir(ctx.home))
     for intent in chain(walk(harnesses, ctx), extra):
         key = (
             intent.kind, intent.target, intent.source, intent.plugin,

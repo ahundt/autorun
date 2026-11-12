@@ -48,9 +48,29 @@ def _get_autorun_config_dir() -> Path:
 
 AUTORUN_CONFIG_DIR = _get_autorun_config_dir()
 
-def ensure_config_dir():
-    """Create AUTORUN_CONFIG_DIR with owner-only permissions (0o700 on Unix)."""
-    AUTORUN_CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+def ensure_config_dir(path: Path | None = None) -> Path:
+    """Create autorun's state directory owner-only (0700), or tighten it to that.
+
+    The one owner of that directory's creation: ``path`` defaults to
+    AUTORUN_CONFIG_DIR, and the installer passes the one it resolved. An
+    existing directory owned by this user loses its group and other bits;
+    one owned by someone else is left alone, and nothing is loosened.
+    Windows has no POSIX modes, so there it only creates. Tightening is
+    best effort: a sandbox that forbids chmod (Codex workspace-write) must
+    not turn every import of ``core`` into a failed hook.
+    ``hooks/hook_entry.py`` cannot import autorun and mirrors this as
+    ``_ensure_private_dir``.
+    """
+    path = AUTORUN_CONFIG_DIR if path is None else Path(path)
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            info = path.stat()
+            if info.st_uid == os.getuid() and info.st_mode & 0o077:
+                os.chmod(path, info.st_mode & 0o700)
+        except OSError:
+            pass
+    return path
 
 AUTORUN_SOCKET_PATH = AUTORUN_CONFIG_DIR / "daemon.sock"
 AUTORUN_PORT_FILE = AUTORUN_CONFIG_DIR / "daemon.port"

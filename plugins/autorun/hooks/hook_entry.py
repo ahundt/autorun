@@ -116,7 +116,7 @@ def _append_debug_log(message: str) -> None:
     """
     try:
         debug_log = _debug_log_path()
-        debug_log.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_private_dir(debug_log.parent)
         if debug_log.exists() and debug_log.stat().st_size > DEBUG_LOG_MAX_BYTES:
             rotated = debug_log.with_suffix(debug_log.suffix + ".1")
             try:
@@ -869,6 +869,25 @@ def _autorun_home() -> Path:
     return Path(os.environ.get("AUTORUN_HOME") or Path.home() / ".autorun")
 
 
+def _ensure_private_dir(path: Path) -> Path:
+    """Create ``path`` (AUTORUN_HOME) owner-only (0700), or tighten one this user owns.
+
+    Stdlib mirror of ``autorun.ipc.ensure_config_dir``, which this file cannot
+    import; tests/test_autorun_home_mode.py holds both to the same result.
+    The debug log is often the first file written in AUTORUN_HOME, and it
+    records hook payloads.
+    """
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            info = path.stat()
+            if info.st_uid == os.getuid() and info.st_mode & 0o077:
+                os.chmod(path, info.st_mode & 0o700)
+        except OSError:
+            pass
+    return path
+
+
 def _daemon_socket_path() -> Path:
     """Return the shared daemon socket path without importing autorun."""
     return _autorun_home() / "daemon.sock"
@@ -1356,7 +1375,7 @@ def _write_bootstrap_receipt(
     one's depth would make an unrelated first attempt wait an hour.
     """
     receipt = _bootstrap_path("bootstrap.json")
-    receipt.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _ensure_private_dir(receipt.parent)
     fingerprint = _bootstrap_fingerprint(plugin_root) if plugin_root else None
     attempts = 1
     if not ok and fingerprint:
@@ -1483,7 +1502,7 @@ def spawn_background_bootstrap() -> bool:
 
     lockfile = _bootstrap_path("bootstrap.lock")
     try:
-        lockfile.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _ensure_private_dir(lockfile.parent)
         descriptor = os.open(lockfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             # Identifies this worker's lock, so it removes only its own.

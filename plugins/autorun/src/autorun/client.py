@@ -378,7 +378,7 @@ def _log_hook_lifecycle(message: str, **kwargs) -> None:
     if not DEBUG_ENABLED:
         return
     try:
-        DEBUG_LOG.parent.mkdir(exist_ok=True)
+        ipc.ensure_config_dir(DEBUG_LOG.parent)
         with open(DEBUG_LOG, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.datetime.now()}] {message}\n")
             for key, value in kwargs.items():
