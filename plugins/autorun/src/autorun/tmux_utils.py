@@ -1621,10 +1621,19 @@ def tmux_detect_claude_thinking_mode(content: str) -> bool:
 
 
 class TypedNotSubmitted(RuntimeError):
-    """The text reached the pane but still sits on its input line after Enter."""
+    """Text and Enter were sent, but the pane does not show them submitted.
 
-    def __init__(self):
-        super().__init__('typed, not submitted')
+    reason TYPED: the text still sits on the pane's input line after Enter.
+    reason UNCONFIRMED: the pane could not be read back, so whether it was
+    submitted is unknown. Either way nothing is resent.
+    """
+
+    TYPED = 'typed, not submitted'
+    UNCONFIRMED = 'sent, not confirmed'
+
+    def __init__(self, reason: str = TYPED):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _text_on_cursor_line(tmux: 'TmuxUtilities', text: str, session, window, pane) -> Optional[bool]:
@@ -1675,11 +1684,13 @@ def send_text_and_enter(
     delay_ms apart; echoed text elsewhere on screen is not proof either way.
 
     Returns:
-        True if both sends succeeded, False otherwise
+        True when both sends succeeded and the cursor line no longer ends
+        with the text; False when tmux refused the text or the Enter
 
     Raises:
-        TypedNotSubmitted: the text still sits on the input line. Nothing is
-            resent: a second Enter could submit a half-edited line.
+        TypedNotSubmitted: the text still sits on the input line (reason
+            TYPED), or the pane could not be read back (reason UNCONFIRMED).
+            Nothing is resent: a second Enter could submit a half-edited line.
 
     Example:
         >>> tmux = get_tmux_utilities(detect_current_tmux_session())
@@ -1696,11 +1707,14 @@ def send_text_and_enter(
     # Send Enter as separate command (CRITICAL: must be separate)
     if not tmux.send_keys('C-m', session, window, pane):
         return False
+    on_line = None
     for _ in range(10):
         time.sleep(delay_ms / 1000.0)
-        if not _text_on_cursor_line(tmux, text, session, window, pane):
+        on_line = _text_on_cursor_line(tmux, text, session, window, pane)
+        if on_line is False:
             return True
-    raise TypedNotSubmitted()
+    raise TypedNotSubmitted(TypedNotSubmitted.UNCONFIRMED if on_line is None
+                            else TypedNotSubmitted.TYPED)
 
 
 def check_safe_to_send(content: str) -> tuple[bool, str]:

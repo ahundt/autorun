@@ -588,7 +588,8 @@ harnesses, and shows each session's status as `idle`, `active`, `error`,
 harness shows `unknown`. `autorun tmux send --to <A | A,C | all | awaiting-input>
 -- <text>` prints each target's session, window, pane, directory and harness,
 types the text, presses Enter in a second call, and reports text still on the
-input line as `typed, not submitted`. `awaiting-input` skips `unknown` sessions.
+input line as `typed, not submitted` and a pane it could not read back as
+`sent, not confirmed`, resending neither. `awaiting-input` skips `unknown` sessions.
 
 ### Renamed commands
 

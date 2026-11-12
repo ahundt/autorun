@@ -535,6 +535,50 @@ class TestSendKeysArgv:
                 assert not tmux.send_keys("C-m", "some-session")
 
 
+class TestASendThatCannotBeReadBackIsNotReportedAsSubmitted:
+    """send_text_and_enter returned True when it could not read the pane back
+    (_text_on_cursor_line None), so `autorun tmux send` printed [ok] for a
+    send it never saw land. It now reports 'sent, not confirmed', distinct
+    from success and from 'typed, not submitted', and never resends."""
+
+    def _tmux(self):
+        tmux = Mock()
+        tmux.send_literal.return_value = True
+        tmux.send_keys.return_value = True
+        return tmux
+
+    @pytest.mark.unit
+    def test_an_unreadable_pane_raises_sent_not_confirmed(self):
+        tmux = self._tmux()
+        with patch("time.sleep"), \
+                patch.object(tmux_module, "_text_on_cursor_line", return_value=None):
+            with pytest.raises(tmux_module.TypedNotSubmitted) as raised:
+                tmux_module.send_text_and_enter(tmux, "continue", "s", "1", "0")
+
+        assert str(raised.value) == "sent, not confirmed"
+        assert raised.value.reason == tmux_module.TypedNotSubmitted.UNCONFIRMED
+        assert [c.args[0] for c in tmux.send_keys.call_args_list] == ["C-m"], "resent"
+
+    @pytest.mark.unit
+    def test_text_still_on_the_input_line_stays_typed_not_submitted(self):
+        tmux = self._tmux()
+        with patch("time.sleep"), \
+                patch.object(tmux_module, "_text_on_cursor_line", return_value=True):
+            with pytest.raises(tmux_module.TypedNotSubmitted) as raised:
+                tmux_module.send_text_and_enter(tmux, "continue", "s", "1", "0")
+
+        assert str(raised.value) == "typed, not submitted"
+
+    @pytest.mark.unit
+    def test_the_send_result_names_it_and_is_not_a_success(self):
+        tmux = self._tmux()
+        with patch("time.sleep"), \
+                patch.object(tmux_module, "_text_on_cursor_line", return_value=None):
+            result = tmux_module.send_to_session(tmux, {"tmux_target": "s:1.0"}, "continue")
+
+        assert (result["success"], result["error"]) == (False, "sent, not confirmed")
+
+
 class TestExecuteWindowAction:
     """Tests for tmux_dangerous_batch_execute function"""
 
@@ -899,7 +943,8 @@ class TestSafeToSendAgreesWithThePromptDetector:
         tmux.execute_tmux_command.return_value = {"returncode": 0, "stdout": CLAUDE_IDLE_SCREEN}
         tmux.send_literal.return_value = True
         tmux.send_keys.return_value = True
-        with patch("time.sleep"):
+        with patch("time.sleep"), \
+                patch.object(tmux_module, "_text_on_cursor_line", return_value=False):
             result = tmux_dangerous_batch_execute(tmux, ACTION_CONTINUE, "main:5")
 
         assert result["success_count"] == 1, result

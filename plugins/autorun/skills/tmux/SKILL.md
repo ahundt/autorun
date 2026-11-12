@@ -41,8 +41,9 @@ the sessions and ask what to do.
    `tmux send-keys -t <target> Enter`.
 6. Verify by capturing the pane afterwards. Text echoed on screen is not proof
    it was submitted. `autorun tmux send` reports text still sitting on the
-   input line as `typed, not submitted` and does not resend, because a second
-   Enter can submit a half-edited line. Report it to the user and ask.
+   input line as `typed, not submitted`, and a pane it could not read back as
+   `sent, not confirmed`. It resends neither, because a second Enter can
+   submit a half-edited line. Report it to the user and ask.
 
 </safety_rules>
 

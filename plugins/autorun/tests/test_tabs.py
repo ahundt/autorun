@@ -458,6 +458,12 @@ class TestFormatExecutionResults:
 class TestSelectionParsing:
     """Test selection string parsing via execute_selections (tmux_tab_ai_session_status wrapper)."""
 
+    @pytest.fixture(autouse=True)
+    def _pane_reads_back_submitted(self):
+        """The pane read after Enter shows an empty input line: submitted."""
+        with patch('autorun.tmux_utils._text_on_cursor_line', return_value=False):
+            yield
+
     def _make_mock_tmux(self):
         mock_tmux = MagicMock()
         mock_tmux.send_keys.return_value = True
@@ -522,6 +528,12 @@ class TestSelectionsSendOnlyWhatWasMeant:
     'all' -> A,L,L), the default action typed was a human label such as
     'let it work', and send_to_session skipped send_text_and_enter's delay
     and ignored a failed Enter."""
+
+    @pytest.fixture(autouse=True)
+    def _pane_reads_back_submitted(self):
+        """The pane read after Enter shows an empty input line: submitted."""
+        with patch('autorun.tmux_utils._text_on_cursor_line', return_value=False):
+            yield
 
     def _sessions(self, n, actions=('continue',)):
         return [{'tmux_target': f's:{i}', 'actions': list(actions)} for i in range(n)]

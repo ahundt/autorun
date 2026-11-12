@@ -142,6 +142,14 @@ def test_a_failed_send_exits_nonzero(discovered, tmux, capsys):
     assert '[FAIL]' in capsys.readouterr().out
 
 
+def test_a_send_that_cannot_be_read_back_is_not_ok_and_exits_nonzero(discovered, tmux, capsys):
+    with patch('autorun.tmux_utils._text_on_cursor_line', return_value=None):
+        assert main(['tmux', 'send', '--to', 'A', '--', 'x']) == 1
+
+    out = capsys.readouterr().out
+    assert 'sent, not confirmed' in out and '[ok]' not in out, out
+
+
 def test_an_invalid_selection_types_nothing_and_exits_nonzero(discovered, tmux):
     assert main(['tmux', 'send', '--to', 'Z', '--', 'x']) == 1
 
