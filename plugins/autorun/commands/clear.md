@@ -10,6 +10,6 @@ Remove all session-level command blocks and allows. Global blocks remain active.
 
 After clearing, only the default safety guards and global blocks apply.
 
-See also: `/ar:blocks` to view current session blocks before clearing.
+See also: `/ar:status` to view the current rules before clearing.
 
 UserPromptSubmit hook processes this command and clears session state.

@@ -541,7 +541,7 @@ def _peek_event_name(default: str = "unknown") -> str:
 # The fail-closed reason below names the commands that repair a broken runtime.
 # Denying those is a deadlock: when autorun cannot be imported, the only in-band
 # exit is a tool call, and the gate refused exactly the tool calls that fix it.
-# `/ar:sos` cannot help either -- the block happens at `import autorun`, before
+# `/ar:estop` cannot help either -- the block happens at `import autorun`, before
 # any session state is read -- so the sole remaining exit was hand-editing
 # settings.json. Every session attached to the broken install meanwhile retried
 # a hook that could not succeed, which is how one bad venv became a week of

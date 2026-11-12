@@ -3,7 +3,7 @@
 Provides ScopedAllow (immutable data structure) and parse_scope_args() for
 temporary permission grants with use counts, time-based TTLs, or permanent mode.
 
-Used by: /ar:ok, /ar:globalok command handlers in plugins.py.
+Used by: the /ar:ok and /ar:ok --global command handlers in plugins.py.
 """
 
 from __future__ import annotations
@@ -478,5 +478,5 @@ class ScopedAllow(ScopedGrant):
         )
 
     def status_label(self, *, now: float | None = None) -> str:
-        """Human-readable remaining scope for /ar:blocks display."""
+        """Human-readable remaining scope for /ar:status display."""
         return ScopedGrant.status_label(self, count_unit="use", now=now)

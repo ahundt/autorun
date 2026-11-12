@@ -3518,7 +3518,7 @@ def test_stop_block_pending_injection_re_armed_every_block(tmp_path, monkeypatch
     consecutive==min_consecutive to break a PreToolUse-deny deadlock loop.
     That loop required enforce_stop_injection (PreToolUse deny) which was
     removed, so unconditional re-arming is now safe — and is REQUIRED
-    so the override actions (/ar:sos, /ar:task ignore) stay visible to
+    so the override actions (/ar:estop, /ar:task ignore) stay visible to
     the AI even when consecutive resets because tasks churn between stops.
     Frequency stays low because Stop events themselves are infrequent.
     """
@@ -3560,7 +3560,7 @@ def test_stop_block_message_has_anti_gaming_wording(tmp_path, monkeypatch):
     msg = str(result)
     assert "Do the work, then:" in msg, f"Stop block must have anti-gaming wording. Got: {msg[:200]}"
     assert "You must" in msg, f"Stop block must have imperative wording. Got: {msg[:200]}"
-    assert "/ar:sos" in msg, f"Stop block must show override commands. Got: {msg[:200]}"
+    assert "/ar:estop" in msg, f"Stop block must show override commands. Got: {msg[:200]}"
 
 
 def test_stop_block_no_markdown_literals(tmp_path, monkeypatch):

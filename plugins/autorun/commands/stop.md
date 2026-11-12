@@ -7,6 +7,6 @@ aliases: [x]
 
 Stops autorun after completing the current task.
 
-The session will finish its current work before stopping. Use `/ar:sos` or `/ar:estop` for immediate emergency stop.
+The session will finish its current work before stopping. Use `/ar:estop` for an immediate emergency stop.
 
 UserPromptSubmit hook has processed the stop command.

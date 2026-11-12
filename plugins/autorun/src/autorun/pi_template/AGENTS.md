@@ -8,11 +8,11 @@ the same command dispatcher.
 ## Common commands
 
 - `/ar go <task>` — start autonomous execution with three-stage verification.
-- `/ar st` — show the current AutoFile policy.
-- `/ar allow`, `/ar justify`, `/ar find` — select file-creation policy.
+- `/ar status` — show the file policy and this session's and the global command rules.
+- `/ar file allow`, `/ar file justify`, `/ar file existing-only` — set the new-file policy.
 - `/ar task` — show tracked tasks or control task lifecycle enforcement.
 - `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` — model-callable tools backed by autorun's Python task state. `TaskUpdate` accepts either one `taskId` or an atomic `taskUpdates` array; `status="deleted"` is the delete operation.
-- `/ar sos` — emergency stop.
+- `/ar estop` — emergency stop.
 - `/ar help` — list the complete command surface.
 
 ## Safety guardrails

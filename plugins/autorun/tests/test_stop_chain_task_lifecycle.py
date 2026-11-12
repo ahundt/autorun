@@ -1115,7 +1115,7 @@ class TestStopBlockRepeatedDeliverySuppression:
 
     The re-delivery guarantee is the important half. handle_stop() re-arms
     pending_stop_injection on every block precisely so an AI that keeps making
-    the same mistake keeps re-seeing the override actions (/ar:sos,
+    the same mistake keeps re-seeing the override actions (/ar:estop,
     /ar:task ignore). Suppressing identical text across blocks recreates the
     "infinite non-overridable stop failure" that the re-arm exists to prevent:
     the AI gets blocked forever while never re-learning how to resolve it.
@@ -1158,7 +1158,7 @@ class TestStopBlockRepeatedDeliverySuppression:
             assert "Unfinished work" in delivered, (
                 f"Stop block #{attempt} must re-deliver the task list to the AI even though the text is identical to the previous block. Got: {pt_result!r}"
             )
-            assert "/ar:sos" in delivered or "ar:sos" in delivered, f"Stop block #{attempt} must re-deliver the override actions"
+            assert "/ar:estop" in delivered or "ar:estop" in delivered, f"Stop block #{attempt} must re-deliver the override actions"
 
     def test_single_stop_block_delivers_only_once(self):
         """Within ONE Stop block, a second PostToolUse must not re-deliver.

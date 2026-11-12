@@ -1,12 +1,12 @@
 ---
-description: Start autorun - autonomous task execution (short for /ar:run)
+description: Start autorun - autonomous task execution
 ---
 
 # Resume Claude automatically when it stops - Autorun Workflow (short: /ar:go)
 
 $ARGUMENTS
 
-Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of this /autorun workflow including your current tasks and goals.
+Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of this autorun workflow including your current tasks and goals.
 
 1. **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
    * **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.

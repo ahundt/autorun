@@ -295,7 +295,7 @@ Installation:
   autorun --uninstall pdf-extractor         # source checkout; preserve autorun
   autorun --status                          # preview drift and run health checks
 
-AutoFile - control file creation (slash: /ar:a, /ar:j, /ar:f, /ar:st):
+AutoFile - control file creation (slash: /ar:file allow|justify|existing-only, /ar:status):
   autorun file status
   autorun file allow
   autorun file justify
@@ -582,7 +582,7 @@ For more information: https://github.com/ahundt/autorun
         "file",
         help="AutoFile - control file creation policy",
         description="Control file creation and modification policies (AutoFile system). "
-        "Equivalent to /ar:a (allow), /ar:j (justify), /ar:f (find), /ar:st (status) slash commands.",
+        "Equivalent to the /ar:file allow|justify|existing-only and /ar:status slash commands.",
     )
     file_subparsers = file_parser.add_subparsers(dest="file_command", help="AutoFile operations")
 
@@ -590,7 +590,7 @@ For more information: https://github.com/ahundt/autorun
     allow_parser = file_subparsers.add_parser(
         "allow",
         aliases=["a"],
-        help="Allow creating new files freely (CLI: file a, Slash: /ar:a)",
+        help="Allow creating new files freely (CLI: file a, Slash: /ar:file allow)",
         description="""Set AutoFile policy to 'allow-all' mode.
 
 Claude can create new files and modify existing files without any restrictions.
@@ -604,7 +604,7 @@ Hooks served by the autorun daemon (the default) cache session state, so
 there this exits 1 and names the slash command to run in the session;
 it writes the policy when hooks run daemonless (AUTORUN_USE_DAEMON=0).
 
-Equivalent slash commands: /ar:a, /ar:allow, /afa""",
+Equivalent slash command: /ar:file allow""",
     )
     allow_parser.add_argument(
         "--global",
@@ -618,7 +618,7 @@ Equivalent slash commands: /ar:a, /ar:allow, /afa""",
     justify_parser = file_subparsers.add_parser(
         "justify",
         aliases=["j"],
-        help="Require written justification to create new files (CLI: file j, Slash: /ar:j)",
+        help="Require written justification to create new files (CLI: file j, Slash: /ar:file justify)",
         description="""Set AutoFile policy to 'justify-create' mode.
 
 The active assistant must search for existing files first. If creating a new
@@ -636,7 +636,7 @@ Hooks served by the autorun daemon (the default) cache session state, so
 there this exits 1 and names the slash command to run in the session;
 it writes the policy when hooks run daemonless (AUTORUN_USE_DAEMON=0).
 
-Equivalent slash commands: /ar:j, /ar:justify, /afj""",
+Equivalent slash command: /ar:file justify""",
     )
     justify_parser.add_argument(
         "--global",
@@ -650,7 +650,7 @@ Equivalent slash commands: /ar:j, /ar:justify, /afj""",
     search_parser = file_subparsers.add_parser(
         "search",
         aliases=["find", "f"],
-        help="Block all new file creation - only modify existing (CLI: file f, Slash: /ar:f)",
+        help="Block all new file creation - only modify existing (CLI: file f, Slash: /ar:file existing-only)",
         description="""Set AutoFile policy to 'strict-search' mode (strictest).
 
 The active assistant cannot create any new files. It can only modify existing files.
@@ -667,7 +667,7 @@ Hooks served by the autorun daemon (the default) cache session state, so
 there this exits 1 and names the slash command to run in the session;
 it writes the policy when hooks run daemonless (AUTORUN_USE_DAEMON=0).
 
-Equivalent slash commands: /ar:f, /ar:find, /afs
+Equivalent slash command: /ar:file existing-only
 Aliases: file search, file find, file f (all equivalent)""",
     )
     search_parser.add_argument(
@@ -682,7 +682,7 @@ Aliases: file search, file find, file f (all equivalent)""",
     af_status_parser = file_subparsers.add_parser(
         "status",
         aliases=["st", "s"],
-        help="Show current file creation policy (CLI: file st, Slash: /ar:st)",
+        help="Show current file creation policy (CLI: file st, Slash: /ar:status)",
         description="""Display current AutoFile policy setting.
 
 Shows whether Claude can create new files freely (allow), must justify (justify),
@@ -695,7 +695,7 @@ Examples:
   autorun file status             # Show current session policy
   autorun file st --session ID    # Show session ID's policy (short version)
 
-Equivalent slash commands: /ar:st, /ar:status, /afst
+Equivalent slash command: /ar:status
 Aliases: file status, file st, file s (all equivalent)""",
     )
     af_status_parser.add_argument(
@@ -1207,7 +1207,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             print(f"Error: {exc}")
             return 1
 
-        # The same state access the /ar:a, /ar:j, /ar:f handlers make: ctx.file_policy.
+        # The same state access the /ar:file handler makes: ctx.file_policy.
         ctx = EventContext(session_id=session_id, event="UserPromptSubmit", store=ThreadSafeDB())
         if policy != "STATUS":
             if USE_DAEMON:

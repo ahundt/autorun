@@ -2918,7 +2918,7 @@ class TestVersionBumpGuard:
         assert "/ar:ok regex:" + _VERSION_BUMP_ALLOW_REGEX in msg
         assert "'regex:" not in msg, "regex: form must not be quoted in the hint"
         assert "/ar:ok 'cargo set-version'" in msg
-        assert "/ar:globalok" in msg
+        assert "/ar:ok --global" in msg
         assert "/ar:ok 'version'\n" not in msg and "/ar:ok 'version' " not in msg
 
     def test_consent_grant_round_trip_via_ar_ok(self):

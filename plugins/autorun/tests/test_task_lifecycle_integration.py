@@ -420,7 +420,7 @@ class TestTaskLifecycleIntegration:
             assert result['continue'] == True, f"Attempt {i+1}: continue_running keeps AI working (blocking stop)"
 
         # Every actual block still teaches the user escape hatches.
-        assert '/ar:sos' in result['systemMessage']
+        assert '/ar:estop' in result['systemMessage']
         assert '/ar:task ignore' in result['systemMessage']
 
         yielded = self.manager.handle_stop(ctx)

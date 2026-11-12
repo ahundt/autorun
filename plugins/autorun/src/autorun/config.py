@@ -92,7 +92,7 @@ def _codex_suggestion(command: str, body: str) -> str:
         "**Commands:**\n"
         f"- Allow (default 1 use): /ar:ok {command}\n"
         "Scope: [N|5m|permanent] (default 1 use)\n"
-        f"- Block globally: /ar:globalno {command}"
+        f"- Block globally: /ar:no --global {command}"
     )
 
 
@@ -146,8 +146,8 @@ _VERSION_BUMP_ALLOW_HINT = (
     "  /ar:ok 'Cargo.toml'          — allow edits to that manifest\n"
     "  /ar:ok regex:" + _VERSION_BUMP_ALLOW_REGEX + " perm   — allow ALL version "
     "bumps this session (leave the regex UNQUOTED)\n"
-    "Add a scope: N (uses) | 5m (time window) | permanent. Use /ar:globalok to "
-    "persist the grant across sessions.\n"
+    "Add a scope: N (uses) | 5m (time window) | permanent. Use /ar:ok --global "
+    "to apply the grant to every session.\n"
     "Disable the guard entirely: set AUTORUN_VERSION_BUMP_GUARD_ENABLED=false and "
     "restart the daemon (autorun --restart-daemon)."
 )
@@ -167,8 +167,8 @@ _PUBLISH_ALLOW_HINT = (
     "  /ar:ok 'cargo publish'   — allow that exact command (quote commands with spaces)\n"
     "  /ar:ok regex:" + _PUBLISH_ALLOW_REGEX + " perm   — allow ALL publishes this "
     "session (leave the regex UNQUOTED)\n"
-    "Add a scope: N (uses) | 5m (time window) | permanent. Use /ar:globalok to "
-    "persist the grant across sessions.\n"
+    "Add a scope: N (uses) | 5m (time window) | permanent. Use /ar:ok --global "
+    "to apply the grant to every session.\n"
     "Disable the guard entirely: set AUTORUN_PUBLISH_GUARD_ENABLED=false and "
     "restart the daemon (autorun --restart-daemon)."
 )
@@ -374,7 +374,7 @@ DEFAULT_INTEGRATIONS = {
     "sed": {
         "action": "block",
         "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["sed"]}},
-        "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno sed",
+        "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:no --global sed",
         "when": "_sed_modifies_files",
     },
     "awk": {
@@ -383,7 +383,7 @@ DEFAULT_INTEGRATIONS = {
         # A filter on a pipe is allowed; one that edits,
         # writes, runs a command, reads a file or runs as root is not.
         "when": "_awk_does_more_than_filter_stdin",
-        "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno awk",
+        "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:no --global awk",
     },
     # Git history rewriting tools — permanently alter commit history (v0.10)
     # These require explicit /ar:ok permission since history rewriting is irreversible
@@ -581,7 +581,7 @@ DEFAULT_INTEGRATIONS = {
 # Each variable switches off the default guards listed with it. Guards are on
 # by default; disable one globally with its variable, then restart the daemon
 # (`autorun --restart-daemon`). Allow per use at runtime instead with `/ar:ok`
-# (`/ar:ok 'version'`, `/ar:ok 'cargo publish'`) or `/ar:globalok`. Values:
+# (`/ar:ok 'version'`, `/ar:ok 'cargo publish'`) or `/ar:ok --global`. Values:
 #   unset|true|1|yes|on|always — guard active
 #   false|0|no|off|never       — guard removed
 # integrations.default_integrations() applies this table to the configured

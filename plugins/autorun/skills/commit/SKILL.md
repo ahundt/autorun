@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Use before writing any git commit message or reviewing one, and when the user asks for "commit requirements", "commit message guidelines", "/ar:commit", or "/ar:gc". Carries the 17-step pre-commit analysis, the concrete-subject rules that ban vague verbs and session-internal jargon, and the checks that keep a message reviewable from the repository alone.
+description: Use before writing any git commit message or reviewing one, and when the user asks for "commit requirements", "commit message guidelines", or "/ar:commit". Carries the 17-step pre-commit analysis, the concrete-subject rules that ban vague verbs and session-internal jargon, and the checks that keep a message reviewable from the repository alone.
 aliases: [gc]
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: philosophy
-description: Use when the user asks for the "system design philosophy", "design principles", "/ar:philosophy", or "/ar:ph", and before major feature work, an architecture decision, or a pull-request review. Lists the 17 universal system design principles, ordered from most fundamental to most specific, with concrete examples where a principle is easy to misread.
+description: Use when the user asks for the "system design philosophy", "design principles", or "/ar:philosophy", and before major feature work, an architecture decision, or a pull-request review. Lists the 17 universal system design principles, ordered from most fundamental to most specific, with concrete examples where a principle is easy to misread.
 aliases: [ph]
 ---
 

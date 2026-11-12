@@ -112,7 +112,7 @@ def test_every_plan_skill_explains_pi_durable_note_workflow():
         text = (plugin_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
         assert "## Harness-specific plan lifecycle" in text, name
         assert "Pi" in text and "durable plan note" in text, name
-        assert "/ar pp <path>" in text, name
+        assert "/ar planprocess <path>" in text, name
         assert "Do not call `EnterPlanMode` or `ExitPlanMode` on Pi" in text, name
         assert "**IMPORTANT:** If not already in plan mode, use `EnterPlanMode` tool NOW." not in text, name
         assert "**Call ExitPlanMode when ALL planning tasks are complete**" not in text, name

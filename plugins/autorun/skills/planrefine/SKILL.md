@@ -1,6 +1,6 @@
 ---
 name: planrefine
-description: Use when the user asks to "refine the plan", "critique the plan", "/ar:planrefine", or "/ar:pr". Critiques an existing plan against the actual code, records a change ledger, and iterates until a full pass finds no new material issue.
+description: Use when the user asks to "refine the plan", "critique the plan", or "/ar:planrefine". Critiques an existing plan against the actual code, records a change ledger, and iterates until a full pass finds no new material issue.
 aliases: [pr]
 argument-hint: [plan file or content]
 ---
@@ -14,7 +14,7 @@ The user's request is the task description for everything below.
 ## Harness-specific plan lifecycle
 
 - **Claude Code:** Use `EnterPlanMode` and `ExitPlanMode` where this skill instructs; `ExitPlanMode` is the approval boundary.
-- **Pi:** Do not call `EnterPlanMode` or `ExitPlanMode` on Pi because Pi exposes neither tool. Write or refine the durable plan note directly, report its exact path for approval, and after approval start execution with `/ar pp <path>`.
+- **Pi:** Do not call `EnterPlanMode` or `ExitPlanMode` on Pi because Pi exposes neither tool. Write or refine the durable plan note directly, report its exact path for approval, and after approval start execution with `/ar planprocess <path>`.
 - **Native task tracking is conditional:** Before following any task-operation instruction below, use only a mutation tool that the current session actually exposes. Claude uses `TaskCreate`/`TaskUpdate`; Pi and Prime use those tools only when the autorun extension registered them; Codex uses the flat `update_plan` checklist only when exposed (`update_plan` is unavailable in Codex Plan mode). If no native task mutation tool is available, keep progress in the durable Markdown checklist, do not call or retry an unavailable task tool, and report that native task state was not updated. Every unqualified `TaskCreate`, `TaskUpdate`, dependency, and `TaskList` instruction below is conditional on those capabilities.
 - **Other harnesses:** Use a native plan-mode boundary and native task tracking only when those tools actually exist; otherwise use the same durable-note approval and checklist workflow as Pi with that harness's documented autorun command spelling.
 
@@ -336,7 +336,7 @@ After outputting "Wait," execute these 8 steps:
 
 ## 9. Plan Acceptance and Execution Protocol
 
-When the plan is ready for approval, use the harness-specific boundary above: Claude Code calls **ExitPlanMode**; Pi reports the durable note path and waits for explicit approval before `/ar pp <path>`.
+When the plan is ready for approval, use the harness-specific boundary above: Claude Code calls **ExitPlanMode**; Pi reports the durable note path and waits for explicit approval before `/ar planprocess <path>`.
 
 Then transition to execution:
 

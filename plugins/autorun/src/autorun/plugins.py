@@ -708,7 +708,7 @@ def _command_line_arguments(ctx: EventContext) -> str:
     and /ar:cache. Codex sends the whole prompt body on UserPromptSubmit, so
     "ar:ok git push" followed by instructions once allowed the whole body, and
     "ar:task resume" followed by "thanks" was refused for taking values. Prose
-    commands (/ar:go, /ar:pn) keep reading ctx.command_arguments, which is the
+    commands (/ar:go, /ar:plannew) keep reading ctx.command_arguments, which is the
     whole tail. This reads the activation prompt instead of command_arguments
     because core lstrips the tail, so "/ar:task\\nthanks" arrives as "thanks",
     and because handlers called straight from tests have only a prompt.
@@ -1222,7 +1222,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     Priority:
       TIER 1 — Session allows > Global allows, per shell segment
         - /ar:ok <pattern>       → adds to session_allowed_patterns
-        - /ar:globalok <pattern> → adds to global_allowed_patterns
+        - /ar:ok --global <pattern> → adds to global_allowed_patterns
         - An allow covers only the segments (`a && b` → a, b) it matches.
         - Every segment covered → ctx.allow(), skipping ALL blocks/warns.
         - Otherwise TIER 2 runs; a block hit is waived only when every segment
@@ -1232,7 +1232,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 
       TIER 2 — ALL of these collected together, deny-wins over warn:
         - Session blocks   (/ar:no <pattern>       → session_blocked_patterns, always deny)
-        - Global blocks    (/ar:globalno <pattern>  → global config JSON, always deny)
+        - Global blocks    (/ar:no --global <pattern> → global config JSON, always deny)
         - User integration files (hookify *.md)     (action: block or warn)
         - Python defaults  (config.py DEFAULT_INTEGRATIONS, action: block or warn)
 
@@ -1272,7 +1272,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if not cmd:
         return None
 
-    # No "/ar:" prefix shortcut: a shell line such as `/ar:x; rm -rf ~` runs
+    # No "/ar:" prefix shortcut: a shell line such as `/ar:stop; rm -rf ~` runs
     # every segment after the failing first word, so it goes through the tiers
     # like any other command. A lone `/ar:` word matches no block and passes.
     transcript_policy_notice = _format_transcript_policy_notice(_apply_pending_transcript_policy_command(ctx))
@@ -1346,7 +1346,8 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     seen: set = set()  # dedup by pattern string — same pattern from ANY tier shows once
 
     # Session blocks, then global blocks (always deny)
-    for scope_name, ok_command in (("session", "/ar:ok"), ("global", "/ar:globalok")):
+    for scope_name, ok_command in (("session", "/ar:ok"), ("global", "/ar:ok --global")):
+        ok_command = format_command_for_cli(ok_command, ctx.cli_type)
         for b in ScopeAccessor(ctx, scope_name).get():
             ptype = b.get("pattern_type", "literal")
             if not _match(cmd, b["pattern"], ptype, path=is_path):

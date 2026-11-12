@@ -8,7 +8,7 @@ aliases: [pe]
 
 $ARGUMENTS
 
-Long form of `/ar:pe`. Plans are exported automatically when you exit plan
+Plans are exported automatically when you exit plan
 mode; this one command shows status and owns every plan-export setting.
 
 ## Usage

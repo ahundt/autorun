@@ -135,7 +135,7 @@ class TestFailureModes:
             assert 'CANNOT STOP' in result['systemMessage']
 
         # Verify the message includes user escape hatch instructions
-        assert '/ar:sos' in result['systemMessage'], "Should mention /ar:sos as user escape hatch"
+        assert '/ar:estop' in result['systemMessage'], "Should mention /ar:estop as user escape hatch"
         assert '/ar:task ignore' in result['systemMessage'], "Should mention /ar:task ignore"
 
         yielded = manager.handle_stop(ctx)

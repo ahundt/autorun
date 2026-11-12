@@ -23,7 +23,7 @@ every tool call, because a broken guard that let calls through would let `rm -rf
 through too, unnoticed.
 
 This does not clear on its own, and the agent cannot fix it, because the repair
-command is blocked too. `/ar:sos` cannot help either; the failure happens before
+command is blocked too. `/ar:estop` cannot help either; the failure happens before
 autorun reads any session state.
 
 **Fix it in a terminal, outside the agent.** Run the `uv pip install --python
@@ -99,8 +99,8 @@ Standalone Gemini CLI (legacy, installed only with `--gemini`):
 
 ## A dangerous command was not blocked
 
-1. Check for an allow you gave earlier. `/ar:blocks` and `/ar:globalstatus`
-   list blocks and allows, and `/ar:clear` / `/ar:globalclear` remove them.
+1. Check for an allow you gave earlier. `/ar:status` lists the session and
+   global blocks and allows, and `/ar:clear` / `/ar:clear --global` remove them.
    `/ar:ok` with a count or duration stays active until it runs out.
 2. Check that the agent's harness can block at all. ForgeCode receives advice
    only, and Pi's guard checks only the model's tool calls, so a `!` line you

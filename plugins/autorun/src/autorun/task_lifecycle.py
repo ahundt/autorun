@@ -332,10 +332,10 @@ def _unconfirmed_task_tools_notice(ctx: EventContext) -> str:
 
 def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled: bool = False) -> str:
     """Return stop/resume actions in the platform's native task vocabulary."""
-    sos = format_command_for_cli("/ar:sos", cli_type)
+    estop = format_command_for_cli("/ar:estop", cli_type)
     task_pause = format_command_for_cli("/ar:task pause <reason>", cli_type)
     task_ignore = format_command_for_cli("/ar:task ignore <id>", cli_type)
-    user_actions = f"{task_pause} (discussion; tasks unchanged), {sos}, or {task_ignore}"
+    user_actions = f"{task_pause} (discussion; tasks unchanged), {estop}, or {task_ignore}"
     if staleness_reminders_disabled:
         tasks_off = format_command_for_cli("/ar:tasks off", cli_type)
         user_actions += f"; {tasks_off} only disables reminders"
@@ -2392,7 +2392,7 @@ class TaskLifecycle:
         This is the core mechanism that ensures AI continues while tasks are outstanding.
 
         Task-state escape hatches (user-driven only, never automatic):
-        - User runs /ar:sos to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
+        - User runs /ar:estop to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
         - User runs /ar:task ignore <id> to mark specific tasks as ignored
         - User marks tasks as completed/deleted via TaskUpdate
 
@@ -2934,7 +2934,7 @@ class TaskLifecycle:
         # generation semantics remain intact.
         #
         # Re-arm on EVERY Stop block so the AI reliably sees the override
-        # actions (/ar:sos, /ar:task ignore) on its next PostToolUse. Earlier
+        # actions (/ar:estop, /ar:task ignore) on its next PostToolUse. Earlier
         # logic only re-armed on block_count==1 or consecutive==min_consecutive,
         # which left "infinite non-overridable stop failure" cases: e.g. the
         # AI churning task subjects between stops drove consecutive=1 forever,
@@ -4113,7 +4113,7 @@ def register_hooks(app_instance) -> None:
           Do NOT extend this to skip byte-identical text across generations.
           An AI stuck repeating the same mistake produces an unchanged task
           list and therefore identical text on every block — suppressing that
-          would stop feeding it the override actions (/ar:sos,
+          would stop feeding it the override actions (/ar:estop,
           /ar:task ignore) from the second block onward, recreating the
           "infinite non-overridable stop failure" the every-block re-arm in
           handle_stop() exists to prevent. Every new Stop block re-delivers.

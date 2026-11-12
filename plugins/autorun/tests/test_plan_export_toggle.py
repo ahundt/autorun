@@ -146,7 +146,7 @@ class TestGlobalToggle:
 class TestStatusAndUsage:
     def test_bare_command_shows_status_with_config_hint(self, config_path, project):
         reply = plan_export_command("", project, "claude")
-        assert "Config: /ar:pe off|on|globaloff|globalon" in reply
+        assert "Config: /ar:planexport off|on|globaloff|globalon" in reply
 
     def test_status_names_the_deciding_layer(self, config_path, project):
         plan_export_command("off", project, "claude")
@@ -157,7 +157,7 @@ class TestStatusAndUsage:
         self, config_path, project
     ):
         reply = plan_export_command("", project, "codex")
-        assert "Config: ar:pe off|on|globaloff|globalon" in reply
+        assert "Config: ar:planexport off|on|globaloff|globalon" in reply
         assert "/ar:pe" not in reply
 
     def test_unknown_argument_returns_usage_and_changes_nothing(
@@ -416,11 +416,11 @@ class TestConfigHintHelper:
     def test_claude_hint_uses_the_slash_spelling(self):
         msg = with_plan_export_config_hint("Plan exported to notes/x.md", "claude")
         assert msg.startswith("Plan exported to notes/x.md")
-        assert "Config: /ar:pe off|on|globaloff|globalon" in msg
+        assert "Config: /ar:planexport off|on|globaloff|globalon" in msg
 
     def test_codex_hint_drops_the_slash(self):
         msg = with_plan_export_config_hint("Plan exported to notes/x.md", "codex")
-        assert "Config: ar:pe off|on|globaloff|globalon" in msg
+        assert "Config: ar:planexport off|on|globaloff|globalon" in msg
         assert "/ar:pe" not in msg
 
 

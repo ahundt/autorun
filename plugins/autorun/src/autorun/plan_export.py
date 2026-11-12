@@ -502,7 +502,7 @@ class PlanExportConfig:
 
         The file's top-level keys are the global defaults. Its "projects" key
         maps absolute project paths to per-project pins written by
-        `/ar:pe on|off`; a pin overrides only `enabled`, so every other
+        `/ar:planexport on|off`; a pin overrides only `enabled`, so every other
         setting stays global. Passing no project keeps the global view.
         """
         data = read_config_data()
@@ -538,9 +538,9 @@ class PlanExportConfig:
         }
 
 
-# === /ar:pe toggle command (project pin + global default) ===
+# === /ar:planexport toggle command (project pin + global default) ===
 
-_PLAN_EXPORT_CONFIG_HINT = "Config: /ar:pe off|on|globaloff|globalon"
+_PLAN_EXPORT_CONFIG_HINT = "Config: /ar:planexport off|on|globaloff|globalon"
 
 
 def with_plan_export_config_hint(message: str, cli_type: "str | None") -> str:
@@ -566,7 +566,7 @@ _NOTES_COMPONENT_NAMES = "|".join(c.name for c in NOTES_COMPONENTS)
 # Built from NOTES_COMPONENTS so the help cannot describe a different set of
 # components than the parser accepts.
 _PLAN_EXPORT_USAGE = (
-    "Usage: /ar:pe [on|off|globalon|globaloff|dir <path>|pattern <template>"
+    "Usage: /ar:planexport [on|off|globalon|globaloff|dir <path>|pattern <template>"
     f"|<component> [on|off|dir <path>]|reset]\n"
     "  (no argument)         show status, including each component\n"
     "  on | off              pin plan export for this project\n"
@@ -591,7 +591,7 @@ def _config_write_scope(ctx: "EventContext | None"):
     plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md, all through existing sugar — no lock
     handling in the command code: ``ctx.state_synchronized`` orders daemon
     executor threads; ``session_state``'s file lock orders processes. The
-    config file is ~1KB and written only on an explicit ``/ar:pe``, so
+    config file is ~1KB and written only on an explicit ``/ar:planexport``, so
     holding the global lock across this bounded write stays inside the
     small-I/O rationale ``test_plan_export_no_io_in_lock`` protects.
     """
@@ -610,7 +610,7 @@ def plan_export_command(
     cli_type: "str | None",
     ctx: "EventContext | None" = None,
 ) -> str:
-    """Dispatch /ar:pe subcommands. Bare command shows status.
+    """Dispatch /ar:planexport subcommands. Bare command shows status.
 
     `on`/`off` pin the current project; `globalon`/`globaloff` set the
     default for every project; a pin beats the global default. The settings
@@ -683,7 +683,7 @@ def plan_export_command(
         if project_dir is None:
             return render(
                 "Plan export: no project directory in this context; use "
-                "/ar:pe globalon|globaloff for the global default."
+                "/ar:planexport globalon|globaloff for the global default."
             )
         with _config_write_scope(ctx):
             data = load_data()
@@ -700,7 +700,7 @@ def plan_export_command(
             enabled,
             render(
                 f"Plan export {'on' if enabled else 'off'} globally (projects "
-                "with an explicit /ar:pe on|off pin keep their own setting)."
+                "with an explicit /ar:planexport on|off pin keep their own setting)."
             ),
         )
 
@@ -737,7 +737,7 @@ def plan_export_command(
 
 @app.command("/ar:pe", "/ar:planexport")
 def handle_plan_export_toggle(ctx: EventContext) -> str:
-    """Dispatch `/ar:pe` subcommands (status/on/off/globalon/globaloff)."""
+    """Dispatch `/ar:planexport` subcommands (status/on/off/globalon/globaloff)."""
     prompt = ctx.activation_prompt or ctx.prompt or ""
     tail = prompt.split(None, 1)[1] if " " in prompt.strip() else ""
     return plan_export_command(tail.strip(), _ctx_project_dir(ctx), ctx.cli_type, ctx=ctx)

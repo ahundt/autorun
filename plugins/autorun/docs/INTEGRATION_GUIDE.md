@@ -29,7 +29,7 @@ problem from a handler problem:
 
 ```bash
 SB=$(mktemp -d /tmp/arsb.XXXXXX)
-echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/ar:st", "session_id": "test", "cwd": "/tmp"}' \
+echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/ar:status", "session_id": "test", "cwd": "/tmp"}' \
   | env HOME="$SB" AUTORUN_HOME="$SB/ar" AUTORUN_TEST_STATE_DIR="$SB/state" AUTORUN_USE_DAEMON=0 \
     uv run --project plugins/autorun python -m autorun
 ```
