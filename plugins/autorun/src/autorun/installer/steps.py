@@ -318,7 +318,9 @@ def opencode_shim_step(harness: object, ctx: Context) -> Iterable[Intent]:
 #: ``settings.steps_for_custom``, so adding one adds no entry either.
 STEPS: Mapping[str, tuple[Step, ...]] = {
     "claude": (skills_step, bridge_step),
-    "codex": (skills_step, commands_step, codex_plugin_step),
+    # Codex reads neither ~/.codex/commands nor ~/.codex/prompts (0.167.0), and
+    # its plugin manifest declares `"commands": []`: no commands_step.
+    "codex": (skills_step, codex_plugin_step),
     "gemini": (skills_step, extension_step),
     "qwen": (skills_step, extension_step),
     "antigravity": (skills_step, bridge_step, extension_step),

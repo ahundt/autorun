@@ -1537,3 +1537,41 @@ def test_a_custom_uv_tool_dir_is_recognised_as_a_uv_tool_env(monkeypatch, isolat
 
     assert entrypoint.install_plugins("ar", tool=False, conductor=False) == 0
     assert calls[0][:3] == ("uv", "pip", "install"), calls
+
+
+def test_codex_upgrade_retires_the_command_files_and_keeps_the_users_own(
+    monkeypatch, isolated
+):
+    """Codex reads neither ~/.codex/commands nor ~/.codex/prompts, and its
+    plugin manifest declares `"commands": []`, so autorun stops writing there.
+
+    An earlier release did write the template commands; the upgrade must retire
+    exactly those owned files and leave anything else in the directory alone.
+    """
+    from autorun.installer import entrypoint, steps
+
+    monkeypatch.setattr(entrypoint, "_run", _cache_aware_runner)
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
+    commands = isolated / ".codex" / "commands"
+    commands.mkdir(parents=True)
+    (commands / "mine.md").write_text("my own command\n", encoding="utf-8")
+    (commands / "ar-mine.md").write_text("mine too, despite the prefix\n", encoding="utf-8")
+    forge_dirs = (isolated / "forge" / "commands", isolated / ".forge" / "commands")
+    for directory in forge_dirs:
+        directory.mkdir(parents=True)
+        (directory / "mine.md").write_text("forge command\n", encoding="utf-8")
+
+    current = steps.STEPS["codex"]
+    earlier = tuple(step for step in current if step is not steps.commands_step) + (steps.commands_step,)
+    monkeypatch.setitem(steps.STEPS, "codex", earlier)
+    assert entrypoint.install_plugins("ar", codex_only=True, conductor=False, tool=False) == 0
+    published = sorted(p.name for p in commands.glob("ar-*.md") if p.name != "ar-mine.md")
+    assert published, "the earlier-release layout did not publish any command file"
+
+    monkeypatch.setitem(steps.STEPS, "codex", current)
+    assert entrypoint.install_plugins("ar", codex_only=True, conductor=False, tool=False) == 0
+    assert sorted(p.name for p in commands.iterdir()) == ["ar-mine.md", "mine.md"]
+    assert (commands / "mine.md").read_text(encoding="utf-8") == "my own command\n"
+    assert (commands / "ar-mine.md").read_text(encoding="utf-8") == "mine too, despite the prefix\n"
+    for directory in forge_dirs:
+        assert sorted(p.name for p in directory.iterdir()) == ["mine.md"]

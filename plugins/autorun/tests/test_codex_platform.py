@@ -212,8 +212,10 @@ def test_codex_install_metadata():
     assert "PLUGIN_ROOT" in p.hooks_path_var
     from autorun.installer.steps import STEPS
 
+    # No commands_step: Codex reads neither ~/.codex/commands nor
+    # ~/.codex/prompts, and its plugin manifest declares "commands": [].
     assert [step.__name__ for step in STEPS["codex"]] == [
-        "skills_step", "commands_step", "codex_plugin_step"
+        "skills_step", "codex_plugin_step"
     ]
 
 

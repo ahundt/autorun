@@ -259,11 +259,13 @@ def test_an_eighth_harness_needs_no_module_edited(sandbox):
     """
     from dataclasses import replace
 
+    # Cloned from ForgeCode, whose steps write into its own config dir (the
+    # Codex flavor no longer does: it publishes no command files).
     newcomer = replace(
-        PLATFORMS["codex"], name="acme", display_name="Acme Code",
+        PLATFORMS["forgecode"], name="acme", display_name="Acme Code",
         binary="acme", config_dir="~/.acme", config_dir_env_vars=(),
     )
-    table = {**steps.STEPS, "acme": steps.STEPS["codex"]}
+    table = {**steps.STEPS, "acme": steps.STEPS["forgecode"]}
 
     dirs, _ = discovery.resolve_plugins(REPO, ["ar"])
     ctx = Context(
@@ -310,8 +312,9 @@ def test_orchestrator_runs_a_custom_harness_through_its_flavor_steps(sandbox):
     )
 
     assert result.ok is True
-    assert (sandbox / ".mine" / "commands" / "ar-go.md").is_file()
     assert (sandbox / ".mine" / "hooks.json").is_file()
+    # The Codex flavor publishes no command files (Codex reads none).
+    assert not (sandbox / ".mine" / "commands").exists()
 
 
 def test_custom_extension_harness_registers_through_its_own_binary(sandbox):
@@ -1872,6 +1875,8 @@ def test_uninstall_removes_a_settings_file_autorun_created_before_registration(s
     from autorun.installer.orchestrate import install, uninstall
 
     config = sandbox / ".codex" / "config.toml"
+    # A Codex user has ~/.codex; nothing autorun writes creates it any more.
+    config.parent.mkdir(parents=True)
     entry = '\n[plugins."ar@personal"]\nenabled = true\n'
 
     def codex_cli(argv):
