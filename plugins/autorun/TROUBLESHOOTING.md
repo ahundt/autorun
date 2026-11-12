@@ -5,8 +5,19 @@
 - [A dangerous command was not blocked](#a-dangerous-command-was-not-blocked)
 - [Claude task tools are missing or vanished](#claude-task-tools-are-missing-or-vanished)
 - [Task tools on other harnesses](#task-tools-on-other-harnesses)
+- [Qwen Stop notices](#qwen-stop-notices)
 - [Errors from the hook itself](#errors-from-the-hook-itself)
 - [Reporting a bug](#reporting-a-bug)
+
+## Qwen Stop notices
+
+When autorun lets a Qwen Stop pass through, Qwen's current protocol adapter
+discards the notice text. Waiting-on-user decisions, delegation waits, and
+fork notices are therefore not displayed on that allowed Stop. Actionable
+tasks still block Stop and include their reason. Use `/ar:task status` to
+inspect waiting tasks. There is no recorded Qwen fixture in this repository
+proving a text field the harness accepts on an allowed Stop, so the adapter
+keeps its current response schema until that wire behavior is captured.
 
 ## Every tool call is blocked
 
