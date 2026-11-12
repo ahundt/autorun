@@ -176,7 +176,7 @@ Changes Made:
 Before finishing, verify:
 
 1. [ ] No sections removed without explicit justification
-2. [ ] All file paths verified with Glob/Read
+2. [ ] Every file path verified to exist (listed or read)
 3. [ ] Goals unchanged (or change discussed with user)
 4. [ ] Principles preserved per §1.1
 

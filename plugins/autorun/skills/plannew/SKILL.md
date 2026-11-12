@@ -159,7 +159,7 @@ Use Task tool to launch parallel Explore subagents (up to 3) to understand:
 
 ### Step 6: Architecture Exploration
 Before designing, explore codebase:
-1. Use Glob to find related files
+1. Search file names and contents for related code
 2. Read 2-3 similar implementations for reference
 3. Identify existing patterns to follow
 4. **Concrete Requirement**: Cite specific files (e.g., `src/handler.ts:42-56`)
