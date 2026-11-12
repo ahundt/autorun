@@ -44,7 +44,7 @@ agent's spelling is in [Command spelling](#command-spelling).
 
 From now on autorun blocks commands such as `rm`, `sed -i` and
 `git reset --hard`, and names the safer command or tool for each.
-[Command guards](#command-guards) lists all 44; `/ar:ok <command>` allows one run.
+[Command guards](#command-guards) lists all 45; `/ar:ok <command>` allows one run.
 
 **Upgrade** with the same install plus `--force`:
 
@@ -346,7 +346,7 @@ Tighten it when an agent fills the repository with experiments:
 
 Before a shell command runs, autorun checks it against its guards. A blocked
 agent is told why and what to run instead, so it can switch to the safer
-command. 44 guards ship enabled:
+command. 45 guards ship enabled:
 
 | Guarding against | Commands | The block message suggests |
 |---|---|---|
@@ -359,6 +359,7 @@ command. 44 guards ship enabled:
 | disks and backups | `dd if=`, `mkfs`, `fdisk`, Time Machine changes through `tmutil` | backing up first |
 | scripts nobody read | `curl` or `wget` piped into a shell, including `bash <(curl …)` | download, read, then run; `/ar:ok bash` allows one run |
 | shell text tools | `sed` that edits files, `awk` except a plain field filter on a pipe (`ls -l \| awk '{print $5}'`) | the agent's own edit tool, or `sed -n` and a pipe to print |
+| files deleted or overwritten by `find` | `find` with `-delete`, `-fprint`, `-fprint0`, `-fprintf` or `-fls`; a `find` that only lists is allowed | list the matches first, then `-exec trash {} +`, or `> file` to save the list; `/ar:ok find` allows one run |
 | commit quality | `git` (warning only) | the commit-message rules |
 
 Six guards that earlier releases shipped are gone: `cat`, `head`, `tail`,
@@ -369,7 +370,8 @@ another way 58% of the time, each denial cost a model round trip, Claude
 Code no longer has the `Grep` and `Glob` tools the message named, and every
 supported agent now bounds shell output itself. To block one again, for
 example `cat`: `/ar:no cat` for this session, or `/ar:no --global cat` for
-every session (`/ar:clear --global` removes it).
+every session (`/ar:clear --global` removes it). The `find` row in the table
+is a different guard: it blocks only a `find` that deletes or overwrites files.
 
 The guards catch the commands an agent writes in ordinary shell; they are not
 a sandbox. A command spelled to hide what it runs can get past them: the name
