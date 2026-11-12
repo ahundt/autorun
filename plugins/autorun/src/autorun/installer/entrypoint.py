@@ -746,6 +746,9 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
     except ValueError as error:
         print(f"Error: {error}")
         return 1
+    # The skill trees below are named by skill, not by plugin, so say which
+    # marketplace plugins this preview covers.
+    print(f"plugins {' '.join(plugins)}")
     if include_legacy_gemini and PLATFORMS["gemini"] not in harnesses:
         harnesses = (*harnesses, PLATFORMS["gemini"])
     if not harnesses:

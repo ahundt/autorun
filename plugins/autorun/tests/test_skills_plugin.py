@@ -286,7 +286,7 @@ def test_a_users_own_skill_with_a_moved_name_is_kept_and_reported(
 @pytest.fixture
 def cli(checkouts, homes, monkeypatch, capsys):
     """`autorun.__main__.main` against the copied checkout, with OpenCode as the
-    one harness found on PATH and every subprocess stood in for."""
+    one harness found on PATH and every installer subprocess stood in for."""
     from autorun.__main__ import main
     from autorun.installer import entrypoint
 
@@ -298,8 +298,12 @@ def cli(checkouts, homes, monkeypatch, capsys):
     monkeypatch.setattr(
         entrypoint, "_run", lambda argv, **_: subprocess.CompletedProcess(argv, 0, "", "")
     )
+    real_which = shutil.which
+    # OpenCode is the harness found; uv is real because `--status` probes it.
     monkeypatch.setattr(
-        entrypoint.shutil, "which", lambda name: "/bin/opencode" if name == "opencode" else None
+        entrypoint.shutil,
+        "which",
+        lambda name: "/bin/opencode" if name == "opencode" else real_which(name) if name == "uv" else None,
     )
 
     def run(*argv: str) -> str:
