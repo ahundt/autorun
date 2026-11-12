@@ -2825,15 +2825,12 @@ class EventContext:
             if platform and platform.deferred_stop_notice_events and stop_msg:
                 try:
                     self.queue_deferred_stop_notice(stop_msg)
-                except Exception as exc:  # noqa: BLE001 - never discard an allowed-Stop notice
-                    failure = (
-                        f"{stop_msg}\n⚠️ autorun could not queue this notice for the next "
-                        f"{platform.display_name} injection point: {exc}"
-                    )
-                    return validate_hook_response(
-                        self._event,
-                        protocol.response_to_reject_stop_and_continue(failure),
-                        cli_type=cli_type,
+                except Exception as exc:  # noqa: BLE001 - an advisory notice cannot reverse allow
+                    logger.error(
+                        "autorun could not queue an allowed Stop notice for the next %s "
+                        "injection point; allowing Stop without the notice: %s",
+                        platform.display_name,
+                        exc,
                     )
                 stop_msg = ""
 

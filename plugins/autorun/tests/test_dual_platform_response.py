@@ -195,18 +195,21 @@ class TestDualPlatformResponse:
         stop = EventContext("test", "Stop", cli_type="antigravity")
         assert stop.respond("block", "Keep working") == {"decision": "continue", "reason": "Keep working"}
 
-    def test_antigravity_allowed_stop_notice_queue_failure_blocks_instead_of_losing_it(self, monkeypatch):
+    def test_antigravity_allowed_stop_notice_queue_failure_logs_and_stays_allowed(
+        self, monkeypatch, caplog
+    ):
         stop = EventContext("agy-stop-notice-failure", "Stop", cli_type="antigravity")
 
         def fail(_message):
             raise RuntimeError("state unavailable")
 
         monkeypatch.setattr(EventContext, "queue_deferred_stop_notice", lambda self, message: fail(message))
-        response = stop.respond("allow", "Waiting on you: approve publishing.")
+        with caplog.at_level("ERROR", logger="autorun.core"):
+            response = stop.respond("allow", "Waiting on you: approve publishing.")
 
-        assert response["decision"] == "continue"
-        assert "Waiting on you: approve publishing." in response["reason"]
-        assert "state unavailable" in response["reason"]
+        assert response == {"decision": ""}
+        assert "could not queue an allowed Stop notice" in caplog.text
+        assert "state unavailable" in caplog.text
 
     def test_antigravity_allowed_stop_notice_is_delivered_once_at_preinvocation(self):
         from autorun.plugins import app
