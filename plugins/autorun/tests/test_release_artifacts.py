@@ -320,7 +320,7 @@ def _published_by_plugin(
 
 def _install_every_harness(
     autorun: Path, scripts: Path, env: dict[str, str], names: tuple[str, ...]
-) -> dict[str, set[str]]:
+) -> tuple[dict[str, set[str]], dict[str, str]]:
     """`autorun --install` against a stand-in for every registered harness.
 
     Each stand-in records its arguments and answers a `list` with every
@@ -383,10 +383,90 @@ def _install_every_harness(
         "AUTORUN_FAKE_LOG": str(log),
         "AUTORUN_FAKE_LIST": " ".join(names),
     }
+    _install_all(autorun, scripts, env)
+    return _published_by_plugin(env, log, names), env
+
+
+def _install_all(autorun: Path, cwd: Path, env: dict[str, str], *args: str) -> None:
     # Gemini CLI is opt-in (`install_by_default` is false), so it gets its own run.
     for selection in ((), ("--gemini",)):
-        _run([autorun, "--install", "--force", *selection], cwd=scripts, env=env)
-    return _published_by_plugin(env, log, names)
+        _run([autorun, "--install", *args, "--force", *selection], cwd=cwd, env=env)
+
+
+def _owned_trees(env: dict[str, str], plugin: str) -> list[Path]:
+    """Every tree autorun wrote and recorded as ``plugin``'s.
+
+    Claude's plugin cache is never among them: Claude's own CLI copies a
+    plugin's whole source directory into it, and autorun's fallback that fills
+    it when that CLI fails mirrors the same copy and deliberately records no
+    marker (fs.fill_tree). Measured with Claude Code: a `"source": "./"`
+    plugin's cache kept a .gitignored directory, and a sibling entry
+    `"../side/q"` was refused with `source: Invalid string: must start with
+    "./"`. In a wheel, ar's source is the marketplace root itself, so the
+    other bundled plugins land in ar's Claude cache whatever autorun does;
+    test (c) below pins why that copy is inert there.
+    """
+    return [
+        marker.parent
+        for root in (Path(env["HOME"]), Path(env["AUTORUN_HOME"]))
+        for marker in root.rglob(".autorun-owned")
+        if json.loads(marker.read_text(encoding="utf-8")).get("plugin") == plugin
+    ]
+
+
+def _reachable_skills(env: dict[str, str], names: tuple[str, ...]) -> dict[str, set[str]]:
+    """Per harness, every SKILL.md in a location its registry entry reads.
+
+    Built from the entry's routes (`skill_search_routes`, `native_skills`, the
+    shared root when `loads_shared_agents_skills`), never from a recursive
+    walk, so a copy somewhere a harness does not look is not counted and a
+    second copy where it does look is.
+    """
+    from autorun.installer import discovery
+    from autorun.platforms import (
+        PLATFORMS, CombinedSkillRoutes, ConfigPackageSkills, ExtensionSkills,
+        PluginPackageSkills,
+    )
+
+    home = Path(env["HOME"])
+
+    def flat(route):
+        if isinstance(route, CombinedSkillRoutes):
+            for inner in route.routes:
+                yield from flat(inner)
+        elif route is not None:
+            yield route
+
+    found: dict[str, set[str]] = {}
+    for name, platform in PLATFORMS.items():
+        base = discovery.config_dir(platform, env=env, home=home)
+        roots: set[Path] = set()
+        for route in (*platform.skill_search_routes, platform.native_skills):
+            for leaf in flat(route):
+                if isinstance(leaf, ExtensionSkills):
+                    for directory in leaf.destinations(base, home=home):
+                        roots.update(unit / "skills" for unit in directory.glob("*"))
+                elif isinstance(leaf, ConfigPackageSkills):
+                    for plugin in names:
+                        roots.update(leaf.plugin_destinations(base, plugin))
+                elif isinstance(leaf, PluginPackageSkills):
+                    # The resolver names ar's staged package; every plugin
+                    # gets a sibling one under the same source directory.
+                    if leaf.resolver is not None:
+                        roots.update(
+                            discovery.codex_plugin_source(plugin, home=home) / "skills"
+                            for plugin in names
+                        )
+                else:
+                    roots.update(leaf.destinations(base, home=home))
+        if platform.loads_shared_agents_skills:
+            roots.add(home / ".agents" / "skills")
+        found[name] = {
+            "$HOME/" + skill.relative_to(home).as_posix()
+            for directory in roots
+            for skill in directory.glob("*/SKILL.md")
+        }
+    return found
 
 
 def test_wheel_install_publishes_every_marketplace_plugin_a_clone_install_does(
@@ -406,10 +486,8 @@ def test_wheel_install_publishes_every_marketplace_plugin_a_clone_install_does(
     wheel = next(builds[0].glob(f"{WHEEL_STEM}-*.whl"))
     scripts, isolated = _venv(root, wheel, env, label="harnesses")
     (scripts / ("claude.cmd" if os.name == "nt" else "claude")).unlink()
-    from_wheel = _install_every_harness(
-        scripts / ("autorun.exe" if os.name == "nt" else "autorun"),
-        scripts, isolated, names,
-    )
+    wheel_autorun = scripts / ("autorun.exe" if os.name == "nt" else "autorun")
+    from_wheel, wheel_env = _install_every_harness(wheel_autorun, scripts, isolated, names)
 
     clone = root / "clone-harnesses"
     _run(["uv", "venv", "--python", sys.executable, clone], cwd=root, env=env)
@@ -426,7 +504,7 @@ def test_wheel_install_publishes_every_marketplace_plugin_a_clone_install_does(
         "AUTORUN_TEST_RUNTIME_DIR": str(root / "runtime-clone-harnesses"),
         "PATH": os.pathsep.join((str(clone_python.parent), os.defpath)),
     }
-    from_clone = _install_every_harness(
+    from_clone, clone_env = _install_every_harness(
         clone_python.parent / ("autorun.exe" if os.name == "nt" else "autorun"),
         clone_python.parent, clone_env, names,
     )
@@ -437,6 +515,67 @@ def test_wheel_install_publishes_every_marketplace_plugin_a_clone_install_does(
             f"{name}: clone-only {sorted(from_clone[name] - from_wheel[name])}, "
             f"wheel-only {sorted(from_wheel[name] - from_clone[name])}"
         )
+
+    # Each bundled plugin is published as itself, never again inside ar's trees.
+    from autorun.resources import BUNDLED_PLUGINS_DIR
+
+    bundled_skills = {
+        skill.read_bytes()
+        for skill in (checkout / "plugins").glob("*/skills/*/SKILL.md")
+        if not skill.is_relative_to(checkout / "plugins" / "autorun")
+    }
+    assert bundled_skills, "no other marketplace plugin ships a skill to check for"
+    for tree in _owned_trees(wheel_env, "ar"):
+        nested = [path for path in tree.rglob("*") if BUNDLED_PLUGINS_DIR in path.parts]
+        assert not nested, f"{tree} carries the bundled plugins: {nested[:3]}"
+        copies = [
+            path for path in tree.rglob("SKILL.md") if path.read_bytes() in bundled_skills
+        ]
+        assert not copies, f"{tree} carries another plugin's skill: {copies}"
+
+    # Every harness finds each skill in as many places from a wheel as from a clone.
+    assert _reachable_skills(wheel_env, names) == _reachable_skills(clone_env, names)
+
+    # What makes the copy in Claude's ar cache inert: ar's manifest points no
+    # component into it, and it is not under a directory Claude scans by default.
+    package = Path(
+        _run(
+            [scripts / ("python.exe" if os.name == "nt" else "python"), "-c",
+             "import autorun, os; print(os.path.dirname(autorun.__file__))"],
+            cwd=root, env=env,
+        ).stdout.strip()
+    )
+    manifest = json.loads((package / ".claude-plugin" / "plugin.json").read_text())
+    for key in ("skills", "commands", "agents", "hooks"):
+        declared = manifest.get(key, ())
+        for value in [declared] if isinstance(declared, str) else declared:
+            assert BUNDLED_PLUGINS_DIR not in Path(str(value)).parts, (key, value)
+    assert (package / BUNDLED_PLUGINS_DIR).is_dir()
+    for scanned in ("skills", "commands", "agents", "hooks"):
+        assert not any(
+            BUNDLED_PLUGINS_DIR in path.parts for path in (package / scanned).rglob("*")
+        ), scanned
+
+    # Removing ar leaves no bundled copy in anything autorun wrote, and the
+    # bundled plugins survive it; removing and reinstalling one restores it.
+    _run([wheel_autorun, "--uninstall", "ar"], cwd=scripts, env=wheel_env)
+    assert not _owned_trees(wheel_env, "ar")
+    claude_cache = Path(wheel_env["HOME"]) / ".claude" / "plugins" / "cache"
+    for root_dir in (Path(wheel_env["HOME"]), Path(wheel_env["AUTORUN_HOME"])):
+        left = [
+            path for path in root_dir.rglob(BUNDLED_PLUGINS_DIR)
+            if not path.is_relative_to(claude_cache)  # Claude's, see _owned_trees
+        ]
+        assert not left, left
+    for name in names:
+        if name == "ar":
+            continue
+        published = set(_owned_trees(wheel_env, name))
+        assert published, f"uninstalling ar removed {name}"
+        _run([wheel_autorun, "--uninstall", name], cwd=scripts, env=wheel_env)
+        assert not _owned_trees(wheel_env, name)
+        _install_all(wheel_autorun, scripts, wheel_env, name)
+        assert set(_owned_trees(wheel_env, name)) == published, f"{name} not restored"
 
 
 def test_documented_vcs_subdirectory_installs_autorun_entrypoint(release_bundle):
