@@ -49,6 +49,7 @@ from .core import (
     format_command_for_cli,
     format_commands_for_cli,
     format_suggestion,
+    resolve_prompt_author,
     user_only_refusal,
 )
 from .command_docs import CommandEntry, command_help_inventory
@@ -3346,3 +3347,34 @@ def _register_command_mappings() -> None:
 
 
 _register_command_mappings()
+
+
+# === CACHE GUARD — prompt-time expiry check ===
+#
+# Registered last on UserPromptSubmit on purpose: the chain stops at the
+# first handler that returns a response, and this one returns one whenever
+# the cache has expired. Every handler that records state on a new prompt
+# (task_lifecycle's reset_stop_sequence_on_user_prompt) must run before it;
+# tests/test_cache_expiry_at_prompt.py asserts it stays last.
+
+
+@app.on("UserPromptSubmit")
+def cache_guard_prompt_after_expiry(ctx: EventContext) -> Optional[Dict]:
+    """Stop or warn before a prompt re-writes an expired prompt cache.
+
+    Only the user's own prose reaches the check: a command (`/ar:cache off`
+    must always get through) and any prompt resolve_prompt_author does not
+    credit to the user pass untouched.
+    """
+    if app._find_command((ctx.prompt or "").strip(), ctx.cli_type) is not None:
+        return None
+    if resolve_prompt_author(ctx) != "user":
+        return None
+    try:
+        from .cache_guard import CacheGuard
+
+        return CacheGuard.from_ctx(ctx).check_prompt_after_expiry(ctx)
+    except Exception as exc:
+        # Fail open: a prompt is never stopped because the check broke.
+        logger.warning(f"Cache guard prompt check failed open: {exc}")
+        return None

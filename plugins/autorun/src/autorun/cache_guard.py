@@ -545,6 +545,22 @@ class CacheGuard:
             return None
         return ctx.deny(self._render_block(usage, trips))  # type: ignore[union-attr]
 
+    def check_prompt_after_expiry(self, ctx: object) -> Optional[dict]:
+        """Prompt-time check: None, or a denial when the cache has expired.
+
+        Runs only the `expired` test (`_expired_trip`); the user's `ratio`,
+        `read` and `age` thresholds stay at tool time in `check`. The caller
+        decides which prompts reach it (the user's own, never a command).
+        """
+        if not _toggle_enabled(_read_toggle_from_ctx(ctx, self.session_id)):
+            return None
+        usage = self._read_usage(ctx)
+        if not _expired_trip(usage, self.config):
+            return None
+        if self._consume_override(ctx):
+            return None
+        return ctx.deny(_render_expired(usage, self.config))  # type: ignore[union-attr]
+
     _INVALIDATING_EVENTS = frozenset({
         "PreCompact",   "PostCompact",    # Claude Code: summarise lifecycle
         "SessionStart",                   # Claude Code + Gemini: session re-entry
@@ -633,6 +649,29 @@ class CacheGuard:
             "\n  /ar:cache no"
         )
         return f"{heading}\n\nTripped axes:\n{axes}\n{hint}"
+
+
+def _duration_words(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return f"{int(seconds)} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes} m" if hours else f"{minutes} m"
+
+
+def _render_expired(usage: UsageReading, cfg: CacheGuardConfig) -> str:
+    """The prompt-time block message. Names no tool-time axis or hint."""
+    lifetime = usage.cache_lifetime_seconds or cfg.cache_age_max_seconds or 0
+    ago = _duration_words(max(0.0, (usage.cache_age_seconds or 0) - lifetime))
+    tokens = f"{round(usage.total_input_tokens or 0, -3):,}"
+    return (
+        f"ar:cache: this session's prompt cache expired {ago} ago.\n"
+        f"Sending now re-writes about {tokens} tokens at the cache-write price.\n"
+        "  Send the same prompt again to proceed, or /ar:cache ok\n"
+        "  /clear or a new session avoids the cost; /compact lowers later turns\n"
+        "  /ar:cache off        this session      /ar:cache warn   tell me, do not stop me\n"
+        "  /ar:cache set expired-min-tokens 200k  only warn or block at this context size or larger"
+    )
 
 
 # ── grants + override helpers ─────────────────────────────────────────

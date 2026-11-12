@@ -273,6 +273,39 @@ def test_a_typed_permission_command_is_answered_and_never_blocks_the_prompt(cloc
     assert user_only_refusal("/ar:ok", cli_type) in text_of(refused), refused
 
 
+# ─── handler order on UserPromptSubmit ────────────────────────────────────
+
+
+def test_the_prompt_check_runs_after_every_state_writing_prompt_handler(clock, monkeypatch):
+    """The chain stops at the first response, and the check returns one.
+
+    It is registered last, and when it blocks or warns the task-lifecycle
+    prompt handler has already run.
+    """
+    chain = app.chains["UserPromptSubmit"]
+    names = [handler.__name__ for handler in chain]
+    assert names[-1] == "cache_guard_prompt_after_expiry", names
+    assert "reset_stop_sequence_on_user_prompt" in names, names
+
+    ran = []
+    spied = []
+    for handler in chain:
+        if handler.__name__ == "reset_stop_sequence_on_user_prompt":
+            def spy(ctx, _inner=handler):
+                ran.append(ctx.prompt)
+                return _inner(ctx)
+            spied.append(spy)
+        else:
+            spied.append(handler)
+    monkeypatch.setitem(app.chains, "UserPromptSubmit", spied)
+
+    for mode in ("on",):
+        ran.clear()
+        response = armed(EXPIRED_1H, mode=mode).prompt("Continue with the refactor.")
+        assert EXPIRED_NOTICE in text_of(response), f"{mode}: the check did not respond: {response}"
+        assert "Continue with the refactor." in ran, f"{mode}: the task-lifecycle prompt handler did not run"
+
+
 # ─── modes and the message ────────────────────────────────────────────────
 
 
