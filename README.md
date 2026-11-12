@@ -94,8 +94,8 @@ Preview the writes with `autorun --install-dry-run` and check them with `autorun
 | Qwen Code | native hooks (extension) | `--qwen` | `/ar:status` |
 | Codex CLI | native hooks | `--codex` | `ar:status` |
 | Pi | in-process extension that vetoes tool calls | `--pi` | `/ar status` |
-| Prime Agent | the Pi extension | `--prime` | `/ar status` |
-| OpenCode | in-process plugin that vetoes tool calls; no prompt or Stop hooks | when found | `/ar-status` |
+| Prime Agent | Pi extension on versions below 0.10.0; newer Rust runtimes are refused | `--prime` | `/ar status` |
+| OpenCode | in-process prompt, tool, Stop and compaction plugin | when found | `/ar-status` |
 | ForgeCode | installed guidance only; ForgeCode sends autorun no events | when found | `/ar-status` |
 | Gemini CLI (legacy) | native hooks; never installed unless you pass the flag | `--gemini` | `/ar:status` |
 
@@ -151,7 +151,9 @@ autorun --install --codex --codex-plugin-marketplace github   # ar@autorun from 
 ```
 
 `AUTORUN_CODEX_HOOK_SOURCE` sets the source for unattended installs, and a
-reinstall after switching leaves no duplicate hooks behind.
+reinstall after switching leaves no duplicate hooks behind. The generated
+manifest includes `PreCompact` and `PostCompact`, so autorun invalidates its
+cached usage reading around manual and automatic compaction.
 
 In Codex, autorun maps task progress to `update_plan`, search to `rg -n` and
 `rg --files`, and edits to `apply_patch`. Skills appear through `/skills`, a
@@ -173,8 +175,13 @@ the same autorun daemon the other agents use. A blocked tool call comes back as
 Pi's `{ block: true, reason }`. When autorun keeps the agent from finishing
 (`agent_settled`), it starts the next turn with a hidden
 `autorun-continuation` message, so the transcript never shows it as something
-you typed. Pi also accepts `ar:status`, `ar-status` and `/ar:status`, and loads skills with
-`/skill:<name>`.
+you typed. A cancelled (`aborted`) turn is not continued. Pi also accepts
+`ar:status`, `ar-status` and `/ar:status`, and loads skills with `/skill:<name>`.
+
+Prime Agent releases below 0.10.0 use this Pi-compatible extension contract.
+Prime 0.10.x uses a different Rust runtime without the Pi extension API;
+`autorun --install --prime` reports the unsupported version and installs no
+hooks rather than claiming enforcement.
 
 Pi gets `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet` tools backed by
 the same task tracking as Claude. `TaskUpdate` takes one `taskId` or an atomic
@@ -450,9 +457,9 @@ type it." Other commands, such as `/ar:status`, `/ar:task status` and
 | Claude Code | typing `/ar:ok` | the model launching `ar:ok` as a skill; a prompt from inside a subagent; background-task notifications, subagent replies and messages from other sessions |
 | Codex CLI | typing `ar:ok` or `ar ok` | a prompt, or a command read back from the transcript, in a subagent's session |
 | Qwen Code, Gemini CLI | typing the command | none found |
-| Pi, Prime Agent | `/ar ok`, or typing `ar:ok` or `ar ok` | `ar:ok` and `ar ok` sent over RPC or by another extension |
-| OpenCode | no way inside a session: OpenCode hands autorun no typed prompt | the model's `autorun` tool |
-| Antigravity | no way: it sends autorun no prompt event | nothing reaches autorun |
+| Pi, supported Prime Agent releases | `/ar ok`, or typing `ar:ok` or `ar ok` | `ar:ok` and `ar ok` sent over RPC or by another extension |
+| OpenCode | typing `ar:ok` or `ar ok` | the model's `autorun` tool |
+| Antigravity | typing the command before the first model invocation | later model-authored invocations |
 | ForgeCode | no way: it sends autorun no events, and its guards are advice | nothing reaches autorun |
 
 Two routes stay open:
