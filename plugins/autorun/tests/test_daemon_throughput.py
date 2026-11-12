@@ -1075,6 +1075,7 @@ def test_a_direct_write_inside_synchronized_session_is_never_skipped_back(backen
         with core.session_state("dw") as state:
             state["flag"] = True
 
-    store.synchronize_session("dw", direct_write)
+    with store.synchronized_session("dw"):
+        direct_write()
     store.set("dw:flag", False)
     assert ThreadSafeDB().get("dw:flag") is False

@@ -340,13 +340,12 @@ class TestTaskLifecycleIntegration:
         )
         ctx.plan_arguments = plan_key
 
-        result = self.manager.handle_plan_approval(ctx)
+        injection = self.manager.get_plan_approval_injection(ctx)
 
-        # Verify injection
-        assert result is not None, "Should inject plan tasks"
-        assert result['continue'] == True, "Should allow (not block)"
-        assert 'Plan Accepted' in result['systemMessage']
-        assert '1 task' in result['systemMessage'] or 'Plan task' in result['systemMessage']
+        # Verify injection (plugins.py adds it to the ExitPlanMode response)
+        assert injection is not None, "Should inject plan tasks"
+        assert 'Plan Accepted' in injection
+        assert '1 task' in injection or 'Plan task' in injection
 
         print("✅ Test 7 passed: Plan context injection works")
 

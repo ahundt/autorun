@@ -1199,11 +1199,6 @@ class ThreadSafeDB:
                 if self._has_cached_fields(session_id):
                     self._refresh_session_cache(session_id)
 
-    def synchronize_session(self, session_id: str, operation: Callable[[], Any]) -> Any:
-        """Run a legacy state operation and refresh its cache before unlocking."""
-        with self.synchronized_session(session_id):
-            return operation()
-
     def _has_cached_fields(self, session_id: str) -> bool:
         """True when the daemon cache holds anything for this session."""
         if session_id in self._loaded_sessions:
@@ -1427,16 +1422,6 @@ def resolve_session_identity(
     if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
         return ResolvedSessionIdentity(key=f"pid:{pid}", authority="weak-process")
     return ResolvedSessionIdentity(key="unresolved", authority="unresolved")
-
-
-def resolve_session_key(pid: int, cwd: str, fallback_id: str) -> str:
-    """Compatibility wrapper returning only the resolved state key."""
-    del cwd
-    return resolve_session_identity(
-        pid=pid,
-        process_started_at_units=None,
-        fallback_id=fallback_id,
-    ).key
 
 
 # === LAZY TRANSCRIPT ===

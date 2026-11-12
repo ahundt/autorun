@@ -910,12 +910,6 @@ def _destructive_segments(cmd: str) -> list[list[str]]:
     return found
 
 
-def _find_destructive_segment(cmd: str) -> list[str]:
-    """Return the first segment `_destructive_segments` finds; [] if none."""
-    segments = _destructive_segments(cmd)
-    return segments[0] if segments else []
-
-
 def _extract_checkout_ref(tokens: list[str]) -> str:
     """For `git checkout [<flags>] [<ref>] -- <file>`, return <ref> or "HEAD".
 

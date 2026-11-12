@@ -147,7 +147,8 @@ class TestThreadSafeDBSessionCache:
             values["session-a"]["cache/toggle"] = {"enabled": True}
             return "changed"
 
-        assert store.synchronize_session("session-a", mutate) == "changed"
+        with store.synchronized_session("session-a"):
+            assert mutate() == "changed"
         assert store.get("session-a:cache/toggle") == {"enabled": True}
         assert len(calls) == 2
 
@@ -163,7 +164,8 @@ class TestThreadSafeDBSessionCache:
             raise RuntimeError("mutation failed")
 
         try:
-            store.synchronize_session("session-a", mutate_then_fail)
+            with store.synchronized_session("session-a"):
+                mutate_then_fail()
         except RuntimeError as exc:
             assert str(exc) == "mutation failed"
         else:

@@ -3164,11 +3164,6 @@ class TaskLifecycle:
             f"are completed or deleted.\n"
         )
 
-    def handle_plan_approval(self, ctx) -> Optional[Dict]:
-        """Handle plan approval. Delegates to get_plan_approval_injection()."""
-        injection = self.get_plan_approval_injection(ctx)
-        return ctx.allow(injection) if injection else None
-
     # === CLI Interface (Typer-like patterns - class methods) ===
 
     @classmethod

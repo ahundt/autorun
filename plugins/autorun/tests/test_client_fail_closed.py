@@ -13,7 +13,7 @@ import pytest
 from autorun.client import (
     build_daemon_failure_response,
     daemon_response_timeout_for_cli,
-    get_stable_pid,
+    get_stable_process_identity,
     is_tool_gate_event,
     prepare_payload_for_daemon,
     StableProcessIdentity,
@@ -494,7 +494,7 @@ def test_cli_argument_choices_come_from_platform_registry():
     assert tuple(cli_action.choices) == tuple(platform.name for platform in hook_platforms())
 
 
-def test_get_stable_pid_recognizes_codex_parent_after_wrappers(monkeypatch):
+def test_stable_process_identity_pid_recognizes_codex_parent_after_wrappers(monkeypatch):
     """Codex hooks must share one parent-derived fallback session across invocations."""
     from unittest import mock
 
@@ -517,7 +517,7 @@ def test_get_stable_pid_recognizes_codex_parent_after_wrappers(monkeypatch):
 
     monkeypatch.setattr("os.getppid", lambda: 99999)
     with mock.patch("psutil.Process", return_value=python):
-        assert get_stable_pid() == 42000
+        assert get_stable_process_identity().pid == 42000
 
 
 @pytest.mark.parametrize(
@@ -528,7 +528,7 @@ def test_get_stable_pid_recognizes_codex_parent_after_wrappers(monkeypatch):
         ("claude.exe", ["claude.exe"]),
     ],
 )
-def test_get_stable_pid_skips_wrappers_whose_arguments_mention_a_harness(monkeypatch, name, argv):
+def test_stable_process_identity_pid_skips_wrappers_whose_arguments_mention_a_harness(monkeypatch, name, argv):
     """The hook's own python and uv carry ~/.claude/plugins/... paths in their
     arguments, so a substring match on the command line stopped at the
     short-lived uv instead of the claude process that owns the session."""
@@ -558,7 +558,7 @@ def test_get_stable_pid_skips_wrappers_whose_arguments_mention_a_harness(monkeyp
 
     monkeypatch.setattr("os.getppid", lambda: 99999)
     with mock.patch("psutil.Process", return_value=python):
-        assert get_stable_pid() == 42000
+        assert get_stable_process_identity().pid == 42000
 
 
 @pytest.mark.parametrize(
@@ -573,7 +573,7 @@ def test_get_stable_pid_skips_wrappers_whose_arguments_mention_a_harness(monkeyp
         ("claude", ["claude", "--resume"], 42000),
     ],
 )
-def test_get_stable_pid_under_happy_stops_at_the_nearest_session_process(
+def test_stable_process_identity_pid_under_happy_stops_at_the_nearest_session_process(
     monkeypatch, claude_name, claude_argv, expected
 ):
     from unittest import mock
@@ -602,7 +602,7 @@ def test_get_stable_pid_under_happy_stops_at_the_nearest_session_process(
 
     monkeypatch.setattr("os.getppid", lambda: 42001)
     with mock.patch("psutil.Process", return_value=python):
-        assert get_stable_pid() == expected
+        assert get_stable_process_identity().pid == expected
 
 
 @pytest.mark.parametrize(

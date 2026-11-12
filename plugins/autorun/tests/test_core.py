@@ -46,7 +46,7 @@ from autorun.core import (
     AutorunDaemon,
     HOOK_STATE_LOCK_TIMEOUT,
     dispatch_timeout_for_event,
-    resolve_session_key,
+    resolve_session_identity,
     get_cli_event_name,
     format_suggestion,
     get_tool_names,
@@ -2318,19 +2318,19 @@ class TestResolveSessionKey:
     def test_explicit_env_var(self):
         """Should use AUTORUN_SESSION_ID env var when set."""
         with patch.dict("os.environ", {"AUTORUN_SESSION_ID": "explicit-id"}):
-            result = resolve_session_key(12345, "/tmp", "fallback")
+            result = resolve_session_identity(pid=12345, process_started_at_units=None, fallback_id="fallback").key
             assert result == "explicit:explicit-id"
 
     def test_fallback_to_session_id(self):
         """Should fall back to session_id when no env var."""
         with patch.dict("os.environ", isolation_only(), clear=True):
-            result = resolve_session_key(12345, "/tmp", "fallback-session")
+            result = resolve_session_identity(pid=12345, process_started_at_units=None, fallback_id="fallback-session").key
             assert result == "fallback-session"
 
     def test_identity_layer_disabled_by_default(self):
         """JSONL scanning should be disabled without AUTORUN_USE_IDENTITY."""
         with patch.dict("os.environ", isolation_only(), clear=True):
-            result = resolve_session_key(12345, "/tmp", "fallback")
+            result = resolve_session_identity(pid=12345, process_started_at_units=None, fallback_id="fallback").key
             # Should go directly to fallback without trying JSONL scan
             assert result == "fallback"
 

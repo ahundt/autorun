@@ -320,10 +320,11 @@ class TestSynchronizeSessionRefreshCost:
         calls = self._counting_session_state(monkeypatch, values)
         store = ThreadSafeDB()
 
-        store.synchronize_session("__task_lifecycle__never-read", lambda: "done")
+        with store.synchronized_session("__task_lifecycle__never-read"):
+            pass
 
         assert calls == [], (
-            "synchronize_session re-read a session the cache never held. "
+            "synchronized_session re-read a session the cache never held. "
             f"Acquisitions: {calls}"
         )
 
@@ -338,7 +339,8 @@ class TestSynchronizeSessionRefreshCost:
         def mutate():
             values["warm"]["status"] = "after"
 
-        store.synchronize_session("warm", mutate)
+        with store.synchronized_session("warm"):
+            mutate()
 
         assert store.get("warm:status") == "after", (
             "A hydrated session must be re-read after an external mutation, or "

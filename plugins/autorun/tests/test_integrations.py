@@ -2367,7 +2367,7 @@ class TestDestructiveGitCmdFlagBypass:
     made the predicate say "not destructive" — bypassing the block rule.
 
     Similarly, git global options (`git -C <path>`, `git --git-dir=...`,
-    `git -c key=val`) before the subcommand caused `_find_destructive_segment`
+    `git -c key=val`) before the subcommand caused `_destructive_segments`
     to look at tokens[1] for "checkout"/"restore" and miss entirely.
     """
 
@@ -2572,7 +2572,7 @@ class TestDestructiveGitCmdFlagBypass:
 
         sp.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
         # The predicate uses ctx.cwd for the diff probe; after the fix
-        # _find_destructive_segment still recognizes the checkout verb, so
+        # _destructive_segments still recognizes the checkout verb, so
         # the predicate can at least see the destructive pattern. The diff
         # probe against ctx.cwd (not -C target) returns False if cwd isn't
         # a git repo, but the important thing is the parser recognizes it.

@@ -25,7 +25,7 @@ from autorun.core import (
     format_suggestion,
     get_cli_event_name,
     normalize_hook_payload,
-    resolve_session_key,
+    resolve_session_identity,
     validate_hook_response,
 )
 from autorun.client import prepare_payload_for_daemon
@@ -451,7 +451,9 @@ def test_codex_allow_without_session_id_uses_stable_cli_parent(monkeypatch):
 
     def context_from_payload(payload):
         normalized = normalize_hook_payload(payload)
-        session_id = resolve_session_key(payload.get("_pid"), payload.get("_cwd", ""), normalized["session_id"])
+        session_id = resolve_session_identity(
+            pid=payload.get("_pid"), process_started_at_units=None, fallback_id=normalized["session_id"]
+        ).key
         return EventContext(
             session_id=session_id,
             event=normalized["hook_event_name"],

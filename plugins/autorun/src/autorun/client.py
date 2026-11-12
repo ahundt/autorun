@@ -598,11 +598,6 @@ def resolve_launcher_pid(payload: dict) -> None:
         payload["_pid"] = launcher_pid(pid)
 
 
-def get_stable_pid() -> int:
-    """Compatibility accessor for callers that need only the stable PID."""
-    return get_stable_process_identity().pid
-
-
 def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
     """Add client-side runtime context and explicit CLI identity for the daemon.
 
