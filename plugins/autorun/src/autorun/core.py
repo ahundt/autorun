@@ -2913,6 +2913,10 @@ def resolve_prompt_author(ctx: EventContext) -> str:
 # Session state recording that this session was forked from another; its
 # value is the source that said so. Written once, never cleared.
 CONVERSATION_FORKED_FROM = "conversation_forked_from"
+# The task ids a fork received from the conversation it was forked from: the
+# ids in the first task reprojection after the fork was recorded. Written once.
+# Only these ids are inherited; a task the fork creates later is its own.
+CONVERSATION_INHERITED_TASK_IDS = "conversation_inherited_task_ids"
 
 
 def record_conversation_fork(ctx: EventContext) -> bool:
@@ -3435,12 +3439,23 @@ class AutorunDaemon:
             # session id, before its SessionStart: record the fork from this
             # frame's source, and mark the rows inherited rather than owned.
             record_conversation_fork(ctx)
-            inherited = (
-                "the conversation this one was forked from"
-                if resolve_conversation_role(ctx) == "fork"
-                else None
+            inherited_ids: list = []
+            if resolve_conversation_role(ctx) == "fork":
+                stored = ctx.state_get(CONVERSATION_INHERITED_TASK_IDS)
+                if isinstance(stored, list):
+                    inherited_ids = stored
+                else:  # the first reprojection since the fork: the boundary
+                    inherited_ids = sorted({
+                        str(record.get("id")) for record in records
+                        if isinstance(record, dict) and record.get("id")
+                    })
+                    ctx.state_set(CONVERSATION_INHERITED_TASK_IDS, inherited_ids)
+            manager.replace_task_projection(
+                records,
+                source=source,
+                inherited_from="the conversation this one was forked from" if inherited_ids else None,
+                inherited_ids=inherited_ids,
             )
-            manager.replace_task_projection(records, source=source, inherited_from=inherited)
             return {
                 "_autorun_bridge": {
                     "operation": "task_reproject_v1",

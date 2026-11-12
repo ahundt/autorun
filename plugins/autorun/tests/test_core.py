@@ -2052,9 +2052,10 @@ class TestAutorunDaemon:
         class FakeLifecycle:
             def __init__(self, ctx):
                 assert ctx.cli_type == "pi"
-            def replace_task_projection(self, records, *, source, inherited_from=None):
+            def replace_task_projection(self, records, *, source, inherited_from=None, inherited_ids=()):
                 assert source == "pi_task_tool"
                 assert inherited_from is None, "a startup reprojection marked rows inherited"
+                assert not list(inherited_ids), "a startup reprojection named inherited ids"
                 received.extend(records)
 
         monkeypatch.setattr(task_lifecycle, "TaskLifecycle", FakeLifecycle)

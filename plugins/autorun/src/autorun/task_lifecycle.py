@@ -1493,14 +1493,25 @@ class TaskLifecycle:
                         record,
                     )
 
-    def replace_task_projection(self, records: List[Dict], *, source: str, inherited_from: "str | None" = None) -> None:
+    def replace_task_projection(
+        self,
+        records: List[Dict],
+        *,
+        source: str,
+        inherited_from: "str | None" = None,
+        inherited_ids: Iterable[str] = (),
+    ) -> None:
         """Atomically replace only rows owned by one native task source.
 
-        ``inherited_from`` is set when this conversation is a fork: each row
-        is marked as inherited from that conversation, so the Stop gate lists
-        it as waiting instead of blocking on it, unless this conversation
-        already took the task on by updating it (``inherited_claimed``).
+        ``inherited_from`` is set when this conversation is a fork, and
+        ``inherited_ids`` are the ids that crossed the fork boundary
+        (core.CONVERSATION_INHERITED_TASK_IDS). Only those rows are marked as
+        inherited from that conversation, so the Stop gate lists them as
+        waiting instead of blocking on them, unless this conversation already
+        took one on by updating it (``inherited_claimed``). A task the fork
+        created itself is never marked.
         """
+        inherited_ids = {str(task_id) for task_id in inherited_ids}
         if not source:
             raise ValueError("Task projection source must be non-empty")
         normalized: Dict[str, Dict] = {}
@@ -1542,7 +1553,7 @@ class TaskLifecycle:
             for task_id, record in normalized.items():
                 if task_id in claimed:
                     record["metadata"]["inherited_claimed"] = True
-                elif inherited_from:
+                elif inherited_from and task_id in inherited_ids:
                     record["metadata"]["inherited_from"] = inherited_from
             tasks.update(normalized)
 

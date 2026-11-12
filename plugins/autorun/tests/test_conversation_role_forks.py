@@ -103,6 +103,30 @@ def test_fork_claims_inherited_task_by_updating_it(gate_env, cli_type):
 
 
 @pytest.mark.parametrize("cli_type", REPROJECTING)
+@pytest.mark.parametrize("later_source", ["startup", "resume", None])
+def test_task_created_in_the_fork_stays_the_forks_own(gate_env, cli_type, later_source):
+    """Only ids that crossed the fork boundary are inherited. A task the fork
+    created after it was forked blocks its Stop, and a later reprojection of
+    the fork's history (resume, Pi /tree) does not turn it into an inherited row."""
+    fork = _session(cli_type, "own")
+    _start_fork(fork)
+    fork.seed("2", "The fork's own task", status="pending")
+    assert blocks(fork.stop("Done."), cli_type), f"{cli_type}: control: the fork's own task did not block"
+
+    own = {"id": "2", "subject": "The fork's own task", "status": "pending"}
+    _reproject(fork, later_source, records=(PARENT_ROW, own))
+
+    response = fork.stop("Done.")
+    assert "inherited_from" not in fork.task("2").get("metadata", {}), (
+        f"{cli_type}: a reprojection marked the fork's own task #2 inherited: {fork.task('2')}"
+    )
+    assert blocks(response, cli_type) and "#2" in text(response), (
+        f"{cli_type}: the fork's own task stopped blocking after a reprojection: {response}"
+    )
+    assert fork.task("1").get("metadata", {}).get("inherited_from"), "the parent's row is no longer inherited"
+
+
+@pytest.mark.parametrize("cli_type", REPROJECTING)
 def test_fork_does_not_touch_parent_state(gate_env, cli_type):
     parent = _session(cli_type, "parent")
     parent.seed("1", "Parent orchestration row")
