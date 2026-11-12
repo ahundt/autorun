@@ -181,10 +181,10 @@ def test_every_bug_workaround_key_in_config_is_read_by_the_code():
 def test_retired_marketplace_names_are_absent_from_current_install_surfaces():
     """The old marketplace names made every plugin install miss its source."""
     repo = Path(__file__).resolve().parents[3]
+    assert not (repo / "plugins" / "known_marketplaces.json").exists()
     paths = [
         repo / "README.md",
         repo / ".claude-plugin" / "marketplace.json",
-        repo / "plugins" / "known_marketplaces.json",
     ]
     paths.extend((repo / "plugins" / "autorun" / "src" / "autorun").rglob("*.py"))
     paths.extend((repo / "plugins" / "autorun" / "skills").rglob("*.md"))
