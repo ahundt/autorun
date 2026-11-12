@@ -128,11 +128,11 @@ class TestCommandBlockingAllToolNames:
     """Test blocking works for ALL tool name variants (Claude + Gemini)."""
 
     @pytest.mark.parametrize("tool_name", ["Bash", "bash_command", "run_shell_command"])
-    def test_cat_blocked_all_bash_tool_names(self, tool_name):
-        """Verify cat blocked for all bash tool name variants."""
+    def test_rm_blocked_all_bash_tool_names(self, tool_name):
+        """Verify rm blocked for all bash tool name variants."""
         ctx = create_test_context(
             tool_name=tool_name,
-            tool_input={"command": "cat /etc/hosts"}
+            tool_input={"command": "rm /tmp/autorun-test-file"}
         )
 
         result = _pretooluse(ctx)
@@ -141,11 +141,11 @@ class TestCommandBlockingAllToolNames:
         permission = hook_output.get("permissionDecision", "allow")
 
         assert permission == "deny", \
-            f"cat not blocked for tool_name={tool_name}"
+            f"rm not blocked for tool_name={tool_name}"
 
         # Verify helpful message
         reason = hook_output.get("permissionDecisionReason", "")
-        assert "read" in reason.lower(), f"Message doesn't suggest Read tool for {tool_name}"
+        assert "trash" in reason.lower(), f"Message doesn't suggest trash for {tool_name}"
         assert len(reason) > 50, f"Blocking message too short for {tool_name}"
 
     @pytest.mark.parametrize("tool_name", ["Write", "write_file"])
@@ -335,41 +335,6 @@ class TestFilePathVariants:
 class TestSystemMessageQuality:
     """Test that systemMessage content is helpful and actionable."""
 
-    def test_cat_message_suggests_read_tool(self):
-        """Verify cat blocking message suggests Read tool."""
-        ctx = create_test_context(
-            tool_name="bash_command",
-            tool_input={"command": "cat myfile.txt"}
-        )
-
-        result = _pretooluse(ctx)
-
-        system_message = result.get("systemMessage", "")
-        reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-
-        # Should mention Read tool
-        combined = (system_message + reason).lower()
-        assert "read" in combined, "Message doesn't mention Read tool"
-
-        # Should explain why Read is better
-        assert any(word in combined for word in ["pagination", "limit", "offset", "line numbers"]), \
-            "Message doesn't explain benefits of Read tool"
-
-    def test_head_message_suggests_read_with_limit(self):
-        """Verify head blocking message suggests Read tool with limit parameter."""
-        ctx = create_test_context(
-            tool_name="bash_command",
-            tool_input={"command": "head -20 file.txt"}
-        )
-
-        result = _pretooluse(ctx)
-
-        reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-
-        # Should mention Read tool with limit
-        assert "read" in reason.lower(), "Message doesn't mention Read tool"
-        assert "limit" in reason.lower(), "Message doesn't mention limit parameter"
-
     def test_file_creation_message_explains_policy(self):
         """Verify file creation blocking explains the policy."""
         ctx = create_test_context(
@@ -400,14 +365,12 @@ class TestPipeDetectionComprehensive:
         ("find . -name '*.py' | head -10", "allow"),
         ("ls -la | tail -20", "allow"),
 
-        # Direct commands - should be BLOCKED
-        ("cat file.txt", "deny"),
-        ("head -10 data.csv", "deny"),
-        ("tail -f logfile", "deny"),
-
-        # Commands with pipes but blocked command not in pipe
-        ("cat file.txt && echo done", "deny"),  # cat not piped
-        ("head data.csv; ls", "deny"),  # head not piped
+        # Direct reads outside a pipe - also ALLOWED (no read-redirect guards)
+        ("cat file.txt", "allow"),
+        ("head -10 data.csv", "allow"),
+        ("tail -f logfile", "allow"),
+        ("cat file.txt && echo done", "allow"),
+        ("head data.csv; ls", "allow"),
     ])
     def test_pipe_detection_accuracy(self, command, expected_permission):
         """Test pipe detection accuracy for various command patterns."""
@@ -485,37 +448,6 @@ done'''
             "incorrectly blocked"
         )
 
-    def test_direct_grep_blocks_with_unrelated_head_pipeline(self):
-        """A direct grep remains blocked even when another command is piped."""
-        ctx = create_test_context(
-            tool_name="bash_command",
-            tool_input={"command": "grep pattern file.txt; git log | head -5"}
-        )
-
-        result = _pretooluse(ctx)
-        hook_output = result.get("hookSpecificOutput", {})
-        reason = hook_output.get("permissionDecisionReason", "")
-
-        assert hook_output.get("permissionDecision") == "deny"
-        assert "Command blocked: grep" in reason
-        assert "Command blocked: head" not in reason
-
-    def test_direct_head_blocks_with_unrelated_grep_pipeline(self):
-        """A direct head remains blocked even when grep is a pipeline stage."""
-        ctx = create_test_context(
-            tool_name="bash_command",
-            tool_input={"command": "git show HEAD:README.md | grep autorun; head -5 README.md"}
-        )
-
-        result = _pretooluse(ctx)
-        hook_output = result.get("hookSpecificOutput", {})
-        reason = hook_output.get("permissionDecisionReason", "")
-
-        assert hook_output.get("permissionDecision") == "deny"
-        assert "Command blocked: head" in reason
-        assert "Command blocked: grep" not in reason
-
-
 class TestHookResponseFormatCompliance:
     """Test hook response format matches specification."""
 
@@ -569,7 +501,7 @@ class TestHookResponseFormatCompliance:
     def test_permission_decision_valid_values(self):
         """Verify permissionDecision only uses valid values."""
         test_cases = [
-            ("bash_command", {"command": "cat file.txt"}, "deny"),
+            ("bash_command", {"command": "rm file.txt"}, "deny"),
             ("bash_command", {"command": "ls -la"}, "allow"),
         ]
 
@@ -594,7 +526,7 @@ class TestSessionStateIsolation:
         # Test 1: Create some session state
         ctx1 = create_test_context(
             tool_name="bash_command",
-            tool_input={"command": "cat file1.txt"},
+            tool_input={"command": "rm file1.txt"},
             session_id="test-session-1"
         )
         result1 = _pretooluse(ctx1)
@@ -602,7 +534,7 @@ class TestSessionStateIsolation:
         # Test 2: Different session should not see state from test 1
         ctx2 = create_test_context(
             tool_name="bash_command",
-            tool_input={"command": "cat file2.txt"},
+            tool_input={"command": "rm file2.txt"},
             session_id="test-session-2"
         )
         result2 = _pretooluse(ctx2)

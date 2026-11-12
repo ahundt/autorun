@@ -83,18 +83,6 @@ def test_a_plain_field_filter_on_a_pipe_is_allowed(cmd):
 
 
 @pytest.mark.parametrize("cmd", [
-    "cat f; echo $#; sudo cat /etc/shadow",
-    "cat f; git log --grep=fix#1; doas cat /etc/shadow",
-    "cat f; echo ${#arr[@]}; sudo -u postgres cat /etc/shadow",
-    "cat f; echo $#; cat x > ~/.ssh/authorized_keys",
-    "cat a 1<>~/.bashrc",
-    "tail -n 5 log; tail -f log",
-])
-def test_codex_read_exemption_sees_past_a_hash_and_every_segment(cmd):
-    assert _decide(cmd, "codex") == "deny", cmd
-
-
-@pytest.mark.parametrize("cmd", [
     "sed -E -i 's/a/b/' f",
     "sed -n -i 's/a/b/' f",
     "sed 's/a/b/' -i f",

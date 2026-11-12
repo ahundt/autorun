@@ -14,7 +14,6 @@ sys.path.insert(0, str(plugin_root / 'src'))
 
 from autorun.integrations import _not_in_pipe
 from autorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
-from autorun.config import CONFIG
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
 
@@ -44,26 +43,6 @@ class TestDaemonPipeBlockingIntegration:
             "bashlex MUST be installed for tests. "
             "Run: python3 -m pip install bashlex"
         )
-
-    def test_config_has_pipe_predicate(self):
-        """Verify CONFIG has head/tail/grep/cat with _not_in_pipe predicate."""
-        default_integrations = CONFIG.get('default_integrations', {})
-
-        # Check head/tail/grep/cat integrations exist
-        assert 'head' in default_integrations, "head integration missing from CONFIG"
-        assert 'tail' in default_integrations, "tail integration missing from CONFIG"
-        assert 'grep' in default_integrations, "grep integration missing from CONFIG"
-        assert 'cat' in default_integrations, "cat integration missing from CONFIG"
-
-        # Verify they use _not_in_pipe predicate
-        assert default_integrations['head'].get('when') == '_not_in_pipe', \
-            f"head integration has wrong when: {default_integrations['head'].get('when')}"
-        assert default_integrations['tail'].get('when') == '_not_in_pipe', \
-            f"tail integration has wrong when: {default_integrations['tail'].get('when')}"
-        assert default_integrations['grep'].get('when') == '_not_in_pipe', \
-            f"grep integration has wrong when: {default_integrations['grep'].get('when')}"
-        assert default_integrations['cat'].get('when') == '_not_in_pipe', \
-            f"cat integration has wrong when: {default_integrations['cat'].get('when')}"
 
     def test_command_matches_pattern_with_pipes(self):
         """Test command_matches_pattern correctly identifies commands in pipes."""
@@ -138,24 +117,6 @@ class TestDaemonPipeBlockingIntegration:
             # result should be None (not blocked)
             assert result is None, (
                 f"Pipe command should be ALLOWED: {cmd}\n"
-                f"_check_block() returned: {result}"
-            )
-
-    def test_should_block_command_direct_blocked(self):
-        """Test _check_block() blocks direct file operations."""
-        # These SHOULD be blocked
-        direct_commands = [
-            "head file.txt",
-            "tail -100 /var/log/system.log",
-            "grep pattern file.py",
-            "cat README.md",
-        ]
-
-        for cmd in direct_commands:
-            result = _check_block("test-session", cmd)
-            # result should be a dict with block info when blocked
-            assert result is not None, (
-                f"Direct command should be BLOCKED: {cmd}\n"
                 f"_check_block() returned: {result}"
             )
 

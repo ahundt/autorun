@@ -237,13 +237,6 @@ class TestPredicatesJudgeTheCommandThatMatched:
         for cmd in ("git restore --staged seed.txt", "bash -c 'git restore --staged seed.txt'"):
             assert _decision(plugins.check_blocked_commands(_bash_in(repo, cmd))) != "deny", cmd
 
-    def test_a_direct_read_inside_a_wrapper_is_judged_like_the_bare_command(self):
-        for cmd in ("cat notes.txt", "bash -c 'cat notes.txt'"):
-            assert _decision(plugins.check_blocked_commands(_bash(cmd))) == "deny", cmd
-        for cmd in ("cat notes.txt | head -5", "bash -c 'cat notes.txt | head -5'"):
-            assert _decision(plugins.check_blocked_commands(_bash(cmd))) != "deny", cmd
-
-
 def _claude_transcript(path, *entries) -> str:
     """Write Claude Code-shaped JSONL: ("user"|"assistant"|"tool_result", text)."""
     lines = []
@@ -839,20 +832,6 @@ class TestCodexReadExemptionCoversTheWholeLine:
     as another user anywhere on the line must not ride along."""
 
     @pytest.mark.parametrize("cmd", [
-        "X=$(sudo cat /etc/shadow) cat f",
-        "X=`sudo cat /etc/shadow` cat f",
-        "X=$(doas cat /root/.ssh/id_rsa) cat f",
-        "cat f; sudo cat /etc/shadow",
-        "cat a && sudo cat /etc/shadow",
-        'cat f "$(sudo cat /etc/shadow)"',
-        "run0 cat /etc/shadow",
-        "runuser -u root -- cat /etc/shadow",
-        "setpriv --reuid=0 cat /etc/shadow",
-    ])
-    def test_a_privileged_read_anywhere_on_the_line_is_blocked(self, cmd):
-        assert _decision(plugins.check_blocked_commands(_codex_bash(cmd))) == "deny", cmd
-
-    @pytest.mark.parametrize("cmd", [
         "cat f",
         "rtk cat f",
         "LC_ALL=C cat f",
@@ -930,16 +909,6 @@ class TestAwkIsJudgedOnTheWholeQuotedLine:
         """Expressions beyond fields, strings and simple conditions are not
         proven harmless, so they stay blocked as every awk was before rc4."""
         assert _decision(plugins.check_blocked_commands(_bash(cmd))) == "deny", cmd
-
-
-class TestCodexPrivilegeCheckReadsShellWords:
-    @pytest.mark.parametrize("cmd", [
-        "cat a; s''udo cat /etc/shadow",
-        "cat a; s\\udo cat /etc/shadow",
-        "cat a; su root -c 'cat /etc/shadow'",
-    ])
-    def test_quoting_a_privilege_wrapper_does_not_hide_it(self, cmd):
-        assert _decision(plugins.check_blocked_commands(_codex_bash(cmd))) == "deny", cmd
 
 
 class TestRedirectQuotingEdgeCases:

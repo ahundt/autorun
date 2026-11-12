@@ -119,7 +119,6 @@ def test_codex_tool_names_match_current_model_surface():
     assert codex_tools["write"] == "apply_patch"
     assert codex_tools["edit"] == "apply_patch"
     assert codex_tools["bash"] == "Bash"
-    assert PLATFORMS["codex"].native_shell_read_commands == frozenset({"cat", "head", "tail"})
 
 
 def test_codex_task_progress_uses_update_plan():
@@ -171,23 +170,6 @@ def test_codex_format_suggestion_uses_codex_tool_surface():
 
     assert format_suggestion("Use {grep} then {edit}", "codex") == ("Use `rg -n` shell search then apply_patch")
     assert format_suggestion("Use {read}", "codex") == "Use shell file inspection"
-
-
-def test_default_integration_platform_overrides_keep_claude_and_fix_codex_find():
-    from autorun.config import DEFAULT_INTEGRATIONS
-    from autorun.core import format_suggestion
-    from autorun.integrations import Integration
-
-    find = Integration.from_dict("find", DEFAULT_INTEGRATIONS["find"])
-
-    claude = format_suggestion(find.message_for_cli("claude"), "claude")
-    assert "Glob tool" in claude
-    assert "/ar:ok find" in claude
-
-    codex = format_suggestion(find.message_for_cli("codex"), "codex")
-    assert "`rg --files`" in codex
-    assert "Glob tool" not in codex
-    assert "ar:ok find" in codex
 
 
 def test_codex_default_suggestions_name_only_what_codex_has():

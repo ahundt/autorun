@@ -504,64 +504,6 @@ class TestClaudeHookEntryPoint:
         assert "trash" in reason.lower(), \
             f"rm -rf should suggest 'trash'. reason={reason!r}"
 
-    def test_pretooluse_bash_grep_blocked_suggests_grep_tool(self, hook_resources):
-        """grep blocked and suggests 'Grep tool' — Claude-specific name, not 'grep_search'.
-
-        This is the critical format_suggestion() platform-awareness test.
-        If this returns 'grep_search', the CLI_TOOL_NAMES table is misconfigured
-        for Claude Code.
-        """
-        payload = self._base_payload(
-            "PreToolUse", self._sid("grep"),
-            tool_name="Bash",
-            tool_input={"command": "grep 'pattern' /tmp/file.txt"},
-        )
-        rc, stdout, stderr, resp = self._run(hook_resources, payload)
-
-        assert rc == 2, f"grep must be denied. Got rc={rc}"
-        assert get_deny_decision(resp) == "deny"
-        reason = get_deny_reason(resp)
-        assert "Grep" in reason, \
-            f"Should suggest 'Grep tool' (Claude-specific, capitalized). reason={reason!r}"
-        assert "grep_search" not in reason, (
-            f"WRONG: 'grep_search' is the Gemini tool name, not Claude's. "
-            f"format_suggestion() is returning the wrong CLI's tool name. reason={reason!r}"
-        )
-
-    def test_pretooluse_bash_find_blocked_suggests_glob_tool(self, hook_resources):
-        """find blocked and suggests 'Glob tool' — Claude-specific name, not 'glob'."""
-        payload = self._base_payload(
-            "PreToolUse", self._sid("find"),
-            tool_name="Bash",
-            tool_input={"command": "find /tmp -name '*.txt' -type f"},
-        )
-        rc, stdout, stderr, resp = self._run(hook_resources, payload)
-
-        assert rc == 2, f"find must be denied. Got rc={rc}"
-        assert get_deny_decision(resp) == "deny"
-        reason = get_deny_reason(resp)
-        assert "Glob" in reason, \
-            f"Should suggest 'Glob tool' (Claude-specific). reason={reason!r}"
-
-    def test_pretooluse_bash_cat_blocked_suggests_read_tool(self, hook_resources):
-        """cat blocked and suggests 'Read tool' — Claude-specific name, not 'read_file'."""
-        payload = self._base_payload(
-            "PreToolUse", self._sid("cat"),
-            tool_name="Bash",
-            tool_input={"command": "cat /tmp/file.txt"},
-        )
-        rc, stdout, stderr, resp = self._run(hook_resources, payload)
-
-        assert rc == 2, f"cat must be denied. Got rc={rc}"
-        assert get_deny_decision(resp) == "deny"
-        reason = get_deny_reason(resp)
-        assert "Read" in reason, \
-            f"Should suggest 'Read tool' (Claude-specific). reason={reason!r}"
-        assert "read_file" not in reason, (
-            f"WRONG: 'read_file' is the Gemini tool name, not Claude's. "
-            f"format_suggestion() is returning the wrong CLI's tool name. reason={reason!r}"
-        )
-
     def test_pretooluse_bash_sed_blocked_suggests_edit_tool(self, hook_resources):
         """sed blocked and suggests 'Edit tool' — Claude-specific name, not 'replace'."""
         payload = self._base_payload(

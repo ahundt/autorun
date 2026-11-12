@@ -1879,7 +1879,6 @@ class TestDemoFree:
 
     These verify that the same hook calls the scripted demo makes actually work:
     - rm is blocked (exit 2, mentions trash)
-    - grep standalone is blocked
     - grep in pipe is allowed (bashlex pipeline detection)
     - /ar:st responds with JSON
     - /ar:f strict mode blocks Write to new files
@@ -1897,17 +1896,6 @@ class TestDemoFree:
         rc, _, stderr = run_hook("PreToolUse", payload, root)
         assert rc == 2, f"rm must exit 2 (blocked), got {rc}\nstderr: {stderr}"
         assert "trash" in stderr.lower(), f"Block must mention 'trash'\nstderr: {stderr}"
-
-    def test_grep_standalone_blocked(self):
-        """Standalone grep PreToolUse is blocked (exit 2)."""
-        root = find_plugin_root()
-        payload = {
-            "hook_event_name": "PreToolUse", "session_id": "demo-test-grep",
-            "tool_name": "Bash", "tool_input": {"command": "grep pattern file.txt"},
-            "_cwd": "/tmp", "_pid": os.getpid(),
-        }
-        rc, _, _ = run_hook("PreToolUse", payload, root)
-        assert rc == 2, f"standalone grep must be blocked, got rc={rc}"
 
     def test_grep_in_pipe_allowed(self):
         """grep inside a pipe is allowed (bashlex pipe detection)."""

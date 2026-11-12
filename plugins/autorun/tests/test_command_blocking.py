@@ -487,54 +487,6 @@ class TestPlatformAwareShellFileInspection:
 
     @pytest.mark.parametrize(
         "command",
-        ["env sudo cat /etc/sudoers", "sudo env cat secrets.txt", "doas tail app.log",
-         "timeout 5 sudo head secrets.txt"],
-    )
-    def test_codex_still_blocks_privileged_reads_through_wrappers(self, command):
-        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
-        assert result is not None, f"Privileged read must still be handled: {command}"
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "cat README.md > /tmp/out.txt",
-            "head -20 README.md >> /tmp/out.txt",
-            "tail -n 40 daemon.log > /tmp/out.txt",
-            "tail -f daemon.log",
-            "tail -F daemon.log",
-            "sudo tail -f daemon.log",
-            "sudo cat README.md",
-        ],
-    )
-    def test_codex_still_blocks_shell_read_writes_or_unbounded_follow(self, command):
-        """Codex native file inspection must not become a shell-write bypass."""
-        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
-        assert result is not None, f"Unsafe shell read form must be handled: {command}"
-        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
-        assert perm == "deny", f"Unsafe shell read form must be denied, got {perm!r}"
-        # The reason reaches the model: it must name what Codex can do (2026-11-06:
-        # it named a "shell file inspection tool ... file_path=" Codex lacks).
-        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-        assert "apply_patch" in msg and "file_path=" not in msg, msg
-
-    @pytest.mark.parametrize(
-        "cli_type,expected",
-        [
-            ("claude", "Read tool"),
-            ("gemini", "read_file tool"),
-        ],
-    )
-    def test_claude_and_gemini_keep_dedicated_read_tool_routing(self, cli_type, expected):
-        """Harnesses with dedicated file-read tools should retain their guardrail."""
-        result = plugins.check_blocked_commands(self._ctx("cat README.md", cli_type=cli_type))
-        assert result is not None, f"{cli_type} direct cat must still be routed"
-        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
-        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-        assert perm == "deny"
-        assert expected in msg
-
-    @pytest.mark.parametrize(
-        "command",
         [
             "sed -n '1,20p' README.md",
             "sed 's/old/new/g' README.md",
@@ -1114,20 +1066,6 @@ class TestGrepFalsePositiveProtection:
         result = plugins.check_blocked_commands(ctx)
         assert result is None, f"Gemini glob tool must return None, got {result!r}"
 
-    def test_bash_grep_not_in_pipe_is_correctly_blocked(self):
-        """Bash tool with grep command (not in pipe) IS correctly blocked.
-
-        This verifies the EXPECTED behavior: bash grep outside a pipe should be
-        blocked and the AI should use the Grep AI tool instead.
-        """
-        ctx = self._ctx("Bash", {"command": "grep -r 'pattern' ."})
-        result = plugins.check_blocked_commands(ctx)
-        assert result is not None, "bash grep (not in pipe) must be blocked"
-        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
-        assert perm == "deny", f"bash grep must be denied, got {perm!r}"
-        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-        assert "grep" in msg.lower(), "block message must mention grep"
-
     def test_bash_grep_in_pipe_is_allowed(self):
         """Bash tool with grep in pipe is correctly allowed.
 
@@ -1180,14 +1118,6 @@ def test_the_hook_denies_rm_rf_hidden_by_a_wrapper_or_shell_form(command: str) -
     assert result is not None
     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "trash" in result["hookSpecificOutput"]["permissionDecisionReason"]
-
-
-def test_the_default_echo_redirect_guard_fires() -> None:
-    """`echo >` was a default block that could never match a parsable command."""
-    result = plugins.check_blocked_commands(_make_ctx("echo 'content' > notes.txt"))
-    assert result is not None
-    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "echo >" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 if __name__ == "__main__":

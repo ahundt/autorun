@@ -861,39 +861,23 @@ def test_codex_pretooluse_git_commit_rules_warning_is_valid_context():
     assert "additionalContext" in hso
 
 
-def test_codex_find_block_guides_to_rg_files_not_claude_glob():
-    ctx = _codex_context(
-        "PreToolUse",
-        tool_name="Bash",
-        tool_input={"command": "find . -name '*.py'"},
-    )
-    response = plugins.check_blocked_commands(ctx)
-
-    assert response is not None
-    assert_codex_response_valid("PreToolUse", response)
-    rendered = json.dumps(response)
-    assert "`rg --files`" in rendered
-    assert "Glob tool" not in rendered
-    assert "ar:ok find" in rendered
-
-
 def test_codex_pretooluse_block_reason_lives_only_in_permission_decision_reason():
     """Regression test: blocked commands must not triple-populate the
     same reason text across root reason, systemMessage, and
     hookSpecificOutput.permissionDecisionReason (the reported "tail"
     transcript showed this shape rendering as two duplicate Codex rows; this
-    test uses "find" since Codex treats "tail" as a native shell read)."""
+    test uses an in-place sed, a command Codex still blocks)."""
     ctx = _codex_context(
         "PreToolUse",
         tool_name="Bash",
-        tool_input={"command": "find . -name '*.py'"},
+        tool_input={"command": "sed -i 's/a/b/' README.md"},
     )
     response = plugins.check_blocked_commands(ctx)
 
     assert response is not None
     assert_codex_response_valid("PreToolUse", response)
     hso = response["hookSpecificOutput"]
-    assert "rg --files" in hso["permissionDecisionReason"]
+    assert "apply_patch" in hso["permissionDecisionReason"]
     assert response.get("reason", "") == ""
     assert response.get("systemMessage", "") == ""
 

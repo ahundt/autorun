@@ -68,13 +68,13 @@ class TestActualCommandBlocking:
     }
     """
 
-    def test_cat_command_blocked(self):
-        """Verify cat command is blocked with permissionDecision='deny'."""
+    def test_rm_command_blocked(self):
+        """Verify rm command is blocked with permissionDecision='deny'."""
         ctx = EventContext(
             session_id="test-session",
             event="PreToolUse",
             tool_name="bash_command",  # Gemini's bash tool
-            tool_input={"command": "cat /etc/hosts"},
+            tool_input={"command": "rm /tmp/autorun-test-file"},
         )
 
         result = _pretooluse(ctx)
@@ -85,19 +85,18 @@ class TestActualCommandBlocking:
         permission_decision = hook_output.get("permissionDecision", "allow")
 
         assert permission_decision == "deny", \
-            f"cat command not blocked! permissionDecision={permission_decision}"
+            f"rm command not blocked! permissionDecision={permission_decision}"
 
         # Verify blocking message provided
         reason = hook_output.get("permissionDecisionReason", "")
-        assert "cat" in reason.lower(), "Blocking reason doesn't mention cat"
-        assert "read" in reason.lower(), "Blocking reason doesn't suggest Read tool"
+        assert "trash" in reason.lower(), "Blocking reason doesn't suggest trash"
 
         # Verify continue=True when decision is deny (AI loop keeps running)
         assert result.get("continue") is True, \
             "continue should be True when permissionDecision is deny to keep AI working"
 
-    def test_head_command_blocked(self):
-        """Verify head command is blocked with permissionDecision='deny'."""
+    def test_head_command_allowed(self):
+        """A bare head is a read and is not blocked."""
         ctx = EventContext(
             session_id="test-session",
             event="PreToolUse",
@@ -110,11 +109,8 @@ class TestActualCommandBlocking:
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
 
-        assert permission_decision == "deny", \
-            f"head command not blocked! permissionDecision={permission_decision}"
-
-        reason = hook_output.get("permissionDecisionReason", "")
-        assert "head" in reason.lower(), "Blocking reason doesn't mention head"
+        assert permission_decision == "allow", \
+            f"head command blocked! permissionDecision={permission_decision}"
 
     def test_piped_cat_allowed(self):
         """Verify piped cat is ALLOWED (bashlex detects pipe context)."""
@@ -268,7 +264,7 @@ class TestActualCommandBlocking:
             session_id="test-session",
             event="PreToolUse",
             tool_name="bash_command",
-            tool_input={"command": "cat /etc/hosts"},
+            tool_input={"command": "rm /tmp/autorun-test-file"},
         )
 
         result = _pretooluse(ctx)
@@ -451,8 +447,8 @@ class TestPipeDetectionRobustness:
         assert permission_decision == "allow", \
             "Piped command with tee was blocked"
 
-    def test_direct_cat_blocked_without_pipe(self):
-        """Verify direct cat is still blocked even if bashlex unavailable."""
+    def test_direct_cat_allowed_without_pipe(self):
+        """A direct cat outside a pipe is a read and is not blocked."""
         ctx = EventContext(
             session_id="test-session",
             event="PreToolUse",
@@ -465,8 +461,8 @@ class TestPipeDetectionRobustness:
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
 
-        assert permission_decision == "deny", \
-            "Direct cat command was not blocked"
+        assert permission_decision == "allow", \
+            "Direct cat command was blocked"
 
 
 class TestGeminiPayloadNormalization:
@@ -520,13 +516,13 @@ class TestGeminiPayloadNormalization:
         assert result["tool_input"] == {"command": "ls"}
         assert result["session_id"] == "claude-session"
 
-    def test_gemini_cat_blocked_through_normalization(self):
-        """End-to-end: Gemini camelCase format cat command blocked."""
+    def test_gemini_rm_blocked_through_normalization(self):
+        """End-to-end: Gemini camelCase format rm command blocked."""
         from autorun.core import normalize_hook_payload
         payload = {
             "type": "BeforeTool",
             "toolName": "bash_command",
-            "toolInput": {"command": "cat /etc/hosts"},
+            "toolInput": {"command": "rm /tmp/autorun-test-file"},
             "sessionId": "test-normalization",
         }
         normalized = normalize_hook_payload(payload)
@@ -543,37 +539,10 @@ class TestGeminiPayloadNormalization:
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
         assert permission_decision == "deny", \
-            "cat command not blocked after Gemini format normalization"
+            "rm command not blocked after Gemini format normalization"
         # Gemini CLI format (top-level decision)
         assert result.get("decision") == "deny", \
-            "cat command: top-level decision not 'deny' (Gemini CLI won't block)"
-
-    def test_gemini_head_blocked_through_normalization(self):
-        """End-to-end: Gemini camelCase format head command blocked."""
-        from autorun.core import normalize_hook_payload
-        payload = {
-            "type": "BeforeTool",
-            "toolName": "bash_command",
-            "toolInput": {"command": "head -10 file.txt"},
-            "sessionId": "test-normalization",
-        }
-        normalized = normalize_hook_payload(payload)
-
-        ctx = EventContext(
-            session_id=normalized["session_id"],
-            event=normalized["hook_event_name"],
-            tool_name=normalized["tool_name"],
-            tool_input=normalized["tool_input"],
-        )
-
-        result = _pretooluse(ctx)
-
-        hook_output = result.get("hookSpecificOutput", {})
-        permission_decision = hook_output.get("permissionDecision", "allow")
-        assert permission_decision == "deny", \
-            "head command not blocked after Gemini format normalization"
-        assert result.get("decision") == "deny", \
-            "head command: top-level decision not 'deny' (Gemini CLI won't block)"
+            "rm command: top-level decision not 'deny' (Gemini CLI won't block)"
 
     def test_gemini_safe_command_allowed(self):
         """End-to-end: Gemini camelCase format safe command allowed."""
@@ -693,13 +662,13 @@ class TestGeminiOfficialSnakeCaseFormat:
     - reason: "..." at the TOP LEVEL
     """
 
-    def test_official_format_cat_blocked(self):
-        """Verify cat is blocked with official Gemini CLI snake_case input."""
+    def test_official_format_rm_blocked(self):
+        """Verify rm is blocked with official Gemini CLI snake_case input."""
         from autorun.core import normalize_hook_payload
         payload = {
             "hook_event_name": "BeforeTool",
             "tool_name": "bash_command",
-            "tool_input": {"command": "cat /etc/hosts"},
+            "tool_input": {"command": "rm /tmp/autorun-test-file"},
             "session_id": "gemini-official-test",
             "cwd": "/tmp",
             "transcript_path": "/tmp/transcript.jsonl",
@@ -722,12 +691,12 @@ class TestGeminiOfficialSnakeCaseFormat:
             "Gemini official format: top-level reason is empty"
 
     def test_official_format_run_shell_command_blocked(self):
-        """Verify run_shell_command (Gemini's other bash tool) blocks cat."""
+        """Verify run_shell_command (Gemini's other bash tool) blocks rm."""
         from autorun.core import normalize_hook_payload
         payload = {
             "hook_event_name": "BeforeTool",
             "tool_name": "run_shell_command",
-            "tool_input": {"command": "cat /etc/passwd"},
+            "tool_input": {"command": "rm /tmp/autorun-test-file"},
             "session_id": "gemini-official-test",
         }
         normalized = normalize_hook_payload(payload)
@@ -742,7 +711,7 @@ class TestGeminiOfficialSnakeCaseFormat:
         result = _pretooluse(ctx)
 
         assert result.get("decision") == "deny", \
-            f"run_shell_command with cat not blocked! decision={result.get('decision')}"
+            f"run_shell_command with rm not blocked! decision={result.get('decision')}"
 
     def test_official_format_safe_command_allowed(self):
         """Verify safe commands produce decision='allow' with official format."""

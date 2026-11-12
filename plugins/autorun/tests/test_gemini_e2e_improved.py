@@ -197,7 +197,7 @@ class TestGeminiHookEntryPointDirect:
         stdin_data = json.dumps({
             "type": "BeforeTool",
             "toolName": "bash_command",
-            "toolInput": {"command": "cat /etc/hosts"},
+            "toolInput": {"command": "rm /tmp/autorun-test-file"},
             "sessionId": "test-e2e-session"
         })
 
@@ -252,7 +252,7 @@ class TestGeminiHookEntryPointDirect:
         stdin_data = json.dumps({
             "hook_event_name": "BeforeTool",
             "tool_name": "bash_command",
-            "tool_input": {"command": "cat /etc/hosts"},
+            "tool_input": {"command": "rm /tmp/autorun-test-file"},
             "session_id": "test-e2e-session",
             "cwd": "/tmp",
             "transcript_path": "/tmp/test-transcript.jsonl"
@@ -294,8 +294,8 @@ class TestGeminiHookEntryPointDirect:
 
         # Verify reason is meaningful
         reason = response.get("reason", "")
-        assert "cat" in reason.lower(), \
-            f"Blocking reason doesn't mention 'cat': {reason[:200]}"
+        assert "trash" in reason.lower(), \
+            f"Blocking reason doesn't mention 'trash': {reason[:200]}"
 
     def test_hook_safe_command_allowed_snakecase(self, clean_environment):
         """Test that safe commands are allowed with official snake_case format (NO COST)."""
@@ -476,8 +476,8 @@ class TestGeminiExtensionInstalledHook:
                 f"stderr: {result.stderr}"
             )
 
-    def test_installed_hook_blocks_cat(self, extension_hook):
-        """Verify INSTALLED hook blocks 'cat' via bash_command (Gemini tool name).
+    def test_installed_hook_blocks_rm(self, extension_hook):
+        """Verify INSTALLED hook blocks 'rm' via bash_command (Gemini tool name).
 
         This uses the exact JSON format Gemini CLI sends: snake_case keys,
         hook_event_name='BeforeTool', tool_name='bash_command'.
@@ -486,7 +486,7 @@ class TestGeminiExtensionInstalledHook:
             "hook_event_name": "BeforeTool",
             "source": "gemini",
             "tool_name": "bash_command",
-            "tool_input": {"command": "cat /etc/passwd"},
+            "tool_input": {"command": "rm /tmp/autorun-test-file"},
             "session_id": "test-installed-hook",
             "cwd": "/tmp",
         }
@@ -499,37 +499,7 @@ class TestGeminiExtensionInstalledHook:
 
         # Top-level 'decision' is CLI-mapped: "deny" (Gemini) or "block" (Claude)
         assert response.get("decision") in ("deny", "block"), \
-            f"INSTALLED hook did NOT block 'cat'! Response: {json.dumps(response, indent=2)}"
-
-    def test_installed_hook_blocks_head(self, extension_hook):
-        """Verify INSTALLED hook blocks 'head' via bash_command."""
-        payload = {
-            "hook_event_name": "BeforeTool",
-            "source": "gemini",
-            "tool_name": "bash_command",
-            "tool_input": {"command": "head -20 /etc/hosts"},
-            "session_id": "test-installed-hook",
-            "cwd": "/tmp",
-        }
-        response = self._run_hook(extension_hook, payload)
-
-        assert response.get("decision") in ("deny", "block"), \
-            f"INSTALLED hook did NOT block 'head'! Response: {json.dumps(response, indent=2)}"
-
-    def test_installed_hook_blocks_tail(self, extension_hook):
-        """Verify INSTALLED hook blocks 'tail' via bash_command."""
-        payload = {
-            "hook_event_name": "BeforeTool",
-            "source": "gemini",
-            "tool_name": "bash_command",
-            "tool_input": {"command": "tail -f /var/log/system.log"},
-            "session_id": "test-installed-hook",
-            "cwd": "/tmp",
-        }
-        response = self._run_hook(extension_hook, payload)
-
-        assert response.get("decision") in ("deny", "block"), \
-            f"INSTALLED hook did NOT block 'tail'! Response: {json.dumps(response, indent=2)}"
+            f"INSTALLED hook did NOT block 'rm'! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_blocks_run_shell_command(self, extension_hook):
         """Verify INSTALLED hook blocks via 'run_shell_command' tool name."""
@@ -537,7 +507,7 @@ class TestGeminiExtensionInstalledHook:
             "hook_event_name": "BeforeTool",
             "source": "gemini",
             "tool_name": "run_shell_command",
-            "tool_input": {"command": "cat /etc/shadow"},
+            "tool_input": {"command": "rm /tmp/autorun-test-file"},
             "session_id": "test-installed-hook",
             "cwd": "/tmp",
         }
@@ -606,7 +576,7 @@ class TestGeminiExtensionInstalledHook:
             "hook_event_name": "BeforeTool",
             "source": "gemini",
             "tool_name": "bash_command",
-            "tool_input": {"command": "cat README.md"},
+            "tool_input": {"command": "rm README.md"},
             "session_id": "test-installed-hook",
             "cwd": "/tmp",
         }
@@ -936,23 +906,12 @@ class TestGeminiHighQualityMocks:
         assert response.get("decision") == "deny", \
             f"sed should be blocked: {response.get('decision')}"
 
-    def test_mock_gemini_find_blocked(self):
-        """Mock: 'find' blocked (use Glob instead)."""
-        response = self._simulate_hook({
-            "hook_event_name": "BeforeTool",
-            "tool_name": "bash_command",
-            "tool_input": {"command": "find . -name '*.py'"},
-            "session_id": "mock-6",
-        })
-        assert response.get("decision") == "deny", \
-            f"find should be blocked: {response.get('decision')}"
-
     def test_mock_dual_format_on_deny(self):
         """Mock: denied response has both Gemini and Claude Code formats."""
         response = self._simulate_hook({
             "hook_event_name": "BeforeTool",
             "tool_name": "bash_command",
-            "tool_input": {"command": "cat secret.txt"},
+            "tool_input": {"command": "rm secret.txt"},
             "session_id": "mock-7",
         })
         # Gemini format

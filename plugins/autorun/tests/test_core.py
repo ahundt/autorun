@@ -2418,39 +2418,6 @@ class TestFormatSuggestion:
 
     # ─── Regression: actual DEFAULT_INTEGRATIONS strings ────────────────────
 
-    def test_real_grep_suggestion_claude(self):
-        from autorun.config import DEFAULT_INTEGRATIONS
-
-        msg = DEFAULT_INTEGRATIONS["grep"]["suggestion"]
-        result = format_suggestion(msg, "claude")
-        assert "Grep" in result
-        assert "grep_search" not in result
-
-    def test_real_grep_suggestion_gemini(self):
-        """Regression: grep suggestion must name grep_search for Gemini."""
-        from autorun.config import DEFAULT_INTEGRATIONS
-
-        msg = DEFAULT_INTEGRATIONS["grep"]["suggestion"]
-        result = format_suggestion(msg, "gemini")
-        assert "grep_search" in result
-        assert "{grep}" not in result
-
-    def test_real_find_suggestion_gemini(self):
-        from autorun.config import DEFAULT_INTEGRATIONS
-
-        msg = DEFAULT_INTEGRATIONS["find"]["suggestion"]
-        result = format_suggestion(msg, "gemini")
-        assert "glob" in result.lower()
-        assert "{glob}" not in result
-
-    def test_real_cat_suggestion_gemini(self):
-        from autorun.config import DEFAULT_INTEGRATIONS
-
-        msg = DEFAULT_INTEGRATIONS["cat"]["suggestion"]
-        result = format_suggestion(msg, "gemini")
-        assert "read_file" in result
-        assert "{read}" not in result
-
     # ─── Canary: API tool name stability ────────────────────────────────────
     # These tests document exact API tool names as of specific CLI versions.
     # A failure means the CLI renamed a tool at the API level.

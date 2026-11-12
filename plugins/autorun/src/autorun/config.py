@@ -380,7 +380,7 @@ DEFAULT_INTEGRATIONS = {
     "awk": {
         "action": "block",
         "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["awk"]}},
-        # Like cat/grep/find, a filter on a pipe is allowed; one that edits,
+        # A filter on a pipe is allowed; one that edits,
         # writes, runs a command, reads a file or runs as root is not.
         "when": "_awk_does_more_than_filter_stdin",
         "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno awk",
