@@ -623,10 +623,12 @@ def test_fallback_writer_after_decode_restarts_canonicalization(tmp_path, monkey
     assert "_autorun_status" not in json.loads(payload)
 
 
-def test_status_decode_write_transactions_are_bounded_by_batch_size(tmp_path, monkeypatch):
+def test_status_decode_startup_budget_is_one_batch_and_repeated_starts_finish(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "decode-batches.sqlite3"
     _create_pre_3472b3ee_database(path)
-    total = sm._ENCODED_STATUS_DECODE_BATCH_ROWS + 1
+    total = sm._ENCODED_STATUS_DECODE_BATCH_ROWS * 3 + 1
     with sqlite3.connect(path) as conn:
         conn.executemany(
             "INSERT INTO tasks(session, task_id, status, updated_at, payload_json) "
@@ -674,12 +676,25 @@ def test_status_decode_write_transactions_are_bounded_by_batch_size(tmp_path, mo
             updates_per_transaction.append(current)
             current = None
     decoding_batches = [count for count in updates_per_transaction if count]
-    assert len(decoding_batches) == 2, decoding_batches
-    assert max(decoding_batches) <= sm._ENCODED_STATUS_DECODE_BATCH_ROWS
+    assert len(decoding_batches) == 1, decoding_batches
+    assert 0 < decoding_batches[0] <= sm._ENCODED_STATUS_DECODE_BATCH_ROWS
+    first_start_decoded = _read(
+        path,
+        "SELECT count(*) FROM tasks WHERE task_id LIKE 'encoded-%' AND status = 'delegation-returned'",
+    )[0][0]
+    assert 0 < first_start_decoded <= sm._ENCODED_STATUS_DECODE_BATCH_ROWS
+
+    for _ in range(3):
+        SQLiteStore(path).initialize()
     assert _read(
         path,
         "SELECT count(*) FROM tasks WHERE task_id LIKE 'encoded-%' AND status = 'delegation-returned'",
     ) == [(total,)]
+    assert _read(
+        path,
+        "SELECT value FROM schema_meta WHERE key = ?",
+        (sm._ENCODED_STATUS_DECODE_STATE,),
+    ) == [(sm._ENCODED_STATUS_DECODE_DONE,)]
 
 
 def test_offline_rebuild_decodes_fallback_status_rows(tmp_path, monkeypatch, capsys):

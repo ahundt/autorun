@@ -1866,7 +1866,7 @@ class SQLiteStore:
                 # initializer reaches this only after a validated commit.
                 self._enable_wal(conn, DEFAULT_SESSION_TIMEOUT)
                 if not needs_rebuild:
-                    self._decode_encoded_task_statuses(conn)
+                    self._decode_encoded_task_statuses(conn, max_batches=1)
         except sqlite3.Error as exc:
             raise SessionBackendError(
                 f"Could not initialize state database {self._db_path}: {exc}"
@@ -1893,14 +1893,16 @@ class SQLiteStore:
             )
         return value[0], value[1]
 
-    def _decode_encoded_task_statuses(self, conn) -> None:
+    def _decode_encoded_task_statuses(self, conn, *, max_batches: int | None) -> None:
         """Canonicalize fallback rows in bounded, resumable primary-key batches.
 
         The initial SELECT holds no writer slot. Each transaction rechecks the
         durable mode and cursor, updates at most
         ``_ENCODED_STATUS_DECODE_BATCH_ROWS`` rows, then advances the cursor in
-        the same commit. A fallback writer resets that cursor with its marker,
-        so a concurrent or later marker cannot be skipped permanently.
+        the same commit. Daemon startup supplies ``max_batches=1`` so its work
+        is fixed; offline rebuild supplies ``None`` and drains all rows. A
+        fallback writer resets the cursor with its marker, so a concurrent or
+        later marker cannot be skipped permanently.
         """
         if _schema_meta_value(conn, _ENCODED_STATUS_DECODE_STATE) != _ENCODED_STATUS_DECODE_PENDING:
             return
@@ -1975,11 +1977,28 @@ class SQLiteStore:
                     )
 
                 cursor = rows[-1]
-                conn.execute(
-                    "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
-                    (_ENCODED_STATUS_DECODE_CURSOR, json.dumps(list(cursor))),
-                )
+                finished = len(rows) < _ENCODED_STATUS_DECODE_BATCH_ROWS
+                if finished:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+                        (_ENCODED_STATUS_DECODE_STATE, _ENCODED_STATUS_DECODE_DONE),
+                    )
+                    conn.execute(
+                        "DELETE FROM schema_meta WHERE key = ?",
+                        (_ENCODED_STATUS_DECODE_CURSOR,),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+                        (_ENCODED_STATUS_DECODE_CURSOR, json.dumps(list(cursor))),
+                    )
                 conn.execute("COMMIT")
+                if finished:
+                    return
+                if max_batches is not None:
+                    max_batches -= 1
+                    if max_batches <= 0:
+                        return
             except BaseException:
                 _rollback_without_masking_original(conn)
                 raise
@@ -1995,7 +2014,7 @@ class SQLiteStore:
                     "Nothing was rebuilt; task enforcement uses compatible status storage."
                 )
             _rebuild_tasks_table(conn)
-            self._decode_encoded_task_statuses(conn)
+            self._decode_encoded_task_statuses(conn, max_batches=None)
         self.upgrade_pending = None
 
     def _enable_wal(self, conn, timeout: float) -> None:
