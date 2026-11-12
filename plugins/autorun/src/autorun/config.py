@@ -1111,6 +1111,15 @@ After every step and substep you must say "Wait," and execute this sequential th
         "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search existing file names for similar functionality with patterns like "*related-topic*", 3) Search file contents for relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
         "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search existing file names and contents for your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation.",
     },
+    # ─── Commands only the user may run ───────────────────────────────────────
+    # They change what the agent is allowed to do, so they take effect only
+    # when the user typed them (core.resolve_prompt_author). From a subagent,
+    # a model tool, automation or the harness they answer with the refusal
+    # below and change nothing. "<name> <subcommand>" guards that subcommand
+    # only. Prompt dispatch, the Codex transcript replay and the Skill-tool
+    # denial all read this one list (core.AutorunApp.user_only_command).
+    "user_only_commands": ("ok", "no", "clear", "file", "cache", "task ignore", "task pause"),
+    "user_only_command_refusal": "Only the user can run {command}. Ask them to type it.",
     # ─── Command Mappings ─────────────────────────────────────────────────────
     # Values are internal ids in plugins._INTERNAL_COMMANDS (case-sensitive);
     # plugins._register_command_mappings registers each spelling. An id with

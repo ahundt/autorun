@@ -324,6 +324,11 @@ def format_command_for_cli(command: str, cli_type: str | None) -> str:
     return command
 
 
+def user_only_refusal(command: str, cli_type: str | None) -> str:
+    """What a guarded command answers anyone but the user, in this harness's spelling."""
+    return CONFIG["user_only_command_refusal"].format(command=format_command_for_cli(command, cli_type))
+
+
 def format_commands_for_cli(text: str, cli_type: str | None) -> str:
     """Render canonical /ar:* command mentions for the target platform."""
     display_prefix = command_display_prefix(cli_type)
@@ -3087,6 +3092,43 @@ class AutorunApp:
 
         return None
 
+    def user_only_command(self, match: CommandMatch) -> Optional[str]:
+        """The guarded command ``match`` runs, as ``/ar:<entry>``, or None.
+
+        Guarded commands are ``CONFIG["user_only_commands"]``; an entry with a
+        second word guards that subcommand only. Matched by handler, so every
+        spelling of a guarded command is guarded too: ``tasks`` for ``task``,
+        a retired name, and a spelling a user maps in autorun.config.json to
+        one of the file-policy ids ``/ar:file`` sets.
+        """
+        words = match.arguments.split()
+        first_argument = words[0].lower() if words else ""
+        for entry in CONFIG["user_only_commands"]:
+            name, _, subcommand = entry.partition(" ")
+            handler = self.command_handlers.get(CANONICAL_COMMAND_PREFIX + name)
+            same_command = (handler is not None and match.handler is handler) or (
+                name == "file" and CONFIG["command_mappings"].get(match.alias) in CONFIG["file_policy_words"]
+            )
+            if same_command and (not subcommand or first_argument == subcommand):
+                return CANONICAL_COMMAND_PREFIX + entry
+        return None
+
+    def refuse_unless_user(self, ctx: EventContext, match: CommandMatch) -> Optional[str]:
+        """The refusal for a guarded command the user did not write, else None.
+
+        Every route that runs a command handler for a prompt asks this before
+        running it, so the rule has one owner. A Skill-tool launch is never
+        the user's, so its denial needs only ``user_only_command``.
+        """
+        command = self.user_only_command(match)
+        if command is None:
+            return None
+        author = resolve_prompt_author(ctx)
+        if author == "user":
+            return None
+        logger.info("Refused %s from %s in session %s", command, author, ctx.session_id)
+        return user_only_refusal(command, ctx.cli_type)
+
     def dispatch(self, ctx: EventContext) -> Dict:
         """
         Unified dispatch - routes all events through consistent pattern.
@@ -3143,6 +3185,11 @@ class AutorunApp:
                 return result
             match = self._find_command(ctx.prompt.strip(), ctx.cli_type)
             if match:
+                refusal = self.refuse_unless_user(ctx, match)
+                if refusal is not None:
+                    # A command reply, not a denial: it must never become a
+                    # prompt block on a harness that blocks on a prompt denial.
+                    return ctx.command_response(refusal)
                 apply_command_match(ctx, match)
                 response_text = match.handler(ctx)
                 # Stop/estop handlers set _halt_ai=True to kill AI loop
