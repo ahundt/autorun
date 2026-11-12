@@ -1969,6 +1969,8 @@ CODEX = register(
             "PermissionRequest": "PermissionRequest",
             # https://developers.openai.com/codex/hooks: block re-runs the subagent.
             "SubagentStop": "SubagentStop",
+            "PreCompact": "PreCompact",
+            "PostCompact": "PostCompact",
         },
     )
 )

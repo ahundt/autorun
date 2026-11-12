@@ -58,9 +58,9 @@ Each event cell states whether the harness emits the event and what its output c
 | PreToolUse | Emits before tools. `B=decision:block` and nested `permissionDecision=deny`; the reason stays in the nested field so Codex does not render duplicate rows. AR subscribes and fails closed on malformed denial output. [X1][AR1] |
 | PostToolUse | Emits after tools. `N=systemMessage`; `C=additionalContext`; a block is feedback only. AR subscribes and strips fields Codex rejects. [X1][AR1] |
 | Stop | Emits at main-thread completion. `B=decision:block`; `N=systemMessage`; common output is strict. AR subscribes and uses compact block output or allowed notices. [X1][AR1] |
-| SubagentStop | Emits when a subagent completes; a block reruns/continues the subagent. AR subscribes and maps the event directly. [X1][AR1] |
+| SubagentStop | Emits with the parent `session_id`; `agent_id`, `agent_type`, and `agent_transcript_path` identify the child. A block continues the subagent flow. AR subscribes, preserves the child fields, and uses `agent_id` plus the spawn receipt to return only that child's delegated task to parent verification. [X1][AR1] |
 | PermissionRequest | Emits before a permission decision. AR has the nested decision serializer and a registry mapping, but the shared manifest does not subscribe. The same composition proposal as Claude applies. [X1][AR1] |
-| Compact | `PreCompact` and `PostCompact` emit and accept common notice/context fields. The shared manifest subscribes. Gap: the Codex registry does not list the compact events even though identity mapping currently lets hook entry process them; add explicit registry rows so capability snapshots and future validation cannot drift. [X1][AR1] |
+| Compact | `PreCompact` and `PostCompact` emit for `manual` or `auto` triggers and accept common output. AR now installs both events and lists their identity mappings in the Codex registry, so generated hooks and capability validation share one explicit contract. [X1][AR1] |
 
 ### Legacy Gemini CLI
 
@@ -170,7 +170,7 @@ Each event cell states whether the harness emits the event and what its output c
 ## What changed upstream that autorun should adopt
 
 1. Claude Code 2.1.322 documents more lifecycle events, including `SubagentStart`, task events, model-switch events, and structured `background_tasks`/`session_crons` on Stop and SubagentStop. Autorun already parses the two arrays. A follow-up needs captured payloads before either array becomes running-subagent proof. [C1][C2]
-2. Codex 0.167.0 documents `PreModelRequest`, `PostModelRequest`, `Interrupt`, and `SubagentStart`. Autorun needs a handler-level design before subscribing because none of its current policies target those points. Add explicit compact-event registry rows now or with that change. [X1]
+2. Codex 0.167.0 documents `PreModelRequest`, `PostModelRequest`, `Interrupt`, and `SubagentStart`. Autorun needs a handler-level design before subscribing because none of its current policies target those points. PreCompact/PostCompact are now explicitly installed and registered; the parent-session SubagentStop contract is pinned in `tests/fixtures/hook_contracts/codex-0.167.0-lifecycle.json`. [X1]
 3. Gemini CLI 0.68.0 added a `gemini hooks migrate` alias from Claude's `SubagentStop` setting to Gemini's native AfterAgent event; it did not add a native event. AR pins that distinction in `tests/fixtures/hook_contracts/gemini-0.68.0-subagent-stop.json` and keeps the invalid key out of the shared manifest for both 0.51 and 0.68. [G2]
 4. Qwen 0.21.15 supports `systemMessage` on Stop. Implemented in `942cddd2`; allowed Stop notices no longer disappear. [Q1]
 5. Antigravity 1.1.12 supports SessionStart/PreInvocation `injectSteps`; `invocationNum=0` identifies the first model call, and Stop `fullyIdle=false` means a background command or asynchronous task is active. AR now routes first-invocation prompt policy, defers allowed-Stop notices to the next injection point, and treats the inverse idle flag as running-work evidence without claiming it identifies a specific subagent. [A1]

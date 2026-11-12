@@ -837,7 +837,7 @@ def marketplaces_for(
 #: is a silent gap, so this list is the contract and lives in one place.
 _CODEX_EVENTS = (
     "PreToolUse", "PostToolUse", "UserPromptSubmit",
-    "SessionStart", "Stop", "SubagentStop",
+    "SessionStart", "Stop", "SubagentStop", "PreCompact", "PostCompact",
 )
 
 

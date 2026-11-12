@@ -10,8 +10,8 @@ task never blocked again. Three pieces close that:
    unclaimed spawn, so the task knows where its work went.
 3. SubagentStop flips matching delegated tasks to ``delegation-returned``,
    which blocks the parent Stop gate again with verification wording. Claude
-   can share the parent session while Codex fires from the child session; a
-   spawn-time receipt preserves parent authority across both payload shapes.
+   and Codex both report the parent session while child identity comes from
+   ``agent_id``; a spawn-time receipt preserves parent authority.
 
 The spawn-result fixture below is derived from a captured live Agent-tool
 result (ids and paths generalized): the extraction regex and tool-name
@@ -19,6 +19,7 @@ allowlist must match what the harness actually sends, never a guess.
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -480,13 +481,12 @@ class TestReturnedGate:
         assert tasks["7"]["status"] == "delegation-returned"
         assert tasks["8"]["status"] == "delegated"
 
-    def test_real_codex_child_session_returns_only_its_parent_task(
+    def test_real_codex_parent_session_returns_only_the_matching_child_task(
         self, isolated_state, cfg
     ):
-        """Codex emits SubagentStop in the child session, keyed by agent_id."""
+        """Codex SubagentStop keeps the parent session and identifies the child by agent_id."""
         store = ThreadSafeDB()
         parent_session = "codex-parent-session"
-        child_session = "codex-child-session"
         parent = TaskLifecycle(config=cfg, session_id=parent_session)
         first_id = CODEX_SPAWN_ID
         second_id = "01997b21-0e6f-7bb2-9d1e-bbbbbbbbbbbb"
@@ -509,7 +509,7 @@ class TestReturnedGate:
             ) == [task_id]
 
         sub = _ctx(
-            child_session,
+            parent_session,
             store,
             event="SubagentStop",
             tool_name="",
@@ -518,14 +518,14 @@ class TestReturnedGate:
             agent_id=first_id,
             cli_type="codex",
         )
-        child = TaskLifecycle(ctx=sub, config=cfg)
+        stop_view = TaskLifecycle(ctx=sub, config=cfg)
 
-        assert child.handle_stop(sub) is None
+        assert stop_view.handle_stop(sub) is None
         assert parent.tasks["7"]["status"] == "delegation-returned"
         assert parent.tasks["8"]["status"] == "delegated"
-        assert child.tasks == {}, "child state must not become task authority"
+        assert stop_view.tasks == parent.tasks, "the parent session remains task authority"
 
-        assert child.handle_stop(sub) is None
+        assert stop_view.handle_stop(sub) is None
         assert parent.tasks["7"]["status"] == "delegation-returned"
 
     @pytest.mark.parametrize("backend", ["json", "sqlite"])
@@ -555,6 +555,15 @@ class TestReturnedGate:
 
         assert _ledger(session_id) == first_ledger
         assert _receipts() == first_receipts
+
+    def test_codex_0167_subagent_stop_uses_parent_session_and_child_identity(self):
+        fixture = Path(__file__).parent / "fixtures/hook_contracts/codex-0.167.0-lifecycle.json"
+        contract = json.loads(fixture.read_text(encoding="utf-8"))
+
+        assert contract["subagent_stop"]["session_id"] == "parent session id"
+        assert contract["subagent_stop"]["child_identity"] == [
+            "agent_id", "agent_type", "agent_transcript_path"
+        ]
 
     def test_codex_agent_transcript_path_survives_normalization(self):
         normalized = normalize_hook_payload(

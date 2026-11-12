@@ -53,6 +53,15 @@ def test_a_qwen_subagent_stop_block_is_answered_in_qwens_shape(monkeypatch):
     assert "finish task 3 first" in (response.get("reason") or ""), response
 
 
+def test_codex_installs_documented_compaction_events():
+    from autorun.installer import steps
+
+    platform = PLATFORMS["codex"]
+    assert {"PreCompact", "PostCompact"} <= set(steps._CODEX_EVENTS)
+    assert platform.autorun_to_harness_cli_events["PreCompact"] == "PreCompact"
+    assert platform.autorun_to_harness_cli_events["PostCompact"] == "PostCompact"
+
+
 def test_every_event_codex_installs_is_one_the_registry_says_codex_fires():
     """steps._CODEX_EVENTS installed SubagentStop while the Codex registry
     entry did not list it, so the two owners of 'what Codex fires' disagreed."""

@@ -1,0 +1,18 @@
+{
+  "harness": "Codex CLI",
+  "version": "0.167.0",
+  "read_date": "2026-11-12",
+  "official_docs": "https://developers.openai.com/codex/hooks",
+  "compact": {
+    "events": ["PreCompact", "PostCompact"],
+    "trigger_values": ["manual", "auto"],
+    "pre_block": "continue false stops before compacting",
+    "post_block": "continue false stops after compacting"
+  },
+  "subagent_stop": {
+    "session_id": "parent session id",
+    "child_identity": ["agent_id", "agent_type", "agent_transcript_path"],
+    "other_fields": ["turn_id", "permission_mode", "stop_hook_active", "last_assistant_message"],
+    "block_effect": "continue the subagent flow"
+  }
+}
