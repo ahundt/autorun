@@ -30,6 +30,10 @@ invalid or unsafe regex is refused.
 - `/ar:no regex:eval\(` — block eval() calls
 - `/ar:no --global "kubectl delete"` — block kubectl delete in every session
 
+`/ar:no --global cat` brings back a guard autorun no longer ships by default:
+`cat`, `head`, `tail`, `grep`, `find` and `echo >` are not blocked unless you
+block them.
+
 `/ar:status` lists the current blocks.
 
 UserPromptSubmit hook processes this command and updates session or global state.

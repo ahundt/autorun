@@ -18,3 +18,8 @@ so the no-slash form is the one that arrives, and ForgeCode and OpenCode run
 only the command files the installer copied.
 
 Typing `ar` on its own also opens this list.
+
+Shell reads are not blocked: `cat`, `head`, `tail`, `grep` and `find` outside
+a pipe, and `echo >`, run without a guard. To block one again, use
+`/ar:no <command>` for this session or `/ar:no --global <command>` for every
+session.
