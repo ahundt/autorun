@@ -262,3 +262,32 @@ def test_failed_restore_on_the_users_reply_is_reported(gate_env, monkeypatch):
     response = session.prompt("yes, push")
 
     assert "could not record your reply" in text(response), f"a failed restore was silent: {response}"
+
+
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
+def test_reprojection_keeps_awaiting_user_until_a_later_native_update(gate_env, cli_type):
+    """Pi and Prime rebuild their task rows from TaskCreate/TaskUpdate receipts
+    on resume and /tree. The awaiting-user state autorun recorded after the
+    last receipt must survive that; a receipt newer than it supersedes it."""
+    import time
+
+    from test_conversation_role_forks import _reproject
+
+    session = _session(cli_type, "reproject")
+    receipt = {"id": "7", "subject": "Push release-1.0", "status": "in_progress", "updated_at": time.time() - 60}
+    _reproject(session, "startup", records=(receipt,))
+    session.dispatch("SessionStart", source="startup")
+    _enter(session)
+
+    _reproject(session, "resume", records=(receipt,))
+
+    task = session.task("7")
+    assert task["status"] == AWAITING_STATUS, f"{cli_type}: a reprojection of an older receipt made #7 {task['status']!r}"
+    assert (task.get("metadata", {}).get("awaiting_user") or {}).get("decision") == DECISION, (
+        f"{cli_type}: a reprojection erased the decision #7 waits on: {task.get('metadata')}"
+    )
+    assert not blocks(session.stop("Waiting for your answer."), cli_type)
+
+    newer = dict(receipt, status="completed", updated_at=time.time() + 1)
+    _reproject(session, "resume", records=(newer,))
+    assert session.status("7") == "completed", f"{cli_type}: a newer native update did not supersede awaiting-user"

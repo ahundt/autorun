@@ -1543,6 +1543,17 @@ class TaskLifecycle:
             }
 
         def replace(tasks):
+            # A status only autorun sets (awaiting-user, delegated, ...) was
+            # recorded after the receipt it came from, so an older receipt
+            # does not undo it; a native update newer than it does.
+            for task_id, record in normalized.items():
+                stored = tasks.get(task_id)
+                if (
+                    isinstance(stored, dict)
+                    and stored.get("status") in AUTORUN_OWNED_TASK_STATUSES
+                    and float(stored.get("updated_at") or 0) > record["updated_at"]
+                ):
+                    normalized[task_id] = copy.deepcopy(stored)
             claimed = set()
             for task_id in list(tasks):
                 metadata = tasks[task_id].get("metadata", {})
