@@ -1,6 +1,6 @@
 """python_check refuses every interpreter older than 3.10.
 
-conftest.py and the repo-root autorun.py launcher rely on check_and_exit() to
+conftest.py relies on check_and_exit() to
 stop an old interpreter with a readable message. The 3.0-3.9 branch printed
 that message and then returned True, so check_and_exit() never exited there.
 """

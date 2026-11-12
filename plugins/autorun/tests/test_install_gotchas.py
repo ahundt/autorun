@@ -1925,9 +1925,9 @@ def test_every_installer_module_self_check_passes(module, request):
     daemon socket underneath it must stay inside `sun_path`'s 104 bytes; a
     `tmp_path` under the platform temp directory does not.
 
-    Run from the repository root, as the documented command is: `plugins/autorun`
-    holds an `autorun.py` that shadows the package whenever it is the working
-    directory, and `import autorun` there fails with "not a package".
+    Run from the repository root, as the documented command is: an
+    `autorun.py` in the working directory would shadow the package, and
+    `import autorun` would then fail with "not a package".
     """
     import subprocess
 

@@ -33,7 +33,7 @@ SRC_DIR = PLUGIN_ROOT / "src"
 
 # The probe puts SRC_DIR first on sys.path instead of relying on the working
 # directory. `python -c` puts the *caller's* cwd at sys.path[0], and CI runs
-# pytest from PLUGIN_ROOT, which holds autorun.py -- the bootstrap launcher.
+# pytest from PLUGIN_ROOT, where an autorun.py launcher used to sit.
 # A module shadows a package of the same name, so an inherited-cwd import
 # resolves to the launcher, fails on `autorun.python_check`, and exits 1 with
 # its diagnostic on stdout. Keep the explicit path; do not "simplify" this to a

@@ -35,8 +35,9 @@ point of the mistake.
   4. A home redirect that sets only `HOME`. `Path.home()` reads `USERPROFILE`
      on Windows, so an "isolated" run read a sandbox and wrote a real home.
   5. A `python -c` probe importing autorun with no sys.path insert. sys.path[0]
-     is the parent's cwd, and PLUGIN_ROOT holds autorun.py, which shadows the
-     package -- so the probe passed from the repository root and failed in CI.
+     is the parent's cwd, so any `autorun.py` there shadows the package. Such a
+     file once sat in PLUGIN_ROOT, and the probe passed from the repository root
+     and failed in CI.
 
 Every checker below is paired with a test that plants the defect and requires
 the checker to catch it. A source scanner that has quietly stopped matching
@@ -450,11 +451,11 @@ def _string_value(node: ast.AST) -> "str | None":
 def probes_importing_autorun_from_cwd(source: str, filename: str = "<test>") -> list[int]:
     """Return line numbers of `-c` spawns that import autorun via the caller's cwd.
 
-    `python -c` puts the *parent's* working directory at sys.path[0]. CI runs
-    pytest from PLUGIN_ROOT, which holds autorun.py -- the bootstrap launcher,
-    a module that shadows the package of the same name. Such a probe therefore
-    imports the launcher, dies on `autorun.python_check`, and exits 1 with its
-    diagnostic on stdout, so an assertion that reports only stderr says nothing.
+    `python -c` puts the *parent's* working directory at sys.path[0]. Any
+    `autorun.py` in that directory shadows the package of the same name, so a
+    probe started there imports that file instead, fails, and exits 1 with its
+    diagnostic wherever that file prints it. CI runs pytest from PLUGIN_ROOT,
+    which held exactly such a launcher until it was removed.
 
     The trap is that this passes from the repository root, which is the
     documented local command, and fails only in CI. Pass the source directory
@@ -502,9 +503,7 @@ def probes_importing_autorun_from_cwd(source: str, filename: str = "<test>") -> 
         if "sys.path" in body:
             continue
         keywords = {keyword.arg for keyword in node.keywords}
-        # A ** spread is how the shared helper supplies cwd (spawn_kwargs in
-        # test_task_14_cli_non_interactive.py exists for this very hazard), and
-        # its contents are not visible here.
+        # A ** spread may supply cwd, and its contents are not visible here.
         if "cwd" in keywords or None in keywords:
             continue
         offenders.append(node.lineno)
@@ -522,9 +521,9 @@ def test_no_probe_imports_autorun_through_the_working_directory():
         "a `python -c` probe imports autorun with no sys.path insert and no "
         "cwd=, so sys.path[0] is whatever directory pytest was started from. "
         "From the repository root that finds the installed package and passes; "
-        "from plugins/autorun, which is where CI runs pytest, autorun.py "
-        "shadows the package and the probe exits 1 with its diagnostic on "
-        "stdout. Pass the source directory and insert it at sys.path[0]:\n"
+        "from plugins/autorun, which is where CI runs pytest, any autorun.py "
+        "in that directory would shadow the package and the probe would exit "
+        "1. Pass the source directory and insert it at sys.path[0]:\n"
         + "\n".join(offenders)
     )
 

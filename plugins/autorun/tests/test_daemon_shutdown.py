@@ -35,8 +35,8 @@ def running_daemon(request, monkeypatch):
             "from autorun.daemon import main; main()"
         )
         with (home / "output.log").open("w") as output:
-            # cwd: `python -c` puts it first on sys.path, and CI runs pytest from
-            # plugins/autorun, whose autorun.py would shadow the package.
+            # cwd: `python -c` puts it first on sys.path, so an autorun.py in
+            # the caller's directory would shadow the package.
             proc = subprocess.Popen([sys.executable, "-c", code], env=env, cwd=home,
                                     stdout=output, stderr=output)
             try:

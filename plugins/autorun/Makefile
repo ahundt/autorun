@@ -73,14 +73,8 @@ test-benchmark:
 
 # Cheapest possible answer to "is this checkout importable and configured?".
 # CONFIG and the integration table are what every hook path reads first.
-#
-# `sys.path.pop(0)` drops the `-c` entry for the current directory, which is
-# this one: `autorun.py` sits here and shadows the installed `autorun` package,
-# so the import fails with "'autorun' is not a package". pytest does not hit
-# this because it rewrites sys.path from rootdir.
 test-quick:
-	$(UV_RUN) python -c "import sys; sys.path.pop(0); \
-	    from autorun.config import CONFIG, DEFAULT_INTEGRATIONS; \
+	$(UV_RUN) python -c "from autorun.config import CONFIG, DEFAULT_INTEGRATIONS; \
 	    from autorun.plugins import app; \
 	    assert CONFIG['completion_marker'] and DEFAULT_INTEGRATIONS and app; \
 	    print('imports and configuration OK')"

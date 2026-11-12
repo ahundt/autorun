@@ -169,8 +169,7 @@ Installer specifics:
 
 ## Checks
 
-Every module self-checks, from the repository root (`plugins/autorun/autorun.py`
-shadows the package if you `cd` in first):
+Every module self-checks, from the repository root:
 `uv run --project plugins/autorun python -c "from autorun.installer.fs import demo; demo()"`.
 Named tests live in `plugins/autorun/tests/test_install_*.py`.
 

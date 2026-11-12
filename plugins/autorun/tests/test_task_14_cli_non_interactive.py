@@ -27,20 +27,6 @@ def isolated_autorun_home(tmp_path):
     return tmp_path / "autorun-home"
 
 
-#: ``python -c`` puts the working directory on ``sys.path[0]``, and
-#: ``plugins/autorun/autorun.py`` is a launcher shim named exactly like the
-#: package it launches. A child started from the plugin root therefore imports
-#: the shim, which cannot reach ``autorun.error_handling`` from inside itself
-#: and exits 1 by design (``error_handling.py`` matches "is not a package" and
-#: prints recovery steps). CI runs pytest from the plugin root, so every child
-#: below inherited that shadowing and asserted on it instead of on the encoding
-#: and terminal behaviour it names. Any child importing ``autorun`` gets a
-#: neutral directory so the import resolves to the installed package.
-def spawn_kwargs(cwd: Path) -> dict:
-    """Subprocess options that keep ``import autorun`` off the launcher shim."""
-    return {"cwd": str(cwd), "env": dict(os.environ)}
-
-
 def run_task_lifecycle_cli(*args: str, autorun_home: Path, **kwargs) -> subprocess.CompletedProcess:
     """Run the task lifecycle CLI through the autorun project environment."""
     env = dict(os.environ)
@@ -250,7 +236,8 @@ class TestOutputEncoding:
             text=True,
             encoding="cp1252",
             timeout=5,
-            **{**spawn_kwargs(tmp_path), "env": env},
+            cwd=str(tmp_path),
+            env=env,
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "client" in result.stdout
@@ -269,7 +256,8 @@ class TestOutputEncoding:
             input="rm /tmp/ā-の".encode("utf-8"),
             capture_output=True,
             timeout=5,
-            **{**spawn_kwargs(tmp_path), "env": env},
+            cwd=str(tmp_path),
+            env=env,
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.decode("ascii").strip() == ascii("rm /tmp/ā-の")
@@ -314,7 +302,7 @@ class TestCanPrompt:
             capture_output=True,
             text=True,
             timeout=5,
-            **spawn_kwargs(tmp_path),
+            cwd=str(tmp_path),
         )
         assert result.stdout.strip() == "False"
 
@@ -335,7 +323,7 @@ class TestCanPrompt:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            **spawn_kwargs(tmp_path),
+            cwd=str(tmp_path),
         )
         os.close(slave)
         try:
