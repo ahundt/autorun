@@ -203,10 +203,9 @@ class ExtensionSkills(SkillRoute):
 class HomeDirSkills(SkillRoute):
     """A skills directory addressed from the home directory, not config_dir.
 
-    Needed because two harnesses read roots that are not under their own
-    config directory: ForgeCode documents ``~/forge/skills`` (no dot, while its
-    config dir is ``~/.forge/``), and OpenCode reads Claude's
-    ``~/.claude/skills`` as one of its own tiers. Antigravity's global root,
+    Needed because a harness may read a root that is not under its own
+    config directory: OpenCode reads Claude's ``~/.claude/skills`` as one of
+    its own tiers. Antigravity's global root,
     ``~/.gemini/config/skills``, likewise sits beside its config dir rather
     than inside it.
     """
@@ -2027,7 +2026,11 @@ FORGECODE = register(
         config_dirs_preferred_when_present=("~/forge/",),
         retired_config_dirs=("~/.forge/",),
         template_dir="forgecode_template",
-        skill_search_routes=(HomeDirSkills("forge/skills"),),
+        # Skills follow the same base as commands and AGENTS.md (`forge list
+        # skill`, 2.13.21: only <base>/skills is listed). A fixed ~/forge/skills
+        # created ~/forge on a machine with only ~/.forge, which by the rule
+        # above moved ForgeCode's base away from the user's configuration.
+        skill_search_routes=(ConfigDirSkills("skills"),),
         memory_filename="AGENTS.md",
         memory_template="forgecode_template/AGENTS.md",
         memory_sentinel_slug="forgecode-agents-md",
@@ -2049,7 +2052,7 @@ FORGECODE = register(
         # ForgeCode has no package mechanism, so its documented harness-owned
         # global root is the native publication route.
         loads_shared_agents_skills=True,
-        native_skills=HomeDirSkills("forge/skills"),
+        native_skills=ConfigDirSkills("skills"),
         # tool_names empty: not relevant without hooks (advisory AGENTS.md only)
     )
 )

@@ -60,8 +60,9 @@ after its own override: `CONFIG["harness_config_dirs"]["forgecode"]`, then
 (`Platform.config_dirs_preferred_when_present`), then `~/.forge/`. When
 `~/forge/` is the base, command files autorun wrote earlier to
 `~/.forge/commands/` are retired (`Platform.retired_config_dirs`); files it
-did not write are left alone. Skills always go to `~/forge/skills/`, so after
-an install `~/forge/` exists.
+did not write are left alone. Skills, commands and the `AGENTS.md` block all
+go under the base, so an install on a machine with only `~/.forge/` never
+creates `~/forge/` (which would make ForgeCode stop reading `~/.forge/`).
 
 ## What autorun cannot do for ForgeCode
 

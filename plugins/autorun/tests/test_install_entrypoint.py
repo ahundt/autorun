@@ -1539,6 +1539,48 @@ def test_a_custom_uv_tool_dir_is_recognised_as_a_uv_tool_env(monkeypatch, isolat
     assert calls[0][:3] == ("uv", "pip", "install"), calls
 
 
+@pytest.mark.parametrize("layout", [(".forge",), ("forge",), (".forge", "forge")])
+def test_forgecode_install_writes_under_forgecodes_base_and_creates_no_new_base(
+    monkeypatch, isolated, layout
+):
+    """ForgeCode 2.13.21 reads skills, commands and AGENTS.md from one base:
+    ~/forge when it exists, else ~/.forge (`forge list skill` and `forge list
+    cmd` in a temporary HOME showed only the ~/forge markers when both held
+    one). An install that creates ~/forge on a machine with only ~/.forge moves
+    ForgeCode's base away from the user's configuration, so it must not.
+    """
+    from autorun.installer import entrypoint, memory
+    from autorun.platforms import PLATFORMS
+
+    monkeypatch.setattr(entrypoint, "_run", _cache_aware_runner)
+    monkeypatch.setattr(
+        entrypoint.shutil, "which", lambda name: f"/bin/{name}" if name in ("forge", "uv") else None
+    )
+    monkeypatch.delenv("FORGE_CONFIG", raising=False)
+    monkeypatch.setenv("AUTORUN_USE_DAEMON", "0")
+    for name in layout:
+        (isolated / name / "skills" / "mine").mkdir(parents=True)
+        (isolated / name / "skills" / "mine" / "SKILL.md").write_text(f"mine in {name}\n", encoding="utf-8")
+        (isolated / name / "commands").mkdir()
+        (isolated / name / "commands" / "mine.md").write_text(f"mine in {name}\n", encoding="utf-8")
+        (isolated / name / "AGENTS.md").write_text(f"my rules in {name}\n", encoding="utf-8")
+    before = {path.name for path in isolated.iterdir()}
+
+    assert entrypoint.install_plugins("ar", conductor=False, tool=False) == 0
+
+    created = {path.name for path in isolated.iterdir()} - before
+    assert "forge" not in created, f"install created ~/forge beside {layout}: {sorted(created)}"
+    base = isolated / ("forge" if "forge" in layout else ".forge")
+    assert (base / "skills" / "commit" / "SKILL.md").is_file()
+    assert (base / "commands" / "ar-status.md").is_file()
+    agents = (base / "AGENTS.md").read_text(encoding="utf-8")
+    assert memory.bounds(agents, memory.Block(PLATFORMS["forgecode"].memory_sentinel_slug)) is not None
+    for name in layout:
+        assert (isolated / name / "skills" / "mine" / "SKILL.md").read_text(encoding="utf-8") == f"mine in {name}\n"
+        assert (isolated / name / "commands" / "mine.md").read_text(encoding="utf-8") == f"mine in {name}\n"
+        assert (isolated / name / "AGENTS.md").read_text(encoding="utf-8").startswith(f"my rules in {name}\n")
+
+
 def test_codex_upgrade_retires_the_command_files_and_keeps_the_users_own(
     monkeypatch, isolated
 ):

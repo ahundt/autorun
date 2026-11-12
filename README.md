@@ -254,7 +254,7 @@ autorun --install --skill-placement native --skill-placement codex=both
 | Mode | Effect |
 |---|---|
 | `auto` | One owned route per agent: plugin, extension, or package skills when supported; otherwise the agent's own global skills folder. Autorun does not write `~/.agents/skills` in this mode. |
-| `native` | The same harness-owned route, explicitly. ForgeCode uses `~/forge/skills`; OpenCode uses its XDG-aware `skills/` directory. |
+| `native` | The same harness-owned route, explicitly. ForgeCode uses `skills/` in the directory it reads (`~/forge` when it exists, else `~/.forge`); OpenCode uses its XDG-aware `skills/` directory. |
 | `both` | Shared **and** native where the agent reads both. The only mode that can list a skill twice, and the two copies can drift apart. |
 
 The shared copy in `both` applies to Codex, legacy Gemini, Qwen Code, Pi,
@@ -274,7 +274,8 @@ each agent's target folders.
 
 Under `auto`, Claude and Codex use their plugin packages; Gemini, Qwen, and
 Antigravity use their extension/plugin bundles; Pi and Prime use one local
-package containing the adapter and skills; ForgeCode uses `~/forge/skills`;
+package containing the adapter and skills; ForgeCode uses `skills/` under
+`~/forge` when that directory exists, else under `~/.forge`;
 and OpenCode uses `~/.config/opencode/skills` (or its `XDG_CONFIG_HOME`
 equivalent). The user's cross-client `~/.agents/skills` authoring directory is
 left alone.

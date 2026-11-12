@@ -133,8 +133,12 @@ that need it. No disk access: stage generated content to a temp dir and point th
   dependency, or a module-scope call that raises anything else, breaks this.
 - **Read routes and write routes differ.** Antigravity reads
   `~/.gemini/config/skills` and writes its plugins dir. ForgeCode reads both
-  `~/.agents/skills` and `~/forge/skills`; autorun writes only the latter by
+  `~/.agents/skills` and `<base>/skills`; autorun writes only the latter by
   default. The bridge targets read routes.
+- **Never create a directory a harness uses to pick its base.** ForgeCode's
+  base is `~/forge` when it exists, else `~/.forge`; every ForgeCode route is
+  under `discovery.config_dir`, so an install into `~/.forge` cannot create
+  `~/forge` and switch ForgeCode away from the user's configuration.
 - **A native copy the harness made is proven ours by receipt plus content,
   never by name.** Gemini and Qwen record the source path in
   `.<cli>-extension-install.json`. Agy records only `{"name": "ar", "source":

@@ -810,7 +810,9 @@ def test_a_placement_that_would_install_nothing_is_refused_with_a_remedy():
 # gemini   S5  ~/.gemini/skills
 # qwen     S6  ~/.qwen/skills
 # opencode S8  ~/.config/opencode/skills and ~/.claude/skills
-# forgecode S9 ~/forge/skills   (no dot — as documented)
+# forgecode S9 <base>/skills: ~/forge/skills when ~/forge exists, else
+#             ~/.forge/skills (`forge list skill`, 2.13.21, lists only the
+#             base's copy); this home has neither, so the base is ~/.forge
 # antigravity S10 ~/.gemini/config/skills
 _EXPECTED_OWN_SKILL_ROOTS = {
     "claude": {".claude/skills"},
@@ -820,7 +822,7 @@ _EXPECTED_OWN_SKILL_ROOTS = {
     "pi": {".pi/agent/skills"},
     "prime": {".prime/agent/skills"},
     "opencode": {".config/opencode/skills", ".claude/skills"},
-    "forgecode": {"forge/skills"},
+    "forgecode": {".forge/skills"},
     "antigravity": {".gemini/config/skills"},
 }
 

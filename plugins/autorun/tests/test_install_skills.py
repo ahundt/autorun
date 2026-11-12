@@ -41,8 +41,7 @@ class FakePlatform:
     loads_shared_agents_skills: bool
     config_dir: str = "~/.fake/"
     # Two fields, because they genuinely differ: Antigravity reads
-    # ~/.gemini/config/skills while writing to its plugins directory, and
-    # ForgeCode reads ~/forge/skills with no write route at all.
+    # ~/.gemini/config/skills while writing to its plugins directory.
     native_skills: object = None
     skill_search_routes: tuple = ()
 
@@ -150,6 +149,11 @@ def test_forgecode_and_opencode_write_their_documented_native_roots(ctx):
     from autorun.installer.discovery import skill_destinations
     from autorun.platforms import PLATFORMS
 
+    # ForgeCode's skills follow its base: ~/.forge here, ~/forge once it exists.
+    assert skill_destinations(PLATFORMS["forgecode"], home=ctx.home) == (
+        ctx.home / ".forge" / "skills",
+    )
+    (ctx.home / "forge").mkdir()
     assert skill_destinations(PLATFORMS["forgecode"], home=ctx.home) == (
         ctx.home / "forge" / "skills",
     )

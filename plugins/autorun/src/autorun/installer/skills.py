@@ -532,8 +532,7 @@ def demo() -> None:
         loads_shared_agents_skills: bool
         config_dir: str = "~/.fake/"
         # Two separate fields because they genuinely differ. Antigravity reads
-        # ~/.gemini/config/skills while writing to its plugins directory, and
-        # ForgeCode reads ~/forge/skills with no write route at all. A fake that
+        # ~/.gemini/config/skills while writing to its plugins directory. A fake that
         # models only one of them cannot catch the bridge targeting the wrong
         # one, which is exactly the defect that shipped.
         native_skills: object = None

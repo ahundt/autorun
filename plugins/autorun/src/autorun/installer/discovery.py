@@ -586,8 +586,7 @@ def skill_destinations(
     ``reading`` selects the routes the harness *reads* rather than the one
     autorun *writes*. They genuinely differ, and confusing them misplaces files:
     Antigravity reads ``~/.gemini/config/skills`` but its native write route is
-    its plugins directory, and ForgeCode reads ``~/forge/skills`` with no write
-    route at all.
+    its plugins directory.
 
     ``home`` is the resolved install target. Callers that have a
     :class:`~autorun.installer.traversal.Context` pass it explicitly so every

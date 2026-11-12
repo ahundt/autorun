@@ -572,7 +572,10 @@ def test_forgecode_native_placement_writes_its_documented_root(sandbox):
     )
 
     assert result.ok is True
-    assert (sandbox / "forge" / "skills" / "commit" / "SKILL.md").is_file()
+    # No ~/forge in this home, so ForgeCode's base is ~/.forge, and creating
+    # ~/forge would move it.
+    assert (sandbox / ".forge" / "skills" / "commit" / "SKILL.md").is_file()
+    assert not (sandbox / "forge").exists()
     assert not (sandbox / ".agents" / "skills").exists()
 
 
@@ -618,7 +621,7 @@ def test_default_claude_forge_opencode_install_uses_owned_routes(sandbox):
     )
 
     assert result.ok is True
-    assert (sandbox / "forge" / "skills" / "commit" / "SKILL.md").is_file()
+    assert (sandbox / ".forge" / "skills" / "commit" / "SKILL.md").is_file()
     assert (
         sandbox / ".config" / "opencode" / "skills" / "commit" / "SKILL.md"
     ).is_file()
@@ -2469,9 +2472,7 @@ def test_forgecode_commands_follow_forgecodes_own_base_directory(sandbox, monkey
     codex_commands.mkdir(parents=True)
     (codex_commands / "mine.md").write_text("theirs in .codex\n", encoding="utf-8")
 
-    # Commands only: the skills step writes ~/forge/skills, which creates
-    # ~/forge and so moves ForgeCode's base before the commands are placed.
-    assert _forgecode_install(sandbox, {**steps.STEPS, "forgecode": (steps.commands_step,)}).ok is True
+    assert _forgecode_install(sandbox).ok is True
     shipped = sorted(p.name for p in dot_forge.glob("ar-*.md"))
     assert "ar-status.md" in shipped, "with only ~/.forge present, commands go there"
     assert not (sandbox / "forge").exists()
