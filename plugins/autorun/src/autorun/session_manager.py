@@ -3232,6 +3232,7 @@ class StateMigrator:
         store = SQLiteStore(self._db_path)
         store.initialize()
         legacy = self._reconstruct_legacy_view(store)
+        self._return_task_rows_to_blobs(store, legacy)
 
         staged = self._json_path.with_name(
             f"{self._json_path.name}.rollback-{os.getpid()}"
@@ -3408,6 +3409,24 @@ class StateMigrator:
             f"{session}/{field}": _decode_state_value(session, field, raw)
             for session, field, raw in rows
         }
+
+    @staticmethod
+    def _return_task_rows_to_blobs(store: "SQLiteStore", legacy: dict) -> None:
+        """Put each session's task rows back where the JSON store keeps them.
+
+        On SQLite a session's tasks live in the tasks table and its state
+        carries task_rows_migrated; the JSON store reads ``<session>/tasks``.
+        Events have no JSON form; they stay in the retired database file.
+        """
+        with store.operation_scope(DEFAULT_SESSION_TIMEOUT) as owner:
+            sessions = [row[0] for row in owner.connection.execute(
+                "SELECT DISTINCT session FROM tasks"
+            )]
+        repository = TaskRepository(store)
+        for session_id in sessions:
+            legacy[f"{session_id}/tasks"] = repository.list_tasks(session_id)
+        for key in [key for key in legacy if key.endswith("/task_rows_migrated")]:
+            del legacy[key]
 
     def _retire_source(self) -> Path | None:
         """Rename the original out of the way. It is never deleted."""
