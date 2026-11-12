@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import statistics
 import sys
 import time
@@ -478,3 +479,122 @@ def test_the_prompt_cache_check_stays_fast_on_a_100_mb_transcript(tmp_path, monk
     print(f"prompt cache check on 100 MB: {timing}")
     assert timing["p95_ms"] < PROMPT_CACHE_CHECK_P95_MS, timing
     sm._reset_for_testing()
+
+
+class TestRevision3Upgrade:
+    """The upgrade every existing SQLite store meets once, at its first start.
+
+    It runs inside ``initialize``'s write lock, so every other session waits
+    for it: its lock time must not grow with the size of the store. Sizes are
+    tasks shaped like the live store's (3 KB of payload each), kept small
+    enough not to fill a disk.
+    """
+
+    @staticmethod
+    def _old_store(path: Path, task_count: int) -> Path:
+        from test_task_status_not_in_schema import PRE_3472B3EE_SCHEMA
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path, isolation_level=None)
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.executescript(PRE_3472B3EE_SCHEMA)
+        conn.execute(f"PRAGMA application_id = {sm.SCHEMA_APPLICATION_ID}")
+        conn.execute("PRAGMA user_version = 2")
+        conn.execute("BEGIN")
+        conn.execute("INSERT INTO sessions VALUES ('__task_lifecycle__bench', 'task_lifecycle', 1.0)")
+        payload = json.dumps({"subject": "y" * 3000})
+        conn.executemany(
+            "INSERT INTO tasks (session, task_id, status, updated_at, payload_json) "
+            "VALUES ('__task_lifecycle__bench', ?, ?, 1.0, ?)",
+            ((str(index), "pending" if index % 100 == 0 else "completed", payload) for index in range(task_count)),
+        )
+        conn.execute("COMMIT")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+        return path
+
+    def test_revision_3_upgrade_cost(self, tmp_path):
+        rows = []
+        for task_count in (2_000, 20_000):
+            path = self._old_store(tmp_path / f"upgrade-{task_count}" / "state.sqlite3", task_count)
+            store = SQLiteStore(path)
+            conn = store._connect(30.0)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                start = time.perf_counter()
+                needs_rebuild = sm._migrate_tasks_revision_3(conn)
+                conn.execute("COMMIT")
+                lock_ms = (time.perf_counter() - start) * 1000.0
+                wal = Path(f"{path}-wal")
+                wal_bytes = wal.stat().st_size if wal.exists() else 0
+                check = conn.execute("PRAGMA integrity_check(tasks)").fetchall()
+            finally:
+                conn.close()
+            assert needs_rebuild is False, "this SQLite refused the in-place rewrite"
+            assert check == [("ok",)], check
+            rows.append((task_count, path.stat().st_size, lock_ms, wal_bytes))
+
+        print("\nRevision 3 upgrade: tasks, file bytes, write-lock ms, WAL bytes")
+        for row in rows:
+            print(f"{row[0]:>10} {row[1]:>12} {row[2]:>10.3f} {row[3]:>10}")
+        for task_count, _size, lock_ms, wal_bytes in rows:
+            assert lock_ms < 1000.0, f"{task_count} tasks held the write lock {lock_ms:.1f} ms"
+            assert wal_bytes < 1024 * 1024, f"{task_count} tasks wrote {wal_bytes} WAL bytes"
+        growth = rows[-1][2] / max(rows[0][2], 0.5)
+        assert growth < 3.0, (
+            f"With 10x the tasks the upgrade held the write lock {growth:.2f}x as long; "
+            "it is touching rows instead of only the table definition."
+        )
+
+    def test_stop_query_cost_on_1000_tasks_with_status_parameters(self, tmp_path):
+        """Per-Stop cost on a 1,000-task session: this build's query and both alternatives.
+
+        ``list_incomplete`` opens a connection per call, as every hook does, so
+        it always starts with SQLite's page cache empty. For the raw queries
+        "cold" is a new connection per run and "warm" reuses one; the OS file
+        cache stays warm in both, which no unprivileged test can clear.
+        """
+        path = self._old_store(tmp_path / "stop" / "state.sqlite3", 1_000)
+        store = SQLiteStore(path)
+        store.initialize()  # revision 3
+        repo = TaskRepository(store)
+        session_id = "__task_lifecycle__bench"
+        non_blocking = sorted(sm.task_status.NON_BLOCKING_TASK_STATUSES)
+        queries = {
+            "status NOT IN parameters only": (
+                "SELECT task_id, status, updated_at, payload_json FROM tasks WHERE session = ? "
+                f"AND status NOT IN ({','.join('?' * len(non_blocking))}) ORDER BY task_id",
+                (session_id, *non_blocking),
+            ),
+            "generated-column partial index only": (
+                "SELECT task_id, status, updated_at, payload_json FROM tasks "
+                "WHERE session = ? AND blocks_stop = 1 ORDER BY task_id",
+                (session_id,),
+            ),
+        }
+        assert len(repo.list_incomplete(session_id)) == 10
+
+        def cold(query):
+            def run():
+                conn = sqlite3.connect(path)
+                try:
+                    conn.execute(*query).fetchall()
+                finally:
+                    conn.close()
+            return run
+
+        results = {"list_incomplete": _time_repeatedly(lambda: repo.list_incomplete(session_id))["median_ms"]}
+        print("\nStop query on a 1,000-task session, median ms")
+        print(f"{'list_incomplete (new connection per call)':>45} {results['list_incomplete']:>10.3f}")
+        for name, query in queries.items():
+            conn = sqlite3.connect(path)
+            try:
+                warm = _time_repeatedly(lambda: conn.execute(*query).fetchall())["median_ms"]
+            finally:
+                conn.close()
+            results[name] = _time_repeatedly(cold(query))["median_ms"]
+            print(f"{name + ' warm':>45} {warm:>10.3f}")
+            print(f"{name + ' cold':>45} {results[name]:>10.3f}")
+        assert results["list_incomplete"] < results["status NOT IN parameters only"], (
+            "the Stop query scans every task of the session instead of using the partial index"
+        )

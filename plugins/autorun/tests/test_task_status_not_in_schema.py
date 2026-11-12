@@ -140,25 +140,40 @@ def test_pre_3472b3ee_database_stores_delegation_returned_once_opened(tmp_path):
 
 
 def test_status_added_to_policy_needs_no_schema_change(tmp_path, monkeypatch):
-    """A status the DDL has never seen is stored and read back once the policy names it."""
+    """A status the DDL has never seen is stored, read back and gated by the Python policy.
+
+    The generated ``blocks_stop`` and ``prunable`` columns still name the
+    statuses known when the table was written: older builds read them after a
+    rollback. Nothing in this build takes policy from them, so adding a
+    status changes ``task_status.py`` and no table definition.
+    """
     extended = dict(task_status.STATUS_POLICY)
     extended["needs-maintainer-review"] = TaskStatusPolicy(blocks_stop=True, prunable=False, autorun_owned=True)
+    extended["parked-for-later"] = TaskStatusPolicy(blocks_stop=False, prunable=False, autorun_owned=True)
     monkeypatch.setattr(task_status, "STATUS_POLICY", MappingProxyType(extended))
+    monkeypatch.setattr(
+        task_status, "NON_BLOCKING_TASK_STATUSES",
+        frozenset(status for status, policy in extended.items() if not policy.blocks_stop),
+    )
 
     for label, prepare in (("fresh", lambda path: None), ("pre-3472b3ee", _create_pre_3472b3ee_database)):
         db_path = tmp_path / label / "daemon_state.sqlite3"
         prepare(db_path)
         store = SQLiteStore(db_path)
         store.initialize()
+        ddl = _tasks_ddl(db_path)
         repository = TaskRepository(store)
         try:
             repository.put_task(SESSION, "481", {"id": "481", "subject": "New status", "status": "needs-maintainer-review"})
+            repository.put_task(SESSION, "482", {"id": "482", "subject": "Another", "status": "parked-for-later"})
         except sm.SessionBackendError as error:
             pytest.fail(f"{label} database: a status added only to STATUS_POLICY was refused by the DDL: {error}")
         assert repository.get_task(SESSION, "481")["status"] == "needs-maintainer-review"
-        ddl = _tasks_ddl(db_path)
-        copied = [status for status in extended if f"'{status}'" in ddl]
-        assert not copied, f"{label} database: the tasks DDL still copies status names {copied}: {ddl}"
+        assert "CHECK" not in ddl, f"{label} database: the tasks DDL still restricts statuses: {ddl}"
+        assert _tasks_ddl(db_path) == ddl, f"{label} database: storing a new status changed the table definition"
+        incomplete = {task["id"] for task in repository.list_incomplete(SESSION)}
+        assert "481" in incomplete, f"{label} database: a blocking status the DDL never saw does not block Stop"
+        assert "482" not in incomplete, f"{label} database: Stop followed the DDL, not task_status.py"
 
 
 def test_unknown_stored_status_blocks_stop(gate_env, monkeypatch):
