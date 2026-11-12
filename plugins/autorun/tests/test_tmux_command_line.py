@@ -274,6 +274,29 @@ _PANES = [
 ]
 
 
+def _fake_harness_argv(exe, screen, how, python, stub, executable_dir):
+    """Command that runs the interactive stub behind a real named executable."""
+    import shlex
+
+    command = [str(executable_dir / exe), str(python), str(stub), exe, screen]
+    if how == 'shell':
+        return ['bash', '-c', f'{shlex.join(command)}; echo exited']
+    return command
+
+
+def test_fake_harness_argv_uses_a_real_executable_name_under_a_path_with_spaces(tmp_path):
+    """Process discovery reads the executable name, so the fixture must not
+    rely on an interpreter preserving the synthetic argv[0] from `exec -a`."""
+    from pathlib import Path
+
+    executable_dir = tmp_path / 'fake harness binaries'
+    argv = _fake_harness_argv(
+        'claude', 'plain', 'own', Path('/python'), tmp_path / 'stub.py', executable_dir)
+
+    assert Path(argv[0]).name == 'claude'
+    assert executable_dir == Path(argv[0]).parent
+
+
 @pytest.fixture
 def private_tmux(request, tmp_path):
     """A tmux server only this test uses, and a way to launch stubs in it.
@@ -287,6 +310,7 @@ def private_tmux(request, tmp_path):
     """
     import os
     import shlex
+    import shutil
     import subprocess
     import sys
     import tempfile
@@ -307,6 +331,44 @@ def private_tmux(request, tmp_path):
     stub = tmp_path / 'stub.py'
     stub.write_text(_STUB)
 
+    # The launcher remains the pane process while its child runs the Python
+    # terminal stub. Its hard-link name is therefore what ps(1) reports,
+    # independent of whether the selected Python preserves `exec -a` argv[0].
+    executable_dir = tmp_path / 'fake harness binaries'
+    executable_dir.mkdir()
+    launcher_source = executable_dir / 'launcher.c'
+    launcher_source.write_text(r'''
+#include <errno.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+    if (argc < 3) return 64;
+    pid_t child = fork();
+    if (child < 0) return 71;
+    if (child == 0) {
+        execv(argv[1], &argv[1]);
+        _exit(127);
+    }
+    int status;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) return 71;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
+}
+''')
+    launcher = executable_dir / 'launcher'
+    compiler = shutil.which('cc')
+    assert compiler, 'tmux tests need a C compiler for named fake harness executables'
+    compiled = subprocess.run(
+        [compiler, str(launcher_source), '-o', str(launcher)],
+        capture_output=True, text=True, encoding='utf-8', timeout=30)
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    for exe in {row[0] for row in _PANES}:
+        os.link(launcher, executable_dir / exe)
+
     env = {k: v for k, v in os.environ.items() if k not in ('TMUX', 'ANTHROPIC_API_KEY')}
     env['AUTORUN_TMUX_BIN'] = str(wrapper)
     env['PATH'] = f"{wrapper.parent}{os.pathsep}{env.get('PATH', '')}"
@@ -320,11 +382,7 @@ def private_tmux(request, tmp_path):
             drawn = tmp_path / f'{screen}.txt'
             drawn.write_text(tmux_screens.NOT_READY[screen], encoding='utf-8')
             screen = f'screen={drawn}'
-        launch = (f'exec -a {exe} {shlex.quote(sys.executable)} {shlex.quote(str(stub))} '
-                  f'{exe} {shlex.quote(screen)}')
-        if how == 'shell':  # a subshell execs the stub, so bash stays as its parent
-            launch = f'({launch}); echo exited'
-        return ['bash', '-c', launch]
+        return _fake_harness_argv(exe, screen, how, sys.executable, stub, executable_dir)
 
     try:
         yield tmux, env, stub_argv
