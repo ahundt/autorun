@@ -749,8 +749,12 @@ class TmuxUtilities:
         return info
 
     def is_claude_session(self, session: str, window: str) -> bool:
-        """True when a pane of the window runs any registered AI harness
-        (see pane_harness); the name predates the other harnesses."""
+        """True when the window runs Claude Code (or its happy wrapper); a
+        Codex or Pi window is an AI session but not a Claude session."""
+        return _harness_fields(self.pane_harness(session, window))['is_claude_session']
+
+    def is_ai_session(self, session: str, window: str) -> bool:
+        """True when the window runs any registered AI harness (see pane_harness)."""
         return self.pane_harness(session, window) is not None
 
     def pane_harness(self, session: str, window: str) -> Optional[str]:
@@ -844,6 +848,16 @@ def _named_process(comm: str, argv, names) -> Optional[str]:
             return name
     interpreted = comm in SCRIPT_INTERPRETERS or (argv and argv[0] in SCRIPT_INTERPRETERS)
     return argv[1] if interpreted and len(argv) > 1 and argv[1] in names else None
+
+
+def _harness_fields(harness: Optional[str]) -> Dict[str, Any]:
+    """Window fields for the harness a pane runs: 'harness' (platform name or
+    None), 'is_ai_session' (any harness) and 'is_claude_session' (Claude Code
+    only; WindowList.claude_sessions and its Claude-specific filters use it)."""
+    from .platforms import CLAUDE
+
+    return {'harness': harness, 'is_ai_session': harness is not None,
+            'is_claude_session': harness == CLAUDE.name}
 
 
 def _process_harness(pid: str) -> Optional[str]:
@@ -1255,8 +1269,7 @@ def tmux_list_windows(
                     tmux, win_session, win_index, content_lines
                 )
                 # Which registered AI harness the pane runs (None: not an AI pane)
-                win['harness'] = tmux.pane_harness(win_session, win_index)
-                win['is_claude_session'] = win['harness'] is not None
+                win.update(_harness_fields(tmux.pane_harness(win_session, win_index)))
                 # Detect prompt type for filtering (e.g., windows.filter(prompt_type='input'))
                 win['prompt_type'] = pane_prompt_type(win['content'], win['harness'])
                 # Detect if Claude is actively working
@@ -2372,7 +2385,7 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
     """Discover all Claude sessions across tmux windows.
 
     Uses tmux_list_windows() for a single-query window scan, then filters to
-    windows running a Claude/AI process via is_claude_session(). Populates
+    windows running any registered AI harness via is_ai_session(). Populates
     the 'tmux_target' key (format: 'session:window') used by
     execute_session_selections() and send_to_session().
 
@@ -2383,7 +2396,7 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
     all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES)
     sessions = []
     for win in all_windows:
-        if tmux.is_claude_session(win['session'], str(win['w'])):
+        if tmux.is_ai_session(win['session'], str(win['w'])):
             content = win.get('content', '')
             sessions.append({
                 'session_name': win['session'],

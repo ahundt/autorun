@@ -179,12 +179,25 @@ class TestDiscoveryFindsEveryRegisteredHarness:
                           return_value={'returncode': 0, 'stdout': '111\n'}), \
                 patch('autorun.tmux_utils.subprocess.run',
                       side_effect=_fake_process_table({'111': ['333']}, {'333': procs})):
-            return tmux.pane_harness('test-session', '0'), tmux.is_claude_session('test-session', '0')
+            return (tmux.pane_harness('test-session', '0'), tmux.is_ai_session('test-session', '0'),
+                    tmux.is_claude_session('test-session', '0'))
 
     @pytest.mark.parametrize('name', sorted(PLATFORMS))
     def test_each_registered_binary_is_found_and_labelled(self, name):
         binary = PLATFORMS[name].binary
-        assert self._harness((f'/usr/local/bin/{binary}', f'{binary} --resume x')) == (name, True)
+        # A Codex pane is an AI session, never a Claude Code session.
+        assert self._harness((f'/usr/local/bin/{binary}', f'{binary} --resume x')) == (
+            name, True, name == 'claude')
+
+    @pytest.mark.parametrize('harness', [None, *sorted(PLATFORMS)])
+    def test_window_fields_keep_claude_apart_from_other_harnesses(self, harness):
+        from autorun.tmux_utils import _harness_fields
+
+        assert _harness_fields(harness) == {
+            'harness': harness,
+            'is_ai_session': harness is not None,
+            'is_claude_session': harness == 'claude',
+        }
 
     @pytest.mark.parametrize('comm,args,harness', [
         # Process shapes from the live tmux server on 2026-11-11 (paths are placeholders).
@@ -199,10 +212,10 @@ class TestDiscoveryFindsEveryRegisteredHarness:
         ('/usr/local/bin/happy-dev', 'happy-dev', 'claude'),
     ])
     def test_recorded_process_table(self, comm, args, harness):
-        assert self._harness((comm, args)) == (harness, True)
+        assert self._harness((comm, args)) == (harness, True, harness == 'claude')
 
     def test_a_shell_is_no_harness(self):
-        assert self._harness(('/bin/zsh', '-zsh')) == (None, False)
+        assert self._harness(('/bin/zsh', '-zsh')) == (None, False, False)
 
     def test_discovery_carries_the_harness(self):
         from unittest.mock import create_autospec
@@ -213,7 +226,8 @@ class TestDiscoveryFindsEveryRegisteredHarness:
             {'session': 'main', 'w': 1, 'content': '', 'title': 't', 'harness': 'pi'},
         ])
         tmux = Mock()
-        tmux.is_claude_session.return_value = True
+        tmux.is_ai_session.return_value = True
+        tmux.is_claude_session.return_value = False
         with patch.object(tmux_utils, 'tmux_list_windows', listing):
             assert discover_claude_sessions(tmux)[0]['harness'] == 'pi'
 
@@ -580,7 +594,7 @@ def test_discovery_calls_tmux_list_windows_with_its_real_signature():
         {"session": "main", "w": 1, "content": "> ", "title": "t", "cmd": "claude"},
     ])
     tmux = Mock()
-    tmux.is_claude_session.return_value = True
+    tmux.is_ai_session.return_value = True
     with patch.object(tmux_utils, "tmux_list_windows", listing):
         sessions = discover_claude_sessions(tmux)
 
@@ -627,7 +641,7 @@ class TestTabsUsesThePromptDetector:
              'prompt_type': 'input', 'is_active': False},
         ])
         tmux = Mock()
-        tmux.is_claude_session.return_value = True
+        tmux.is_ai_session.return_value = True
         with patch.object(tmux_utils, 'tmux_list_windows', listing):
             session = discover_claude_sessions(tmux)[0]
 
@@ -701,8 +715,9 @@ class TestSendIsVerifiedOnThePrivateServer:
         import subprocess
         import uuid
 
-        if not os.environ.get("AUTORUN_TEST_TMUX_SOCKET") or not shutil.which("tmux"):
-            pytest.skip("needs the suite's private tmux server")
+        # Never the user's own server: conftest.py sets this with its private socket.
+        assert os.environ.get("AUTORUN_TEST_TMUX_SOCKET") and shutil.which("tmux"), \
+            "tmux-marked tests need the suite's private tmux server"
         name = f"autorun-verify-{uuid.uuid4().hex[:8]}"
         subprocess.run(["tmux", "new-session", "-d", "-s", name, "-x", "80", "-y", "24", "/bin/sh"],
                        check=True, capture_output=True)
@@ -735,6 +750,18 @@ class TestSendIsVerifiedOnThePrivateServer:
 
         assert (result['success'], result['error']) == (False, 'typed, not submitted')
         assert sent == [': autorun-marker-1', 'C-m']
+
+    def test_text_echoed_above_an_empty_input_line_is_reported_as_sent(self, pane):
+        """The sent text stays on screen as the shell's echo and output, but the
+        cursor line is a fresh empty prompt, so the send is a success."""
+        tmux = TmuxUtilities(session_name=pane)
+        self._wait_for_prompt(tmux, pane)
+
+        result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, 'echo autorun-marker-3')
+        screen = tmux.execute_tmux_command(['capture-pane', '-p'], pane, '0')['stdout']
+
+        assert (result['success'], result['error']) == (True, None)
+        assert screen.count('autorun-marker-3') >= 2, screen
 
     def test_submitted_text_is_reported_as_sent(self, pane):
         tmux = TmuxUtilities(session_name=pane)
