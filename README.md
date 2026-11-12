@@ -212,23 +212,40 @@ autorun --status --gemini      # lists ar@1.0.0rc4
 
 ### Skills
 
-Skills are instructions an agent loads when your request matches one. An install
-adds these, among others:
+Skills are instructions an agent loads when your request matches one. They
+come in three plugins, and `autorun --install` installs all three.
+
+`ar`, autorun's own plugin, keeps the skills its commands use:
 
 | Skill | Use it to |
 |-------|---------|
-| `cache` | guard against prompt-cache misses and compaction |
+| `commit` | write a concrete, reviewable commit message |
+| `philosophy` | apply the 17 system design principles |
+| `plannew`, `planrefine`, `planupdate`, `planprocess` | write, critique, update and execute a plan |
+| `tmux` | list the AI coding sessions in your tmux windows and send text to the ones you choose |
+
+`autorun-skills` carries general-purpose skills that need nothing from
+autorun ([its README](plugins/autorun-skills/README.md)). Remove them with
+`autorun --uninstall autorun-skills` if you keep your own copies; install only
+`ar` with `autorun --install ar`. On Claude Code they are listed as
+`autorun-skills:<skill>`; on the other agents the name is unchanged.
+
+| Skill | Use it to |
+|-------|---------|
 | `ai-skill-builder` | create and review portable Agent Skills |
 | `cli-demo-recorder` | record reproducible CLI and TUI demos |
+| `function-signature-and-parameter-guidance` | name and document functions, flags, parameters and config keys |
 | `mermaid-diagrams` | render Mermaid diagrams |
-| `test-fixes-in-parallel` | test several fixes for one ambiguous failure side by side with parallel subagents |
-| `pdf-extractor` | extract text and data from PDFs, trying backends in turn |
+| `streamline-text` | shorten prose without losing facts |
 | `synthesize-project-requirements` | recover cumulative requirements, corrections, and gotchas into an evidence-backed handoff |
 | `task-lifecycle-workflow` | coordinate long, correction-heavy work from evidence through readiness and recovery |
-| `tmux` | list the AI coding sessions in your tmux windows and send text to the ones you choose |
+| `test-fixes-in-parallel` | test several fixes for one ambiguous failure side by side with parallel subagents |
 | `tmux-automation` | test terminal programs in isolated tmux sessions |
 | `write-decision-ready-technical-reports` | turn investigations and plans into an actionable technical decision brief |
 | `write-durable-goal-prompts` | write long-running goals that stay valid as project state changes |
+
+`pdf-extractor` adds `pdf-extractor`, which extracts text and data from PDFs,
+trying backends in turn.
 
 Use `plannew`, `planrefine`, `planupdate`, or `planprocess` for one explicit
 planning operation. `task-lifecycle-workflow` is the larger coordinator for

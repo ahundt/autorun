@@ -359,3 +359,39 @@ def test_status_lists_the_skills_plugin(cli):
     _home, run = cli
     run("--install")
     assert SKILLS_PLUGIN in run("--status")
+
+
+# --- the moved skills work from their own plugin -------------------------------
+
+
+def test_no_moved_skill_reaches_into_ar_or_invokes_a_moved_skill_through_it():
+    """A moved skill is installed beside `ar` or without it, on every harness.
+
+    `${CLAUDE_PLUGIN_ROOT}` is expanded by Claude Code only and names the plugin
+    the skill is in, which is no longer `ar`; a `plugins/autorun/...` path exists
+    only in this repository; and `ar:<skill>` names a skill `ar` no longer has.
+    Each of the three left a skill that works in a checkout of this repository
+    and nowhere it is installed.
+    """
+    import re
+
+    old_name = {new: old for old, new in CONFIG["skill_name_migrations"].items()}
+    names = _moved(REPO) | {old_name[n] for n in _moved(REPO) if n in old_name}
+    forbidden = re.compile(
+        r"CLAUDE_PLUGIN_ROOT|plugins/autorun/(?:skills|src|commands)/"
+        r"|(?<![\w-])/?ar:(?:" + "|".join(map(re.escape, sorted(names))) + r")(?![\w-])"
+    )
+    found = []
+    for path in sorted((REPO / "plugins" / SKILLS_PLUGIN / "skills").rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue  # images and other binary assets
+        found.extend(
+            f"{path.relative_to(REPO)}:{number}: {match.group(0)}"
+            for number, line in enumerate(text.splitlines(), 1)
+            for match in forbidden.finditer(line)
+        )
+    assert not found, "\n".join(found)

@@ -20,6 +20,9 @@ Make a document shorter and clearer while provably losing no required fact. Corr
 | PR titles, descriptions, and replies to a maintainer's review | `write-maintainer-ready-prs` |
 | Reddit, Show HN, release notes, platform norms | `public-facing-writing` |
 
+Only this skill ships in `autorun-skills`; the other three are separate skills. Use them when
+they are installed, and otherwise apply their checks by hand.
+
 Shortening and de-slopping are separate jobs. A draft can be tight and still read as generated,
 and a draft with every flagged word removed can still carry three paragraphs of nothing.
 

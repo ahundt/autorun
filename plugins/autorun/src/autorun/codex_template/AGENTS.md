@@ -25,8 +25,8 @@ them. In Codex, prefer `ar:*` or `ar <command>` forms.
 ## Autorun skills
 
 Codex exposes skills through `/skills`, `$skill-name` mentions, and installed
-plugin selection such as `@autorun`. Autorun installs skills like
-`$mermaid-diagrams` and `$tmux-automation`, but Codex
+plugin selection such as `@autorun`. Autorun's `autorun-skills` plugin installs
+skills like `$mermaid-diagrams` and `$tmux-automation`, but Codex
 does not expose them as slash commands like `/mermaid`.
 
 The `$ar` skill carries the full `ar:<command>` control grammar (policy,
