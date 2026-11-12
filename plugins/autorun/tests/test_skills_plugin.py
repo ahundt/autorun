@@ -427,3 +427,49 @@ def test_each_home_of_the_homes_fixture_has_its_own_daemon_paths(homes):
         homes(label)
         _assert_daemon_paths_follow(Path(os.environ["AUTORUN_HOME"]))
 
+
+@pytest.mark.parametrize("harness", sorted(PLATFORMS))
+@pytest.mark.parametrize("selection", ["ar", SKILLS_PLUGIN])
+@pytest.mark.parametrize("operation", ["install", "uninstall"])
+@pytest.mark.parametrize("edited", [False, True])
+def test_selected_plugin_handles_old_ar_owned_skills(
+    checkouts, homes, harness, selection, operation, edited
+):
+    current, earlier = checkouts
+    home = homes("selected-upgrade")
+    assert _install(earlier, home, harness, "both").ok
+    moved = _moved(current)
+    old_names = moved | {old for old, new in CONFIG["skill_name_migrations"].items() if new in moved}
+    old_trees = _trees(home).get("ar", {})
+    old_skills = {path for path in old_trees if path.name in old_names}
+    edited_files = []
+    if edited:
+        for path in old_skills:
+            if path.name == "streamline-text":
+                skill = path / "SKILL.md"
+                skill.write_text(skill.read_text() + "\nMy own rule.\n")
+                edited_files.append((skill, skill.read_text()))
+
+    result = getattr(orchestrate, operation)(
+        marketplace_root=current, plugins=(selection,), home=home,
+        harnesses=(PLATFORMS[harness],), available=(), state_dir=home / ".state",
+    )
+    assert result.ok, result.lines()
+    for skill, text in edited_files:
+        assert skill.read_text() == text
+        assert any(d.verdict.value == "keep" and "edited" in d.reason
+                   and skill.resolve().is_relative_to(d.target.resolve()) for d in result.decisions)
+    kept = {skill.parent for skill, _ in edited_files}
+    remaining = _trees(home)
+    assert not {path for path in remaining.get("ar", {}) if path.name in old_names} - kept
+    if selection == SKILLS_PLUGIN and operation == "install":
+        reached = _reachable(harness, current)
+        assert moved <= set(_counts(reached)) or not reached
+    else:
+        assert SKILLS_PLUGIN not in remaining
+        assert not {path for path in old_skills if path.exists()} - kept
+    if selection == SKILLS_PLUGIN:
+        for path, marker in old_trees.items():
+            if path.name in AR_SKILLS:
+                assert (path / OWNED_MARKER_NAME).read_text() == marker
+

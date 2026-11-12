@@ -159,8 +159,8 @@ def perform(mode: Mode, *, marketplace_root: Path, **options) -> Result:
     A skill that moved between this marketplace's plugins keeps the old
     owner's marker on every copy an earlier release wrote. ``fs.handed_over``
     makes every ownership read in the run see the plugin that ships the skill
-    today (``skills.heirs``), so the plan, the walk, the sweep and an uninstall
-    agree on who may replace or remove each copy.
+    today (``skills.heirs``), when that heir is selected. Otherwise the old
+    owner must still sweep its retired copies, keeping and reporting edits.
     """
     listed = sorted(_listed_plugins(marketplace_root))
     every = {
@@ -168,7 +168,9 @@ def perform(mode: Mode, *, marketplace_root: Path, **options) -> Result:
         for name in listed
         if (directory := discovery.plugin_dir(marketplace_root, name)) is not None
     }
-    with handed_over(skills.heirs(every)):
+    selected = options.get("plugins", ("ar",))
+    heirs = {key: heir for key, heir in skills.heirs(every).items() if heir in selected}
+    with handed_over(heirs):
         return _perform(mode, marketplace_root=marketplace_root, **options)
 
 

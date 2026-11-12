@@ -303,8 +303,9 @@ def heirs(plugins: Mapping[str, Path]) -> dict[tuple[str, str], str]:
     """Which plugin now owns a skill tree another plugin of the marketplace wrote.
 
     ``plugins`` is every plugin the marketplace lists, not only the selected
-    ones: ``--install ar`` must know that ar's old copy of ``streamline-text``
-    now belongs to ``autorun-skills`` so that ar's sweep leaves it alone.
+    ones, to identify previous owners too. ``perform`` applies only handovers
+    to selected heirs, so an old owner can sweep copies an unselected heir
+    would otherwise hide.
 
     A name goes to the one plugin that ships it, or ships its replacement under
     ``skill_name_migrations``, and is taken from every other plugin that no
