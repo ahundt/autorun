@@ -271,7 +271,6 @@ class TmuxControlState(Enum):
     """States for tmux control sequence parsing"""
     NORMAL = "normal"
     ESCAPE = "escape"
-    LITERAL = "literal"
 
 
 class TmuxUtilities:
