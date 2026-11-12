@@ -140,7 +140,6 @@ autorun provides convenient commands for tmux session automation:
 ### Related Documentation
 - `skills/tabs/SKILL.md` + `commands/tabs-exec` - Session discovery (`/ar:tabs`)
 - `commands/tmux.md` - Session management command (`/ar:tmux`)
-- `agents/tmux-session-automation.md` - Advanced automation patterns
 
 ### Quick Reference: Commands vs Manual tmux
 

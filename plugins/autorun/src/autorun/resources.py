@@ -1,6 +1,6 @@
 """Resource access for installed vs source autorun.
 
-Provides path accessors for plugin resources (commands, skills, agents, hooks)
+Provides path accessors for plugin resources (commands, skills, hooks)
 that work for both source repository development and installed package locations.
 
 The plugin root is the directory containing .claude-plugin/, commands/, etc.
@@ -51,11 +51,6 @@ def get_commands_dir() -> Path:
 def get_skills_dir() -> Path:
     """Get skills directory."""
     return get_plugin_root() / "skills"
-
-
-def get_agents_dir() -> Path:
-    """Get agents directory."""
-    return get_plugin_root() / "agents"
 
 
 def get_hooks_dir() -> Path:

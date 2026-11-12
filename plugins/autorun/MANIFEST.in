@@ -9,9 +9,8 @@ include plugin.json
 recursive-include .claude-plugin *
 recursive-include .codex-plugin *
 
-# Plugin resources (commands, agents, skills - markdown and python)
+# Plugin resources (commands, skills - markdown and python)
 recursive-include commands *
-recursive-include agents *
 recursive-include skills *
 recursive-include hooks *.json *.py
 

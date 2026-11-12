@@ -516,8 +516,8 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 |---|---|
 | `/ar:gc`, `/ar:commit` | the 17-step commit process: `<files>:` or `type(scope):` subjects, concrete wording, a secrets check |
 | `/ar:ph`, `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
-| `/ar:tm`, `/ar:tmux` | create, list and clean up isolated tmux sessions (Claude Code subagent: `ar:tmux-session-automation`) |
-| `/ar:tt`, `/ar:ttest` | test a CLI or plugin in an isolated tmux session (Claude Code subagent: `ar:cli-test-automation`) |
+| `/ar:tm`, `/ar:tmux` | create, list and clean up isolated tmux sessions |
+| `/ar:tt`, `/ar:ttest` | test a CLI or plugin in an isolated tmux session |
 | `/ar:tabs` | list the agent sessions running in your tmux windows, lettered A, B, C, with directory, purpose and status |
 | `/ar:tabw` | type into those sessions after stating what it will send, e.g. `/ar:tabw awaiting:continue` or `/ar:tabw A:git status, B:pwd` |
 | `/ar:cache` | off by default; blocks tool use while Claude Code's prompt cache is cold or the context is near compaction, so a resumed session does not pay to rebuild it: `on\|off [5m\|1h\|perm]` (a timed one reverts when it ends), `set ratio\|read\|age\|full <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`, `2d`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>` |

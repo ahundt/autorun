@@ -105,5 +105,4 @@ else:
 
 Commands always target isolated sessions and **never** affect your current Claude Code session.
 
-**Advanced automation**: See agent `ar:tmux-session-automation` for health monitoring and lifecycle management.
 **Full tmux/byobu syntax reference**: See skill `ar:tmux-automation`.

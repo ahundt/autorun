@@ -2,8 +2,7 @@
 """
 Unit tests for tmux automation agents and commands.
 
-Tests the tmux-session-automation and cli-test-automation agents
-along with the ttest and tmux commands.
+Tests the tmux utilities behind the ttest and tmux commands.
 """
 
 import pytest
@@ -355,26 +354,6 @@ class TestCommandWorkflowIntegration:
         for name in ('tmux-test-workflow.md', 'tmux-session-management.md'):
             assert not os.path.exists(os.path.join(commands_dir, name)), name
 
-    def test_agent_files_structure(self):
-        """Test agent files structure"""
-        agent_files = [
-            'agents/tmux-session-automation.md',
-            'agents/cli-test-automation.md'
-        ]
-
-        for agent_file in agent_files:
-            file_path = os.path.join(os.path.dirname(__file__), '..', agent_file)
-            assert os.path.exists(file_path), f"Agent file {agent_file} should exist"
-
-            with open(file_path, 'r', encoding="utf-8") as f:
-                content = f.read()
-
-            # Check for required agent structure
-            assert 'name:' in content
-            assert 'description:' in content
-            assert 'model:' in content
-            assert '## ' in content  # Should have markdown sections
-
     def test_plugin_integration(self):
         """Test plugin integration compatibility"""
         # Test plugin manifest
@@ -393,10 +372,6 @@ class TestCommandWorkflowIntegration:
         # Test command directory exists
         commands_dir = os.path.join(os.path.dirname(__file__), '..', 'commands')
         assert os.path.exists(commands_dir)
-
-        # Test agents directory exists
-        agents_dir = os.path.join(os.path.dirname(__file__), '..', 'agents')
-        assert os.path.exists(agents_dir)
 
 
 class TestEdgeCasesAndBoundaryConditions:

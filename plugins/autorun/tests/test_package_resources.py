@@ -3,7 +3,7 @@
 Test Coverage:
 - get_plugin_root() returns valid directory with .claude-plugin/
 - get_commands_dir() returns directory with known command files
-- get_skills_dir(), get_agents_dir(), get_hooks_dir() return valid directories
+- get_skills_dir(), get_hooks_dir() return valid directories
 - Resource access works from both source and installed package locations
 
 TDD Methodology:
@@ -480,24 +480,6 @@ class TestGetSkillsDir:
         assert skills_dir.exists(), f"Skills directory not found: {skills_dir}"
 
 
-class TestGetAgentsDir:
-    """Test get_agents_dir() returns agents directory."""
-
-    def test_get_agents_dir_returns_path(self):
-        """Test: get_agents_dir() returns a Path object."""
-        from autorun.resources import get_agents_dir
-
-        agents_dir = get_agents_dir()
-        assert isinstance(agents_dir, Path)
-
-    def test_get_agents_dir_exists(self):
-        """Test: get_agents_dir() returns existing directory."""
-        from autorun.resources import get_agents_dir
-
-        agents_dir = get_agents_dir()
-        assert agents_dir.exists(), f"Agents directory not found: {agents_dir}"
-
-
 class TestGetHooksDir:
     """Test get_hooks_dir() returns hooks directory."""
 
@@ -534,7 +516,6 @@ class TestAllResourcesAccessible:
             get_plugin_root,
             get_commands_dir,
             get_skills_dir,
-            get_agents_dir,
             get_hooks_dir,
         )
 
@@ -542,5 +523,4 @@ class TestAllResourcesAccessible:
         # All resource dirs should be subdirectories of the plugin root
         assert get_commands_dir().parent == root
         assert get_skills_dir().parent == root
-        assert get_agents_dir().parent == root
         assert get_hooks_dir().parent == root

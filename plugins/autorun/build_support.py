@@ -15,7 +15,6 @@ from typing import Mapping
 PLUGIN_ASSET_TREES = (
     (Path(".claude-plugin"), Path(".claude-plugin")),
     (Path(".codex-plugin"), Path(".codex-plugin")),
-    (Path("agents"), Path("agents")),
     (Path("commands"), Path("commands")),
     (Path("hooks"), Path("hooks")),
     (Path("scripts"), Path("scripts")),

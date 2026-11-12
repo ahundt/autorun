@@ -116,5 +116,4 @@ finally:
 - No file changes are made unless the command itself writes files.
 - Note: long-running commands are not automatically killed — avoid `sleep` or hanging processes.
 
-**Advanced patterns**: See agent `ar:cli-test-automation`.
 **Full tmux/byobu syntax**: See skill `ar:tmux-automation`.
