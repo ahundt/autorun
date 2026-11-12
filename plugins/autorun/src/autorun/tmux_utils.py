@@ -687,24 +687,25 @@ class TmuxUtilities:
         Returns:
             True if successful, False otherwise
         """
-        # One argument serves both kinds of send. `tmux send-keys <arg>` parses
-        # the argument as a key name and falls back to sending its characters
-        # when it is not one, so `C-m` arrives as Enter and `export FOO=1`
-        # arrives as text without this having to tell them apart.
-        #
-        # A branch here used to claim it separated control sequences from text,
-        # with both arms building this same list. Sending text as text needs
-        # `send-keys -l`, which never appeared in this file; and applying it to
-        # the "not a control sequence" arm would have broken the `Enter`,
-        # `Escape`, `Tab`, `BTab`, `C-a C-k` and `Escape 0 d` call sites, none
-        # of which that arm's five-name list recognised.
-        #
-        # Known limit of the fallback: text that is exactly a tmux key name is
-        # sent as that key. A prompt of exactly `Up` recalls shell history
-        # instead of typing "Up". Fixing that means classifying at each call
-        # site, not here, because only the caller knows which it meant.
+        # The key path. `tmux send-keys <arg>` parses the argument as a key
+        # name and falls back to sending its characters when it is not one,
+        # so `C-m` arrives as Enter and `C-a C-k` or `Escape 0 d` as keys.
+        # Text from a user goes through send_literal instead: here `Up` would
+        # recall history, `C-c` interrupt, and a leading `-` read as a flag.
+        # Only the caller knows which it meant, so the caller picks the method.
         result = self.execute_tmux_command(['send-keys', keys], session, window, pane)
         return result and result['returncode'] == 0
+
+    def send_literal(self, text: str, session: Optional[str] = None, window: Optional[str] = None,
+                     pane: Optional[str] = None) -> bool:
+        """Type text as its characters (`send-keys -l -- <text>`), never as key
+        names or flags; send_keys is the path for keys. True if tmux accepted it."""
+        # tmux reads an argument ending in ';' as a command separator, even
+        # after -l --, and drops the ';'. '\;' is its escape for a literal ';'.
+        if text.endswith(';'):
+            text = text[:-1] + '\\;'
+        result = self.execute_tmux_command(['send-keys', '-l', '--', text], session, window, pane)
+        return bool(result) and result['returncode'] == 0
 
     def get_session_info(self, session_name: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -1686,8 +1687,8 @@ def send_text_and_enter(
         >>> send_text_and_enter(tmux, "continue", window='48')  # Continue prompt
     """
     import time
-    # Send text first
-    text_ok = tmux.send_keys(text, session, window, pane)
+    # Send text first, as characters: text is never read as key names
+    text_ok = tmux.send_literal(text, session, window, pane)
     if not text_ok:
         return False
     # Brief delay for terminal to process text

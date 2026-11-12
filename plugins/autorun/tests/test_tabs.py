@@ -528,9 +528,16 @@ class TestSelectionsSendOnlyWhatWasMeant:
 
     def _tmux(self, *send_results):
         tmux = MagicMock()
+        tmux.send_literal.return_value = True
         tmux.send_keys.side_effect = list(send_results) if send_results else None
         tmux.send_keys.return_value = True
         return tmux
+
+    @staticmethod
+    def _typed(tmux):
+        """Each send in order: ('text', ...) typed literally, ('key', ...) a key press."""
+        kinds = {'send_literal': 'text', 'send_keys': 'key'}
+        return [(kinds[name], args[0]) for name, args, _ in tmux.method_calls if name in kinds]
 
     @pytest.mark.parametrize('selection,count', [('awaiting', 3), ('all', 12), ('AA', 3), ('AD', 3)])
     def test_a_letter_group_that_is_not_distinct_sessions_sends_nothing(self, selection, count):
@@ -539,6 +546,7 @@ class TestSelectionsSendOnlyWhatWasMeant:
             results = execute_session_selections(selection, self._sessions(count), tmux)
 
         tmux.send_keys.assert_not_called()
+        tmux.send_literal.assert_not_called()
         assert results and not any(r['success'] for r in results), results
 
     @pytest.mark.parametrize('selection,command', [
@@ -553,6 +561,7 @@ class TestSelectionsSendOnlyWhatWasMeant:
             results = execute_session_selections(selection, sessions, tmux, command=command)
 
         tmux.send_keys.assert_not_called()
+        tmux.send_literal.assert_not_called()
         assert results and not any(r['success'] for r in results), results
         for syntax in ('A:<command>', 'all:<command>', 'awaiting:<command>'):
             assert all(syntax in r['error'] for r in results), results
@@ -564,6 +573,7 @@ class TestSelectionsSendOnlyWhatWasMeant:
                 'A', self._sessions(1, ('let it work', 'status')), tmux)
 
         tmux.send_keys.assert_not_called()
+        tmux.send_literal.assert_not_called()
         assert results[0]['success'] is False and 'let it work' in results[0]['error']
 
     def test_interrupt_sends_escape_not_the_word(self):
@@ -580,11 +590,11 @@ class TestSelectionsSendOnlyWhatWasMeant:
         with patch('time.sleep') as sleep:
             execute_session_selections('A', self._sessions(1), tmux)
 
-        assert [c.args[0] for c in tmux.send_keys.call_args_list] == ['continue', 'C-m']
+        assert self._typed(tmux) == [('text', 'continue'), ('key', 'C-m')]
         sleep.assert_called()
 
     def test_send_to_session_reports_a_failed_enter(self):
-        tmux = self._tmux(True, False)
+        tmux = self._tmux(False)
         with patch('time.sleep'):
             result = send_to_session(tmux, {'tmux_target': 's:0'}, 'continue')
 
@@ -617,6 +627,7 @@ class TestSelectionsSendOnlyWhatWasMeant:
 
         out = capsys.readouterr().out
         tmux.send_keys.assert_not_called()
+        tmux.send_literal.assert_not_called()
         assert 'empty command' in out and 'all:<command>' in out and '0/1' in out, out
 
 
@@ -801,14 +812,18 @@ class TestSendIsVerifiedOnThePrivateServer:
     def test_text_left_on_the_input_line_is_reported_and_not_resent(self, pane):
         tmux = TmuxUtilities(session_name=pane)
         self._wait_for_prompt(tmux, pane)
-        real_send = tmux.send_keys
+        real_type = tmux.send_literal
         sent = []
 
         def lose_enter(keys, *args, **kwargs):
             sent.append(keys)
-            return True if keys == 'C-m' else real_send(keys, *args, **kwargs)
+            return True
 
-        tmux.send_keys = lose_enter
+        def type_text(text, *args, **kwargs):
+            sent.append(text)
+            return real_type(text, *args, **kwargs)
+
+        tmux.send_keys, tmux.send_literal = lose_enter, type_text
         result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, ': autorun-marker-1')
 
         assert (result['success'], result['error']) == (False, 'typed, not submitted')
@@ -833,3 +848,21 @@ class TestSendIsVerifiedOnThePrivateServer:
         result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, ': autorun-marker-2')
 
         assert (result['success'], result['error']) == (True, None)
+
+    @pytest.mark.parametrize('text', ['C-c', '-R', 'Up', 'Escape', 'a;b', 'ends;', 'back\\;'])
+    def test_text_that_reads_as_a_key_name_or_flag_arrives_as_those_characters(self, pane, text):
+        """`tmux send-keys <text>` read `C-c` as Ctrl-C (killing the program),
+        `Up` as the arrow key, `-R` as its reset-terminal flag, and a trailing
+        `;` as a tmux command separator. A pane running `cat` echoes each line
+        back, so the text must appear verbatim, typed and then printed."""
+        import subprocess
+
+        subprocess.run(["tmux", "respawn-pane", "-k", "-t", f"{pane}:0", "cat"],
+                       check=True, capture_output=True)
+        tmux = TmuxUtilities(session_name=pane)
+
+        result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, text)
+        screen = tmux.execute_tmux_command(['capture-pane', '-p'], pane, '0')['stdout']
+
+        assert (result['success'], result['error']) == (True, None), (result, screen)
+        assert screen.split('\n')[:2] == [text, text], screen

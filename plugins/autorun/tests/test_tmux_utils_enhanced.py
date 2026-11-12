@@ -496,6 +496,36 @@ class TestSendKeysArgv:
         )
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("text,sent", [
+        ("C-c", "C-c"), ("-R", "-R"), ("Up", "Up"), ("a;b", "a;b"),
+        # tmux reads an argument ending in ';' as a command separator even
+        # after -l --; '\;' is its escape for a literal ';'.
+        ("ends;", "ends\\;"), ("back\\;", "back\\\\;"),
+    ])
+    def test_send_literal_types_text_as_characters_never_as_keys_or_flags(self, text, sent):
+        tmux = TmuxUtilities("some-session")
+        with patch.object(
+            tmux, "execute_tmux_command", return_value={"returncode": 0, "stdout": ""}
+        ) as executed:
+            assert tmux.send_literal(text, "some-session") is True
+
+        executed.assert_called_once_with(
+            ["send-keys", "-l", "--", sent], "some-session", None, None
+        )
+
+    @pytest.mark.unit
+    def test_send_text_and_enter_types_the_text_literally_and_enter_as_a_key(self):
+        tmux = Mock()
+        tmux.send_literal.return_value = True
+        tmux.send_keys.return_value = True
+        with patch("time.sleep"), \
+                patch.object(tmux_module, "_text_on_cursor_line", return_value=False):
+            tmux_module.send_text_and_enter(tmux, "C-c", "s", "1", "0")
+
+        assert [c.args for c in tmux.send_literal.call_args_list] == [("C-c", "s", "1", "0")]
+        assert [c.args for c in tmux.send_keys.call_args_list] == [("C-m", "s", "1", "0")]
+
+    @pytest.mark.unit
     def test_a_failed_send_is_reported_as_false(self):
         """A non-zero tmux exit and an unreachable server are both failures;
         `execute_tmux_command` returns None for the second."""
@@ -867,12 +897,15 @@ class TestSafeToSendAgreesWithThePromptDetector:
     def test_tabw_continue_reaches_a_window_at_the_chevron_prompt(self):
         tmux = Mock()
         tmux.execute_tmux_command.return_value = {"returncode": 0, "stdout": CLAUDE_IDLE_SCREEN}
+        tmux.send_literal.return_value = True
         tmux.send_keys.return_value = True
         with patch("time.sleep"):
             result = tmux_dangerous_batch_execute(tmux, ACTION_CONTINUE, "main:5")
 
         assert result["success_count"] == 1, result
-        assert [c.args[0] for c in tmux.send_keys.call_args_list] == ["continue", "C-m"]
+        assert [(name, args[0]) for name, args, _ in tmux.method_calls
+                if name in ("send_literal", "send_keys")] == [
+            ("send_literal", "continue"), ("send_keys", "C-m")]
 
 
 class TestOnlyACursorOnAnOptionIsAChoicePrompt:

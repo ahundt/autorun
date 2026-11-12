@@ -48,6 +48,7 @@ def discovered():
 def tmux():
     """The tmux every send reaches; send_keys succeeds and nothing is left on the input line."""
     fake = MagicMock()
+    fake.send_literal.return_value = True
     fake.send_keys.return_value = True
     with patch('autorun.tmux_utils.get_tmux_utilities', return_value=fake), \
             patch('autorun.tmux_utils._text_on_cursor_line', return_value=False), \
@@ -76,6 +77,7 @@ def test_list_types_nothing(discovered, tmux):
     main(['tmux', 'list'])
 
     tmux.send_keys.assert_not_called()
+    tmux.send_literal.assert_not_called()
 
 
 def test_send_reaches_the_one_sender_with_that_selection(discovered, capsys):
@@ -90,13 +92,15 @@ def test_send_reaches_the_one_sender_with_that_selection(discovered, capsys):
 
 def test_send_types_into_the_named_pane_only_after_naming_it(discovered, tmux, capsys):
     printed_before_typing = []
-    tmux.send_keys.side_effect = lambda keys, *a, **k: (
+    tmux.send_literal.side_effect = tmux.send_keys.side_effect = lambda keys, *a, **k: (
         printed_before_typing.append(capsys.readouterr().out) or True)
 
     assert main(['tmux', 'send', '--to', 'B', '--', 'hello', 'there']) == 0
 
-    typed = [c.args[:4] for c in tmux.send_keys.call_args_list]
-    assert typed == [('hello there', 'work', '2', '1'), ('C-m', 'work', '2', '1')]
+    typed = [(name, args[:4]) for name, args, _ in tmux.method_calls
+             if name in ('send_literal', 'send_keys')]
+    assert typed == [('send_literal', ('hello there', 'work', '2', '1')),
+                     ('send_keys', ('C-m', 'work', '2', '1'))]
     before = printed_before_typing[0]
     assert 'session work' in before and 'window 2' in before and 'pane 1' in before
     assert '~/src/two' in before and 'codex' in before
@@ -113,6 +117,7 @@ def test_send_without_a_target_or_text_types_nothing_and_fails(argv, discovered,
     assert main(argv) != 0
 
     tmux.send_keys.assert_not_called()
+    tmux.send_literal.assert_not_called()
     out = capsys.readouterr().out
     if '--to' not in argv:
         assert 'all' in out and 'awaiting-input' in out and 'A' in out, out
@@ -141,6 +146,7 @@ def test_an_invalid_selection_types_nothing_and_exits_nonzero(discovered, tmux):
     assert main(['tmux', 'send', '--to', 'Z', '--', 'x']) == 1
 
     tmux.send_keys.assert_not_called()
+    tmux.send_literal.assert_not_called()
 
 
 def test_status_module_main_takes_argv(discovered, capsys, monkeypatch):
