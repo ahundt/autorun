@@ -2184,12 +2184,16 @@ def test_repeat_installs_say_current_and_changes_carry_a_verb(tmp_path):
 
 
 def test_a_kept_user_skill_is_reported_with_its_path_and_the_way_out(sandbox):
-    """"preserved conflicting user paths for ar:cache" named no path and no fix."""
+    """"preserved conflicting user paths for ar:cache" named no path and no fix.
+
+    The skill that report named was folded into commands/cache.md; any
+    shipped skill shows the same conflict, so this uses `commit`.
+    """
     from autorun.installer import orchestrate
 
-    mine = sandbox / ".agents" / "skills" / "cache"
+    mine = sandbox / ".agents" / "skills" / "commit"
     mine.mkdir(parents=True)
-    (mine / "SKILL.md").write_text("---\nname: cache\ndescription: mine\n---\nmine\n")
+    (mine / "SKILL.md").write_text("---\nname: commit\ndescription: mine\n---\nmine\n")
     (sandbox / ".codex").mkdir(exist_ok=True)
     result = orchestrate.preview(
         marketplace_root=REPO,
@@ -2201,7 +2205,7 @@ def test_a_kept_user_skill_is_reported_with_its_path_and_the_way_out(sandbox):
         run_command=lambda argv: None,
     )
     warning = next(f for f in result.findings if f.check == "skill placement")
-    assert str(mine) in warning.detail and "ar:cache" in warning.detail
+    assert str(mine) in warning.detail and "ar:commit" in warning.detail
     assert "rerun `autorun --install`" in warning.fix
     assert (mine / "SKILL.md").read_text().endswith("mine\n"), "the user's copy stays"
 
