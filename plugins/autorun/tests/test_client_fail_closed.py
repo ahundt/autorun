@@ -554,6 +554,50 @@ def test_get_stable_pid_skips_wrappers_whose_arguments_mention_a_harness(monkeyp
 
 
 @pytest.mark.parametrize(
+    ("claude_name", "claude_argv", "expected"),
+    [
+        # npm Claude Code under Happy: `node .../cli.js` names no harness, so
+        # the scan stops at the happy wrapper, which lives as long as the
+        # session; without `happy` in the table it fell back to os.getppid(),
+        # the shell that exits with the hook.
+        ("node", ["node", "/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js"], 41000),
+        # A native claude under Happy is nearer and wins, as it always did.
+        ("claude", ["claude", "--resume"], 42000),
+    ],
+)
+def test_get_stable_pid_under_happy_stops_at_the_nearest_session_process(
+    monkeypatch, claude_name, claude_argv, expected
+):
+    from unittest import mock
+
+    class FakeProcess:
+        def __init__(self, pid, name, argv, parent=None):
+            self.pid = pid
+            self._name = name
+            self._argv = argv
+            self._parent = parent
+
+        def name(self):
+            return self._name
+
+        def cmdline(self):
+            return self._argv
+
+        def parent(self):
+            return self._parent
+
+    terminal = FakeProcess(40000, "zsh", ["-zsh"])
+    happy = FakeProcess(41000, "happy", ["happy"], terminal)
+    claude = FakeProcess(42000, claude_name, claude_argv, happy)
+    shell = FakeProcess(42001, "sh", ["/bin/sh", "-c", "uv run python hook_entry.py"], claude)
+    python = FakeProcess(42003, "python3.12", ["python3", "hook_entry.py"], shell)
+
+    monkeypatch.setattr("os.getppid", lambda: 42001)
+    with mock.patch("psutil.Process", return_value=python):
+        assert get_stable_pid() == expected
+
+
+@pytest.mark.parametrize(
     ("event", "cli", "decision", "root_fields"),
     [
         (
