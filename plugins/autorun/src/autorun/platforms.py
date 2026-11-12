@@ -1290,9 +1290,14 @@ _CLAUDE_TOOLS = {
     "task_progress": "TaskUpdate",
     "task_title": "subject",
     "task_id_param": "taskId",
+    # The tool the model launches an autorun command document with, read by
+    # plugins.deny_model_launch_of_user_only_command. Only Claude Code runs
+    # command documents as skills; "" elsewhere means no such tool.
+    "skill": "Skill",
 }
 
 _GEMINI_TOOLS = {
+    "skill": "",
     "grep": "grep_search",
     "glob": "glob",
     "read": "read_file",
@@ -1332,6 +1337,7 @@ _ANTIGRAVITY_TOOLS = {
 # are its todo-list tools; they matter only once the shim sends PostToolUse,
 # so verify them live when that lands.
 _OPENCODE_TOOLS = {
+    "skill": "",
     "grep": "grep",
     "glob": "glob",
     "read": "read",
@@ -1351,6 +1357,7 @@ _OPENCODE_TOOLS = {
 # Autorun's extension registers Claude-shaped Task* tools, so guidance uses
 # their actual model-facing names and JSON-schema fields.
 _PI_TOOLS = {
+    "skill": "",
     "grep": "grep",
     "glob": "find",
     "read": "read",
@@ -1383,6 +1390,7 @@ _CODEX_TOOLS.update(
         "write": "apply_patch",
         "edit": "apply_patch",
         "task_progress": "update_plan",
+        "skill": "",
     }
 )
 

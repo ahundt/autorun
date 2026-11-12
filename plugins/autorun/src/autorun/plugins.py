@@ -49,6 +49,7 @@ from .core import (
     format_command_for_cli,
     format_commands_for_cli,
     format_suggestion,
+    user_only_refusal,
 )
 from .command_docs import CommandEntry, command_help_inventory
 from .config import (
@@ -826,6 +827,26 @@ _BLOCK_COMMANDS = [
 
 for cmd, op in _BLOCK_COMMANDS:
     app.command(cmd)(_make_block_op(op))
+
+
+@app.on("PreToolUse")
+def deny_model_launch_of_user_only_command(ctx: EventContext) -> Optional[Dict]:
+    """A model launching a guarded command as a skill is told only the user can.
+
+    The launch grants nothing either way (no prompt event runs the handler),
+    but the command document says the hook processes it, so the model read a
+    launch as a grant. The skill and its arguments are matched like a typed
+    prompt, so ``ar:tasks`` with ``pause`` is denied and with ``status`` is
+    not. A tool call is never the user's, so no author check is needed.
+    """
+    skill_tool = platform_for(ctx.cli_type).tool_names.get("skill")
+    if not skill_tool or ctx.tool_name != skill_tool:
+        return None
+    skill = str(ctx.tool_input.get("skill") or "").strip()
+    arguments = str(ctx.tool_input.get("args") or "").strip()
+    match = app._find_command(f"{skill} {arguments}".strip(), ctx.cli_type)
+    command = app.user_only_command(match) if match else None
+    return ctx.deny(user_only_refusal(command, ctx.cli_type)) if command else None
 
 
 _TRANSCRIPT_POLICY_COMMANDS = frozenset(
