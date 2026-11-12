@@ -15,11 +15,13 @@ or irreversible actions rather than waiting to be blocked.
 - `/ar-commit` — refresh git commit guidelines before staging.
 - `/ar-philosophy` — refresh the universal system design philosophy.
 
-Every other autorun control command reaches the daemon through the
-registered `autorun` tool — invoke it with the command's name and arguments
-(status, ok, no, task, cache, planexport, help, ...) whenever the user types
-an autorun command in any spelling or asks about autorun state. `help`
-lists everything.
+Other autorun commands reach the daemon through the registered `autorun`
+tool — invoke it with the command's name and arguments (status, task,
+planexport, help) whenever the user asks about autorun state. `help` lists
+everything. Commands that change permissions (ok, no, clear, file, cache,
+task pause, task ignore) take effect only when the user types them, and
+OpenCode hands autorun no typed prompt, so through this tool they answer
+that only the user can run them: tell the user, do not retry.
 
 ## Safety guardrails
 

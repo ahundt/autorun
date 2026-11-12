@@ -70,12 +70,12 @@ export const AutorunPlugin = async ({ serverUrl, directory }) => {
     hooks.tool = {
       autorun: tool({
         description:
-          "Run an autorun control command: st (status), allow/justify/find, " +
-          "ok/no/blocks/clear guards, task, cache, planexport, stop/estop, help.",
+          "Run an autorun command: status, help, or task (for example task status). " +
+          "Commands that change permissions run only when the user types them.",
         args: {
           command: tool.schema
             .string()
-            .describe("command and arguments, e.g. 'st' or 'ok git push 5m'"),
+            .describe("command and arguments, e.g. 'status' or 'task status'"),
         },
         async execute({ command }, context) {
           return runArCommand(command, directory, context?.sessionID)
