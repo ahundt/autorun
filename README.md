@@ -580,12 +580,14 @@ block tells the agent that for a task its harness no longer lists it may print
 ignored, logs `GHOST_CLEAR`, and shows you which. It works from the first
 block. For a real task that needs discussion, use `/ar:tasks pause <reason>`.
 
-**Loop guard.** If the agent stops 4 times in a row (`stop_block_max_count`
-blocks, then one more) with no tool call of its own between the Stops, the
-block reason is not reaching it, and autorun lets that Stop through with a
-notice instead of looping. No task changes. A subagent's tool calls do not
-count as the agent acting. The next tool call, prompt or session start
-restores enforcement. It is not how work ends; the states above are.
+**Loop guard.** This is the one count that can pass a Stop. After
+`stop_block_max_count` consecutive main-agent Stops are blocked with no
+main-agent tool call between them, the next Stop passes through with a notice
+naming `/ar:task status`; later Stop handlers, including stage verification,
+still run. The guard means the block reason is not reaching the agent, not that
+work is finished, and it changes no task. A subagent's tool calls do not count
+as the main agent acting. A main-agent tool call, a user-authored prompt, or a
+session start restarts the sequence and restores enforcement.
 
 **Forked conversations.** A conversation the harness reports as a fork
 (Claude Code `--fork-session`, Pi and Prime Agent `/fork`) is told so once. It
@@ -599,7 +601,7 @@ Settings live in `~/.autorun/task-lifecycle.config.json`:
 |---|---|---|
 | `enabled` | `true` | task tracking on |
 | `max_resume_tasks` | `20` | tasks listed in a resume or Stop message |
-| `stop_block_max_count` | `3` | loop guard: consecutive Stops with no tool call between them that are blocked before one passes |
+| `stop_block_max_count` | `3` | the one count that can pass a Stop: blocked consecutive main-agent Stops with no main-agent tool call before the next Stop passes through with a notice |
 | `task_ttl_days` | `30` | completed tasks pruned after this many days |
 | `debug_logging` | `false` | audit logging |
 | `ghost_clear_enabled` | `true` | the stale-task marker is honored |

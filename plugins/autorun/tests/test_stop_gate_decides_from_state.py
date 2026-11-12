@@ -147,13 +147,14 @@ def test_dangling_and_cyclic_blockers_are_actionable(gate_env, shape):
 
 
 @pytest.mark.parametrize("cli_type", HOOK_PLATFORMS)
-def test_loop_guard_counts_only_toolless_main_agent_stops(gate_env, cli_type):
-    """Main-agent tool calls between Stops keep every Stop blocked, however many.
+def test_stop_block_max_count_releases_after_n_toolless_main_agent_stops(gate_env, cli_type):
+    """The one count that can pass a Stop is ``stop_block_max_count``.
 
-    A subagent's tool call (``agent_id`` set, same session on Claude) is not
-    the main agent acting, so it must not reset the parent's count: after
-    ``stop_block_max_count`` blocks with only subagent activity between them
-    the guard releases.
+    After N consecutive main-agent Stops with no main-agent tool call, the next
+    Stop passes through with a notice naming the task-status command. A
+    main-agent tool call or user-authored prompt restarts the sequence; a
+    subagent's tool call does not count as the main agent acting. Other tests in
+    this module exercise the user-prompt restart and pass-through notice.
     """
     session = _session(cli_type, "loopguard")
     session.seed("1", "Finish the migration")

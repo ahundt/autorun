@@ -65,6 +65,13 @@ model or a subagent, they change nothing. Other operations run for anyone.
 harness no longer lists. It works from the first Stop block; no count of
 repeated blocks gates it.
 
+`stop_block_max_count` controls the one count that can pass a Stop. After that
+many consecutive main-agent Stops are blocked with no main-agent tool call,
+the next Stop passes through with a notice naming `/ar:task status`; later Stop
+handlers still run and no task changes. A main-agent tool call or user-authored
+prompt restarts the sequence. This is a guard for a harness that is not
+delivering the block reason, not a way to finish work.
+
 `/ar:task` lists, after the blocking tasks, every task that waits on someone
 else and so does not block Stop: `⏳` waiting on you for a decision the agent
 named with `AUTORUN_TASK_AWAITING_USER(<id>): <decision>` (your next prompt

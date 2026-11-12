@@ -391,11 +391,13 @@ def _loop_guard_message(cli_type: str | None, *, blocked_count: int, task_count:
     task_label = "task" if task_count == 1 else "tasks"
     task_status = format_command_for_cli("/ar:task status", cli_type)
     return (
-        f"⚠️ autorun's Stop loop guard let this Stop through: {blocked_count} "
-        "consecutive Stops arrived with no tool call between them, which means "
+        "⚠️ autorun's Stop loop guard let this Stop through after the configured "
+        f"stop_block_max_count: {blocked_count} consecutive Stops arrived with no "
+        "main-agent tool call between them, which means "
         "the block reason is not reaching the agent. It is not a way to finish "
         f"work: retained {task_count} incomplete {task_label}, unchanged, and the "
-        f"next tool call, prompt or session start restores enforcement. Review "
+        "next main-agent tool call, user-authored prompt or session start restores "
+        "enforcement. Review "
         f"them with {task_status}."
     )
 
@@ -3248,6 +3250,9 @@ class TaskLifecycle:
         block_count = computed.get("block_count", 1)
         total = len(actionable)
 
+        # This loop guard is the one count allowed to pass a Stop. It does not
+        # decide task state: the tasks remain actionable, and returning None
+        # preserves every later Stop handler, including stage verification.
         if block_count > self.config.stop_block_max_count:
             ctx.pending_stop_injection = None
             if block_count == self.config.stop_block_max_count + 1:
