@@ -456,19 +456,24 @@ autorun changes nothing and answers "Only the user can run /ar:ok. Ask them to
 type it." Other commands, such as `/ar:status`, `/ar:task status` and
 `/ar:go`, run whoever sends them.
 
-| Agent | You change permissions by | Refused |
-|---|---|---|
-| Claude Code | typing `/ar:ok` | the model launching `ar:ok` as a skill; a prompt from inside a subagent; background-task notifications, subagent replies and messages from other sessions |
-| Codex CLI | typing `ar:ok` or `ar ok` | a prompt, or a command read back from the transcript, in a subagent's session |
-| Qwen Code, Gemini CLI | typing the command | none found |
-| Pi, supported Prime Agent releases | `/ar ok`, or typing `ar:ok` or `ar ok` | `ar:ok` and `ar ok` sent over RPC or by another extension |
-| OpenCode 1.18.31 | no verified-user route: `chat.message` exposes no origin field | every prompt frame and the model's `autorun` tool |
-| Antigravity | typing the command before the first model invocation | later model-authored invocations |
-| ForgeCode | no way: it sends autorun no events, and its guards are advice | nothing reaches autorun |
+| Agent | You change permissions by | What else can trigger it | Refused |
+|---|---|---|---|
+| Claude Code | typing `/ar:ok` | none found | the model launching `ar:ok` as a skill; a prompt from inside a subagent; background-task notifications, subagent replies and messages from other sessions |
+| Codex CLI | typing `ar:ok` or `ar ok` | none found | a prompt, or a command read back from the transcript, in a subagent's session |
+| Qwen Code, Gemini CLI | typing the command | none found | none found |
+| Pi, supported Prime Agent releases | `/ar ok`, or typing `ar:ok` or `ar ok` | `ar:ok` and `ar ok` sent over RPC or by another extension | none found |
+| OpenCode 1.18.31 | typing `ar:ok` or `ar ok` in a root session | the same non-synthetic root-session `chat.message` sent by another plugin or an API client | child-session prompts, any prompt containing a synthetic part, and the model's `autorun` tool |
+| Antigravity | typing the command before the first model invocation | none found | later model-authored invocations |
+| ForgeCode | no way: it sends autorun no events, and its guards are advice | none | nothing reaches autorun |
 
-OpenCode 1.18.31's native `chat.message` metadata cannot distinguish a TUI
-prompt from a plugin or API prompt. Autorun treats all of those frames as
-automation rather than letting an ambiguous prompt change permissions.
+OpenCode exposes the session's `parentID` and marks injected parts as
+`synthetic`, but it does not distinguish a typed root-session prompt from the
+same prompt sent by another plugin or API client. Autorun therefore accepts a
+root-session prompt only when no part is synthetic, classifies a child session
+as a subagent, and classifies synthetic or unresolvable prompts as automation.
+OpenCode's built-in task tool creates a child session with `parentID`; its
+built-in shell route writes a synthetic user record without invoking
+`chat.message`, so neither gives the model a root-session user prompt.
 
 Two routes stay open:
 

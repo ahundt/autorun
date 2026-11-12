@@ -19,9 +19,11 @@ Other autorun commands reach the daemon through the registered `autorun`
 tool — invoke it with the command's name and arguments (status, task,
 planexport, help) whenever the user asks about autorun state. `help` lists
 everything. Commands that change permissions (ok, no, clear, file, cache,
-task pause, task ignore) take effect only when the user types them, and
-OpenCode hands autorun no typed prompt, so through this tool they answer
-that only the user can run them: tell the user, do not retry.
+task pause, task ignore) take effect only from a non-synthetic prompt in a
+root session. The model-callable `autorun` tool, child sessions, compaction
+continuations and plugin-injected synthetic parts are refused. OpenCode cannot
+distinguish a typed root prompt from the same prompt sent by another plugin or
+API client; that residual exposure is part of the harness contract.
 
 ## Safety guardrails
 
@@ -36,8 +38,8 @@ that only the user can run them: tell the user, do not retry.
 
 ## Stop semantics
 
-OpenCode delivers no stop event to autorun, so autorun holds nothing open
-when you finish a turn — never say autorun blocked or cleared a stop. The
-emergency stop still has teeth here: after an emergency stop the plugin
-refuses further tool calls, so honor it immediately. When you stop with
-work outstanding, name what is left and let the user decide.
+OpenCode's `session.idle` event reaches autorun's Stop gate. When the gate
+blocks and the client exposes `session.promptAsync`, the plugin submits one
+synthetic continuation; older clients show a warning toast and cannot enforce
+the continuation. The emergency stop also refuses further tool calls, so honor
+it immediately.

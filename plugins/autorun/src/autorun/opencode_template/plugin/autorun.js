@@ -24,6 +24,14 @@ function promptText(parts) {
     .join("\n")
 }
 
+function hasSyntheticPart(parts) {
+  return (Array.isArray(parts) ? parts : []).some((part) => part?.synthetic === true)
+}
+
+function sessionInfo(result) {
+  return result?.data ?? result
+}
+
 function noticePart(message) {
   return {
     type: "text",
@@ -71,6 +79,37 @@ async function surfaceStopDenial(client, sessionID, directory, reason) {
 }
 
 export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
+  // A session's parent does not change. Cache the in-flight lookup too, so two
+  // prompts arriving together still make one SDK request.
+  const promptAuthors = new Map()
+
+  async function promptAuthor(sessionID, parts) {
+    // OpenCode marks compaction, plugin-injected parts, and autorun's own Stop
+    // continuation as synthetic. Synthetic evidence outranks session shape.
+    if (hasSyntheticPart(parts)) return "automation"
+    if (!sessionID || typeof client?.session?.get !== "function") return "automation"
+
+    let cached = promptAuthors.get(sessionID)
+    if (!cached) {
+      cached = client.session
+        .get({ path: { id: sessionID }, query: { directory: String(directory ?? "") } })
+        .then((result) => {
+          const session = sessionInfo(result)
+          if (!session || typeof session !== "object") throw new Error("session lookup returned no session")
+          return session.parentID ? "subagent" : "user"
+        })
+      promptAuthors.set(sessionID, cached)
+    }
+    try {
+      return await cached
+    } catch {
+      // Unknown origin must not gain user-only authority. Do not cache a
+      // transient SDK failure; a later prompt can retry the lookup.
+      if (promptAuthors.get(sessionID) === cached) promptAuthors.delete(sessionID)
+      return "automation"
+    }
+  }
+
   await bridge.askDaemon({
     hook_event_name: "OpenCodeAttach",
     server_url: String(serverUrl ?? ""),
@@ -84,10 +123,7 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
         hook_event_name: "UserPromptSubmit",
         session_id: input.sessionID,
         prompt,
-        // OpenCode 1.18.31 exposes no prompt-origin field. A TUI prompt and
-        // an API/plugin prompt can have the same chat.message shape, so none
-        // is positive evidence of a person; ambiguous input is automation.
-        prompt_author: "automation",
+        prompt_author: await promptAuthor(input.sessionID, output?.parts),
         cwd: String(directory ?? ""),
       })
       const blocked = denialReason(response)

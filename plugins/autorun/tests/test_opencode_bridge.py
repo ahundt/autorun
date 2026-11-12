@@ -43,6 +43,10 @@ from pathlib import Path
 
 import pytest
 
+from autorun.core import AutorunDaemon, app
+from stop_gate_support import Session, awaiting, blocks, gate_env_fixture  # noqa: F401
+from test_prompt_author_guard import REFUSAL_LEAD, send_frame, session_allows
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 MARKETPLACE_ROOT = Path(__file__).resolve().parents[3]
 SHIM_SOURCE = PLUGIN_ROOT / "src" / "autorun" / "opencode_template" / "plugin" / "autorun.js"
@@ -148,6 +152,13 @@ class TestInstallerPlacesTheShim:
 
         assert not (base / "plugin" / "autorun.js").exists()
         assert stranger.is_file(), "uninstall removed a plugin autorun does not own"
+
+
+@pytest.fixture
+def policy_daemon(monkeypatch):
+    monkeypatch.delenv("AUTORUN_SESSION_ID", raising=False)
+    monkeypatch.delenv("AUTORUN_USE_IDENTITY", raising=False)
+    return AutorunDaemon(app)
 
 
 @pytest.fixture
@@ -384,38 +395,91 @@ class TestDaemonSocketFrames:
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
     @pytest.mark.parametrize(
-        "mode",
+        ("mode", "expected_author"),
         [
-            "prompt-human-shaped",
-            "prompt-child",
-            "prompt-plugin",
-            "prompt-api",
-            "prompt-compaction",
-            "prompt-automation",
+            ("prompt-root", "user"),
+            ("prompt-root-repeat", "user"),
+            ("prompt-child", "subagent"),
+            ("prompt-compaction", "automation"),
+            ("prompt-automation", "automation"),
+            ("prompt-mixed-synthetic", "automation"),
+            ("prompt-unknown-session", "automation"),
         ],
     )
-    def test_prompt_without_positive_human_origin_is_automation(self, tmp_path, short_socket_dir, mode):
-        """OpenCode 1.18.31 gives chat.message no origin discriminator.
-
-        Even the TUI-shaped case is indistinguishable from an API call, so it
-        must not receive user-only command or awaiting-user authority.
-        """
+    def test_prompt_author_uses_session_parent_and_synthetic_parts(
+        self, tmp_path, short_socket_dir, mode, expected_author
+    ):
+        """The bridge uses the strongest origin evidence OpenCode exposes."""
         socket_path = short_socket_dir / "daemon.sock"
+        prompt_count = 2 if mode == "prompt-root-repeat" else 1
         frames, thread = self._serve(
             socket_path,
             {
                 "OpenCodeAttach": {},
                 "UserPromptSubmit": {"systemMessage": "Cache expired; review cost before continuing."},
             },
+            connections=1 + prompt_count,
         )
         result = _run_shim(tmp_path, socket_path, mode)
         thread.join(timeout=25)
 
         assert "Cache expired; review cost before continuing." in result.stdout
+        prompts = frames[1:]
+        assert len(prompts) == prompt_count
+        assert {prompt["hook_event_name"] for prompt in prompts} == {"UserPromptSubmit"}
+        assert {prompt["session_id"] for prompt in prompts} == {"prompt-session"}
+        assert {prompt["prompt_author"] for prompt in prompts} == {expected_author}
+        if mode == "prompt-root-repeat":
+            assert "session-get-count 1" in result.stdout, (
+                "the bridge must cache parentID per session instead of fetching it per prompt"
+            )
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    @pytest.mark.parametrize(
+        ("mode", "grants"),
+        [
+            ("prompt-root-command", True),
+            ("prompt-child-command", False),
+            ("prompt-synthetic-command", False),
+        ],
+    )
+    def test_prompt_classification_controls_user_only_commands(
+        self, tmp_path, short_socket_dir, policy_daemon, mode, grants
+    ):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(socket_path, {"OpenCodeAttach": {}, "UserPromptSubmit": {}})
+        _run_shim(tmp_path, socket_path, mode)
+        thread.join(timeout=25)
+
+        prompt = {**frames[1], "session_id": mode}
+        response = send_frame(policy_daemon, prompt)
+        allowed = session_allows(policy_daemon, mode, "opencode")
+        if grants:
+            assert allowed == ["git push"], response
+        else:
+            assert allowed == []
+            assert REFUSAL_LEAD in json.dumps(response), response
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_root_user_reply_restores_awaiting_user_task(
+        self, tmp_path, short_socket_dir, gate_env
+    ):
+        session = Session("prompt-session", "opencode")
+        session.seed("7", "Push release-1.0")
+        session.stop(awaiting("7", "approve pushing release-1.0"))
+        assert session.status("7") == "awaiting-user"
+
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(socket_path, {"OpenCodeAttach": {}, "UserPromptSubmit": {}})
+        _run_shim(tmp_path, socket_path, "prompt-root-reply")
+        thread.join(timeout=25)
+
         prompt = frames[1]
-        assert prompt["hook_event_name"] == "UserPromptSubmit"
-        assert prompt["session_id"] == "prompt-session"
-        assert prompt["prompt_author"] == "automation"
+        session.prompt(prompt["prompt"], prompt_author=prompt["prompt_author"])
+        assert session.status("7") == "in_progress"
+        assert blocks(session.stop("Work remains."), "opencode")
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
@@ -625,8 +689,15 @@ if (process.argv[2] === "command") {
   process.exit(0)
 }
 
+let sessionGetCount = 0
 const client = {
   session: {
+    get: async ({ path }) => {
+      sessionGetCount += 1
+      if (process.argv[2] === "prompt-unknown-session") throw new Error("session missing")
+      const child = process.argv[2].includes("child")
+      return { data: { id: path.id, ...(child ? { parentID: "parent-session" } : {}) } }
+    },
     promptAsync: async (options) => console.log("continued", JSON.stringify(options)),
   },
 }
@@ -635,18 +706,28 @@ if (process.argv[2].startsWith("prompt-")) {
   const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
   const mode = process.argv[2]
   const input = { sessionID: "prompt-session" }
+  const command = mode.endsWith("-command")
+  const reply = mode.endsWith("-reply")
   const output = {
     message: { role: "user" },
-    parts: [{ type: "text", text: `ordinary ${mode} prompt` }],
+    parts: [{ type: "text", text: command ? "ar:ok 'git push'" : reply ? "Approved; continue" : `ordinary ${mode} prompt` }],
   }
-  if (mode === "prompt-child") input.messageID = "msg_child_generated"
-  if (mode === "prompt-plugin") output.message.system = "plugin supplied"
-  if (mode === "prompt-compaction") output.parts[0].synthetic = true
+  if (mode === "prompt-compaction" || mode === "prompt-synthetic-command") output.parts[0].synthetic = true
   if (mode === "prompt-automation") {
     output.parts[0].synthetic = true
     output.parts[0].metadata = { source: "autorun-stop-gate" }
   }
+  if (mode === "prompt-mixed-synthetic") {
+    output.parts.push({ type: "text", text: "injected", synthetic: true })
+  }
   await hooks["chat.message"](input, output)
+  if (mode === "prompt-root-repeat") {
+    await hooks["chat.message"](input, {
+      message: { role: "user" },
+      parts: [{ type: "text", text: "second root prompt" }],
+    })
+  }
+  console.log("session-get-count", sessionGetCount)
   console.log(JSON.stringify(output.parts))
   process.exit(0)
 }
