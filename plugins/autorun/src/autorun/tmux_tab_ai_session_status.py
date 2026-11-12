@@ -276,7 +276,7 @@ def execute_selections(selection_str: str, sessions: List[Dict], command: str = 
     """Execute selections and return formatted result string.
 
     Convenience wrapper combining execute_session_selections() (tmux_utils) and
-    format_execution_results() for the /ar:tabs command interface.
+    format_execution_results().
     """
     results = execute_session_selections(selection_str, sessions, command=command or None)
     return format_execution_results(results)

@@ -2478,9 +2478,9 @@ def execute_session_selections(selection_str: str, sessions: list,
                                tmux: 'TmuxUtilities | None' = None,
                                command: Optional[str] = None,
                                announce: Optional[Callable[[list], None]] = None) -> 'list[dict]':
-    """Execute commands on selected Claude sessions using the /ar:tabs selection syntax.
+    """Execute commands on selected AI sessions; the selection behind `autorun tmux send --to`.
 
-    Selection syntax (same as /ar:tabs command interface):
+    Selection syntax:
       'A,C' or 'AC'          Execute each session's default action (sessions[i]['actions'][0]);
                              only 'continue' and 'interrupt' (Escape) are sent, other
                              labels are refused per session

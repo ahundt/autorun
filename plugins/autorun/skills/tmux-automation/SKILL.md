@@ -95,26 +95,12 @@ This skill provides comprehensive capabilities for automated testing of CLI appl
 autorun provides convenient commands for tmux session automation:
 
 ### Session Discovery
-- `/ar:tabs` - Discover and manage all Claude sessions across tmux windows
-  - Interactive table showing session status (working, awaiting input, etc.)
-  - Batch operations: `all:continue`, `awaiting:status`, `A:pwd, B:ls`
-  - AI-powered session analysis (uses Claude SDK when available)
+- The `tmux` skill (`autorun tmux list`, `autorun tmux send`) lists the AI
+  coding sessions in your tmux windows and types text into the ones you name.
 
 Creating, listing and cleaning up isolated sessions, and testing a CLI in
 one: `references/session-management.md` and `references/isolated-testing.md`
 in this skill. autorun ships no slash command for them.
-
-### Related Documentation
-- `skills/tabs/SKILL.md` + `commands/tmux-exec` - Session discovery (`/ar:tabs`)
-
-### Quick Reference: Commands vs Manual tmux
-
-| Task | Manual tmux Command | autorun Shortcut |
-|------|-------------------|-------------------|
-| List Claude sessions | `tmux list-windows` (manual) | `/ar:tabs` |
-| Create session | `tmux new-session -d -s name` | (none) |
-| Send to all sessions | `for s in $(tmux list-sessions); do ...` | `/ar:tabs all:continue` |
-| Test CLI | Manual scripting required | (none) |
 
 </integrations>
 

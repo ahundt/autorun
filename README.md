@@ -16,7 +16,7 @@ It works with Claude Code, Codex, Qwen Code, Pi and five more agents, from one i
 | leaves scratch files all over the repository | limits it to editing existing files, or to new files it justifies | `/ar:file existing-only`, `/ar:file justify` |
 | runs `rm -rf`, `git reset --hard`, or `curl … \| sh` | blocks the command and names the safer one: `trash`, `git stash`, download-read-run | `/ar:no`, `/ar:ok` |
 | pushes, opens a PR, or bumps a version | blocks each one until you allow it | `/ar:ok 'git push'` |
-| runs in a terminal you need to close | run it in byobu so it survives; `/ar:tabs` lists and steers those sessions | `/ar:tabs` |
+| runs in a terminal you need to close | run it in byobu so it survives; `autorun tmux list` lists those sessions and `autorun tmux send` types into the ones you name | `/ar:tmux` |
 
 ![autorun Architecture](autorun-architecture.svg)
 
@@ -225,6 +225,7 @@ adds these, among others:
 | `pdf-extractor` | extract text and data from PDFs, trying backends in turn |
 | `synthesize-project-requirements` | recover cumulative requirements, corrections, and gotchas into an evidence-backed handoff |
 | `task-lifecycle-workflow` | coordinate long, correction-heavy work from evidence through readiness and recovery |
+| `tmux` | list the AI coding sessions in your tmux windows and send text to the ones you choose |
 | `tmux-automation` | test terminal programs in isolated tmux sessions |
 | `write-decision-ready-technical-reports` | turn investigations and plans into an actionable technical decision brief |
 | `write-durable-goal-prompts` | write long-running goals that stay valid as project state changes |
@@ -560,14 +561,17 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 |---|---|
 | `/ar:commit` | the 17-step commit process: `<files>:` or `type(scope):` subjects, concrete wording, a secrets check |
 | `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
-| `/ar:tabs` | list the agent sessions running in your tmux windows, lettered A, B, C, with directory, purpose and status |
-| `/ar:tabw` | type into those sessions after stating what it will send, e.g. `/ar:tabw awaiting:continue` or `/ar:tabw A:git status, B:pwd` |
+| `/ar:tmux` | list the AI coding sessions running in your tmux windows, lettered A, B, C, with harness, directory and status, and type text into the ones you name (`autorun tmux list`, `autorun tmux send --to A -- continue`) |
 | `/ar:cache` | warns before a prompt re-sends an expired prompt cache of 100,000 tokens or more (Claude Code; Pi and Prime Agent when `age` is set): `on` blocks it until the same text is sent again, `warn` (the default) only tells, `off` stops it; each takes `[5m\|1h\|perm]`. `set expired-min-tokens <tokens>` sets the floor. Optional tool-time thresholds: `set ratio\|read\|age <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>`. Details: [commands/cache.md](plugins/autorun/commands/cache.md) |
 | `/ar:restart-daemon` | restart the daemon for this install |
 
-`/ar:tabs` shows each session as `awaiting input`, `working`, `plan approval`,
-`tool permission`, `idle`, or `error`. Answer with selections such as `A, B:git
-status, all:continue`; `all:escape` interrupts every working session.
+`autorun tmux list` only reads. It finds a pane running any of the nine
+harnesses, and shows each session's status as `idle`, `active`, `error`,
+`completed` or `unknown`; only Claude Code's prompts can be read, so every other
+harness shows `unknown`. `autorun tmux send --to <A | A,C | all | awaiting-input>
+-- <text>` prints each target's session, window, pane, directory and harness,
+types the text, presses Enter in a second call, and reports text still on the
+input line as `typed, not submitted`. `awaiting-input` skips `unknown` sessions.
 
 ### Renamed commands
 
@@ -689,6 +693,21 @@ autorun task gc --no-archive --no-confirm             # delete without archive o
 `--pattern` defaults to `*` and `--ttl` to `task_ttl_days`. On the SQLite backend `task gc` expires whole
 sessions with no unfinished tasks, archives them before deleting, and refuses
 `--pattern` and `--no-archive`, which it cannot honor.
+
+**AI sessions in tmux** (`/ar:tmux` in a session):
+
+```bash
+autorun tmux list                          # read only: letter, target, harness, directory, status
+autorun tmux list --json
+autorun tmux send --to A -- continue       # type into session A, then Enter
+autorun tmux send --to A,C -- git status
+autorun tmux send --to awaiting-input -- continue   # Claude Code sessions waiting at a prompt
+```
+
+`send` with no `--to` or no text types nothing and exits 1; it also exits 1
+when any target failed. A Claude Code install made through the marketplace
+alone has no `autorun` on PATH; `commands/tmux-exec` in the plugin takes the
+same arguments.
 
 **Custom agents.** `--custom-harness` takes
 `name=flavor:binary:config_dir[::display]`. Flavors are `claude`, `gemini`,

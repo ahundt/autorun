@@ -9,27 +9,24 @@ class TestBangOperatorSyntax:
     """Test ! operator syntax in command markdown files"""
 
     @pytest.mark.unit
-    def test_tabs_skill_still_gets_the_session_list_first(self):
+    def test_tmux_skill_lists_the_sessions_before_it_sends(self):
         """The session list has to reach the agent before it picks a window.
 
         It used to arrive through Claude's `` !`cmd` `` block, which renders
-        nowhere else, so the skill now instructs the agent to run the command.
-        The requirement is unchanged: no acting on windows sight-unseen.
+        nowhere else, so the skill instructs the agent to run the command.
+        The requirement is unchanged: no typing into windows sight-unseen.
+        The skill folds the former listing (`tabs`) and writing (`tabw`)
+        skills, so the list must come before the first send.
         """
-        skill = Path(__file__).parent.parent / "skills" / "tabs" / "SKILL.md"
+        skill = Path(__file__).parent.parent / "skills" / "tmux" / "SKILL.md"
         content = skill.read_text(encoding="utf-8")
 
-        assert "tmux list-sessions" in content
+        assert "autorun tmux list" in content
+        assert content.index("autorun tmux list") < content.index("autorun tmux send --to")
         assert "!`" not in content, "a Claude-only block came back into a skill body"
-
-    @pytest.mark.unit
-    def test_tabw_skill_still_gets_the_session_list_first(self):
-        """Same rule for the writing command, which is the dangerous one."""
-        skill = Path(__file__).parent.parent / "skills" / "tabw" / "SKILL.md"
-        content = skill.read_text(encoding="utf-8")
-
-        assert "tmux list-sessions" in content
-        assert "!`" not in content
+        # One stated fallback for Claude Code marketplace installs; any other
+        # use of the variable is a command that fails on every other harness.
+        assert content.count("${CLAUDE_PLUGIN_ROOT}") == 1
 
     @pytest.mark.unit
     def test_executable_command_lines_use_backticks(self):

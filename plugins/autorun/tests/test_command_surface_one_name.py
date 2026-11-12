@@ -94,8 +94,9 @@ TAIL = {"globalok": "'git push'", "globalno": "'git push'"}
 
 # Deleted outright (section 10): documents with no handler. `tmux` is left
 # out on purpose: section 10.1 gives that name to the tmux skill workstream H
-# adds, so forbidding it here would fail the moment H lands.
-DELETED = ("gc", "ph", "tm", "tt", "ttest", "test", "gemini", "claude-code-plugin-help")
+# adds, so forbidding it here would fail the moment H lands. `tabs` and
+# `tabw` were skills, never handlers; the `tmux` skill replaced both.
+DELETED = ("gc", "ph", "tm", "tt", "ttest", "test", "gemini", "claude-code-plugin-help", "tabs", "tabw")
 
 UNPREFIXED = ("/afs", "/afa", "/afj", "/afst", "/autorun", "/autoproc", "/autostop", "/estop")
 
