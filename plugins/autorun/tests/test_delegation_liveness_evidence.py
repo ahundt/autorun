@@ -22,6 +22,7 @@ import uuid
 
 import pytest
 
+from autorun import session_manager as sm, task_lifecycle as tl
 from autorun.session_manager import TASK_DELEGATION_RECEIPT_SESSION, session_state
 from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_env)
     CODEX_SPAWN_ID,
@@ -148,23 +149,46 @@ def test_same_harness_pid_and_birth_keeps_delegation_open(gate_env, monkeypatch)
 
 def _seed_open_receipts(count: int, *, harness_pid: int, newer_than: float) -> None:
     """``count`` children of other sessions, spawned after ``newer_than`` and still running."""
-    with session_state(TASK_DELEGATION_RECEIPT_SESSION) as state:
-        receipts = dict(state.get("receipts", {}))
-        for n in range(count):
-            receipts[f"codex:other-{n:05d}-0e6f-7bb2"] = {
-                "agent_id": f"other-{n:05d}-0e6f-7bb2",
+    for n in range(count):
+        agent_id = f"other-{n:05d}-0e6f-7bb2"
+        with session_state(tl._delegation_receipt_session_id("codex", agent_id)) as state:
+            state["receipt"] = {
+                "agent_id": agent_id,
                 "cli_type": "codex",
                 "parent_session_id": f"other-parent-{n}",
+                "parent_global_key": f"__task_lifecycle__other-parent-{n}",
                 "at": newer_than + n + 1,
                 "returned": False,
+                "claimed": False,
                 "harness_pid": harness_pid,
             }
-        state["receipts"] = receipts
 
 
 def _receipts() -> dict:
+    receipts = {}
     with session_state(TASK_DELEGATION_RECEIPT_SESSION) as state:
-        return dict(state.get("receipts", {}))
+        receipts.update(state.get("receipts", {}))
+    for receipt_session in sm.get_session_manager().list_sessions(namespace="task_delegation_receipts"):
+        if receipt_session == TASK_DELEGATION_RECEIPT_SESSION:
+            continue
+        with session_state(receipt_session) as state:
+            receipt = state.get("receipt")
+            if isinstance(receipt, dict):
+                receipts[f"{receipt.get('cli_type')}:{receipt.get('agent_id')}"] = dict(receipt)
+    return receipts
+
+
+def _replace_receipt(key: str, update) -> None:
+    cli_type, agent_id = key.split(":", 1)
+    receipt_session = tl._delegation_receipt_session_id(cli_type, agent_id)
+    with session_state(receipt_session) as state:
+        if isinstance(state.get("receipt"), dict):
+            state["receipt"] = update(dict(state["receipt"]))
+            return
+    with session_state(TASK_DELEGATION_RECEIPT_SESSION) as state:
+        receipts = dict(state.get("receipts", {}))
+        receipts[key] = update(dict(receipts[key]))
+        state["receipts"] = receipts
 
 
 def test_open_receipt_survives_any_number_of_newer_open_receipts(gate_env):
@@ -185,27 +209,88 @@ def test_open_receipt_survives_any_number_of_newer_open_receipts(gate_env):
     )
 
 
-def test_open_receipt_is_reclaimed_only_when_its_harness_process_is_gone(gate_env):
-    """Growth is bounded by evidence: a receipt whose parent harness exited is
-    dropped at the next SubagentStop; one whose harness runs is kept."""
+def test_receipt_read_reclaims_only_gone_harness_identity(gate_env):
+    """Keyed reads reclaim the named dead receipt without scanning its peers."""
     gone, alive = dead_pid(), os.getppid()
     _seed_open_receipts(3, harness_pid=gone, newer_than=time.time())
-    with session_state(TASK_DELEGATION_RECEIPT_SESSION) as state:
-        receipts = dict(state["receipts"])
-        receipts["codex:kept-0e6f-7bb2-9d1e"] = {
-            "agent_id": "kept-0e6f-7bb2-9d1e", "cli_type": "codex", "parent_session_id": "p",
-            "at": time.time(), "returned": False, "harness_pid": alive,
+    kept_id = "kept-0e6f-7bb2-9d1e"
+    parent = tl.TaskLifecycle(session_id="p")
+    parent.atomic_update_metadata(lambda metadata: metadata.update({"agent_spawns": []}))
+    with session_state(tl._delegation_receipt_session_id("codex", kept_id)) as state:
+        state["receipt"] = {
+            "agent_id": kept_id,
+            "cli_type": "codex",
+            "parent_session_id": "p",
+            "parent_global_key": "__task_lifecycle__p",
+            "at": time.time(),
+            "returned": False,
+            "claimed": False,
+            "harness_pid": alive,
         }
-        state["receipts"] = receipts
     reporter = _session("codex", "reclaim")
 
-    reporter.dispatch("SubagentStop", agent_id="unrelated-0e6f-7bb2-9d1e")
+    for n in range(3):
+        agent_id = f"other-{n:05d}-0e6f-7bb2"
+        assert reporter.manager._delegation_receipt("codex", agent_id) is None
+    assert reporter.manager._delegation_receipt("codex", kept_id) is not None
 
     left = _receipts()
     assert "codex:kept-0e6f-7bb2-9d1e" in left, "a receipt whose harness still runs was dropped"
     assert not [key for key in left if key.startswith("codex:other-")], (
         f"receipts whose harness process exited were kept: {sorted(left)}"
     )
+
+
+def test_no_pid_receipt_is_reclaimed_when_parent_no_longer_delegates_to_child(gate_env):
+    """Task state, not elapsed time, retires a claimed receipt with no PID."""
+    parent = _session("codex", "no-pid-task-evidence")
+    parent.seed("7", "Sweep the fixtures")
+    parent.delegate("7")
+    key = f"codex:{CODEX_SPAWN_ID}"
+
+    def without_process(receipt):
+        receipt.pop("harness_pid", None)
+        receipt.pop("harness_started_at_units", None)
+        receipt.pop("claimed", None)  # pre-keyed records infer this from the parent ledger
+        return receipt
+
+    _replace_receipt(key, without_process)
+    parent.manager.update_task("7", {"status": "completed"}, "work completed")
+
+    child = _session("codex", "no-pid-child")
+    assert child.manager._delegation_receipt("codex", CODEX_SPAWN_ID) is None
+    assert key not in _receipts(), "the completed parent task left an unbounded no-PID receipt"
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_task_gc_removes_no_pid_receipt_with_deleted_parent(gate_env, monkeypatch, backend):
+    """Deleting the parent task root is durable end evidence for its receipts."""
+    monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+    sm._reset_for_testing()
+    parent = _session("codex", f"gc-no-pid-{backend}")
+    parent.seed("7", "Sweep the fixtures")
+    parent.delegate("7")
+    key = f"codex:{CODEX_SPAWN_ID}"
+
+    def without_process(receipt):
+        receipt.pop("harness_pid", None)
+        receipt.pop("harness_started_at_units", None)
+        receipt.pop("claimed", None)
+        return receipt
+
+    _replace_receipt(key, without_process)
+    parent.manager.update_task("7", {"status": "completed"}, "work completed")
+
+    assert tl.TaskLifecycle.cli_gc(
+        archive=True,
+        dry_run=False,
+        ttl_days=0,
+        config=tl.TaskLifecycleConfig.load(),
+        confirm=False,
+        current_session_id="protected-other-session",
+    ) == 0
+
+    assert key not in _receipts(), f"{backend}: task gc left the deleted parent's receipt"
 
 
 def test_every_unreturned_spawn_stays_in_the_ledger(gate_env):

@@ -30,7 +30,7 @@ SRC_DIR = PLUGIN_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from autorun import session_manager as sm  # noqa: E402
+from autorun import session_manager as sm, task_lifecycle as tl  # noqa: E402
 from autorun.config import CONFIG  # noqa: E402
 from autorun.core import EventContext, ThreadSafeDB, normalize_hook_payload  # noqa: E402
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig  # noqa: E402
@@ -141,8 +141,18 @@ def _ledger(session_id):
 
 
 def _receipts():
-    with sm.session_state("__task_delegation_receipts__") as state:
-        return dict(state.get("receipts", {}))
+    receipts = {}
+    with sm.session_state(sm.TASK_DELEGATION_RECEIPT_SESSION) as state:
+        receipts.update(state.get("receipts", {}))
+    manager = sm.get_session_manager()
+    for receipt_session in manager.list_sessions(namespace="task_delegation_receipts"):
+        if receipt_session == sm.TASK_DELEGATION_RECEIPT_SESSION:
+            continue
+        with sm.session_state(receipt_session) as state:
+            receipt = state.get("receipt")
+            if isinstance(receipt, dict):
+                receipts[f"{receipt.get('cli_type')}:{receipt.get('agent_id')}"] = dict(receipt)
+    return receipts
 
 
 class TestSpawnLedger:
@@ -204,10 +214,12 @@ class TestSpawnLedger:
         _spawn("dl-old-receipt", store, cfg)
         key = f"claude:{SPAWN_ID}"
         days_ago = time.time() - 30 * 24 * 3600
-        with sm.session_state("__task_delegation_receipts__") as state:
-            receipts = dict(state["receipts"])
-            receipts[key] = {**receipts[key], "at": days_ago}
-            state["receipts"] = receipts
+        receipt = _receipts()[key]
+        sm.get_session_manager().clear_session(
+            tl._delegation_receipt_session_id("claude", SPAWN_ID)
+        )
+        with sm.session_state(sm.TASK_DELEGATION_RECEIPT_SESSION) as state:
+            state["receipts"] = {key: {**receipt, "at": days_ago}}
 
         child = TaskLifecycle(config=cfg, session_id="untrusted-child")
         receipt = child._delegation_receipt("claude", SPAWN_ID)

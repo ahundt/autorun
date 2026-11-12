@@ -64,6 +64,7 @@ from .session_manager import (
     DEFAULT_SESSION_TIMEOUT,
     MISSING,
     TASK_DELEGATION_RECEIPT_SESSION,
+    TASK_DELEGATION_RECEIPT_SESSION_PREFIX,
     TASK_LIFECYCLE_SESSION_PREFIX,
     get_session_manager,
     session_state,
@@ -712,6 +713,34 @@ def _agent_receipt_key(cli_type: str, agent_id: str) -> str:
     return f"{cli_type}:{agent_id}"
 
 
+def _delegation_receipt_session_id(cli_type: str, agent_id: str) -> str:
+    """The keyed state root for one child-return authority record."""
+    return f"{TASK_DELEGATION_RECEIPT_SESSION_PREFIX}{_agent_receipt_key(cli_type, agent_id)}"
+
+
+def _delegation_receipt_sessions_for_parents(
+    parent_global_keys: Iterable[str] | None = None,
+) -> tuple[str, ...]:
+    """Find keyed receipt roots for explicit maintenance operations only."""
+    wanted = None if parent_global_keys is None else frozenset(parent_global_keys)
+    manager = get_session_manager()
+    matches = []
+    for receipt_session in manager.list_sessions(namespace="task_delegation_receipts"):
+        if receipt_session == TASK_DELEGATION_RECEIPT_SESSION:
+            continue
+        receipt = manager.read_field(
+            receipt_session,
+            "receipt",
+            MISSING,
+            timeout=DEFAULT_SESSION_TIMEOUT,
+        )
+        if not isinstance(receipt, dict):
+            continue
+        if wanted is None or receipt.get("parent_global_key") in wanted:
+            matches.append(receipt_session)
+    return tuple(matches)
+
+
 def _recorded_harness_is_live(
     record: dict,
     *,
@@ -1206,8 +1235,30 @@ class TaskLifecycle:
                 yield state
 
     @contextlib.contextmanager
-    def _delegation_receipt_state(self, ctx: EventContext | None = None):
-        """Open the cross-session child-to-parent authority registry safely."""
+    def _delegation_receipt_state(
+        self,
+        cli_type: str,
+        agent_id: str,
+        ctx: EventContext | None = None,
+    ):
+        """Open one keyed child-to-parent authority record safely."""
+        receipt_session = _delegation_receipt_session_id(cli_type, agent_id)
+        hook_ctx = ctx or self.ctx
+        synchronization = (
+            hook_ctx.state_synchronized(session_id=receipt_session)
+            if hook_ctx is not None
+            else contextlib.nullcontext()
+        )
+        with synchronization:
+            with session_state(
+                receipt_session,
+                timeout=self._state_lock_timeout,
+            ) as state:
+                yield state
+
+    @contextlib.contextmanager
+    def _legacy_delegation_receipt_state(self, ctx: EventContext | None = None):
+        """Open the pre-keyed whole-registry record for compatibility only."""
         hook_ctx = ctx or self.ctx
         synchronization = (
             hook_ctx.state_synchronized(session_id=TASK_DELEGATION_RECEIPT_SESSION)
@@ -1221,41 +1272,156 @@ class TaskLifecycle:
             ) as state:
                 yield state
 
+    def _receipt_parent_still_owns_child(self, receipt: dict) -> bool:
+        """Whether recorded parent state still authorizes this child receipt."""
+        parent_global_key = receipt.get("parent_global_key")
+        parent_session_id = receipt.get("parent_session_id")
+        if not isinstance(parent_global_key, str) or not parent_global_key:
+            return True
+        metadata = get_session_manager().read_field(
+            parent_global_key,
+            "session_metadata",
+            MISSING,
+            timeout=self._state_lock_timeout,
+        )
+        if metadata is MISSING:
+            return False
+        claimed = bool(receipt.get("claimed"))
+        if isinstance(metadata, dict):
+            agent_id = str(receipt.get("agent_id") or "")
+            claimed = claimed or any(
+                str(entry.get("id")) == agent_id and entry.get("claimed")
+                for entry in metadata.get("agent_spawns", [])
+                if isinstance(entry, dict)
+            )
+        if not claimed:
+            return True
+        if not isinstance(parent_session_id, str) or not parent_session_id:
+            return False
+        agent_id = str(receipt.get("agent_id") or "")
+        parent = TaskLifecycle(
+            session_id=parent_session_id,
+            config=self.config,
+        )
+        return any(
+            task.get("status") == "delegated"
+            and _delegation_agent(task) == agent_id
+            for task in parent.get_incomplete_tasks(exclude_blocking=False)
+        )
+
+    def _receipt_is_reclaimable(self, receipt: dict) -> bool:
+        starts_by_pid: dict[int, int] = {}
+        legacy_alive_by_pid: dict[int, bool] = {}
+        pid = receipt.get("harness_pid")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+            if not _recorded_harness_is_live(
+                receipt,
+                starts_by_pid=starts_by_pid,
+                legacy_alive_by_pid=legacy_alive_by_pid,
+            ):
+                return True
+        return not self._receipt_parent_still_owns_child(receipt)
+
     def _delegation_receipt(self, cli_type: str, agent_id: str) -> dict | None:
-        """Read the immutable parent authority recorded at child spawn."""
+        """Read one parent authority record and retire evidence-ended records."""
         key = _agent_receipt_key(cli_type, agent_id)
-        with self._delegation_receipt_state() as state:
+        with self._delegation_receipt_state(cli_type, agent_id) as state:
+            receipt = copy.deepcopy(state.get("receipt"))
+        legacy = False
+        if not isinstance(receipt, dict):
+            with self._legacy_delegation_receipt_state() as state:
+                receipts = state.get(_DELEGATION_RECEIPTS_FIELD, {})
+                receipt = copy.deepcopy(receipts.get(key)) if isinstance(receipts, dict) else None
+            legacy = isinstance(receipt, dict)
+        if not isinstance(receipt, dict):
+            return None
+        if not self._receipt_is_reclaimable(receipt):
+            return receipt
+
+        if legacy:
+            with self._legacy_delegation_receipt_state() as state:
+                receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
+                if receipts.get(key) == receipt:
+                    receipts.pop(key, None)
+                    if receipts:
+                        state[_DELEGATION_RECEIPTS_FIELD] = receipts
+                    else:
+                        state.clear()
+        else:
+            get_session_manager().clear_session_if_field_matches(
+                _delegation_receipt_session_id(cli_type, agent_id),
+                "receipt",
+                receipt,
+                timeout=self._state_lock_timeout,
+            )
+        return None
+
+    def _mark_delegation_receipt_claimed(
+        self,
+        cli_type: str,
+        agent_id: str,
+        task_ids: Iterable[str],
+    ) -> None:
+        """Record that task state now depends on this exact child receipt."""
+        with self._delegation_receipt_state(cli_type, agent_id) as state:
+            receipt = copy.deepcopy(state.get("receipt"))
+            if isinstance(receipt, dict) and receipt.get("parent_session_id") == self.session_id:
+                receipt["claimed"] = True
+                receipt["delegated_task_ids"] = list(dict.fromkeys(str(value) for value in task_ids))
+                state["receipt"] = receipt
+                return
+        key = _agent_receipt_key(cli_type, agent_id)
+        with self._legacy_delegation_receipt_state() as state:
             receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
-            bounded = _bounded_delegation_receipts(receipts, reclaim=True)
-            if bounded != receipts:
-                state[_DELEGATION_RECEIPTS_FIELD] = bounded
-            receipt = bounded.get(key)
-            return copy.deepcopy(receipt) if isinstance(receipt, dict) else None
+            receipt = receipts.get(key)
+            if isinstance(receipt, dict) and receipt.get("parent_session_id") == self.session_id:
+                receipt["claimed"] = True
+                receipt["delegated_task_ids"] = list(dict.fromkeys(str(value) for value in task_ids))
+                state[_DELEGATION_RECEIPTS_FIELD] = receipts
 
     def _finish_delegation_receipts(
         self,
-        state: dict,
         cli_type: str,
         agent_ids: Iterable[str],
         now: float,
     ) -> None:
-        """Mark only receipts owned by this parent returned."""
-        receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
-        changed = False
-        for agent_id in agent_ids:
-            key = _agent_receipt_key(cli_type, str(agent_id))
-            receipt = receipts.get(key)
-            if not isinstance(receipt, dict):
-                continue
-            if receipt.get("parent_session_id") != self.session_id:
-                continue
-            if receipt.get("returned"):
-                continue
-            receipt["returned"] = True
-            receipt["returned_at"] = now
-            changed = True
-        if changed:
-            state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(receipts)
+        """Retire keyed receipts and mark matching legacy records returned."""
+        legacy_ids: list[str] = []
+        manager = get_session_manager()
+        for value in agent_ids:
+            agent_id = str(value)
+            receipt_session = _delegation_receipt_session_id(cli_type, agent_id)
+            receipt = manager.read_field(
+                receipt_session,
+                "receipt",
+                MISSING,
+                timeout=self._state_lock_timeout,
+            )
+            if isinstance(receipt, dict) and receipt.get("parent_session_id") == self.session_id:
+                manager.clear_session_if_field_matches(
+                    receipt_session,
+                    "receipt",
+                    receipt,
+                    timeout=self._state_lock_timeout,
+                )
+            else:
+                legacy_ids.append(agent_id)
+        if not legacy_ids:
+            return
+        with self._legacy_delegation_receipt_state(self.ctx) as state:
+            receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
+            changed = False
+            for agent_id in legacy_ids:
+                key = _agent_receipt_key(cli_type, agent_id)
+                receipt = receipts.get(key)
+                if not isinstance(receipt, dict) or receipt.get("parent_session_id") != self.session_id:
+                    continue
+                if not receipt.get("returned"):
+                    receipt["returned"] = True
+                    receipt["returned_at"] = now
+                    changed = True
+            if changed:
+                state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(receipts)
 
     def _migrate_if_needed(self, state: Dict) -> None:
         """Migrate stored state to current schema version (lazy self-healing).
@@ -2754,13 +2920,11 @@ class TaskLifecycle:
                 if repository is None:
                     state["tasks"] = tasks
                 state["session_metadata"] = metadata
-            with self._delegation_receipt_state(ctx) as receipt_state:
-                self._finish_delegation_receipts(
-                    receipt_state,
-                    ctx.cli_type,
-                    target_ids,
-                    now,
-                )
+            self._finish_delegation_receipts(
+                ctx.cli_type,
+                target_ids,
+                now,
+            )
 
         for task_id in returned:
             self.log_event(
@@ -3378,16 +3542,18 @@ class TaskLifecycle:
         agent_id = match.group(1)
         try:
             with self._session_state() as state:
-                with self._delegation_receipt_state(ctx) as receipt_state:
+                with self._delegation_receipt_state(ctx.cli_type, agent_id, ctx) as receipt_state:
                     now = time.time()
-                    stored_receipts = copy.deepcopy(
-                        receipt_state.get(_DELEGATION_RECEIPTS_FIELD, {})
-                    )
-                    receipts = _bounded_delegation_receipts(stored_receipts)
-                    if receipts != stored_receipts:
-                        receipt_state[_DELEGATION_RECEIPTS_FIELD] = receipts
-                    key = _agent_receipt_key(ctx.cli_type, agent_id)
-                    existing = receipts.get(key)
+                    existing = copy.deepcopy(receipt_state.get("receipt"))
+                    if not isinstance(existing, dict):
+                        key = _agent_receipt_key(ctx.cli_type, agent_id)
+                        with self._legacy_delegation_receipt_state(ctx) as legacy_state:
+                            receipts = legacy_state.get(_DELEGATION_RECEIPTS_FIELD, {})
+                            existing = (
+                                copy.deepcopy(receipts.get(key))
+                                if isinstance(receipts, dict)
+                                else None
+                            )
                     if isinstance(existing, dict):
                         if existing.get("parent_session_id") != self.session_id:
                             logger.warning(
@@ -3420,17 +3586,17 @@ class TaskLifecycle:
                     metadata["agent_spawns"] = _bounded_spawn_ledger(ledger)
                     state["session_metadata"] = metadata
                     if not isinstance(existing, dict):
-                        receipts[key] = {
+                        receipt_state["receipt"] = {
                             "agent_id": agent_id,
                             "cli_type": ctx.cli_type,
                             "parent_session_id": self.session_id,
                             "parent_global_key": self.global_key,
                             "at": float(ledger_entry.get("at") or now),
                             "returned": bool(ledger_entry.get("returned")),
+                            "claimed": False,
                             "harness_pid": ctx.harness_pid,
                             "harness_started_at_units": ctx.harness_started_at_units,
                         }
-                        receipt_state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(receipts)
         except Exception as exc:  # noqa: BLE001 - capture must never break the hook
             logger.warning("Could not record agent spawn: %s", exc)
 
@@ -3678,6 +3844,16 @@ class TaskLifecycle:
                     state["tasks"] = tasks
                 state["session_metadata"] = metadata
 
+        if delegated and session and self._cli_type:
+            try:
+                self._mark_delegation_receipt_claimed(
+                    self._cli_type,
+                    str(session),
+                    delegated,
+                )
+            except Exception as exc:  # noqa: BLE001 - task state already committed
+                logger.warning("Could not mark delegation receipt claimed: %s", exc)
+
         for task_id in delegated:
             self.log_event(
                 "DELEGATE",
@@ -3891,13 +4067,14 @@ class TaskLifecycle:
                     TASK_DELEGATION_RECEIPT_SESSION
                     in state_manager.list_sessions()
                 )
+                receipt_sessions = _delegation_receipt_sessions_for_parents()
                 sessions_dir = config.storage_dir
                 session_dirs = (
                     [d for d in sessions_dir.iterdir() if d.is_dir()]
                     if sessions_dir.exists()
                     else []
                 )
-                if not session_keys and not session_dirs and not receipt_present:
+                if not session_keys and not session_dirs and not receipt_present and not receipt_sessions:
                     print("No task data found.")
                     return 0
 
@@ -3914,9 +4091,11 @@ class TaskLifecycle:
                 import shutil
 
                 state_manager.clear_sessions_atomically(
-                    (*session_keys, *(
-                        (TASK_DELEGATION_RECEIPT_SESSION,) if receipt_present else ()
-                    ))
+                    (
+                        *session_keys,
+                        *receipt_sessions,
+                        *((TASK_DELEGATION_RECEIPT_SESSION,) if receipt_present else ()),
+                    )
                 )
                 for session_dir in session_dirs:
                     shutil.rmtree(session_dir)
@@ -3973,8 +4152,11 @@ class TaskLifecycle:
                         else:
                             receipt_state.clear()
 
+                receipt_sessions = _delegation_receipt_sessions_for_parents(
+                    (manager.global_key,)
+                )
                 state_manager.clear_sessions_atomically(
-                    (manager.global_key,),
+                    (manager.global_key, *receipt_sessions),
                     related_session=TASK_DELEGATION_RECEIPT_SESSION,
                     related_updater=remove_parent_receipts,
                     timeout=manager._state_lock_timeout,
@@ -4287,6 +4469,10 @@ class TaskLifecycle:
                     if clear_sids:
                         clear_set = set(clear_sids)
                         with all_session_state(timeout=10.0, write=True) as raw:
+                            cleared_parent_keys = {
+                                f"{TASK_LIFECYCLE_SESSION_PREFIX}{sid}"
+                                for sid in clear_set
+                            }
                             for sid in sorted(clear_set):
                                 prefix = f"{TASK_LIFECYCLE_SESSION_PREFIX}{sid}/"
                                 for key in [k for k in raw if k.startswith(prefix)]:
@@ -4295,6 +4481,30 @@ class TaskLifecycle:
                                 if audit_dir.exists():
                                     shutil.rmtree(audit_dir, ignore_errors=True)
                                 cleared += 1
+                            receipt_roots = {
+                                key.split("/", 1)[0]
+                                for key, value in raw.items()
+                                if key.startswith(TASK_DELEGATION_RECEIPT_SESSION_PREFIX)
+                                and key.endswith("/receipt")
+                                and isinstance(value, dict)
+                                and value.get("parent_global_key") in cleared_parent_keys
+                            }
+                            for receipt_root in receipt_roots:
+                                for key in [k for k in raw if k.startswith(receipt_root + "/")]:
+                                    del raw[key]
+                            legacy_key = f"{TASK_DELEGATION_RECEIPT_SESSION}/{_DELEGATION_RECEIPTS_FIELD}"
+                            legacy = raw.get(legacy_key)
+                            if isinstance(legacy, dict):
+                                kept = {
+                                    key: receipt
+                                    for key, receipt in legacy.items()
+                                    if not isinstance(receipt, dict)
+                                    or receipt.get("parent_global_key") not in cleared_parent_keys
+                                }
+                                if kept:
+                                    raw[legacy_key] = kept
+                                else:
+                                    raw.pop(legacy_key, None)
 
             except PermissionError as e:
                 errors += 1

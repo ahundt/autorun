@@ -670,6 +670,37 @@ class SessionStateManager:
         with self._store.session(session_id, timeout) as state:
             state.clear()
 
+    def clear_session_if_field_matches(
+        self,
+        session_id: str,
+        field: str,
+        expected,
+        timeout: float = DEFAULT_SESSION_TIMEOUT,
+    ) -> bool:
+        """Delete one keyed state root only if its authority record is unchanged."""
+        _validate_session_id(session_id)
+        if isinstance(self._store, SQLiteStore):
+            encoded = _encode_state_value(field, expected)
+            try:
+                with self._store.operation_scope(timeout) as owner:
+                    with self._store.write_transaction(owner) as conn:
+                        cursor = conn.execute(
+                            "DELETE FROM sessions WHERE session = ? AND EXISTS ("
+                            "SELECT 1 FROM state WHERE session = ? AND field = ? "
+                            "AND value_json = ?)",
+                            (session_id, session_id, field, encoded),
+                        )
+                        return bool(cursor.rowcount)
+            except sqlite3.Error as exc:
+                raise SessionBackendError(
+                    f"Could not conditionally clear session {session_id!r}: {exc}"
+                ) from exc
+        with self._store.session(session_id, timeout) as state:
+            if state.get(field, MISSING) != expected:
+                return False
+            state.clear()
+            return True
+
     def clear_sessions_atomically(
         self,
         session_ids,
@@ -1466,10 +1497,14 @@ def _decode_state_value(session_id: str, field: str, raw: str):
         ) from exc
 
 
-# Session ids task_lifecycle.py writes: one per AI session, and one global
-# registry of delegation receipts shared by every session.
+# Session ids task_lifecycle.py writes: one per AI session, one legacy global
+# receipt registry, and one keyed state root per current delegation receipt.
 TASK_LIFECYCLE_SESSION_PREFIX = "__task_lifecycle__"
+# Legacy whole-registry location, read for compatibility with pre-keyed stores.
 TASK_DELEGATION_RECEIPT_SESSION = "__task_delegation_receipts__"
+# One durable state root per (cli_type, agent_id). The task lifecycle owns the
+# suffix format; the store owns namespace classification and atomic deletion.
+TASK_DELEGATION_RECEIPT_SESSION_PREFIX = "__task_delegation_receipt__"
 
 # Session-ID prefixes that retention policy distinguishes. An ID matching none
 # of these is an ordinary session; retention must never invent a namespace for
@@ -1480,6 +1515,7 @@ _NAMESPACE_PREFIXES = (
     ("__plan_export__", "plan_export"),
     (TASK_LIFECYCLE_SESSION_PREFIX, "task_lifecycle"),
     (TASK_DELEGATION_RECEIPT_SESSION, "task_delegation_receipts"),
+    (TASK_DELEGATION_RECEIPT_SESSION_PREFIX, "task_delegation_receipts"),
     ("monitor_", "monitor"),
 )
 
@@ -2820,6 +2856,9 @@ class StateRetention:
             return report
 
         report["archive"] = str(self._archive_sessions(eligible))
+        receipt_sessions_by_parent = self._delegation_receipt_sessions_by_parent(
+            eligible
+        )
         terminal = list(self.policy.TERMINAL_TASK_STATUSES)
         terminal_placeholders = ",".join("?" * len(terminal))
         deleted = []
@@ -2838,11 +2877,73 @@ class StateRetention:
                     )
                     if cursor.rowcount:
                         deleted.append(session_id)
+                        conn.executemany(
+                            "DELETE FROM sessions WHERE session = ?",
+                            (
+                                (receipt_session,)
+                                for receipt_session in receipt_sessions_by_parent.get(
+                                    session_id, ()
+                                )
+                            ),
+                        )
+                if deleted:
+                    legacy_row = conn.execute(
+                        "SELECT value_json FROM state WHERE session = ? AND field = 'receipts'",
+                        (TASK_DELEGATION_RECEIPT_SESSION,),
+                    ).fetchone()
+                    if legacy_row is not None:
+                        legacy = _decode_state_value(
+                            TASK_DELEGATION_RECEIPT_SESSION,
+                            "receipts",
+                            legacy_row[0],
+                        )
+                        deleted_set = set(deleted)
+                        kept = {
+                            key: receipt
+                            for key, receipt in legacy.items()
+                            if not isinstance(receipt, dict)
+                            or receipt.get("parent_global_key") not in deleted_set
+                        }
+                        if kept:
+                            conn.execute(
+                                "UPDATE state SET value_json = ?, updated_at = ? "
+                                "WHERE session = ? AND field = 'receipts'",
+                                (
+                                    _encode_state_value("receipts", kept),
+                                    time.time(),
+                                    TASK_DELEGATION_RECEIPT_SESSION,
+                                ),
+                            )
+                        else:
+                            conn.execute(
+                                "DELETE FROM sessions WHERE session = ?",
+                                (TASK_DELEGATION_RECEIPT_SESSION,),
+                            )
         report["deleted"] = deleted
         report["changed_after_archive"] = [
             session_id for session_id in eligible if session_id not in deleted
         ]
         return report
+
+    def _delegation_receipt_sessions_by_parent(self, parent_sessions) -> dict:
+        """Keyed receipts removed with their parent during explicit task GC."""
+        wanted = frozenset(parent_sessions)
+        if not wanted:
+            return {}
+        with self.store.operation_scope(DEFAULT_SESSION_TIMEOUT) as owner:
+            rows = owner.connection.execute(
+                "SELECT state.session, state.value_json FROM state "
+                "JOIN sessions ON sessions.session = state.session "
+                "WHERE sessions.namespace = 'task_delegation_receipts' "
+                "AND state.field = 'receipt'"
+            ).fetchall()
+        grouped = {}
+        for receipt_session, raw in rows:
+            receipt = _decode_state_value(receipt_session, "receipt", raw)
+            parent = receipt.get("parent_global_key") if isinstance(receipt, dict) else None
+            if parent in wanted:
+                grouped.setdefault(parent, []).append(receipt_session)
+        return grouped
 
     def _classify_sessions(self):
         """Sort every session into eligible, protected, and suspicious."""
