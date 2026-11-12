@@ -40,6 +40,7 @@ SEEDED = {
     "t-returned": "delegation-returned",
     "t-done": "completed",
     "t-future": "zz-future-status",
+    "t-awaiting": "awaiting-user",
 }
 
 _OLDER_BUILD_PROBE = textwrap.dedent("""
@@ -69,6 +70,22 @@ _OLDER_BUILD_PROBE = textwrap.dedent("""
     result["mutate_to_known"] = repo.get_task(session, "t-future")["status"]
     retention = sm.StateRetention(store, sm.RetentionPolicy())
     result["has_unfinished"] = retention._has_unfinished_tasks(session)
+    import inspect
+    from autorun.core import EventContext
+    from autorun import plugins
+    from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+    # Leave only the status the older lifecycle cannot restore.
+    for task_id, record in repo.list_tasks(session).items():
+        if task_id != "t-awaiting":
+            repo.put_task(session, task_id, dict(record, status="completed"))
+    manager = TaskLifecycle(session_id=session.removeprefix("__task_lifecycle__"),
+                            config=TaskLifecycleConfig(enabled=True))
+    evidence = ({"active_tools": ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]}
+                if "active_tools" in inspect.signature(EventContext).parameters else {})
+    plugins.app.dispatch(EventContext(session_id=manager.session_id, event="UserPromptSubmit",
+                                     cli_type="claude", prompt="Approved; continue", **evidence))
+    ctx = EventContext(session_id=manager.session_id, event="Stop", cli_type="claude", **evidence)
+    result["stop"] = manager.handle_stop(ctx)
     print(json.dumps(result))
 """)
 
@@ -148,7 +165,7 @@ def test_older_builds_open_and_gate_a_migrated_database(ref, tmp_path):
     stored = {**SEEDED, **{task_id: status for task_id, status, _payload in TASK_ROWS}}
     blocking = sorted(
         task_id for task_id, status in stored.items()
-        if status not in task_status.NON_BLOCKING_TASK_STATUSES
+        if status not in task_status.NON_BLOCKING_TASK_STATUSES or status == "awaiting-user"
     )
     assert result["incomplete"] == blocking, (
         f"{ref}'s Stop gate does not see what this build's policy blocks on: {result['incomplete']}"
@@ -158,6 +175,8 @@ def test_older_builds_open_and_gate_a_migrated_database(ref, tmp_path):
     assert result["mutate_unknown"] == "Unknown task status 'zz-future-status'"
     assert result["mutate_to_known"] == "completed"
     assert result["has_unfinished"] is True
+    assert result["stop"] and result["stop"]["decision"] == "block", result
+    assert "t-awaiting" in json.dumps(result["stop"]), result
     assert _read(db_path, "PRAGMA integrity_check") == [("ok",)]
 
 

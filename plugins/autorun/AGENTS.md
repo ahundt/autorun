@@ -131,8 +131,13 @@ Task status policy has one owner, `task_status.py`. The tasks table has no
 status CHECK; its `blocks_stop` and `prunable` columns exist for older builds
 and fail closed for statuses written after them. Code here never takes
 policy from them: `list_incomplete` passes `task_status.py`'s lists as
-parameters and uses `blocks_stop` only to narrow rows through its partial
-index while `schema_meta('blocks_stop_non_blocking')` shows that is exact.
+parameters and narrows candidates with `prunable = 0` through
+`tasks_retention`. Older lifecycle code cannot restore `awaiting-user`, so
+the compatibility `blocks_stop` column blocks it. An earlier revision-3
+definition is repaired without changing rows or rebuilding an index: its
+partial index additionally excludes `awaiting-user`, preserving the index's
+existing membership. Older readers use another index for that query after
+rollback; they may read finished history but cannot silently exempt the task.
 Adding a status changes `task_status.py` only. Changing what an existing
 status means (`blocks_stop`, `prunable`) is an incompatible change:
 `test_existing_status_policy_never_changes` freezes them, because skipping

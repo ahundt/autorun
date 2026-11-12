@@ -960,6 +960,8 @@ QUERY_PARAMETER_CHUNK = int(_CONFIG.get("state_query_parameter_chunk", 500))
 # to be non-blocking, so a status added later fails closed for any reader of
 # those columns, including builds released before this one after a rollback.
 _CANONICAL_PRUNABLE_TASK_STATUSES = tuple(sorted(PRUNABLE_TASK_STATUSES))
+# Older lifecycle code cannot restore this status on a user reply.
+_COMPAT_NON_BLOCKING_TASK_STATUSES = NON_BLOCKING_TASK_STATUSES - {task_status.AWAITING_USER_STATUS}
 
 
 def _sql_status_list(statuses) -> str:
@@ -975,7 +977,7 @@ _TASK_COLUMNS = {
     "status": "status       TEXT NOT NULL",
     "blocks_stop": (
         "blocks_stop  INTEGER GENERATED ALWAYS AS (CASE WHEN status IN "
-        f"{_sql_status_list(NON_BLOCKING_TASK_STATUSES)} THEN 0 ELSE 1 END) VIRTUAL"
+        f"{_sql_status_list(_COMPAT_NON_BLOCKING_TASK_STATUSES)} THEN 0 ELSE 1 END) VIRTUAL"
     ),
     "prunable": (
         "prunable     INTEGER GENERATED ALWAYS AS (CASE WHEN status IN "
@@ -1223,7 +1225,7 @@ def _record_schema_revision(conn) -> None:
         (
             ("schema_revision", str(SCHEMA_REVISION)),
             ("schema_written_by", __version__),
-            ("blocks_stop_non_blocking", json.dumps(sorted(NON_BLOCKING_TASK_STATUSES))),
+            ("blocks_stop_non_blocking", json.dumps(sorted(_COMPAT_NON_BLOCKING_TASK_STATUSES))),
         ),
     )
 
@@ -1244,6 +1246,16 @@ def _rewrite_tasks_definition(conn, sql: str) -> None:
     version = conn.execute("PRAGMA schema_version").fetchone()[0]
     conn.execute("PRAGMA writable_schema = ON")
     try:
+        if _schema_meta_value(conn, "schema_revision") == "3" and task_status.AWAITING_USER_STATUS in json.loads(
+            _schema_meta_value(conn, "blocks_stop_non_blocking") or "[]"
+        ):
+            # These rows were absent from the old partial index. Keep its
+            # membership unchanged; older readers use another index to see them.
+            conn.execute(
+                "UPDATE sqlite_master SET sql = ? WHERE type = 'index' AND name = 'tasks_incomplete'",
+                ("CREATE INDEX tasks_incomplete ON tasks(session, task_id) "
+                 "WHERE blocks_stop = 1 AND status != 'awaiting-user'",),
+            )
         conn.execute(
             "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'tasks'",
             (sql,),
@@ -1382,7 +1394,7 @@ def _migrate_tasks_revision_3(conn) -> bool:
         conn.execute("RELEASE tasks_revision_3")
         logger.error("Not upgrading the tasks table: after the rewrite, %s.", "; ".join(problems))
         return False
-    if order != list(_TASK_COLUMNS):
+    if order != list(_TASK_COLUMNS) and _schema_meta_value(conn, "schema_revision") != "3":
         conn.execute("REINDEX tasks_incomplete")
         conn.execute("REINDEX tasks_retention")
     _record_schema_revision(conn)
@@ -1789,7 +1801,11 @@ class SQLiteStore:
                     elif version == 1:
                         _migrate_schema_v1_to_v2(conn)
                         _record_schema_revision(conn)
-                    elif revision < SCHEMA_REVISION:
+                    elif revision < SCHEMA_REVISION or (
+                        revision == 3 and task_status.AWAITING_USER_STATUS in json.loads(
+                            _schema_meta_value(conn, "blocks_stop_non_blocking") or "[]"
+                        )
+                    ):
                         needs_rebuild = _migrate_tasks_revision_3(conn)
                     conn.execute("COMMIT")
                 except BaseException:
@@ -2445,30 +2461,7 @@ class TaskRepository:
         column means finished work is never decoded to establish that it is
         finished.
         """
-        _validate_session_id(session_id)
-        non_blocking = sorted(task_status.NON_BLOCKING_TASK_STATUSES)
-        placeholders = ",".join("?" * len(non_blocking))
-        with self._store.operation_scope(timeout) as owner:
-            conn = owner.connection
-            # The policy is task_status.py's list. blocks_stop only narrows the
-            # rows through its partial index, and only while every status the
-            # column was written to call non-blocking is non-blocking here too;
-            # otherwise (revision 2, or a column a newer build wrote) every
-            # task of the session is read.
-            try:
-                written = json.loads(_schema_meta_value(conn, "blocks_stop_non_blocking") or "null")
-            except ValueError:
-                written = None
-            narrowed = isinstance(written, list) and set(written) <= set(non_blocking)
-            rows = conn.execute(
-                "SELECT task_id, status, updated_at, payload_json FROM tasks WHERE session = ? "
-                + ("AND blocks_stop = 1 " if narrowed else "")
-                + f"AND status NOT IN ({placeholders}) ORDER BY task_id",
-                (session_id, *non_blocking),
-            ).fetchall()
-        return [
-            self._record_from_row(session_id, row[0], row[1:]) for row in rows
-        ]
+        return self.list_excluding_statuses(session_id, task_status.NON_BLOCKING_TASK_STATUSES, timeout)
 
     def list_excluding_statuses(self, session_id: str, statuses,
                                 timeout: float = DEFAULT_SESSION_TIMEOUT) -> list:

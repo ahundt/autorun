@@ -175,7 +175,7 @@ def test_first_start_rewrites_the_tasks_definition_and_keeps_every_row(tmp_path)
     assert "CHECK" not in ddl, f"the status CHECK survived the upgrade: {ddl}"
     blocks = (
         "blocks_stop  INTEGER GENERATED ALWAYS AS "
-        f"(CASE WHEN status IN {_status_list(task_status.NON_BLOCKING_TASK_STATUSES)} THEN 0 ELSE 1 END) VIRTUAL"
+        f"(CASE WHEN status IN {_status_list(task_status.NON_BLOCKING_TASK_STATUSES - {'awaiting-user'})} THEN 0 ELSE 1 END) VIRTUAL"
     )
     prunable = (
         "prunable     INTEGER GENERATED ALWAYS AS "
@@ -202,6 +202,41 @@ def test_a_fresh_database_is_created_at_revision_3(tmp_path):
     assert _revision(db_path) == "3"
     assert "CHECK" not in _tasks_ddl(db_path)
     assert _read(db_path, "PRAGMA user_version") == [(2,)]
+
+
+def test_earlier_revision_3_awaiting_user_fails_closed_without_reindex(tmp_path, monkeypatch):
+    path = tmp_path / "earlier.sqlite3"
+    # The first revision-3 definition exempted awaiting-user for older readers.
+    columns = dict(sm._TASK_COLUMNS)
+    columns["blocks_stop"] = (
+        "blocks_stop INTEGER GENERATED ALWAYS AS (CASE WHEN status IN "
+        f"{sm._sql_status_list(task_status.NON_BLOCKING_TASK_STATUSES)} THEN 0 ELSE 1 END) VIRTUAL"
+    )
+    sql = "CREATE TABLE tasks (" + ",".join(columns.values()) + ",PRIMARY KEY(session, task_id))"
+    with sqlite3.connect(path) as conn:
+        for statement in sm._SCHEMA_STATEMENTS:
+            conn.execute(sql if "CREATE TABLE IF NOT EXISTS tasks (" in statement else statement)
+        conn.execute(f"PRAGMA application_id = {sm.SCHEMA_APPLICATION_ID}")
+        conn.execute("PRAGMA user_version = 2")
+        conn.executemany("INSERT INTO schema_meta VALUES (?, ?)", [
+            ("schema_revision", "3"),
+            ("blocks_stop_non_blocking", json.dumps(sorted(task_status.NON_BLOCKING_TASK_STATUSES))),
+        ])
+        conn.execute("INSERT INTO sessions VALUES ('old-r3', 'task_lifecycle', 1)")
+        conn.execute("INSERT INTO tasks(session,task_id,status,updated_at,payload_json) VALUES ('old-r3','wait','awaiting-user',1,'{\"id\":\"wait\"}')")
+    statements = []
+    store = SQLiteStore(path)
+    real = store._connect
+    def connect(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+    monkeypatch.setattr(store, "_connect", connect)
+    store.initialize()
+    assert _read(path, "SELECT blocks_stop FROM tasks") == [(1,)], "older builds still exempt awaiting-user"
+    assert _read(path, "PRAGMA integrity_check") == [("ok",)]
+    assert TaskRepository(store).list_incomplete("old-r3") == [], "current Python policy must keep awaiting-user waiting"
+    assert not any(sql.startswith(("REINDEX", "UPDATE tasks ", "INSERT INTO tasks ", "DROP ")) for sql in statements), statements
 
 
 def test_a_version_1_database_reaches_revision_3_with_fail_closed_columns(tmp_path):
