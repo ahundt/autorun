@@ -5,7 +5,7 @@
  * Usage:
  *   bun run render-mermaid.ts <input.mmd...> [-o output.svg] [-d outdir] [-t theme]
  *   bun run render-mermaid.ts --list-themes
- *   echo 'graph TD; A-->B' | bun run render-mermaid.ts -o diagram.svg
+ *   echo 'graph TD; A --> B' | bun run render-mermaid.ts -o diagram.svg
  *
  * Dependencies (beautiful-mermaid) are auto-installed by bun on first run.
  */
@@ -17,7 +17,7 @@ const HELP = `render-mermaid — Render Mermaid .mmd files to themed SVG
 
 Usage:
   bun run render-mermaid.ts [options] <input.mmd...>
-  echo 'graph TD; A-->B' | bun run render-mermaid.ts -o out.svg
+  echo 'graph TD; A --> B' | bun run render-mermaid.ts -o out.svg
 
 Options:
   -o, --output <file>   Output file (single input only)
@@ -168,7 +168,11 @@ if (outDir) mkdirSync(outDir, { recursive: true })
 for (const { name, source, dest } of jobs) {
   try {
     // Strip %%{init:...}%% front matter — beautiful-mermaid handles theming
-    const cleaned = source.replace(/^%%\{init:.*?\}%%\n?/s, '')
+    // and put a one-line header ("graph TD; A --> B") on its own line, which
+    // Mermaid accepts and beautiful-mermaid rejects as an invalid header.
+    const cleaned = source
+      .replace(/^%%\{init:.*?\}%%\n?/s, '')
+      .replace(/^(\s*(?:graph|flowchart)\s+[A-Za-z]{2})\s*;\s*/, '$1\n')
     const svg = await renderMermaidSVGAsync(cleaned, theme)
     mkdirSync(dirname(dest), { recursive: true })
     writeFileSync(dest, svg)

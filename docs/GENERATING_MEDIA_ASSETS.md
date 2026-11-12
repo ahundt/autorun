@@ -6,7 +6,7 @@ recordings (`autorun_demo.*`) are gitignored to keep the repository small.
 
 ## SVG Diagrams (from Mermaid `.mmd` source files)
 
-Each `.mmd` file has a regeneration comment at the top. See also: `plugins/autorun/skills/mermaid-diagrams/SKILL.md`.
+Each `.mmd` file has a regeneration comment at the top. See also: `plugins/autorun-skills/skills/mermaid-diagrams/SKILL.md`.
 
 ### Option 1: beautiful-mermaid + bun (preferred — already in repo)
 
@@ -18,7 +18,7 @@ brew install oven-sh/bun/bun   # macOS
 # or: curl -fsSL https://bun.sh/install | bash
 
 # Regenerate all diagrams at once (one-liner)
-MERMAID=plugins/autorun/skills/mermaid-diagrams/render-mermaid.ts
+MERMAID=plugins/autorun-skills/skills/mermaid-diagrams/render-mermaid.ts
 bun run $MERMAID autorun-ux.mmd docs/diagrams/autofile-policy.mmd docs/diagrams/three-stage-autorun.mmd
 
 # Or render to a specific output directory
@@ -45,6 +45,11 @@ npx mmdc -i docs/diagrams/autofile-policy.mmd -o docs/diagrams/autofile-policy.s
 npx mmdc -i docs/diagrams/three-stage-autorun.mmd -o docs/diagrams/three-stage-autorun.svg
 ```
 
+### Project overview image
+
+`docs/gemini-diagram-prompt.md` is a prompt for Gemini to generate an
+outcome-focused overview image of autorun. Copy it into a Gemini conversation.
+
 ## Demo Recordings (GIF, cast, MP4)
 
 Demo recordings are generated using the `cli-demo-recorder` skill:
@@ -52,7 +57,7 @@ Demo recordings are generated using the `cli-demo-recorder` skill:
 ```bash
 # In a Claude Code session:
 # Use the cli-demo-recorder skill to record a new demo
-# See: plugins/autorun/skills/cli-demo-recorder/SKILL.md
+# See: plugins/autorun-skills/skills/cli-demo-recorder/SKILL.md
 ```
 
 Output files (all gitignored):
@@ -62,4 +67,4 @@ Output files (all gitignored):
 
 ## PDF Assets
 
-- `plugins/autorun/skills/ai-skill-builder/ai-skill-builder-guide.pdf` — Static reference document (not generated). Gitignored via `*.pdf`.
+- `plugins/autorun-skills/skills/ai-skill-builder/ai-skill-builder-guide.pdf` — Static reference document (not generated). Gitignored via `*.pdf`.
