@@ -119,6 +119,14 @@ def test_every_plan_skill_explains_pi_durable_note_workflow():
         assert "call the **ExitPlanMode** tool" not in text, name
 
 
+def test_no_plan_skill_claims_the_model_may_use_every_tool_without_asking():
+    """"You have full permission to use all tools" contradicted autorun's own
+    guards, which deny commands and ask before permission changes."""
+    for name in PLAN_SKILLS:
+        text = (plugin_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+        assert "full permission" not in text.lower(), name
+
+
 def test_every_plan_skill_makes_native_task_tracking_capability_conditional():
     """Raw skill loading must survive optional extensions and mode changes.
 
