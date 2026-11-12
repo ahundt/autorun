@@ -1277,8 +1277,8 @@ class TestTryCliRobustness:
             "continue", "stopReason", "suppressOutput", "systemMessage"
         } & response.keys()
 
-    def test_antigravity_lifecycle_fallback_failure_is_native_noop(self, tmp_path):
-        """A non-permission bootstrap failure must not emit Claude fields."""
+    def test_antigravity_session_start_fallback_failure_uses_inject_steps(self, tmp_path):
+        """A SessionStart bootstrap failure uses Antigravity's native notice field."""
         plugin = tmp_path / "broken-plugin"
         package = plugin / "src" / "autorun"
         package.mkdir(parents=True)
@@ -1313,7 +1313,11 @@ class TestTryCliRobustness:
         )
 
         assert result.returncode == 0, result.stderr
-        assert json.loads(result.stdout) == {}
+        assert json.loads(result.stdout) == {
+            "injectSteps": [{
+                "ephemeralMessage": "[autorun] Runtime error: injected lifecycle failure"
+            }]
+        }
         assert result.stderr == ""
 
     def test_stdin_read_once_in_main(self):
@@ -2330,10 +2334,14 @@ class TestFallbacksUseThePayloadHarness:
 
 
 def _without_failure_message(response: dict, no_op: dict) -> dict:
-    """A native no-op with the failure message, minus the message: drops
-    systemMessage, and the continue:true that carries it when the no-op has none."""
+    """Remove each harness-native failure-message carrier from a no-op."""
     response = dict(response)
-    if response.pop("systemMessage", None) is not None and "continue" not in no_op:
+    had_system_message = response.pop("systemMessage", None) is not None
+    if "reason" not in no_op:
+        response.pop("reason", None)
+    if "injectSteps" not in no_op:
+        response.pop("injectSteps", None)
+    if had_system_message and "continue" not in no_op:
         response.pop("continue", None)
     return response
 

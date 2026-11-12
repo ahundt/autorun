@@ -143,6 +143,7 @@ _VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgeco
 # holds them to client._TOOL_GATE_EVENTS and Antigravity's native events.
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _VALID_EXPLICIT_EVENTS = {
+    "SessionStart",
     "PreToolUse",
     "PostToolUse",
     "PreInvocation",
@@ -495,9 +496,9 @@ def fail_open_for_cli(message: str, cli_type: str, event_name: str) -> NoReturn:
 #: filter_response_to_harness_schema keeps, pinned by test_hook_entry.py's
 #: test_wrapper_fail_open_tells_the_user_what_the_client_path_would.
 _FAIL_OPEN_MESSAGE_FIELDS = {
-    "antigravity": {"Stop": "reason", "SubagentStop": "reason",
-                    "UserPromptSubmit": "injectSteps", None: None},
-    "qwen": {"Stop": None, "SubagentStop": None},
+    "antigravity": {"SessionStart": "injectSteps", "Stop": "reason",
+                    "SubagentStop": "reason", "UserPromptSubmit": "injectSteps",
+                    None: None},
 }
 
 
