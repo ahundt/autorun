@@ -1,9 +1,10 @@
 """Ghost-task / stale-ref workaround tests (v0.10.2).
 
-Covers: counter reset/increment, injection augmentation, marker regex,
-handler idempotence, end-to-end loop, disabled-feature, multi-session
-isolation, CI regex-leak check, FeatureToggle-vs-ConfigFlag wiring,
-config persistence, ctx override precedence, marker template integrity.
+Covers: the marker offered on every block and honored from the first,
+marker regex, handler idempotence, end-to-end loop, disabled-feature,
+multi-session isolation, CI regex-leak check, FeatureToggle-vs-ConfigFlag
+wiring, config persistence, marker template integrity. No count of identical
+Stop blocks gates the marker (stop_gate_design.md 3d).
 
 Follows fixture conventions from test_stop_chain_task_lifecycle.py and
 test_task_lifecycle_ghost_task_bug.py.
@@ -115,58 +116,6 @@ def _arm_stale_clear(mgr: tl.TaskLifecycle, times: int = 2) -> None:
         assert mgr.handle_stop(_ctx_for_session(mgr.session_id)) is not None
 
 
-# ─── Section 1: counter increments on identical id-set ────────────────────────
-
-def test_counter_increments_on_identical_id_set(tmp_path):
-    mgr = _make_mgr(tmp_path)
-    _add_task(mgr, "72", "Ghost #72")
-    _add_task(mgr, "74", "Ghost #74")
-    ctx = _make_stop_ctx(tmp_path)
-
-    mgr.handle_stop(ctx)
-    assert mgr.session_metadata.get("consecutive_identical_stop_block_count") == 1
-
-    mgr.handle_stop(ctx)
-    assert mgr.session_metadata.get("consecutive_identical_stop_block_count") == 2
-
-
-# ─── Section 2: counter resets on id-set change ───────────────────────────────
-
-def test_counter_resets_on_id_set_change(tmp_path):
-    mgr = _make_mgr(tmp_path)
-    _add_task(mgr, "72", "Ghost #72")
-    ctx = _make_stop_ctx(tmp_path)
-
-    mgr.handle_stop(ctx)
-    first_hash = mgr.session_metadata.get("last_stop_block_id_hash")
-    assert first_hash is not None
-
-    _add_task(mgr, "99", "Different task")
-    mgr.handle_stop(ctx)
-
-    assert mgr.session_metadata.get("consecutive_identical_stop_block_count") == 1
-    assert mgr.session_metadata.get("last_stop_block_id_hash") != first_hash
-
-
-# ─── Section 3: counter resets on PostToolUse activity ───────────────────────
-
-def test_counter_resets_on_posttooluse(tmp_path, monkeypatch):
-    _isolated_cfg(tmp_path, monkeypatch)
-    mgr = _make_mgr(tmp_path)
-    _add_task(mgr, "72", "Ghost #72")
-    ctx = _make_stop_ctx(tmp_path)
-
-    mgr.handle_stop(ctx)
-    assert mgr.session_metadata.get("consecutive_identical_stop_block_count") == 1
-
-    ctx.event = "PostToolUse"
-    ctx.tool_name = "Read"
-    plg.reset_ghost_counter_on_activity(ctx)
-
-    assert mgr.session_metadata.get("consecutive_identical_stop_block_count", 0) == 0
-    assert "last_stop_block_id_hash" not in mgr.session_metadata
-
-
 # ─── Section 4: injection unchanged at count == 1 ─────────────────────────────
 
 def test_injection_unchanged_at_count_one(tmp_path):
@@ -202,29 +151,8 @@ def test_injection_unchanged_at_count_one(tmp_path):
     assert "/ar:task pause <reason>" in msg
 
 
-# ─── Section 5: injection augmented at count == min_consecutive ──────────────
-
-def test_injection_augmented_at_threshold(tmp_path):
-    mgr = _make_mgr(tmp_path, ghost_clear_min_consecutive_blocks=2)
-    _add_task(mgr, "72", "Ghost #72")
-    _add_task(mgr, "74", "Ghost #74")
-    ctx = _make_stop_ctx(tmp_path)
-
-    mgr.handle_stop(ctx)          # count=1 — no escape hatch
-    result = mgr.handle_stop(ctx) # count=2 — threshold met
-
-    assert result is not None
-    msg = result.get("reason", "")
-    assert "CANNOT STOP" in msg
-    assert "STALE-TASK ESCAPE HATCH" in msg
-    assert "AUTORUN_TASKS_CLEAR_STALE_TASK(72)" in msg
-    assert "AUTORUN_TASKS_CLEAR_STALE_TASK(74)" in msg
-    assert "/ar:tasks pause <reason>" in msg
-    assert "/ar:tasks stale off" in msg
-
-
 def test_stale_task_actions_use_codex_command_syntax(tmp_path):
-    mgr = _make_mgr(tmp_path, ghost_clear_min_consecutive_blocks=2)
+    mgr = _make_mgr(tmp_path)
     _add_task(mgr, "72", "Ghost #72")
     ctx = EventContext(
         session_id=_sid(tmp_path),
@@ -238,9 +166,9 @@ def test_stale_task_actions_use_codex_command_syntax(tmp_path):
     result = mgr.handle_stop(ctx)
 
     msg = result.get("reason", "")
-    assert "ar:tasks pause <reason>" in msg
-    assert "ar:tasks stale off" in msg
-    assert "/ar:tasks" not in msg
+    assert "ar:task pause <reason>" in msg
+    assert "ar:task ignore <id>" in msg
+    assert "/ar:task" not in msg
 
 
 # ─── Section 6: marker regex positive cases ───────────────────────────────────
@@ -287,15 +215,16 @@ def test_handler_idempotent(tmp_path, monkeypatch):
     assert mgr.tasks.get("72", {}).get("status") == "ignored"
 
 
-def test_posttooluse_marker_before_threshold_does_not_clear(tmp_path, monkeypatch):
+def test_posttooluse_marker_clears_without_any_prior_block(tmp_path, monkeypatch):
+    """No count gates the marker: it is honored the first time it appears."""
     _isolated_cfg(tmp_path, monkeypatch)
-    mgr = _make_mgr(tmp_path, ghost_clear_min_consecutive_blocks=2)
-    _add_task(mgr, "72", "Real in-progress task")
+    mgr = _make_mgr(tmp_path)
+    _add_task(mgr, "72", "Task the harness list no longer has")
 
     ctx = _make_ctx(tmp_path, event="PostToolUse", tool_result=_marker("72"))
     plg.clear_ghost_tasks(ctx)
 
-    assert mgr.tasks.get("72", {}).get("status") == "in_progress"
+    assert mgr.tasks.get("72", {}).get("status") == "ignored"
 
 
 # ─── Section 9: handler logs GHOST_CLEAR audit event ─────────────────────────
@@ -322,13 +251,13 @@ def test_handler_logs_ghost_clear(tmp_path, monkeypatch):
 
 def test_full_loop(tmp_path, monkeypatch):
     _isolated_cfg(tmp_path, monkeypatch)
-    mgr = _make_mgr(tmp_path, ghost_clear_min_consecutive_blocks=2)
+    mgr = _make_mgr(tmp_path)
     _add_task(mgr, "72", "Ghost")
     _add_task(mgr, "74", "Ghost")
     ctx = _make_stop_ctx(tmp_path)
 
     mgr.handle_stop(ctx)
-    mgr.handle_stop(ctx)  # count==2, injection augmented
+    mgr.handle_stop(ctx)
 
     ctx2 = _make_ctx(
         tmp_path, event="PostToolUse",
@@ -343,14 +272,14 @@ def test_full_loop(tmp_path, monkeypatch):
     assert mgr.handle_stop(ctx3) is None  # allow stop
 
 
-def test_stop_marker_clears_after_threshold_without_tool_call(tmp_path, monkeypatch):
+def test_stop_marker_clears_without_tool_call(tmp_path, monkeypatch):
     """Assistant-text marker must work on the next Stop, not only PostToolUse.
 
     Regression source: when the AI prints the stale-clear marker as text and no
     tool call follows, Claude triggers Stop again. A PostToolUse-only marker
     scanner misses that path and the session stays blocked forever.
     """
-    mgr = _saved_mgr(tmp_path, monkeypatch, ghost_clear_min_consecutive_blocks=2)
+    mgr = _saved_mgr(tmp_path, monkeypatch)
     _add_task(mgr, "72", "Ghost")
 
     _arm_stale_clear(mgr)
@@ -361,25 +290,22 @@ def test_stop_marker_clears_after_threshold_without_tool_call(tmp_path, monkeypa
     assert mgr.tasks["72"]["status"] == "ignored"
 
 
-def test_stop_marker_before_threshold_does_not_clear(tmp_path, monkeypatch):
-    """The AI-callable marker is armed by repeated identical Stop blocks."""
-    mgr = _saved_mgr(tmp_path, monkeypatch, ghost_clear_min_consecutive_blocks=3)
-    _add_task(mgr, "72", "Real in-progress task")
+def test_stop_marker_clears_on_the_first_block(tmp_path, monkeypatch):
+    """No identical-block count arms the marker; the first Stop honors it."""
+    mgr = _saved_mgr(tmp_path, monkeypatch)
+    _add_task(mgr, "72", "Task the harness list no longer has")
 
-    assert mgr.handle_stop(_make_stop_ctx(tmp_path)) is not None
+    result = mgr.handle_stop(_make_stop_ctx(tmp_path, transcript_text=_marker("72")))
 
-    early_stop_ctx = _make_stop_ctx(tmp_path, transcript_text=_marker("72"))
-    result = mgr.handle_stop(early_stop_ctx)
-
-    assert result is not None
-    assert "CANNOT STOP" in result.get("reason", "")
-    assert mgr.tasks["72"]["status"] == "in_progress"
+    assert result is None
+    assert mgr.tasks["72"]["status"] == "ignored"
+    assert "consecutive_identical_stop_block_count" not in mgr.session_metadata
 
 
 def test_stop_marker_clears_only_current_session_task(tmp_path, monkeypatch):
     _isolated_cfg(tmp_path, monkeypatch)
     storage = tmp_path / "task-tracking"
-    cfg = tl.TaskLifecycleConfig(storage_dir=storage, ghost_clear_min_consecutive_blocks=2)
+    cfg = tl.TaskLifecycleConfig(storage_dir=storage)
     cfg.save()
     mgr_a = tl.TaskLifecycle(session_id=f"{_sid(tmp_path)}-A", config=cfg)
     mgr_b = tl.TaskLifecycle(session_id=f"{_sid(tmp_path)}-B", config=cfg)
@@ -396,7 +322,7 @@ def test_stop_marker_clears_only_current_session_task(tmp_path, monkeypatch):
 
 
 def test_stop_marker_partial_clear_still_blocks_remaining_tasks(tmp_path, monkeypatch):
-    mgr = _saved_mgr(tmp_path, monkeypatch, ghost_clear_min_consecutive_blocks=2)
+    mgr = _saved_mgr(tmp_path, monkeypatch)
     _add_task(mgr, "72", "Stale task")
     _add_task(mgr, "99", "Real unfinished task")
 
@@ -407,26 +333,25 @@ def test_stop_marker_partial_clear_still_blocks_remaining_tasks(tmp_path, monkey
     assert result is not None
     msg = result.get("reason", "")
     assert "CANNOT STOP" in msg
-    assert "#72" not in msg
-    assert "#99" in msg
+    # #72 is named only in the notice that it was cleared, never as blocking.
+    assert "#72:" not in msg and "Cleared stale task(s): #72" in msg
+    assert "#99:" in msg
     assert mgr.tasks["72"]["status"] == "ignored"
     assert mgr.tasks["99"]["status"] == "in_progress"
 
 
 # ─── Section 11: disabled feature suppresses injection ────────────────────────
 
-def test_disabled_feature_suppresses_injection(tmp_path, monkeypatch):
+def test_disabled_feature_ignores_the_marker(tmp_path, monkeypatch):
     _isolated_cfg(tmp_path, monkeypatch)
-    mgr = _make_mgr(tmp_path, ghost_clear_enabled=False, ghost_clear_min_consecutive_blocks=2)
+    mgr = _make_mgr(tmp_path, ghost_clear_enabled=False)
     _add_task(mgr, "72", "Ghost")
-    ctx = _make_stop_ctx(tmp_path)
 
-    mgr.handle_stop(ctx)
-    result = mgr.handle_stop(ctx)
+    result = mgr.handle_stop(_make_stop_ctx(tmp_path, transcript_text=_marker("72")))
 
     assert result is not None
-    msg = result.get("reason", "")
-    assert "STALE-TASK ESCAPE HATCH" not in msg
+    assert "CANNOT STOP" in result.get("reason", "")
+    assert mgr.tasks["72"]["status"] == "in_progress"
 
 
 # ─── Section 12: multi-session isolation ─────────────────────────────────────
@@ -450,7 +375,8 @@ def test_multi_session_isolation(tmp_path, monkeypatch):
     )
     mgr_a.handle_stop(ctx_a)
 
-    assert mgr_b.session_metadata.get("consecutive_identical_stop_block_count", 0) == 0
+    assert mgr_a.session_metadata.get("stop_block_count") == 1
+    assert mgr_b.session_metadata.get("stop_block_count", 0) == 0
 
 
 # ─── Section 13: single-source-of-truth CI guard ─────────────────────────────
@@ -461,6 +387,7 @@ def test_multi_session_isolation(tmp_path, monkeypatch):
         "ghost_clear_marker_template",
         "delegate_marker_template",
         "task_pause_resume_marker_template",
+        "awaiting_user_marker_template",
     ],
 )
 def test_marker_literal_single_source_of_truth(template_key):
@@ -514,16 +441,23 @@ def test_enabled_flag_read_from_config_not_dict():
 
 def test_config_persistence(tmp_path, monkeypatch):
     monkeypatch.setattr(tl, "CONFIG_PATH", tmp_path / "cfg.json")
-    cfg = tl.TaskLifecycleConfig(
-        ghost_clear_enabled=False,
-        ghost_clear_min_consecutive_blocks=5,
-        ghost_clear_hash_length=16,
-    )
+    cfg = tl.TaskLifecycleConfig(ghost_clear_enabled=False, stop_block_max_count=5)
     cfg.save()
     loaded = tl.TaskLifecycleConfig.load()
     assert loaded.ghost_clear_enabled is False
-    assert loaded.ghost_clear_min_consecutive_blocks == 5
-    assert loaded.ghost_clear_hash_length == 16
+    assert loaded.stop_block_max_count == 5
+
+
+def test_removed_stale_clear_count_settings_still_load(tmp_path, monkeypatch):
+    """A file written by an older build keeps loading; the removed keys are dropped."""
+    import json
+
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps({"ghost_clear_enabled": False, "ghost_clear_min_consecutive_blocks": 5, "ghost_clear_hash_length": 16}))
+    monkeypatch.setattr(tl, "CONFIG_PATH", path)
+    loaded = tl.TaskLifecycleConfig.load()
+    assert loaded.ghost_clear_enabled is False
+    assert not hasattr(loaded, "ghost_clear_min_consecutive_blocks")
 
 
 @pytest.mark.parametrize(
@@ -569,24 +503,6 @@ def test_a_string_hook_lock_timeout_does_not_disable_the_stop_gate(tmp_path, mon
     result = plg.app.dispatch(ctx)
 
     assert "72" in str(result), f"the Stop gate allowed with a task open: {result!r}"
-
-
-# ─── Section 16: ctx override precedence ─────────────────────────────────────
-
-def test_ctx_override_precedence(tmp_path):
-    mgr = _make_mgr(tmp_path, ghost_clear_min_consecutive_blocks=2)
-    _add_task(mgr, "72", "Ghost")
-    ctx = _make_stop_ctx(tmp_path)
-    ctx.ghost_clear_min_consecutive_blocks_override = 3
-
-    mgr.handle_stop(ctx)  # count=1
-    r2 = mgr.handle_stop(ctx)  # count=2 — below override threshold of 3
-    assert r2 is not None
-    assert "STALE-TASK ESCAPE HATCH" not in r2.get("reason", "")
-
-    r3 = mgr.handle_stop(ctx)  # count=3 — at override threshold
-    assert r3 is not None
-    assert "STALE-TASK ESCAPE HATCH" in r3.get("reason", "")
 
 
 # ─── Section 17: marker template integrity ───────────────────────────────────

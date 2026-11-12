@@ -2489,6 +2489,29 @@ class TaskRepository:
             self._record_from_row(session_id, row[0], row[1:]) for row in rows
         ]
 
+    def existing_task_ids(self, session_id: str, task_ids,
+                          timeout: float = DEFAULT_SESSION_TIMEOUT) -> set:
+        """Which of ``task_ids`` have a row in this session, whatever its status.
+
+        Keyed lookups only, so the Stop gate can tell a finished blocker from
+        a dangling one without reading finished task bodies.
+        """
+        _validate_session_id(session_id)
+        requested = sorted({str(task_id) for task_id in task_ids})
+        found: set = set()
+        with self._store.operation_scope(timeout) as owner:
+            for start in range(0, len(requested), QUERY_PARAMETER_CHUNK):
+                chunk = requested[start:start + QUERY_PARAMETER_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                found.update(
+                    row[0]
+                    for row in owner.connection.execute(
+                        f"SELECT task_id FROM tasks WHERE session = ? AND task_id IN ({placeholders})",
+                        (session_id, *chunk),
+                    )
+                )
+        return found
+
     def list_terminal_before(self, session_id: str, statuses, cutoff: float,
                              timeout: float = DEFAULT_SESSION_TIMEOUT) -> list:
         """Finished tasks last touched before ``cutoff``.

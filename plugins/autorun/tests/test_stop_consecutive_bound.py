@@ -1,8 +1,11 @@
-"""Regression tests for bounded consecutive task-backed Stop callbacks.
+"""Regression tests for the Stop loop guard.
 
-The consecutive Stop sequence is session-scoped and advisory. Real tasks stay
-authoritative: reaching the configured bound may end one stuck interaction but
+The guard counts consecutive main-agent Stops with no main-agent tool call
+between them; it is session-scoped and advisory. Real tasks stay
+authoritative: reaching the configured bound passes one Stop through (the
+gate returns None with a notice, so stage verification still answers) and
 must not complete, ignore, delete, pause, or otherwise mutate those tasks.
+``_stop`` reproduces what the handler chain does with a None result.
 """
 
 from __future__ import annotations
@@ -99,7 +102,6 @@ def _saved_manager(
         storage_dir=tmp_path / "task-tracking",
         stop_block_max_count=stop_block_max_count,
         ghost_clear_enabled=True,
-        ghost_clear_min_consecutive_blocks=10,
     )
     config.save()
     manager = TaskLifecycle(
@@ -112,6 +114,14 @@ def _saved_manager(
         "created",
     )
     return manager
+
+
+def _stop(manager: TaskLifecycle, ctx: EventContext) -> dict:
+    """handle_stop's response, or what the chain flushes when it passes through."""
+    response = manager.handle_stop(ctx)
+    if response is not None:
+        return response
+    return ctx.respond("allow", "") if ctx._chain_notifications else {}
 
 
 def _registered_handler(event: str, name: str):
@@ -152,7 +162,7 @@ def _process_stop(
     # independent of how long the queue takes to drain. Ten seconds is far
     # above the observed contention and far below the suite timeout, so a
     # genuine deadlock still fails rather than hanging.
-    return manager.handle_stop(_stop_context(manager, ThreadSafeDB(state_timeout=10.0)))
+    return _stop(manager, _stop_context(manager, ThreadSafeDB(state_timeout=10.0)))
 
 
 @pytest.mark.parametrize("prompt", ["Discuss the release.", "/test"])
@@ -194,7 +204,7 @@ def test_first_through_n_stops_block_and_n_plus_one_allows(
     manager = _manager(tmp_path, stop_block_max_count=configured_max)
     store = ThreadSafeDB()
 
-    decisions = [_decision(manager.handle_stop(_stop_context(manager, store))) for _ in range(configured_max + 1)]
+    decisions = [_decision(_stop(manager, _stop_context(manager, store))) for _ in range(configured_max + 1)]
 
     assert decisions == ["block"] * configured_max + ["allow"]
 
@@ -205,7 +215,7 @@ def test_allowed_stop_retains_tasks_and_keeps_counter_above_bound(tmp_path):
     store = ThreadSafeDB()
     tasks_before = copy.deepcopy(manager.tasks)
 
-    responses = [manager.handle_stop(_stop_context(manager, store)) for _ in range(configured_max + 2)]
+    responses = [_stop(manager, _stop_context(manager, store)) for _ in range(configured_max + 2)]
 
     assert [_decision(response) for response in responses] == [
         "block",
@@ -229,12 +239,12 @@ def test_allow_clears_pending_replay_without_mutating_task(tmp_path):
     assert first_context.pending_stop_injection
 
     second_context = _stop_context(manager, store)
-    assert _decision(manager.handle_stop(second_context)) == "allow"
+    assert _decision(_stop(manager, second_context)) == "allow"
     assert second_context.pending_stop_injection is None
     assert manager.get_incomplete_tasks(exclude_blocking=True)[0]["id"] == "plan-1"
 
 
-def test_non_task_posttooluse_resets_stop_and_ghost_sequences(
+def test_non_task_posttooluse_resets_stop_sequence(
     tmp_path,
     monkeypatch,
 ):
@@ -242,9 +252,8 @@ def test_non_task_posttooluse_resets_stop_and_ghost_sequences(
     store = ThreadSafeDB()
 
     for _ in range(2):
-        assert _decision(manager.handle_stop(_stop_context(manager, store))) == "block"
+        assert _decision(_stop(manager, _stop_context(manager, store))) == "block"
     assert manager.session_metadata["stop_block_count"] == 2
-    assert manager.session_metadata["consecutive_identical_stop_block_count"] == 2
 
     context = EventContext(
         session_id=manager.session_id,
@@ -256,40 +265,38 @@ def test_non_task_posttooluse_resets_stop_and_ghost_sequences(
         cli_type="claude",
         active_tools=task_tool_evidence("claude"),
     )
-    plugins.reset_ghost_counter_on_activity(context)
+    plugins.reset_stop_loop_guard_on_tool_activity(context)
 
     metadata = manager.session_metadata
     assert metadata["stop_block_count"] == 0
-    assert metadata["consecutive_identical_stop_block_count"] == 0
-    assert "last_stop_block_id_hash" not in metadata
 
 
-def test_task_posttooluse_resets_stop_but_not_ghost_sequence(
+def test_subagent_posttooluse_does_not_reset_the_parent_stop_sequence(
     tmp_path,
     monkeypatch,
 ):
+    """A subagent shares the parent's session on Claude; its tool call is not
+    the main agent acting, so the parent's loop guard keeps counting."""
     manager = _saved_manager(tmp_path, monkeypatch)
     store = ThreadSafeDB()
 
     for _ in range(2):
-        assert _decision(manager.handle_stop(_stop_context(manager, store))) == "block"
+        assert _decision(_stop(manager, _stop_context(manager, store))) == "block"
 
     context = EventContext(
         session_id=manager.session_id,
         event="PostToolUse",
-        tool_name="TaskUpdate",
-        tool_input={"taskId": "missing", "status": "completed"},
-        tool_result="Task not found",
+        tool_name="Read",
+        tool_input={"file_path": "README.md"},
+        tool_result="contents",
         store=store,
         cli_type="claude",
+        agent_id="subagent-7f3e",
         active_tools=task_tool_evidence("claude"),
     )
-    plugins.reset_ghost_counter_on_activity(context)
+    plugins.reset_stop_loop_guard_on_tool_activity(context)
 
-    metadata = manager.session_metadata
-    assert metadata["stop_block_count"] == 0
-    assert metadata["consecutive_identical_stop_block_count"] == 2
-    assert metadata["last_stop_block_id_hash"]
+    assert manager.session_metadata["stop_block_count"] == 2
 
 
 def test_productive_stop_tool_cycles_never_reach_bound(tmp_path, monkeypatch):
@@ -301,9 +308,9 @@ def test_productive_stop_tool_cycles_never_reach_bound(tmp_path, monkeypatch):
     store = ThreadSafeDB()
 
     for cycle in range(8):
-        response = manager.handle_stop(_stop_context(manager, store))
+        response = _stop(manager, _stop_context(manager, store))
         assert _decision(response) == "block", f"productive cycle {cycle + 1}"
-        plugins.reset_ghost_counter_on_activity(
+        plugins.reset_stop_loop_guard_on_tool_activity(
             EventContext(
                 session_id=manager.session_id,
                 event="PostToolUse",
@@ -322,7 +329,7 @@ def test_parallel_posttooluse_resets_are_idempotent(tmp_path, monkeypatch):
     manager = _saved_manager(tmp_path, monkeypatch)
     store = ThreadSafeDB()
     for _ in range(2):
-        assert _decision(manager.handle_stop(_stop_context(manager, store))) == "block"
+        assert _decision(_stop(manager, _stop_context(manager, store))) == "block"
 
     contexts = [
         EventContext(
@@ -338,11 +345,10 @@ def test_parallel_posttooluse_resets_are_idempotent(tmp_path, monkeypatch):
         for index in range(8)
     ]
     with ThreadPoolExecutor(max_workers=len(contexts)) as executor:
-        list(executor.map(plugins.reset_ghost_counter_on_activity, contexts))
+        list(executor.map(plugins.reset_stop_loop_guard_on_tool_activity, contexts))
 
     metadata = manager.session_metadata
     assert metadata["stop_block_count"] == 0
-    assert metadata["consecutive_identical_stop_block_count"] == 0
     assert list(manager.tasks) == ["plan-1"]
 
 
@@ -354,7 +360,7 @@ def test_user_prompt_resets_sequence_before_next_stop(
     store = ThreadSafeDB()
 
     for _ in range(manager.config.stop_block_max_count):
-        assert _decision(manager.handle_stop(_stop_context(manager, store))) == "block"
+        assert _decision(_stop(manager, _stop_context(manager, store))) == "block"
 
     handler = _registered_handler(
         "UserPromptSubmit",
@@ -372,7 +378,7 @@ def test_user_prompt_resets_sequence_before_next_stop(
     )
 
     assert manager.session_metadata["stop_block_count"] == 0
-    assert _decision(manager.handle_stop(_stop_context(manager, store))) == "block"
+    assert _decision(_stop(manager, _stop_context(manager, store))) == "block"
 
 
 def test_session_start_resets_sequence_before_resume_enforcement(
@@ -383,7 +389,7 @@ def test_session_start_resets_sequence_before_resume_enforcement(
     store = ThreadSafeDB()
 
     for _ in range(manager.config.stop_block_max_count):
-        assert _decision(manager.handle_stop(_stop_context(manager, store))) == "block"
+        assert _decision(_stop(manager, _stop_context(manager, store))) == "block"
 
     handler = _registered_handler("SessionStart", "resume_incomplete_tasks")
     response = handler(
@@ -398,7 +404,7 @@ def test_session_start_resets_sequence_before_resume_enforcement(
 
     assert response is not None
     assert manager.session_metadata["stop_block_count"] == 0
-    assert _decision(manager.handle_stop(_stop_context(manager, store))) == "block"
+    assert _decision(_stop(manager, _stop_context(manager, store))) == "block"
 
 
 def test_concurrent_stop_callbacks_share_one_atomic_session_bound(tmp_path):
@@ -410,7 +416,7 @@ def test_concurrent_stop_callbacks_share_one_atomic_session_bound(tmp_path):
     with ThreadPoolExecutor(max_workers=callback_count) as executor:
         responses = list(
             executor.map(
-                lambda _index: manager.handle_stop(_stop_context(manager, store)),
+                lambda _index: _stop(manager, _stop_context(manager, store)),
                 range(callback_count),
             )
         )
@@ -441,8 +447,8 @@ def test_same_working_directory_keeps_session_stop_sequences_independent(tmp_pat
         )
 
     stores = [ThreadSafeDB(), ThreadSafeDB()]
-    assert [_decision(manager.handle_stop(_stop_context(manager, store))) for manager, store in zip(managers, stores)] == ["block", "block"]
-    assert [_decision(manager.handle_stop(_stop_context(manager, store))) for manager, store in zip(managers, stores)] == ["allow", "allow"]
+    assert [_decision(_stop(manager, _stop_context(manager, store))) for manager, store in zip(managers, stores)] == ["block", "block"]
+    assert [_decision(_stop(manager, _stop_context(manager, store))) for manager, store in zip(managers, stores)] == ["allow", "allow"]
     assert [manager.session_metadata["stop_block_count"] for manager in managers] == [2, 2]
 
 
@@ -486,10 +492,10 @@ def test_n_plus_one_yield_is_audited_once(tmp_path):
     store = ThreadSafeDB()
 
     for _ in range(configured_max + 3):
-        manager.handle_stop(_stop_context(manager, store))
+        _stop(manager, _stop_context(manager, store))
 
     audit_text = manager.audit_log.read_text(encoding="utf-8")
-    assert audit_text.count("[STOP_SEQUENCE_YIELD]") == 1
+    assert audit_text.count("[STOP_LOOP_GUARD]") == 1
     assert "retained 1 incomplete task" in audit_text
     assert list(manager.tasks) == ["plan-1"]
 
@@ -525,8 +531,8 @@ def test_all_registered_harnesses_encode_block_then_bounded_allow(
             stop_hook_active=stop_hook_active,
         )
 
-    blocked = manager.handle_stop(context())
-    allowed = manager.handle_stop(context())
+    blocked = _stop(manager, context())
+    allowed = _stop(manager, context())
 
     protocol = PLATFORMS[cli_type].hook_protocol
     assert blocked["decision"] == protocol.stop_blocking_decision
@@ -581,10 +587,10 @@ def test_user_prompt_reset_failure_is_logged_and_prompt_dispatch_continues(
         "reset_stop_sequence_on_user_prompt",
     )
 
-    def fail_reset(_self, _updater):
+    def fail_reset(_self, _ctx):
         raise OSError("isolated reset failure")
 
-    monkeypatch.setattr(TaskLifecycle, "atomic_update_metadata", fail_reset)
+    monkeypatch.setattr(TaskLifecycle, "restore_awaiting_user", fail_reset)
     response = handler(
         EventContext(
             session_id="reset-failure",

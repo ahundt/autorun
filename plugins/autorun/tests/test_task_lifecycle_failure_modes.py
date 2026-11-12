@@ -138,12 +138,19 @@ class TestFailureModes:
         assert '/ar:estop' in result['systemMessage'], "Should mention /ar:estop as user escape hatch"
         assert '/ar:task ignore' in result['systemMessage'], "Should mention /ar:task ignore"
 
+        # The loop guard passes the Stop through (None, so later Stop
+        # handlers still answer) and says why in a chain notification.
+        ctx.add_chain_notification.reset_mock()
         yielded = manager.handle_stop(ctx)
-        assert "retained 1 incomplete task" in yielded["systemMessage"]
+        assert yielded is None
+        notices = " ".join(str(call.args[0]) for call in ctx.add_chain_notification.call_args_list)
+        assert "retained 1 incomplete task" in notices
         assert manager.tasks["1"]["status"] == "pending"
 
+        ctx.add_chain_notification.reset_mock()
         repeated = manager.handle_stop(ctx)
-        assert repeated["systemMessage"] == ""
+        assert repeated is None
+        assert not ctx.add_chain_notification.call_args_list
         assert manager.tasks["1"]["status"] == "pending"
 
         # Cleanup

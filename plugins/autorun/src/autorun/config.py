@@ -744,16 +744,14 @@ CONFIG = {
     # tool schema. Printing this marker is that way.
     "delegate_marker_template": "AUTORUN_TASK_DELEGATED({id})",
     "task_pause_resume_marker_template": "AUTORUN_TASK_RECOVERY({id})",
+    # Printed by the AI on its own line, followed by the decision it needs:
+    # "AUTORUN_TASK_AWAITING_USER(7): approve the merge". The task becomes
+    # awaiting-user (task_status.py) with that decision stored, stops blocking
+    # Stop, and is shown to the user; the next prompt the user types, or the
+    # agent's own update of the task, restores the status it had.
+    "awaiting_user_marker_template": "AUTORUN_TASK_AWAITING_USER({id})",
     "delegate_reason": "delegated to a subagent via marker; non-blocking until it reports back",
-    "ghost_clear_reason": ("stale ref: marker emitted after ghost_clear_min_consecutive_blocks identical stop blocks"),
-    "ghost_clear_injection_template": (
-        "\n"
-        "⚠ STALE-TASK ESCAPE HATCH — the same task IDs blocked Stop {threshold} times. "
-        "Only for an ID absent from native tasks, print its marker "
-        "alone:\n"
-        "{marker_lines}\n"
-        "Autorun marks it `ignored` (non-blocking). Never use this for real work.\n"
-    ),
+    "ghost_clear_reason": "stale ref: the agent printed the stale-clear marker for a task its harness no longer lists",
     # ─── Cache Guard (/ar:cache) ─────────────────────────────────────────────
     # How much of the JSONL transcript to tail-scan on each PreToolUse call.
     # Larger values find usage stats in sessions with large tool_result payloads.
@@ -1183,11 +1181,6 @@ After every step and substep you must say "Wait," and execute this sequential th
     # install and status, CLI winning by name. Multiple entries may share one
     # flavor with different config dirs, e.g. codex-home + codex-work.
     "custom_harnesses": (),
-    # A delegated task whose subagent produced no SubagentStop within this
-    # many seconds reverts to pending at the next Stop check, so a dead child
-    # cannot exempt work forever. Only ledger-linked delegations are subject;
-    # a marker printed with no recorded spawn keeps today's manual semantics.
-    "delegation_ttl_seconds": 3600.0,
     # Command documents Codex may migrate into model-visible skill entries.
     #
     # Empty ON PURPOSE — and it must STAY DECLARED. codex-rs core-plugins

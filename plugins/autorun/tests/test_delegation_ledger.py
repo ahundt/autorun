@@ -193,23 +193,26 @@ class TestSpawnLedger:
         assert _ledger("dl-forge") == []
 
     @pytest.mark.parametrize("backend", ["json", "sqlite"])
-    def test_unreturned_receipt_expires_with_delegation_ttl(
+    def test_unreturned_receipt_survives_any_age(
         self, isolated_state, cfg, monkeypatch, backend
     ):
+        """No clock ends a receipt: a subagent that reports days later still
+        routes to its parent (stop_gate_design.md 3b)."""
         monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
         sm._reset_for_testing()
         store = ThreadSafeDB()
-        _spawn("dl-expired-receipt", store, cfg)
+        _spawn("dl-old-receipt", store, cfg)
         key = f"claude:{SPAWN_ID}"
-        expired = time.time() - float(CONFIG["delegation_ttl_seconds"]) - 60
+        days_ago = time.time() - 30 * 24 * 3600
         with sm.session_state("__task_delegation_receipts__") as state:
             receipts = dict(state["receipts"])
-            receipts[key] = {**receipts[key], "at": expired}
+            receipts[key] = {**receipts[key], "at": days_ago}
             state["receipts"] = receipts
 
         child = TaskLifecycle(config=cfg, session_id="untrusted-child")
-        assert child._delegation_receipt("claude", SPAWN_ID) is None
-        assert key not in _receipts()
+        receipt = child._delegation_receipt("claude", SPAWN_ID)
+        assert receipt is not None and receipt["parent_session_id"] == "dl-old-receipt"
+        assert key in _receipts()
 
     @pytest.mark.parametrize("backend", ["json", "sqlite"])
     def test_clear_parent_removes_its_cross_session_receipts(
@@ -599,34 +602,35 @@ class TestReturnedGate:
             manager.tasks[str(10 + n)]["status"] == "completed" for n in range(8)
         ), "a fan-out storm must never complete anything"
 
-    def test_dead_agent_ttl_reverts_to_pending(self, isolated_state, cfg, monkeypatch):
-        store = ThreadSafeDB()
-        session_id = "dl-ttl"
-        self._delegate(session_id, store, cfg)
+    def test_delegation_reverts_when_its_harness_process_exited(self, isolated_state, cfg, monkeypatch):
+        """Evidence, not a clock: the recorded parent harness process is gone."""
+        import subprocess
 
-        expired = time.time() - float(CONFIG["delegation_ttl_seconds"]) - 60
+        store = ThreadSafeDB()
+        session_id = "dl-harness-exited"
+        self._delegate(session_id, store, cfg)
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+
         with sm.session_state(_state_key(session_id)) as state:
-            metadata = state.get("session_metadata", {})
-            for entry in metadata.get("agent_spawns", []):
-                entry["at"] = expired
             task = state["tasks"]["7"]
-            task["metadata"]["delegated_at"] = expired
+            task["metadata"]["delegation"]["harness_pid"] = child.pid
             state["tasks"] = state["tasks"]
-            state["session_metadata"] = metadata
 
         stop = _ctx(session_id, store, event="Stop", tool_name="", assistant_text="done")
         response = TaskLifecycle(ctx=stop, config=cfg).handle_stop(stop)
 
         task = TaskLifecycle(ctx=stop, config=cfg).tasks["7"]
         assert task["status"] == "pending", (
-            "a dead subagent must not exempt its task forever"
+            "a subagent whose harness process exited must not exempt its task forever"
         )
         assert response is not None, "the reverted task blocks the stop again"
 
-    def test_active_fanout_is_not_evicted_before_ttl_recovery(
+    def test_active_fanout_is_not_evicted_by_the_history_bound(
         self, isolated_state, cfg
     ):
-        """The history bound must never discard an unresolved delegation."""
+        """The history bound must never discard an unresolved delegation:
+        the oldest of 17 claimed spawns still returns its task."""
         store = ThreadSafeDB()
         session_id = "dl-over-ring-bound"
         manager = TaskLifecycle(config=cfg, session_id=session_id)
@@ -650,23 +654,10 @@ class TestReturnedGate:
         oldest_id = "d00e4f5a6b7c8d9e00"
         assert oldest_id in {entry["id"] for entry in _ledger(session_id)}
 
-        expired = time.time() - float(CONFIG["delegation_ttl_seconds"]) - 60
-        manager.update_task(
-            "0",
-            {"metadata": {"delegated_at": expired}},
-            "expire oldest",
-        )
+        finished = _ctx(session_id, store, event="SubagentStop", tool_name="", agent_id=oldest_id)
+        TaskLifecycle(ctx=finished, config=cfg).handle_stop(finished)
 
-        def expire_oldest(metadata):
-            for entry in metadata.get("agent_spawns", []):
-                if entry.get("id") == oldest_id:
-                    entry["at"] = expired
-
-        manager.atomic_update_metadata(expire_oldest)
-        stop = _ctx(session_id, store, event="Stop", tool_name="", assistant_text="done")
-        TaskLifecycle(ctx=stop, config=cfg).handle_stop(stop)
-
-        assert manager.tasks["0"]["status"] == "pending"
+        assert manager.tasks["0"]["status"] == "delegation-returned"
 
 
 class TestHarnessNamesLiveInTheRegistry:

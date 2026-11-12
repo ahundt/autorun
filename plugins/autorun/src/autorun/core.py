@@ -1935,7 +1935,6 @@ class EventContext:
         "plan_awaiting_execution_tasks": False,  # v0.10: Nag until [TDD]/[EXEC] tasks created
         "plan_task_reminder_count": 0,  # v0.10.2: Escalation for remind_until_tasks_created
         "pending_stop_injection": None,  # v0.10: Stop-hook msg deferred to next PostToolUse
-        "ghost_clear_min_consecutive_blocks_override": None,  # v0.10.2: Session override
     }
 
     def __init__(
@@ -2910,6 +2909,45 @@ def resolve_prompt_author(ctx: EventContext) -> str:
     return "user"
 
 
+# === WHICH CONVERSATION AN EVENT BELONGS TO ===
+# Session state recording that this session was forked from another; its
+# value is the source that said so. Written once, never cleared.
+CONVERSATION_FORKED_FROM = "conversation_forked_from"
+
+
+def record_conversation_fork(ctx: EventContext) -> bool:
+    """Record that this session is a fork when ``ctx.source`` says so.
+
+    The fact comes from the harness: a ``source`` listed in
+    ``Platform.fork_session_start_sources`` (Pi and Prime Agent send it on
+    their reprojection and SessionStart frames, Claude Code on
+    ``--fork-session``). Returns True only when this call recorded it, so the
+    caller can say it once. Costs one cached state read otherwise.
+    """
+    if ctx.agent_id or ctx.source not in platform_for(ctx.cli_type).fork_session_start_sources:
+        return False
+    if ctx.state_get(CONVERSATION_FORKED_FROM):
+        return False
+    ctx.state_set(CONVERSATION_FORKED_FROM, ctx.source)
+    return True
+
+
+def resolve_conversation_role(ctx: EventContext) -> str:
+    """``main``, ``subagent`` or ``fork``: the one place autorun decides it.
+
+    - ``subagent``: ``ctx.agent_id`` is set, the same test as
+      ``resolve_prompt_author``.
+    - ``fork``: this session recorded a fork fact (``record_conversation_fork``).
+    - ``main``: otherwise, including every harness that sends no fork fact,
+      so nothing changes where a fork cannot be told apart.
+    """
+    if ctx.agent_id:
+        return "subagent"
+    if ctx.state_get(CONVERSATION_FORKED_FROM):
+        return "fork"
+    return "main"
+
+
 # === AUTORUN APP (Click-style Registration + Unified Dispatch) ===
 class AutorunApp:
     """
@@ -3393,7 +3431,16 @@ class AutorunDaemon:
             if not isinstance(records, list):
                 raise TypeError("task_reproject_v1 requires task_records list")
             source = platform_for(ctx.cli_type).task_record_source
-            manager.replace_task_projection(records, source=source)
+            # A /fork reprojects the parent's history under the fork's new
+            # session id, before its SessionStart: record the fork from this
+            # frame's source, and mark the rows inherited rather than owned.
+            record_conversation_fork(ctx)
+            inherited = (
+                "the conversation this one was forked from"
+                if resolve_conversation_role(ctx) == "fork"
+                else None
+            )
+            manager.replace_task_projection(records, source=source, inherited_from=inherited)
             return {
                 "_autorun_bridge": {
                     "operation": "task_reproject_v1",

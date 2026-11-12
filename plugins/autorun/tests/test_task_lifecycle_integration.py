@@ -422,12 +422,19 @@ class TestTaskLifecycleIntegration:
         assert '/ar:estop' in result['systemMessage']
         assert '/ar:task ignore' in result['systemMessage']
 
+        # The loop guard passes the Stop through (None, so later Stop
+        # handlers still answer) and says why in a chain notification.
+        ctx.add_chain_notification.reset_mock()
         yielded = self.manager.handle_stop(ctx)
-        assert "retained 1 incomplete task" in yielded["systemMessage"]
+        assert yielded is None
+        notices = " ".join(str(call.args[0]) for call in ctx.add_chain_notification.call_args_list)
+        assert "retained 1 incomplete task" in notices
         assert self.manager.tasks["1"]["status"] == "pending"
 
+        ctx.add_chain_notification.reset_mock()
         repeated = self.manager.handle_stop(ctx)
-        assert repeated["systemMessage"] == ""
+        assert repeated is None
+        assert not ctx.add_chain_notification.call_args_list
         assert self.manager.tasks["1"]["status"] == "pending"
 
         print("✅ Test passed: bounded Stop yield keeps the task authoritative")

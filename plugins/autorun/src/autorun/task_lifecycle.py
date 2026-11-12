@@ -52,7 +52,14 @@ from datetime import datetime
 from functools import cache
 
 from . import ipc
-from .core import AI_ECHO_CHANNEL, EventContext, format_command_for_cli, logger
+from .core import (
+    AI_ECHO_CHANNEL,
+    EventContext,
+    format_command_for_cli,
+    logger,
+    record_conversation_fork,
+    resolve_prompt_author,
+)
 from .session_manager import (
     DEFAULT_SESSION_TIMEOUT,
     MISSING,
@@ -86,10 +93,14 @@ from .task_pause import (
 )
 from .task_status import (
     AUTORUN_OWNED_TASK_STATUSES,
+    AWAITING_USER_STATUS,
+    BLOCKING_TASK_STATUSES,
     COMPLETED_TASK_STATUSES,
     NON_BLOCKING_TASK_STATUSES,
     PRUNABLE_TASK_STATUSES,
+    SETTLED_TASK_STATUSES,
     STATUS_POLICY,
+    WAITING_TASK_STATUSES,
     task_status_policy,
 )
 
@@ -100,6 +111,14 @@ _MAX_CONSUMED_DELEGATION_MARKERS: int = 256
 _SESSION_START_CLAIM_DIGEST_HEX_CHARS: int = 16
 _DELEGATION_RECEIPTS_FIELD = "receipts"
 _MAX_RESOLVED_DELEGATION_RECEIPTS = 256
+_MAX_AWAITING_USER_DECISION_CHARS = 300
+# Session metadata: ids of tasks waiting on the user, so a prompt restores
+# them without reading every task row. The task row is the truth; an id whose
+# row moved on is dropped when the user next writes.
+_AWAITING_USER_INDEX = "awaiting_user_task_ids"
+# Volatile flag set by a blocked Stop: the next main-agent tool call restarts
+# the loop guard's count (plugins.reset_stop_loop_guard_on_tool_activity).
+STOP_LOOP_GUARD_ARMED = "stop_loop_guard_armed"
 
 
 def task_progress_state_session_id(ctx: EventContext) -> str:
@@ -169,11 +188,9 @@ _ACT_REVIEW = "{task_list}"
 _ACT_COMPLETE = '{task_update}({task_id_param}="X", status="completed")'
 _ACT_DELEGATE = '{task_update}({task_id_param}="X", status="delegated")'
 _ACT_DISCARD = '{task_update}({task_id_param}="X", status="deleted")'
-# AI-callable escape route — emitted on EVERY Stop block so the AI does
-# not give up on block #1 when a task is provably stale. The actual marker
-# only takes effect after ghost_clear_min_consecutive_blocks identical blocks
-# (anti-abuse: prevents instant single-block clears), but discoverability
-# must not depend on the threshold being met.
+# AI-callable stale-task clear, offered on every Stop block. It works from the
+# first block: the fact it asserts is that the harness's own task list no
+# longer has the task, and counting identical blocks proved nothing about that.
 # The marker literal lives in CONFIG["ghost_clear_marker_template"]
 # (single source of truth, enforced by test_marker_literal_single_source_of_truth).
 # {task_list}/{task_update}/{task_progress} are resolved per harness by
@@ -183,25 +200,21 @@ _ACT_DISCARD = '{task_update}({task_id_param}="X", status="deleted")'
 # said update_plan, naming two tools Codex does not have.
 _ACT_STALE_AI_ESCAPE_TASK_TOOLS = (
     "If a task above is stale ({task_list} does not show it or "
-    '{task_update} returns "Task not found"), retry — after '
-    "{threshold} identical Stop blocks an AI-callable stale-clear marker "
-    "({marker}) becomes printable to mark "
-    "those ids ignored without user intervention."
+    '{task_update} returns "Task not found"), print {marker} on its own line '
+    "to mark those ids ignored."
 )
 _ACT_STALE_AI_ESCAPE_CHECKLIST = (
     "If an item above is stale (it no longer appears in {task_progress}), "
-    "retry — after {threshold} identical Stop blocks an AI-callable "
-    "stale-clear marker ({marker}) becomes printable to mark those ids "
-    "ignored without user intervention."
+    "print {marker} on its own line to mark those ids ignored."
 )
 
 
-def _stale_escape_sentence(cli_type: str | None, *, threshold: int, marker: str) -> str:
+def _stale_escape_sentence(cli_type: str | None, *, marker: str) -> str:
     """Stale-task escape wording in the harness's own task vocabulary."""
     template = _ACT_STALE_AI_ESCAPE_CHECKLIST if writes_whole_task_list(cli_type) else _ACT_STALE_AI_ESCAPE_TASK_TOOLS
-    # Only threshold/marker are substituted here; the {task_*} placeholders stay
-    # for core.py to resolve against the running harness.
-    return template.replace("{threshold}", str(threshold)).replace("{marker}", marker)
+    # Only the marker is substituted here; the {task_*} placeholders stay for
+    # core.py to resolve against the running harness.
+    return template.replace("{marker}", marker)
 
 
 def _delegate_action(cli_type: str | None) -> str:
@@ -340,12 +353,19 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
         tasks_off = format_command_for_cli("/ar:tasks off", cli_type)
         user_actions += f"; {tasks_off} only disables reminders"
     recovery = task_tool_recovery_sentence(cli_type)
+    awaiting = (
+        "4b. Waiting on a decision only the user can make (approval to merge or push, "
+        "a credential, a choice between options)? Print this line on its own, naming "
+        f"that decision: {_awaiting_user_marker_example()} — the task waits on the user "
+        "until the user's next message, and stops blocking until then"
+    )
     if writes_whole_task_list(cli_type):
         return (
             "Actions: 1. You must complete or remove each checklist item before stopping "
             "2. Review/update: {task_progress} with the full current list "
             '3. Finish work: {task_progress} with finished items status="completed" '
             "4. Defer/delegate: keep a concrete follow-up item pending "
+            f"{awaiting} "
             "5. Truly blocked? re-check that first (reread the error, try another "
             "approach); then, as a permitted last resort, remove the item from the "
             "list you send and state why "
@@ -357,6 +377,7 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
         f"2. Review: {_ACT_REVIEW} "
         f"3. Do the work, then: {_ACT_COMPLETE} "
         f"4. Delegate to subagent first: {_delegate_action(cli_type)} (marks task non-blocking while subagent runs) "
+        f"{awaiting} "
         f"5. Truly blocked? re-check that first (reread the error, try another "
         f"approach); then, as a permitted last resort, discard: {_ACT_DISCARD} "
         f"and state why "
@@ -365,21 +386,32 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
     )
 
 
-def _bounded_stop_message(
-    cli_type: str | None,
-    *,
-    blocked_count: int,
-    task_count: int,
-) -> str:
-    """Describe one bounded Stop yield without implying task completion."""
+def _loop_guard_message(cli_type: str | None, *, blocked_count: int, task_count: int) -> str:
+    """Say what the loop guard is when it lets a Stop through: an anomaly, not an exit."""
     task_label = "task" if task_count == 1 else "tasks"
     task_status = format_command_for_cli("/ar:task status", cli_type)
     return (
-        f"Autorun allowed this interaction to end after {blocked_count} "
-        f"consecutive Stop blocks without completed activity; retained "
-        f"{task_count} incomplete {task_label}. No task was completed, ignored, "
-        f"or cleared. The next user prompt or session resume restores task "
-        f"enforcement; use {task_status} to review the retained work."
+        f"⚠️ autorun's Stop loop guard let this Stop through: {blocked_count} "
+        "consecutive Stops arrived with no tool call between them, which means "
+        "the block reason is not reaching the agent. It is not a way to finish "
+        f"work: retained {task_count} incomplete {task_label}, unchanged, and the "
+        f"next tool call, prompt or session start restores enforcement. Review "
+        f"them with {task_status}."
+    )
+
+
+def _fork_notice(cli_type: str | None) -> str:
+    """What autorun says once when a conversation turns out to be a fork."""
+    goal_clear = platform_for(cli_type).goal_clear_command
+    goal = (
+        f" A goal the harness set in the parent conversation continues here until you run {goal_clear}."
+        if goal_clear
+        else ""
+    )
+    return (
+        "This conversation is a fork of another. Tasks it inherited are listed "
+        "and do not block it from stopping until it updates one to take it on, "
+        "and it is not asked to create tasks of its own." + goal
     )
 
 
@@ -489,13 +521,14 @@ class TaskLifecycleConfig:
     enabled: bool = True
     storage_dir: Path = ipc.AUTORUN_CONFIG_DIR / "task-tracking"
     max_resume_tasks: int = 20
+    # Loop guard only: consecutive main-agent Stops with no main-agent tool
+    # call between them. Reaching it means the harness is not delivering the
+    # block reason; it never decides whether work is done.
     stop_block_max_count: int = 3
     task_ttl_days: int = 30
     recent_task_days: int = 1  # tasks created within this window shown as "recent"
     debug_logging: bool = False
     ghost_clear_enabled: bool = True
-    ghost_clear_min_consecutive_blocks: int = 2
-    ghost_clear_hash_length: int = 12
     task_pause_default_ttl_seconds: float = TASK_PAUSE_DEFAULT_TTL_SECONDS
     state_lock_timeout_seconds: float = DEFAULT_SESSION_TIMEOUT
     hook_state_lock_timeout_seconds: float = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.5))
@@ -572,26 +605,31 @@ class PlanNotifyConfig:
         PLAN_NOTIFY_CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-# === Ghost-Task Helpers (v0.10.2) ===
-
-
-def _ghost_id_set_hash(tasks: Iterable[dict], hex_chars: int) -> str:
-    """Stable hash of the sorted task-id set — detects identical consecutive stop blocks."""
-    ids = ",".join(sorted(str(t["id"]) for t in tasks))
-    byte_size = max(4, min(32, hex_chars // 2))
-    return hashlib.blake2s(ids.encode(), digest_size=byte_size).hexdigest()
+# === Stop loop guard ===
 
 
 def _reset_stop_block_sequence(metadata: dict) -> None:
-    """Start a fresh consecutive Stop sequence."""
+    """Start a fresh consecutive Stop sequence.
+
+    Also drops the identical-block counter older builds kept, so a session
+    carried across the upgrade stops storing it.
+    """
     metadata["stop_block_count"] = 0
     metadata.pop("last_delivered_stop_block_generation", None)
-
-
-def _reset_ghost_counter(metadata: dict) -> None:
-    """Reset consecutive identical stop-block counter (called on clean exit or tool activity)."""
-    metadata["consecutive_identical_stop_block_count"] = 0
+    metadata.pop("consecutive_identical_stop_block_count", None)
     metadata.pop("last_stop_block_id_hash", None)
+
+
+def _stop_sequence_is_reset(metadata: dict) -> bool:
+    """Whether ``_reset_stop_block_sequence`` would change nothing."""
+    return not metadata.get("stop_block_count") and not any(
+        key in metadata
+        for key in (
+            "last_delivered_stop_block_generation",
+            "consecutive_identical_stop_block_count",
+            "last_stop_block_id_hash",
+        )
+    )
 
 
 @cache
@@ -636,27 +674,36 @@ _MARKER_SESSION_KEYWORDS = ("agent_session_id", "session")
 _AGENT_SPAWN_ID_RE = re.compile(r'\bagent(?:Id|_id)"?\s*:\s*"?([A-Za-z0-9][A-Za-z0-9-]{7,})')
 # A SubagentStop's transcript_path names the child: .../agent-<id>.jsonl.
 _AGENT_TRANSCRIPT_RE = re.compile(r"agent-([A-Za-z0-9-]{8,})\.jsonl$")
-# Bound resolved history only. Unresolved spawns are lifecycle authority and
-# must survive arbitrarily wide fan-outs until they return or expire.
+# Storage bounds, not decisions. A claimed, unreturned spawn owns a delegated
+# task and is always kept. Only the newest unclaimed spawn can be claimed by a
+# marker that names no agent, so older unclaimed ones are kept only up to this
+# bound, and so is returned history.
 _MAX_TRACKED_SPAWNS = 16
+_STATUS_FIELD_RE = re.compile(r'"status"\s*:\s*"([^"]+)"')
 
 
-def _bounded_spawn_ledger(entries: list[dict], now: float) -> list[dict]:
-    """Retain every unresolved spawn plus bounded resolved history."""
-    ttl = float(CONFIG.get("delegation_ttl_seconds", 0) or 0)
-    unresolved = []
-    resolved = []
-    for entry in entries:
-        if entry.get("returned"):
-            resolved.append(entry)
-            continue
-        # An unclaimed spawn older than the same liveness TTL cannot own a
-        # task. Claimed entries remain authoritative until return/TTL handling.
-        age = now - float(entry.get("at") or now)
-        if not entry.get("claimed") and ttl > 0 and age >= ttl:
-            continue
-        unresolved.append(entry)
-    return unresolved + resolved[-_MAX_TRACKED_SPAWNS:]
+def _bounded_spawn_ledger(entries: list[dict]) -> list[dict]:
+    """Every claimed unreturned spawn, plus bounded unclaimed and returned history."""
+    claimed = [entry for entry in entries if entry.get("claimed") and not entry.get("returned")]
+    unclaimed = [entry for entry in entries if not entry.get("claimed") and not entry.get("returned")]
+    returned = [entry for entry in entries if entry.get("returned")]
+    return claimed + unclaimed[-_MAX_TRACKED_SPAWNS:] + returned[-_MAX_TRACKED_SPAWNS:]
+
+
+def _spawn_mode(cli_type: str | None, tool_result: str) -> str:
+    """``async``, ``sync`` or ``unrecognized`` from a spawn result's status.
+
+    The meaning of each value is the platform's data. ``unrecognized`` is
+    treated as running: ending a delegation needs evidence.
+    """
+    match = _STATUS_FIELD_RE.search(tool_result or "")
+    status = match.group(1) if match else ""
+    platform = platform_for(cli_type)
+    if status in platform.agent_spawn_finished_results:
+        return "sync"
+    if status in platform.agent_spawn_running_results:
+        return "async"
+    return "unrecognized"
 
 
 def _agent_receipt_key(cli_type: str, agent_id: str) -> str:
@@ -664,21 +711,20 @@ def _agent_receipt_key(cli_type: str, agent_id: str) -> str:
     return f"{cli_type}:{agent_id}"
 
 
-def _bounded_delegation_receipts(
-    receipts: dict[str, dict], now: float | None = None
-) -> dict[str, dict]:
-    """Expire abandoned authority and retain bounded returned history."""
-    now = time.time() if now is None else now
-    ttl = float(CONFIG.get("delegation_ttl_seconds", 0) or 0)
-    unresolved = {
-        key: value
-        for key, value in receipts.items()
-        if not value.get("returned")
-        and not (
-            ttl > 0
-            and now - float(value.get("at") or now) >= ttl
-        )
-    }
+# ponytail: a storage bound on the machine-wide receipt registry. A receipt
+# whose child never reports (its harness was killed) is evicted oldest first
+# once this many are open; raise it if a returning child is ever not routed.
+_MAX_UNRESOLVED_DELEGATION_RECEIPTS = 1024
+
+
+def _bounded_delegation_receipts(receipts: dict[str, dict]) -> dict[str, dict]:
+    """Keep open authority up to a storage bound and bounded returned history."""
+    unresolved = dict(
+        sorted(
+            ((key, value) for key, value in receipts.items() if not value.get("returned")),
+            key=lambda item: float(item[1].get("at") or 0),
+        )[-_MAX_UNRESOLVED_DELEGATION_RECEIPTS:]
+    )
     resolved = sorted(
         (
             (key, value)
@@ -874,6 +920,102 @@ def extract_delegate_markers(*texts: object) -> list:
     return _extract_marker_entries(CONFIG["delegate_marker_template"], *texts)
 
 
+def extract_awaiting_user_markers(text: object) -> list[tuple[list[str], str]]:
+    """(task ids, stated decision) for each awaiting-user marker line.
+
+    Only a marker that starts its own line outside a code fence counts, so a
+    quoted or discussed marker does nothing. The decision is the text after
+    the marker, with an optional leading colon; it is "" when nothing
+    follows, and the caller rejects that.
+    """
+    template = CONFIG["awaiting_user_marker_template"]
+    if not isinstance(text, str) or _marker_literal_prefix(template) not in text:
+        return []
+    pattern = _marker_regex(template)
+    entries = []
+    for line in _standalone_non_code_lines(text):
+        match = pattern.match(line)
+        if match is None:
+            continue
+        ids, _session = _parse_marker_arguments(match.group(1))
+        if ids:
+            entries.append((ids, line[match.end():].strip().lstrip(":").strip()))
+    return entries
+
+
+def _awaiting_user_marker_example() -> str:
+    return CONFIG["awaiting_user_marker_template"].replace("{id}", "<id>[,<id>...]") + ": <the decision you need>"
+
+
+def _task_refs(task_ids: Iterable[object]) -> str:
+    """``#1, #2`` for display."""
+    return ", ".join(f"#{task_id}" for task_id in task_ids)
+
+
+def _delegation_agent(task: Dict) -> "str | None":
+    """The subagent a delegated task was handed to, if one was recorded.
+
+    ``metadata.delegation`` is the record; ``delegated_to_session`` is what
+    builds before it wrote, still read for rows they delegated.
+    """
+    metadata = task.get("metadata") or {}
+    record = metadata.get("delegation")
+    agent = record.get("agent_id") if isinstance(record, dict) else None
+    return agent or metadata.get("delegated_to_session") or None
+
+
+def _cycle_members(graph: Dict[str, List[str]]) -> set:
+    """Nodes on a cycle of ``graph`` (node -> nodes it depends on).
+
+    Tarjan's strongly connected components, iterative so a long blockedBy
+    chain cannot reach the recursion limit. Linear in nodes plus edges.
+    """
+    index: Dict[str, int] = {}
+    low: Dict[str, int] = {}
+    on_stack: set = set()
+    stack: list = []
+    members: set = set()
+    for root in graph:
+        if root in index:
+            continue
+        index[root] = low[root] = len(index)
+        stack.append(root)
+        on_stack.add(root)
+        work = [(root, iter(graph[root]))]
+        while work:
+            node, edges = work[-1]
+            descended = False
+            for nxt in edges:
+                if nxt not in graph:
+                    continue
+                if nxt not in index:
+                    index[nxt] = low[nxt] = len(index)
+                    stack.append(nxt)
+                    on_stack.add(nxt)
+                    work.append((nxt, iter(graph[nxt])))
+                    descended = True
+                    break
+                if nxt in on_stack:
+                    low[node] = min(low[node], index[nxt])
+            if descended:
+                continue
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[node])
+            if low[node] == index[node]:
+                component = []
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    component.append(member)
+                    if member == node:
+                        break
+                if len(component) > 1 or node in graph[node]:
+                    members.update(component)
+    return members
+
+
 def _delegate_marker_example() -> str:
     """Delegation marker with placeholder arguments, for guidance text.
 
@@ -1053,10 +1195,8 @@ class TaskLifecycle:
         cli_type: str,
         agent_ids: Iterable[str],
         now: float,
-        *,
-        expired: bool = False,
     ) -> None:
-        """Mark only receipts owned by this parent returned or expired."""
+        """Mark only receipts owned by this parent returned."""
         receipts = copy.deepcopy(state.get(_DELEGATION_RECEIPTS_FIELD, {}))
         changed = False
         for agent_id in agent_ids:
@@ -1066,17 +1206,13 @@ class TaskLifecycle:
                 continue
             if receipt.get("parent_session_id") != self.session_id:
                 continue
-            if receipt.get("returned") and (not expired or receipt.get("expired")):
+            if receipt.get("returned"):
                 continue
             receipt["returned"] = True
             receipt["returned_at"] = now
-            if expired:
-                receipt["expired"] = True
             changed = True
         if changed:
-            state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(
-                receipts, now
-            )
+            state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(receipts)
 
     def _migrate_if_needed(self, state: Dict) -> None:
         """Migrate stored state to current schema version (lazy self-healing).
@@ -1346,8 +1482,14 @@ class TaskLifecycle:
                         record,
                     )
 
-    def replace_task_projection(self, records: List[Dict], *, source: str) -> None:
-        """Atomically replace only rows owned by one native task source."""
+    def replace_task_projection(self, records: List[Dict], *, source: str, inherited_from: "str | None" = None) -> None:
+        """Atomically replace only rows owned by one native task source.
+
+        ``inherited_from`` is set when this conversation is a fork: each row
+        is marked as inherited from that conversation, so the Stop gate lists
+        it as waiting instead of blocking on it, unless this conversation
+        already took the task on by updating it (``inherited_claimed``).
+        """
         if not source:
             raise ValueError("Task projection source must be non-empty")
         normalized: Dict[str, Dict] = {}
@@ -1379,9 +1521,18 @@ class TaskLifecycle:
             }
 
         def replace(tasks):
+            claimed = set()
             for task_id in list(tasks):
-                if tasks[task_id].get("metadata", {}).get("source") == source:
+                metadata = tasks[task_id].get("metadata", {})
+                if metadata.get("inherited_claimed"):
+                    claimed.add(task_id)
+                if metadata.get("source") == source:
                     tasks.pop(task_id)
+            for task_id, record in normalized.items():
+                if task_id in claimed:
+                    record["metadata"]["inherited_claimed"] = True
+                elif inherited_from:
+                    record["metadata"]["inherited_from"] = inherited_from
             tasks.update(normalized)
 
         self.atomic_update_tasks(replace)
@@ -1670,9 +1821,18 @@ class TaskLifecycle:
                     else:
                         task["metadata"][k] = v
 
+            # This conversation's own update of a task it inherited from the
+            # conversation it was forked from takes the task on: it blocks
+            # from now on, and a later reprojection keeps it taken.
+            if task["metadata"].pop("inherited_from", None):
+                task["metadata"]["inherited_claimed"] = True
+
             # Status transition (with ghost task protection)
             if "status" in updates:
                 old_status = task["status"]
+                if old_status == AWAITING_USER_STATUS:
+                    # The agent resumed or settled it: no longer waiting on the user.
+                    task["metadata"].pop("awaiting_user", None)
                 new_status = updates["status"]
                 task_status_policy(new_status)
 
@@ -2280,6 +2440,14 @@ class TaskLifecycle:
             clear_task_staleness_enforcement(ctx)
             return None
 
+        # A resumed harness is the moment a dead one is noticed: a delegation
+        # whose recorded harness process is gone goes back to pending here.
+        try:
+            open_tasks, _metadata, _unknown = self._open_task_snapshot()
+            self._settle_delegations(ctx, open_tasks)
+        except Exception as exc:  # noqa: BLE001 - liveness must not break resume
+            logger.warning("Could not check delegation liveness at SessionStart: %s", exc)
+
         # Find blocking tasks. Parked and delegated work is retained and shown
         # separately below without making Stop block on it.
         # REMOVED: self.prune_old_tasks() - manual pruning only
@@ -2289,8 +2457,9 @@ class TaskLifecycle:
         all_tasks = self.tasks
         delegated_all = [t for t in all_tasks.values() if t.get("status") == "delegated"]
         paused_all = [t for t in all_tasks.values() if t.get("status") == "paused"]
+        awaiting_all = [t for t in all_tasks.values() if t.get("status") == AWAITING_USER_STATUS]
 
-        if not incomplete and not delegated_all and not paused_all:
+        if not incomplete and not delegated_all and not paused_all and not awaiting_all:
             return None
 
         # Get prioritized tasks for better AI guidance
@@ -2345,19 +2514,25 @@ class TaskLifecycle:
             task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} (⏯ paused — resume when ready)")
             total_shown += 1
 
+        for t in awaiting_all[: max_tasks - total_shown]:
+            decision = ((t.get("metadata") or {}).get("awaiting_user") or {}).get("decision", "")
+            task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} (⏳ waiting on the user: {decision})")
+            total_shown += 1
+
         task_list = " ".join(task_items)
-        total = len(incomplete) + len(delegated_all) + len(paused_all)
+        total = len(incomplete) + len(delegated_all) + len(paused_all) + len(awaiting_all)
         # Subtract the older tasks already named above: counting them again in
         # the "older" suffix reported one set of tasks as two.
         older_count = len(older_incomplete) - len(named_older)
-        overflow = f" [... and {total - total_shown} more: use /ar:task to see all]" if total > total_shown else ""
+        task_status = format_command_for_cli("/ar:task status", ctx.cli_type)
+        overflow = f" [... and {total - total_shown} more: {task_status} lists them]" if total > total_shown else ""
         older = f" [📅 {older_count} older task(s) from previous days also incomplete]" if older_count > 0 else ""
 
         injection = (
             f"🔄 outstanding incomplete tasks from previous session: "
             f"{task_list}{overflow}{older}\n"
             f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
-            f"7. {_stale_escape_sentence(_task_cli_hint(ctx), threshold=self.config.ghost_clear_min_consecutive_blocks, marker=_stale_clear_marker_example())}\n"
+            f"7. {_stale_escape_sentence(_task_cli_hint(ctx), marker=_stale_clear_marker_example())}\n"
         )
 
         # SessionStart can fire repeatedly within one session: harnesses emit it
@@ -2387,18 +2562,17 @@ class TaskLifecycle:
         return ctx.continue_running(injection)
 
     def handle_stop(self, ctx: EventContext) -> Optional[Dict]:
-        """Handle Stop (block if incomplete tasks - PRIMARY GOAL).
+        """Handle Stop: block only while some task is the agent's to act on now.
 
-        This is the core mechanism that ensures AI continues while tasks are outstanding.
+        The decision is made from recorded task state, never from a clock or a
+        block count (``_stop_decision``). A task that waits — delegated to a
+        subagent with no evidence that it ended, waiting on a decision the
+        user must make, blocked by a task that is itself waiting, or inherited
+        from another conversation — is listed and does not block. When nothing
+        is actionable the gate returns None, so later Stop handlers (autorun's
+        stage verification) still answer.
 
-        Task-state escape hatches (user-driven only, never automatic):
-        - User runs /ar:estop to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
-        - User runs /ar:task ignore <id> to mark specific tasks as ignored
-        - User marks tasks as completed/deleted via TaskUpdate
-
-        A configured consecutive-Stop bound may yield one stuck interaction,
-        but it retains every task and re-enables enforcement on the next
-        completed activity, user prompt, or session start.
+        User-driven exits: /ar:estop, /ar:task ignore <id>, /ar:task pause.
         """
         # SubagentStop may share the parent's session (Claude) or carry the
         # child's session plus a parent transcript (Codex). Blocking it creates
@@ -2425,12 +2599,7 @@ class TaskLifecycle:
             return None
         if task_pause_allows_stop(ctx):
             return ctx.allow()
-
-        try:
-            self._revert_expired_delegations(ctx)
-        except Exception as exc:  # noqa: BLE001 - liveness fallback must not break Stop
-            logger.warning("Could not check delegation TTLs: %s", exc)
-        return self._check_stop_with_delegation(ctx)
+        return self._stop_decision(ctx)
 
     def _return_delegations(self, ctx) -> list[str]:
         """Flip delegated tasks whose subagent finished to delegation-returned.
@@ -2496,8 +2665,7 @@ class TaskLifecycle:
             for task_id, task in tasks.items():
                 if not isinstance(task, dict) or task.get("status") != "delegated":
                     continue
-                agent = (task.get("metadata") or {}).get("delegated_to_session")
-                if agent not in target_ids:
+                if _delegation_agent(task) not in target_ids:
                     continue
                 task["status"] = "delegation-returned"
                 task["updated_at"] = now
@@ -2516,7 +2684,7 @@ class TaskLifecycle:
                         entry["returned_at"] = now
                         matched_ledger = True
             if returned or matched_ledger:
-                metadata["agent_spawns"] = _bounded_spawn_ledger(ledger, now)
+                metadata["agent_spawns"] = _bounded_spawn_ledger(ledger)
                 if repository is None:
                     state["tasks"] = tasks
                 state["session_metadata"] = metadata
@@ -2546,86 +2714,470 @@ class TaskLifecycle:
             )
         return returned
 
-    def _revert_expired_delegations(self, ctx) -> list[str]:
-        """Liveness fallback: a dead subagent cannot exempt its task forever.
+    # === The Stop gate's view of the session ===
 
-        A ledger-linked delegation whose spawn produced no SubagentStop within
-        the TTL reverts to pending with a notice. Manual delegations (no
-        recorded spawn) keep their open-ended semantics.
+    def _open_task_snapshot(self) -> tuple[Dict[str, Dict], Dict, set]:
+        """One read for the Stop gate: open tasks, session metadata, unknown blockers.
+
+        Rows whose status is settled (completed, deleted, ignored) are never
+        read. A blocker id that is not among the rows read is either settled
+        or unknown; only such ids are looked up, in the same transaction, so a
+        finished blocker can be told from a dangling one. One transaction;
+        cost linear in the open tasks.
         """
-        ttl = float(CONFIG.get("delegation_ttl_seconds", 0) or 0)
-        if ttl <= 0:
-            return []
-        now = time.time()
-        reverted: list[str] = []
         with self._session_state() as state:
             repository = self._prepare_task_storage(state)
             metadata = copy.deepcopy(state.get("session_metadata", {}))
-            ledger = {
-                str(entry.get("id")): entry
-                for entry in metadata.get("agent_spawns", [])
+            if repository is None:
+                stored = state.get("tasks", {})
+                rows = [copy.deepcopy(task) for task in stored.values() if task.get("status") not in SETTLED_TASK_STATUSES]
+            else:
+                rows = repository.list_excluding_statuses(self.global_key, SETTLED_TASK_STATUSES, self._state_lock_timeout)
+            tasks = {str(task["id"]): task for task in rows}
+            absent = {
+                str(blocker)
+                for task in tasks.values()
+                if task.get("status") not in NON_BLOCKING_TASK_STATUSES
+                for blocker in task.get("blockedBy") or []
+                if str(blocker) not in tasks
             }
-            tasks = (
-                repository.list_tasks(self.global_key, self._state_lock_timeout)
-                if repository is not None
-                else state.get("tasks", {})
-            )
-            for task_id, task in tasks.items():
-                if not isinstance(task, dict) or task.get("status") != "delegated":
+            if not absent:
+                unknown: set = set()
+            elif repository is None:
+                unknown = {task_id for task_id in absent if task_id not in stored}
+            else:
+                unknown = absent - repository.existing_task_ids(self.global_key, absent, self._state_lock_timeout)
+        return tasks, metadata, unknown
+
+    def _update_task_rows(
+        self,
+        updaters: Dict[str, Callable[[Dict], bool]],
+        metadata_update: Callable[[Dict], None] | None = None,
+    ) -> list[str]:
+        """Apply per-task updaters to fresh rows in one transaction.
+
+        Each updater sees the row as stored now (not as an earlier snapshot
+        saw it) and returns whether it changed it; only changed rows are
+        written. Returns the changed ids.
+        """
+        changed: list[str] = []
+        now = time.time()
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            stored = state.get("tasks", {}) if repository is None else None
+            for task_id, update in updaters.items():
+                current = stored.get(task_id) if repository is None else repository.get_task(self.global_key, task_id, self._state_lock_timeout)
+                if not isinstance(current, dict):
                     continue
-                task_metadata = task.get("metadata") or {}
-                agent = task_metadata.get("delegated_to_session")
-                entry = ledger.get(str(agent)) if agent else None
-                if not agent or (entry is not None and entry.get("returned")):
+                task = copy.deepcopy(current)
+                if not update(task):
                     continue
-                delegated_at = task_metadata.get("delegated_at")
-                if delegated_at is None:
-                    if entry is None:
-                        continue
-                    delegated_at = entry.get("at") or now
-                if now - float(delegated_at) < ttl:
-                    continue
-                task["status"] = "pending"
                 task["updated_at"] = now
-                reverted.append(str(task_id))
-                if repository is not None:
-                    repository.put_task(self.global_key, str(task_id), task, self._state_lock_timeout)
-                if entry is not None:
-                    entry["returned"] = True
-                    entry["expired"] = True
-            if reverted:
                 if repository is None:
-                    state["tasks"] = tasks
-                metadata["agent_spawns"] = _bounded_spawn_ledger(
-                    list(metadata.get("agent_spawns", [])), now
-                )
-                state["session_metadata"] = metadata
-                with self._delegation_receipt_state(ctx) as receipt_state:
-                    self._finish_delegation_receipts(
-                        receipt_state,
-                        ctx.cli_type,
-                        (
-                            str((tasks.get(task_id, {}).get("metadata") or {}).get("delegated_to_session"))
-                            for task_id in reverted
-                            if (tasks.get(task_id, {}).get("metadata") or {}).get("delegated_to_session")
-                        ),
-                        now,
-                        expired=True,
-                    )
-        for task_id in reverted:
-            self.log_event(
-                "DELEGATION_EXPIRED",
-                f"task#{task_id}",
-                "no SubagentStop within delegation_ttl_seconds; reverted to pending",
-                "pending",
-            )
-        if reverted:
+                    stored[task_id] = task
+                else:
+                    repository.put_task(self.global_key, task_id, task, self._state_lock_timeout)
+                changed.append(task_id)
+            if repository is None and changed:
+                state["tasks"] = stored
+            if metadata_update is not None:
+                metadata = copy.deepcopy(state.get("session_metadata", {}))
+                original = copy.deepcopy(metadata)
+                metadata_update(metadata)
+                if metadata != original:
+                    state["session_metadata"] = metadata
+        return changed
+
+    def _settle_delegations(self, ctx: EventContext, tasks: Dict[str, Dict]) -> bool:
+        """End delegations whose evidence says they ended. True if a task changed.
+
+        No clock is involved. Evidence read here:
+        - A delegation an older build recorded by marker (``delegated_at``
+          with no ``delegation`` record) has no liveness to check, so it
+          returns to the agent for verification (``delegation-returned``).
+          A task set to ``delegated`` through a task tool carries neither and
+          stays delegated until it is updated: there is nothing to check.
+        - The recorded parent harness process is gone, so the subagent it ran
+          died with it: the task goes back to ``pending``. The hook's own
+          harness is alive by definition and is not checked; every other
+          recorded pid is checked once (one ``pid_exists`` per distinct pid).
+          A reused pid can only delay this, as in plan_export.
+
+        A SubagentStop (``_return_delegations``) and the agent's or user's own
+        update of the task are the other evidence, handled where they arrive.
+        """
+        legacy: list[str] = []
+        exited: Dict[str, str] = {}
+        alive: Dict[int, bool] = {}
+        for task_id, task in tasks.items():
+            if task.get("status") != "delegated":
+                continue
+            metadata = task.get("metadata") or {}
+            record = metadata.get("delegation")
+            if not isinstance(record, dict):
+                if "delegated_at" in metadata:
+                    legacy.append(task_id)
+                continue
+            pid = record.get("harness_pid")
+            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or pid == ctx.harness_pid:
+                continue
+            if pid not in alive:
+                import psutil
+
+                alive[pid] = psutil.pid_exists(pid)
+            if not alive[pid]:
+                exited[task_id] = str(record.get("agent_id") or "with no recorded id")
+        if not legacy and not exited:
+            return False
+
+        def returned_for_verification(task: Dict) -> bool:
+            metadata = task.get("metadata") or {}
+            if task.get("status") != "delegated" or isinstance(metadata.get("delegation"), dict) or "delegated_at" not in metadata:
+                return False
+            task["status"] = "delegation-returned"
+            task.setdefault("tool_outputs", []).append("Delegation liveness not recorded before upgrade; verify the subagent's results")
+            return True
+
+        def back_to_pending(task: Dict) -> bool:
+            if task.get("status") != "delegated":
+                return False
+            task["status"] = "pending"
+            task.setdefault("tool_outputs", []).append("The harness process that ran the subagent exited before it reported")
+            return True
+
+        def close_ledger_entries(metadata: Dict) -> None:
+            ledger = list(metadata.get("agent_spawns", []))
+            gone = set(exited.values())
+            for entry in ledger:
+                if str(entry.get("id")) in gone and not entry.get("returned"):
+                    entry["returned"] = True
+                    entry["harness_exited"] = True
+            if ledger:
+                metadata["agent_spawns"] = _bounded_spawn_ledger(ledger)
+
+        updaters: Dict[str, Callable[[Dict], bool]] = {task_id: returned_for_verification for task_id in legacy}
+        updaters.update({task_id: back_to_pending for task_id in exited})
+        changed = set(self._update_task_rows(updaters, close_ledger_entries if exited else None))
+        verify = [task_id for task_id in legacy if task_id in changed]
+        pending = [task_id for task_id in exited if task_id in changed]
+        for task_id in verify:
+            self.log_event("DELEGATION_UNVERIFIED", f"task#{task_id}", "delegated before liveness was recorded; verification required", "delegation-returned")
+        for task_id in pending:
+            self.log_event("DELEGATION_HARNESS_EXITED", f"task#{task_id}", f"harness of subagent {exited[task_id]} exited", "pending")
+        if verify:
             ctx.add_chain_notification(
-                "Delegated subagent produced no completion within the TTL; "
-                "reverted to pending: " + ", ".join(f"#{task_id}" for task_id in reverted),
+                f"📥 {_task_refs(verify)}: delegated before autorun recorded the subagent's harness process "
+                "(liveness not recorded before upgrade); verify the subagent's results, then complete, "
+                "re-delegate or ignore each.",
                 channel="both",
             )
-        return reverted
+        for task_id in pending:
+            ctx.add_chain_notification(
+                f"↩️ The harness process that ran subagent {exited[task_id]} exited before it reported; "
+                f"#{task_id} is back to pending.",
+                channel="both",
+            )
+        return bool(changed)
+
+    def apply_awaiting_user_markers(self, ctx: EventContext, blocking_tasks: List[Dict]) -> tuple[list[str], list[str]]:
+        """Record the awaiting-user markers of the agent's latest turn as task state.
+
+        Returns (ids entered, ids whose marker named no decision). Only a task
+        blocking now can enter, so a marker cannot touch a finished, unknown,
+        delegated or already waiting task. The decision and the status the
+        task had are stored on it; the session keeps the ids so the next user
+        prompt restores them without scanning every task.
+        """
+        entries = extract_awaiting_user_markers(latest_assistant_turn(ctx)[1])
+        if not entries:
+            return [], []
+        by_id = {str(task["id"]): task for task in blocking_tasks}
+        decisions: Dict[str, str] = {}
+        unstated: list[str] = []
+        for ids, decision in entries:
+            for task_id in ids:
+                if task_id not in by_id:
+                    continue
+                if decision:
+                    decisions[task_id] = decision[:_MAX_AWAITING_USER_DECISION_CHARS]
+                elif task_id not in unstated:
+                    unstated.append(task_id)
+        unstated = [task_id for task_id in unstated if task_id not in decisions]
+        if not decisions:
+            return [], unstated
+
+        def entering(decision: str) -> Callable[[Dict], bool]:
+            def update(task: Dict) -> bool:
+                status = task.get("status")
+                if status not in BLOCKING_TASK_STATUSES:
+                    return False
+                task.setdefault("metadata", {})["awaiting_user"] = {"decision": decision, "previous_status": status}
+                task["status"] = AWAITING_USER_STATUS
+                task.setdefault("tool_outputs", []).append(f"Waiting on the user: {decision}")
+                return True
+
+            return update
+
+        def index(metadata: Dict) -> None:
+            waiting = list(metadata.get(_AWAITING_USER_INDEX, []))
+            waiting.extend(task_id for task_id in decisions if task_id not in waiting)
+            metadata[_AWAITING_USER_INDEX] = waiting
+            _reset_stop_block_sequence(metadata)
+
+        entered = self._update_task_rows({task_id: entering(decision) for task_id, decision in decisions.items()}, index)
+        for task_id in entered:
+            self.log_event("AWAITING_USER", task_id, by_id[task_id].get("subject", ""), AWAITING_USER_STATUS, {"decision": decisions[task_id]})
+        return entered, unstated
+
+    def restore_awaiting_user(self, ctx: EventContext) -> None:
+        """A new prompt: restart the loop guard, and if the user wrote it, end awaiting-user.
+
+        Reads the session metadata without the writer slot first, so a prompt
+        with nothing to reset and nothing waiting on the user writes nothing
+        and reads no task row. Only a prompt ``resolve_prompt_author`` credits
+        to the user restores the tasks; a subagent, harness or automation
+        prompt leaves them waiting.
+        """
+        metadata = get_session_manager().read_field(self.global_key, "session_metadata", {}, timeout=self._state_lock_timeout)
+        metadata = metadata if isinstance(metadata, dict) else {}
+        waiting = [str(task_id) for task_id in metadata.get(_AWAITING_USER_INDEX, [])]
+        restore = bool(waiting) and resolve_prompt_author(ctx) == "user"
+        if not restore:
+            if not _stop_sequence_is_reset(metadata):
+                self.atomic_update_metadata(_reset_stop_block_sequence)
+            return
+
+        def restored(task: Dict) -> bool:
+            if task.get("status") != AWAITING_USER_STATUS:
+                return False
+            record = (task.get("metadata") or {}).pop("awaiting_user", None) or {}
+            previous = record.get("previous_status")
+            task["status"] = previous if previous in BLOCKING_TASK_STATUSES else "pending"
+            task.setdefault("tool_outputs", []).append("The user replied; enforcement restored")
+            return True
+
+        def clear_index(metadata: Dict) -> None:
+            _reset_stop_block_sequence(metadata)
+            metadata.pop(_AWAITING_USER_INDEX, None)
+
+        changed = self._update_task_rows({task_id: restored for task_id in waiting}, clear_index)
+        for task_id in changed:
+            self.log_event("AWAITING_USER_ANSWERED", task_id, "the user replied", "restored")
+        if changed:
+            ctx.add_chain_notification(
+                f"The user replied; {_task_refs(changed)} no longer waiting on the user and "
+                "blocking again until done.",
+                channel="ai",
+            )
+
+    def _apply_stop_markers(self, ctx: EventContext, tasks: Dict[str, Dict]) -> tuple[bool, list[str]]:
+        """Apply the agent's markers against the tasks blocking now.
+
+        Returns (whether any task changed, notes for the reply). Each marker
+        reader first tests its literal prefix, so a reply with no marker costs
+        three substring searches.
+        """
+        blocking = [task for task in tasks.values() if task.get("status") not in NON_BLOCKING_TASK_STATUSES]
+        if not blocking:
+            return False, []
+        changed = bool(self.apply_delegation_markers(ctx, blocking))
+        entered, unstated = self.apply_awaiting_user_markers(ctx, blocking)
+        changed = changed or bool(entered)
+        notes = []
+        if unstated:
+            notes.append(
+                f"Awaiting-user marker ignored for {_task_refs(unstated)}: no decision stated. "
+                f"Name the decision on the same line: {_awaiting_user_marker_example()}"
+            )
+        if self.config.ghost_clear_enabled:
+            stale = stale_clear_marker_ids(ctx)
+            if stale:
+                cleared = self.clear_stale_task_markers(stale, allowed_task_ids={str(task["id"]) for task in blocking})
+                if cleared:
+                    changed = True
+                    ctx.add_chain_notification(f"Cleared stale task(s): {_task_refs(cleared)}", channel="both")
+        return changed, notes
+
+    def _waiting_line(self, task: Dict) -> str:
+        """One line for a task whose own status means it waits on someone else."""
+        task_id, subject = task["id"], task.get("subject", "")
+        if task.get("status") == AWAITING_USER_STATUS:
+            decision = ((task.get("metadata") or {}).get("awaiting_user") or {}).get("decision", "")
+            return f"⏳ Waiting on you: #{task_id} {subject}: {decision}"
+        agent = _delegation_agent(task)
+        if agent:
+            return f"🤝 Waiting on subagent {agent}: #{task_id} {subject}"
+        return (
+            f"🤝 Delegated with no subagent id recorded: #{task_id} {subject}; it stays "
+            "delegated until you or the agent update it"
+        )
+
+    def _stop_view(self, tasks: Dict[str, Dict], unknown: set) -> tuple[list[tuple[Dict, str]], list[str]]:
+        """(actionable tasks with a note, waiting lines) from one snapshot.
+
+        In memory, linear in the open tasks. A blocking-status task is
+        actionable when it has no open blocker, when a blocker id is unknown
+        (a dangling dependency the agent must fix), or when it sits in a
+        blockedBy cycle (one the agent must break). Otherwise it waits on its
+        open blockers, which block Stop themselves if they are actionable.
+        A task a fork inherited waits until this conversation updates it.
+        """
+        blocking = {task_id: task for task_id, task in tasks.items() if task.get("status") not in NON_BLOCKING_TASK_STATUSES}
+        graph = {
+            task_id: [str(blocker) for blocker in task.get("blockedBy") or [] if str(blocker) in blocking]
+            for task_id, task in blocking.items()
+        }
+        cyclic = _cycle_members(graph)
+        actionable: list[tuple[Dict, str]] = []
+        waiting: list[str] = []
+        for task in sorted(blocking.values(), key=self._creation_order_key):
+            task_id = str(task["id"])
+            inherited = (task.get("metadata") or {}).get("inherited_from")
+            if inherited:
+                waiting.append(f"↪️ #{task_id} {task.get('subject', '')} is inherited from {inherited}; update it here to take it on")
+                continue
+            blockers = list(dict.fromkeys(str(blocker) for blocker in task.get("blockedBy") or []))
+            dangling = [blocker for blocker in blockers if blocker in unknown]
+            if dangling:
+                actionable.append((task, f"blocked by unknown task {_task_refs(dangling)}: fix its blockedBy"))
+                continue
+            if task_id in cyclic:
+                partners = [blocker for blocker in graph[task_id] if blocker in cyclic]
+                actionable.append((task, f"in a blockedBy cycle with {_task_refs(partners)}: break the cycle"))
+                continue
+            holding = [blocker for blocker in blockers if blocker in tasks]
+            if holding:
+                waiting.append(f"⛓️ #{task_id} waits on {_task_refs(holding)}")
+                continue
+            actionable.append((task, ""))
+        waiting.extend(
+            self._waiting_line(task)
+            for task in sorted(tasks.values(), key=self._creation_order_key)
+            if task.get("status") in WAITING_TASK_STATUSES
+        )
+        return actionable, waiting
+
+    def waiting_summary(self) -> list[str]:
+        """The waiting lines the Stop gate would print now, for status commands."""
+        tasks, _metadata, unknown = self._open_task_snapshot()
+        return self._stop_view(tasks, unknown)[1]
+
+    def _stop_decision(self, ctx: EventContext) -> Optional[Dict]:
+        """The Stop gate proper: block on actionable tasks, list the waiting ones.
+
+        1. One snapshot of the open tasks.
+        2. Markers in the agent's latest turn (delegation, awaiting-user,
+           stale clear) and delegation liveness evidence, each a state write
+           that happens only when it changes a task; the snapshot is re-read
+           only then.
+        3. Actionable tasks block, followed by one line per waiting task.
+           With none, return None (never allow) so stage verification runs,
+           and tell the user who waits on whom.
+        4. The loop guard: a block counts one consecutive Stop; past
+           ``stop_block_max_count`` with no tool call between them the gate
+           passes through instead, saying so.
+        """
+        tasks, metadata, unknown = self._open_task_snapshot()
+        changed, notes = self._apply_stop_markers(ctx, tasks)
+        if changed:
+            tasks, metadata, unknown = self._open_task_snapshot()
+        if self._settle_delegations(ctx, tasks):
+            tasks, metadata, unknown = self._open_task_snapshot()
+        actionable, waiting = self._stop_view(tasks, unknown)
+        waiting_text = "Not blocking this Stop:\n" + "\n".join(waiting) if waiting else ""
+
+        if not actionable:
+            if not _stop_sequence_is_reset(metadata):
+                self.atomic_update_metadata(_reset_stop_block_sequence)
+            for note in [*notes, waiting_text]:
+                if note:
+                    ctx.add_chain_notification(note, channel="both")
+            return None
+
+        computed: dict = {}
+
+        def count_block(metadata: Dict) -> None:
+            metadata["stop_block_count"] = metadata.get("stop_block_count", 0) + 1
+            metadata.pop("consecutive_identical_stop_block_count", None)
+            metadata.pop("last_stop_block_id_hash", None)
+            computed["block_count"] = metadata["stop_block_count"]
+
+        self.atomic_update_metadata(count_block)
+        ctx.state_set_volatile(STOP_LOOP_GUARD_ARMED, True)
+        # If the counter update failed, block (count 1) rather than release.
+        block_count = computed.get("block_count", 1)
+        total = len(actionable)
+
+        if block_count > self.config.stop_block_max_count:
+            ctx.pending_stop_injection = None
+            if block_count == self.config.stop_block_max_count + 1:
+                message = _loop_guard_message(_task_cli_hint(ctx), blocked_count=block_count - 1, task_count=total)
+                self.log_event("STOP_LOOP_GUARD", "session", message, "released")
+                ctx.add_chain_notification(message, channel="both")
+            return None
+
+        max_tasks = self.config.max_resume_tasks
+        task_lines = []
+        for task, note in actionable[:max_tasks]:
+            status = task["status"]
+            status_icon = {
+                "in_progress": "🔄",
+                "pending": "⏸️",
+                "delegation-returned": "📥",
+            }.get(status, "❓")
+            if status not in STATUS_POLICY:
+                # Written by a newer build: it blocks (fail closed), so say why.
+                status_icon += f" unknown status {status!r}: update this task, or install the release that wrote it"
+            if note:
+                status_icon += f" {note}"
+            task_lines.append(f"{len(task_lines) + 1}. #{task['id']}: {task.get('subject', '')} ({status_icon})")
+
+        task_status = format_command_for_cli("/ar:task status", ctx.cli_type)
+        overflow = f" [... and {total - max_tasks} more: {task_status} lists them]" if total > max_tasks else ""
+        injection = (
+            f"🛑 CANNOT STOP — incomplete tasks: {' '.join(task_lines)}{overflow}\n"
+            f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
+            f"7. {_stale_escape_sentence(_task_cli_hint(ctx), marker=_stale_clear_marker_example())}\n"
+        )
+
+        returned_tasks = [task for task, _note in actionable if task.get("status") == "delegation-returned"]
+        if returned_tasks:
+            task_ignore = format_command_for_cli("/ar:task ignore <id>", ctx.cli_type)
+            injection += (
+                "Delegation returned (📥): critically assess each returned "
+                "task's results — subagents make mistakes — and verify before "
+                'accepting. Then TaskUpdate(status="completed") with the '
+                "evidence, or re-delegate by printing the delegation marker "
+                f"again, or ignore it with {task_ignore} if no longer needed: "
+                + _task_refs(task["id"] for task in returned_tasks[:max_tasks])
+                + "\n"
+            )
+        for note in notes:
+            injection += note + "\n"
+        if waiting_text:
+            injection += waiting_text + "\n"
+
+        # Block count is diagnostic only, not shown to the agent.
+        self.log_event("STOP_WARNING", "session", f"Block #{block_count}: {total} incomplete tasks", "blocked")
+
+        # Reset three-stage system if at STAGE_2_COMPLETED — tasks must resolve first.
+        if ctx.autorun_stage == EventContext.STAGE_2_COMPLETED:
+            ctx.autorun_stage = EventContext.STAGE_2
+            injection += CONFIG.get("task_outstanding_stage3_message", "").format(
+                count=total,
+                names=", ".join(task.get("subject", f"#{task.get('id', '?')}") for task, _note in actionable[:_STAGE3_OVERFLOW_NAME_COUNT])
+                + ("..." if total > _STAGE3_OVERFLOW_NAME_COUNT else ""),
+            )
+
+        # Deferred AI delivery: the Stop block uses decision+reason, and the
+        # next PostToolUse replays the same text through the context pathway
+        # (deliver_pending_stop_injection). Re-armed on every block so the
+        # agent always sees the override actions again; PostToolUse delivery
+        # clears it, so each arm fires at most once.
+        ctx.pending_stop_injection = injection
+        # Reset staleness counter — AI just learned about tasks, give full countdown.
+        ctx.tool_calls_since_task_update = 0
+        return ctx.continue_running(injection)
 
     def record_agent_spawn(self, ctx) -> None:
         """Remember which child agent took work — Python-side, no transcription.
@@ -2648,9 +3200,7 @@ class TaskLifecycle:
                     stored_receipts = copy.deepcopy(
                         receipt_state.get(_DELEGATION_RECEIPTS_FIELD, {})
                     )
-                    receipts = _bounded_delegation_receipts(
-                        stored_receipts, now
-                    )
+                    receipts = _bounded_delegation_receipts(stored_receipts)
                     if receipts != stored_receipts:
                         receipt_state[_DELEGATION_RECEIPTS_FIELD] = receipts
                     key = _agent_receipt_key(ctx.cli_type, agent_id)
@@ -2670,18 +3220,21 @@ class TaskLifecycle:
                         None,
                     )
                     if ledger_entry is None:
+                        mode = _spawn_mode(ctx.cli_type, ctx.tool_result_str)
                         ledger_entry = {
                             "id": agent_id,
                             "at": float(existing.get("at") or now)
                             if isinstance(existing, dict)
                             else now,
                             "claimed": False,
-                            "returned": bool(existing.get("returned"))
-                            if isinstance(existing, dict)
-                            else False,
+                            "mode": mode,
+                            # A child that had already finished when this
+                            # result arrived cannot be waited on.
+                            "returned": mode == "sync"
+                            or (bool(existing.get("returned")) if isinstance(existing, dict) else False),
                         }
                         ledger.append(ledger_entry)
-                    metadata["agent_spawns"] = _bounded_spawn_ledger(ledger, now)
+                    metadata["agent_spawns"] = _bounded_spawn_ledger(ledger)
                     state["session_metadata"] = metadata
                     if not isinstance(existing, dict):
                         receipts[key] = {
@@ -2692,9 +3245,7 @@ class TaskLifecycle:
                             "at": float(ledger_entry.get("at") or now),
                             "returned": bool(ledger_entry.get("returned")),
                         }
-                        receipt_state[_DELEGATION_RECEIPTS_FIELD] = (
-                            _bounded_delegation_receipts(receipts, now)
-                        )
+                        receipt_state[_DELEGATION_RECEIPTS_FIELD] = _bounded_delegation_receipts(receipts)
         except Exception as exc:  # noqa: BLE001 - capture must never break the hook
             logger.warning("Could not record agent spawn: %s", exc)
 
@@ -2761,225 +3312,27 @@ class TaskLifecycle:
             logger.warning("Could not apply delegation markers: %s", exc)
             return []
 
-    def _apply_delegate_markers(self, ctx, incomplete_tasks: List[Dict]) -> List[Dict]:
-        """Apply markers and report what still blocks the stop."""
-        if not incomplete_tasks:
-            return incomplete_tasks
-        if not self.apply_delegation_markers(ctx, incomplete_tasks):
-            return incomplete_tasks
-        return self.get_incomplete_tasks(exclude_blocking=True)
-
-    def _check_stop_with_delegation(self, ctx) -> Optional[str]:
-        """The stop gate proper, with delegation markers already honored."""
-
-        # Find incomplete tasks (exclude paused/ignored - they're explicitly parked)
-        incomplete_tasks = self.get_incomplete_tasks(exclude_blocking=True)
-
-        # Apply delegation markers here as well as on PostToolUse.
-        #
-        # The block message tells the AI to print AUTORUN_TASK_DELEGATED(N) to
-        # hand a task to a subagent. It usually does so in a plain-text reply
-        # with no tool call — and PostToolUse only fires after a tool call, so
-        # on that path the marker is never read. This hook then blocks again on
-        # the very task the AI just delegated, prints the same instruction, and
-        # the AI complies again: a loop with no exit that the AI cannot escape
-        # by doing what it was told.
-        #
-        # Both pathways are kept. PostToolUse applies the marker as soon as it
-        # appears; this applies it at the only moment it has to be right.
-        incomplete_tasks = self._apply_delegate_markers(ctx, incomplete_tasks)
-
-        if not incomplete_tasks:
-
-            def reset_counter(metadata):
-                _reset_stop_block_sequence(metadata)
-                _reset_ghost_counter(metadata)
-
-            self.atomic_update_metadata(reset_counter)
-            return None
-
-        override = getattr(ctx, "ghost_clear_min_consecutive_blocks_override", None)
-        min_consecutive = override if isinstance(override, int) else self.config.ghost_clear_min_consecutive_blocks
-        ghost_enabled = self.config.ghost_clear_enabled
-
-        id_hash = _ghost_id_set_hash(incomplete_tasks, self.config.ghost_clear_hash_length)
-
-        # Read AND write inside one atomic lock — eliminates race between
-        # two concurrent Stop hooks reading stale session_metadata snapshots.
-        computed: dict = {}
-
-        def update_counters(metadata):
-            block_count = metadata.get("stop_block_count", 0) + 1
-            prev_hash = metadata.get("last_stop_block_id_hash")
-            prev_count = metadata.get("consecutive_identical_stop_block_count", 0)
-            consecutive = prev_count + 1 if id_hash == prev_hash else 1
-            metadata["stop_block_count"] = block_count
-            metadata["last_stop_block_id_hash"] = id_hash
-            metadata["consecutive_identical_stop_block_count"] = consecutive
-            computed["block_count"] = block_count
-            computed["consecutive"] = consecutive
-
-        self.atomic_update_metadata(update_counters)
-        ctx.state_set_volatile("ghost_counter_armed_in_daemon", True)
-        # Use .get() with safe defaults: if atomic update failed (exception in
-        # callback), computed is empty. Default to block_count=1/consecutive=1
-        # so we show the standard block message but do NOT trigger the escape
-        # hatch (consecutive=1 < min_consecutive). Prefer a correct block over
-        # a fail-open allow-stop.
-        block_count = computed.get("block_count", 1)
-        consecutive = computed.get("consecutive", 1)
-
-        if ghost_enabled and consecutive >= min_consecutive:
-            marker_ids = stale_clear_marker_ids(ctx)
-            if marker_ids:
-                blocking_ids = {str(task["id"]) for task in incomplete_tasks}
-                cleared = self.clear_stale_task_markers(
-                    marker_ids,
-                    require_armed=False,
-                    allowed_task_ids=blocking_ids,
-                )
-                if cleared:
-                    incomplete_tasks = self.get_incomplete_tasks(exclude_blocking=True)
-                if cleared and not incomplete_tasks:
-                    ctx.add_chain_notification(
-                        f"Cleared stale task(s): {', '.join(f'#{c}' for c in cleared)}",
-                        channel="both",
-                    )
-                    return None
-
-        if block_count > self.config.stop_block_max_count:
-            ctx.pending_stop_injection = None
-            if block_count == self.config.stop_block_max_count + 1:
-                yield_message = _bounded_stop_message(
-                    _task_cli_hint(ctx),
-                    blocked_count=block_count - 1,
-                    task_count=len(incomplete_tasks),
-                )
-                self.log_event(
-                    "STOP_SEQUENCE_YIELD",
-                    "session",
-                    yield_message,
-                    "yielded",
-                )
-                return ctx.allow(yield_message)
-            return ctx.allow()
-
-        # Build task list with status indicators (cap at max_resume_tasks)
-        max_tasks = self.config.max_resume_tasks
-        task_lines = []
-
-        for t in incomplete_tasks[:max_tasks]:
-            tid = t["id"]
-            subject = t["subject"]
-            status = t["status"]
-            status_icon = {
-                "in_progress": "🔄",
-                "pending": "⏸️",
-                "delegated": "🤝",
-                "delegation-returned": "📥",
-            }.get(status, "❓")
-            if status not in STATUS_POLICY:
-                # Written by a newer build: it blocks (fail closed), so say why.
-                status_icon += (
-                    f" unknown status {status!r}: update this task, or install the release that wrote it"
-                )
-            task_lines.append(f"{len(task_lines) + 1}. #{tid}: {subject} ({status_icon})")
-
-        task_list = " ".join(task_lines)
-        total = len(incomplete_tasks)
-        overflow = f" [... and {total - max_tasks} more: use /ar:task to see all]" if total > max_tasks else ""
-
-        injection = (
-            f"🛑 CANNOT STOP — incomplete tasks: {task_list}{overflow}\n"
-            f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
-            f"7. {_stale_escape_sentence(_task_cli_hint(ctx), threshold=min_consecutive, marker=_stale_clear_marker_example())}\n"
-        )
-
-        returned_tasks = [t for t in incomplete_tasks if t.get("status") == "delegation-returned"]
-        if returned_tasks:
-            task_ignore = format_command_for_cli("/ar:task ignore <id>", ctx.cli_type)
-            injection += (
-                "Delegation returned (📥): critically assess each returned "
-                "task's results — subagents make mistakes — and verify before "
-                'accepting. Then TaskUpdate(status="completed") with the '
-                "evidence, or re-delegate by printing the delegation marker "
-                f"again, or ignore it with {task_ignore} if no longer needed: "
-                + ", ".join(f"#{t['id']}" for t in returned_tasks[:max_tasks])
-                + "\n"
-            )
-
-        if ghost_enabled and consecutive >= min_consecutive:
-            marker_template = CONFIG["ghost_clear_marker_template"]
-            marker_lines = "\n".join(f"   {marker_template.format(id=t['id'])}" for t in incomplete_tasks[:max_tasks])
-            injection += CONFIG["ghost_clear_injection_template"].format(
-                threshold=min_consecutive,
-                marker_lines=marker_lines,
-            )
-            task_pause = format_command_for_cli("/ar:tasks pause <reason>", ctx.cli_type)
-            task_stale_off = format_command_for_cli("/ar:tasks stale off", ctx.cli_type)
-            injection += f"Real task: {task_pause}. Disable recovery: {task_stale_off}\n"
-
-        # Log warning (block count is diagnostic-only, not shown to AI)
-        self.log_event("STOP_WARNING", "session", f"Block #{block_count}: {total} incomplete tasks", "blocked")
-
-        # Reset three-stage system if at STAGE_2_COMPLETED — tasks must resolve first.
-        if ctx.autorun_stage == EventContext.STAGE_2_COMPLETED:
-            ctx.autorun_stage = EventContext.STAGE_2
-            injection += CONFIG.get("task_outstanding_stage3_message", "").format(
-                count=total,
-                names=", ".join(t.get("subject", f"#{t.get('id', '?')}") for t in incomplete_tasks[:_STAGE3_OVERFLOW_NAME_COUNT])
-                + ("..." if total > _STAGE3_OVERFLOW_NAME_COUNT else ""),
-            )
-
-        # Deferred AI delivery — the established Stop block pathway uses
-        # decision+reason and the PostToolUse replay keeps override actions
-        # visible to the AI across supported harnesses. Current Claude also
-        # documents Stop additionalContext, but changing the delivery pathway
-        # requires a live harness proof that user/AI visibility and repeated
-        # generation semantics remain intact.
-        #
-        # Re-arm on EVERY Stop block so the AI reliably sees the override
-        # actions (/ar:estop, /ar:task ignore) on its next PostToolUse. Earlier
-        # logic only re-armed on block_count==1 or consecutive==min_consecutive,
-        # which left "infinite non-overridable stop failure" cases: e.g. the
-        # AI churning task subjects between stops drove consecutive=1 forever,
-        # so it never re-saw the override instructions. Frequency is naturally
-        # low because Stop events themselves are infrequent (one per AI
-        # stop-attempt). Safety: PostToolUse delivery clears pending_stop_injection,
-        # so each Stop re-arm fires AT MOST once. The historical deadlock
-        # (re-arm + PreToolUse deny + AI text → Stop → re-arm) is impossible
-        # now because enforce_stop_injection (PreToolUse deny) was removed.
-        ctx.pending_stop_injection = injection
-        # Reset staleness counter — AI just learned about tasks, give full countdown.
-        ctx.tool_calls_since_task_update = 0
-        return ctx.continue_running(injection)
-
     def clear_stale_task_markers(
         self,
         task_ids: Iterable[str],
         *,
-        require_armed: bool = True,
         allowed_task_ids: Iterable[str] | None = None,
     ) -> list[str]:
         """Mark stale task ids ignored through the configured escape hatch.
 
+        The marker is the agent's statement that the harness's own task list
+        no longer has the task. It is honored from the first block, logged as
+        GHOST_CLEAR and shown to the user; no count of identical blocks gates
+        it, since such a count says nothing about the harness's list.
+
         Args:
             task_ids: Task ids extracted from the configured marker template.
-            require_armed: If true, require the identical-stop threshold to be
-                armed in session metadata before clearing. Stop handling checks
-                the threshold before calling this method, so it passes false to
-                avoid re-reading counter state after it already holds the
-                relevant decision.
             allowed_task_ids: Optional current blocking task-id set. When
                 provided, markers for unrelated or already non-blocking tasks are
                 ignored.
         """
         if not self.config.ghost_clear_enabled:
             return []
-        if require_armed:
-            consecutive = self.session_metadata.get("consecutive_identical_stop_block_count", 0)
-            if consecutive < self.config.ghost_clear_min_consecutive_blocks:
-                return []
 
         reason = CONFIG["ghost_clear_reason"]
         cleared: list[str] = []
@@ -3066,8 +3419,9 @@ class TaskLifecycle:
             # has the child id to transcribe (https://github.com/anthropics/claude-code/issues/7881 bars session
             # identity too). No spawn recorded → today's manual semantics.
             ledger = list(metadata.get("agent_spawns", []))
+            claimed_entry = None
             if session is None:
-                unclaimed = [entry for entry in ledger if not entry.get("claimed")]
+                unclaimed = [entry for entry in ledger if not entry.get("claimed") and not entry.get("returned")]
                 if unclaimed:
                     claimed_entry = unclaimed[-1]
                     claimed_entry["claimed"] = True
@@ -3077,8 +3431,19 @@ class TaskLifecycle:
                 for entry in ledger:
                     if str(entry.get("id")) == str(session):
                         entry["claimed"] = True
+                        claimed_entry = entry
                         metadata["agent_spawns"] = ledger
                         break
+            # What ends this delegation later is evidence about this record:
+            # a SubagentStop for agent_id, or harness_pid no longer running.
+            delegation = {
+                "agent_id": str(session) if session else None,
+                "cli_type": self._cli_type,
+                "parent_session_id": self.session_id,
+                "harness_pid": self.ctx.harness_pid if self.ctx is not None else None,
+                "mode": claimed_entry.get("mode", "unrecognized") if claimed_entry else "manual",
+                "delegated_at": now,
+            }
 
             tasks = state.get("tasks", {}) if repository is None else None
             for task_id in requested:
@@ -3094,6 +3459,9 @@ class TaskLifecycle:
                 task["status"] = "delegated"
                 task["updated_at"] = now
                 task_metadata = task.setdefault("metadata", {})
+                task_metadata["delegation"] = dict(delegation)
+                # Kept beside the record for builds released before it, which
+                # match a returning subagent on delegated_to_session.
                 task_metadata["delegated_at"] = now
                 if session:
                     task_metadata["delegated_to_session"] = str(session)
@@ -4059,20 +4427,31 @@ def register_hooks(app_instance) -> None:
             return ctx.allow()
         return None
 
+    @app_instance.on("SessionStart")
+    def record_fork_at_session_start(ctx: EventContext) -> None:
+        """Record a fork once and say what it means, before any handler answers."""
+        try:
+            if record_conversation_fork(ctx):
+                ctx.add_chain_notification(_fork_notice(ctx.cli_type), channel="both")
+        except Exception as error:  # noqa: BLE001 - unknown stays "main"
+            logger.warning(f"Could not record a forked conversation: {error}")
+        return None
+
     if not lifecycle_hooks_registered:
         return
 
-    def reset_stop_sequence(ctx: EventContext) -> None:
-        manager = TaskLifecycle(ctx=ctx)
-        manager.atomic_update_metadata(_reset_stop_block_sequence)
-
     @app_instance.on("UserPromptSubmit")
     def reset_stop_sequence_on_user_prompt(ctx: EventContext) -> Optional[Dict]:
-        """Start a fresh consecutive Stop sequence for a new user turn."""
+        """A new prompt: restart the Stop loop guard and end awaiting-user if the user wrote it.
+
+        Registered first on UserPromptSubmit and always returns None: the
+        chain is first-wins, so a handler that answers the prompt (the
+        prompt-time cache check) must never run before this state change.
+        """
         if not is_enabled():
             return None
         try:
-            reset_stop_sequence(ctx)
+            TaskLifecycle(ctx=ctx).restore_awaiting_user(ctx)
         except Exception as error:
             logger.warning(f"Task Stop-sequence prompt reset error: {error}")
         return None

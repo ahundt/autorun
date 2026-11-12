@@ -31,6 +31,7 @@ from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_
     blocks,
     gate_env_fixture,
     lookup,
+    shows_allowed_stop_message,
     text,
 )
 
@@ -65,15 +66,17 @@ def test_awaiting_user_marker_records_status_decision_and_previous_status(gate_e
     assert record.get("previous_status") == "in_progress"
     assert not blocks(response, cli_type), f"{cli_type}: a task waiting on the user still blocked the Stop: {response}"
     shown = text(response)
-    assert "Waiting on you" in shown and "#7" in shown and DECISION in shown, (
-        f"{cli_type}: the user was not shown what #7 waits on: {response}"
-    )
+    if shows_allowed_stop_message(cli_type):
+        assert "Waiting on you" in shown and "#7" in shown and DECISION in shown, (
+            f"{cli_type}: the user was not shown what #7 waits on: {response}"
+        )
     assert "[AWAITING_USER]" in session.audit(), f"{cli_type}: no AWAITING_USER audit line"
 
     # Recorded, so the next Stop needs no restated marker.
     again = session.stop("Waiting for your answer.")
     assert not blocks(again, cli_type), f"{cli_type}: the recorded state did not outlive the reply that stated it: {again}"
-    assert DECISION in text(again)
+    if shows_allowed_stop_message(cli_type):
+        assert DECISION in text(again)
 
 
 def test_awaiting_user_marker_without_decision_is_rejected_and_named(gate_env):

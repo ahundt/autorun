@@ -582,7 +582,7 @@ def test_a_whole_list_task_tool_is_never_described_as_per_task_calls(cli_type):
     from autorun.task_lifecycle import _stale_escape_sentence, _task_actions_fragment
 
     progress = platform_for(cli_type).tool_names["task_progress"]
-    texts = [_task_actions_fragment(cli_type), _stale_escape_sentence(cli_type, threshold=2, marker="M")]
+    texts = [_task_actions_fragment(cli_type), _stale_escape_sentence(cli_type, marker="M")]
     for planning, execution in ((False, False), (True, False), (False, True)):
         ctx = SimpleNamespace(
             cli_type=cli_type,

@@ -93,6 +93,17 @@ def blocks(response, cli_type: str) -> bool:
     return isinstance(response, dict) and response.get("decision") == protocol.stop_blocking_decision
 
 
+def shows_allowed_stop_message(cli_type: str) -> bool:
+    """Whether this harness's Stop protocol carries any text on a Stop it lets end.
+
+    Qwen's Stop schema keeps only ``decision`` and ``reason``
+    (platforms.QwenHookProtocol), so a pass-through Stop reaches its user with
+    no message at all; there the gate's waiting lines cannot be shown.
+    """
+    probe = "stop-message-probe"
+    return probe in text(EventContext("probe", "Stop", cli_type=cli_type).respond("allow", probe))
+
+
 def bash_tool(cli_type: str) -> str:
     return PLATFORMS[cli_type].tool_names.get("bash", "Bash")
 

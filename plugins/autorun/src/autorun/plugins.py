@@ -49,6 +49,7 @@ from .core import (
     format_command_for_cli,
     format_commands_for_cli,
     format_suggestion,
+    resolve_conversation_role,
     resolve_prompt_author,
     user_only_refusal,
 )
@@ -2316,20 +2317,19 @@ def _ghost_marker_regex() -> re.Pattern:
 
 
 @app.on("PostToolUse")
-def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
-    """Reset consecutive Stop state after completed tool activity.
+def reset_stop_loop_guard_on_tool_activity(ctx: EventContext) -> Optional[Dict]:
+    """Restart the Stop loop guard's count after the main agent ran a tool.
 
-    Every tool resets the bounded no-action Stop sequence. Task tools do not
-    reset the separate identical-ID ghost sequence: a failing
-    TaskUpdate("Task not found") must still reach the stale-task threshold.
+    The guard counts consecutive main-agent Stops with no main-agent tool call
+    between them. A subagent's tool call (``ctx.agent_id`` set; on Claude it
+    shares the parent's session) is not the main agent acting, so it leaves
+    the count alone.
     """
-    if not task_lifecycle.is_enabled():
+    if ctx.agent_id or not task_lifecycle.is_enabled():
         return None
-    task_tool_activity = is_task_tool(_task_cli_hint(ctx), ctx.tool_name)
-    # A Stop block arms this reset in daemon memory. Most PostToolUse calls
-    # therefore avoid opening the much larger task-lifecycle JSON entirely.
-    # The first Stop after a daemon restart begins a fresh consecutive sequence,
-    # so losing this advisory bit cannot create a false ghost-task clearance.
+    # A Stop block arms this reset in daemon memory, so most PostToolUse calls
+    # never open task-lifecycle state. The first Stop after a daemon restart
+    # begins a fresh sequence anyway, so losing the bit releases nothing early.
     claimed_initial_check = False
 
     def claim_initial_check(current):
@@ -2340,25 +2340,17 @@ def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
         return current
 
     armed = ctx.state_update_volatile(
-        "ghost_counter_armed_in_daemon",
+        task_lifecycle.STOP_LOOP_GUARD_ARMED,
         claim_initial_check,
         None,
     )
     if armed is False or (armed == "checking" and not claimed_initial_check):
         return None
     try:
-        manager = task_lifecycle.TaskLifecycle(ctx=ctx)
-
-        def reset_activity_counters(metadata):
-            task_lifecycle._reset_stop_block_sequence(metadata)
-            if not task_tool_activity:
-                task_lifecycle._reset_ghost_counter(metadata)
-
-        manager.atomic_update_metadata(reset_activity_counters)
-        ctx.state_set_volatile("ghost_counter_armed_in_daemon", False)
-    except Exception:
-        ctx.state_set_volatile("ghost_counter_armed_in_daemon", False)
-        pass
+        task_lifecycle.TaskLifecycle(ctx=ctx).atomic_update_metadata(task_lifecycle._reset_stop_block_sequence)
+    except Exception as exc:  # noqa: BLE001 - a counter reset must not break the tool
+        logger.warning(f"Stop loop guard reset failed: {exc}")
+    ctx.state_set_volatile(task_lifecycle.STOP_LOOP_GUARD_ARMED, False)
     return None
 
 
@@ -2638,6 +2630,16 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     )
     _task_progress_state_set(ctx, "task_staleness_last_threshold", threshold)
 
+    if resolve_conversation_role(ctx) == "fork":
+        # A fork answers a side question with history it did not create: offer
+        # a task list, never order one and never arm the PreToolUse denial.
+        ctx.add_chain_notification(
+            f"This conversation is a fork and has run {threshold}+ tool calls with no "
+            "task update. Track work in tasks only if you take on work here.",
+            channel="both",
+        )
+        return None
+
     no_tasks = False
     if task_lifecycle.is_enabled():
         try:
@@ -2870,11 +2872,12 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
                         "deleted": "deleted",
                         "ignored": "ignored",
                     }
-                    status_parts = []
-                    for s in ["in_progress", "pending", "completed", "paused", "deleted", "ignored"]:
-                        c = by_status.get(s, 0)
-                        if c > 0:
-                            status_parts.append(f"{c} {status_icons.get(s, s)}")
+                    order = ["in_progress", "pending", "completed", "paused", "deleted", "ignored"]
+                    status_parts = [
+                        f"{by_status[s]} {status_icons.get(s, s)}"
+                        for s in order + sorted(set(by_status) - set(order))
+                        if by_status.get(s)
+                    ]
 
                     lines.append(f"Tasks: {len(tasks)} total ({', '.join(status_parts)})")
 
@@ -2888,7 +2891,9 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
                             lines.append(f"  {icon} #{tid}: {subj} ({st})")
                         if len(incomplete) > 5:
                             lines.append(f"  ... and {len(incomplete) - 5} more (/ar:task for full list)")
-                    else:
+                    waiting = manager.waiting_summary()
+                    lines.extend(f"  {line}" for line in waiting)
+                    if not incomplete and not waiting:
                         lines.append("  All tasks completed!")
                 else:
                     lines.append("Tasks: none tracked")
@@ -2904,7 +2909,7 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
         )
         cfg = task_lifecycle.TaskLifecycleConfig.load()
         ghost_state = "on" if cfg.ghost_clear_enabled else "off"
-        lines.append(f"Stale-task clear: {ghost_state} (min={cfg.ghost_clear_min_consecutive_blocks})")
+        lines.append(f"Stale-task clear: {ghost_state}")
 
         # Superset Capability: Gemini-specific hints for task management
         if platform_for(ctx.cli_type).aggregates_conductor_tasks:
@@ -3004,24 +3009,14 @@ def _task_recovery(ctx: EventContext, arguments: tuple[str, ...]) -> str:
         cfg.ghost_clear_enabled = False
         cfg.save()
         return "Task recovery: disabled."
-    if operation == "min" and len(arguments) == 2:
-        value = arguments[1]
-        if value.isdecimal() and int(value) > 0:
-            ctx.ghost_clear_min_consecutive_blocks_override = int(value)
-            return f"Task recovery threshold (this session): {value} consecutive identical Stop blocks."
-        return f"❌ recovery minimum must be an integer greater than 0, got {value!r}; pass " + format_command_for_cli(
-            "/ar:task recovery min <positive-count>",
-            ctx.cli_type,
-        )
     if operation != "status" or len(arguments) > 1:
         command = format_command_for_cli(
-            "/ar:task recovery status|on|off|min <positive-count>",
+            "/ar:task recovery status|on|off",
             ctx.cli_type,
         )
         return f"❌ Unknown recovery values; pass {command}"
     enabled = "on" if cfg.ghost_clear_enabled else "off"
-    threshold = getattr(ctx, "ghost_clear_min_consecutive_blocks_override", None) or cfg.ghost_clear_min_consecutive_blocks
-    return f"Task recovery: {enabled}, minimum consecutive identical Stop blocks: {threshold}."
+    return f"Task recovery: {enabled}. The stale-clear marker works from the first Stop block."
 
 
 def _task_status(ctx: EventContext, arguments: tuple[str, ...]) -> str:

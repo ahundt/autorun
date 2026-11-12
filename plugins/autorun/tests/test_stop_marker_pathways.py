@@ -441,14 +441,13 @@ class TestBothPathwaysAgree:
         seed.create_task("77", {"subject": "Ghost"}, "created")
         seed.update_task("77", {"status": "in_progress"}, "started")
 
-        # The escape hatch only opens after repeated identical blocks.
+        # The marker works from the first block; the loop tolerates a retry.
         blocked = None
         for _ in range(5):
             ctx = _stop_context(
                 session_id, "", last_assistant_message=STALE_CLEAR.format(id="77")
             )
             assert ctx.transcript.text == ""
-            ctx.ghost_clear_min_consecutive_blocks_override = 1
             blocked = TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx)
             if blocked is None:
                 break
@@ -491,9 +490,9 @@ def _pi_context(session_id, messages, event="Stop", tool_name="", tool_result=""
 class TestStaleClearReadsOnlyTheNewestAssistantMessage:
     """Pi sends its whole transcript, autorun's own block messages included.
 
-    After the threshold the block message lists the stale-clear marker with
-    each real task id, so a reader that scans the whole transcript finds a
-    marker the assistant never printed and releases the gate by itself.
+    A transcript can hold a stale-clear marker with a real task id that the
+    assistant never printed (older builds' block messages listed them), so a
+    reader that scans the whole transcript would release the gate by itself.
     """
 
     @staticmethod
@@ -503,16 +502,20 @@ class TestStaleClearReadsOnlyTheNewestAssistantMessage:
         seed.update_task("77", {"status": "in_progress"}, "started")
 
     def _block_twice(self, cfg, session_id, messages):
-        """Two identical Stop blocks; the second prints the marker for #77."""
+        """Two Stop blocks, then a continuation naming the marker for #77.
+
+        Block messages now show the marker only with a placeholder id; older
+        builds printed it with each real id. The continuation keeps a real-id
+        marker in the transcript that the assistant never printed, which is
+        what a whole-transcript reader would wrongly obey.
+        """
         for reply in ("Working on it.", "Still working."):
             messages.append(_pi_message("assistant", reply))
             ctx = _pi_context(session_id, list(messages))
             reason = _blocked_text(TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx))
             assert "77" in reason
             messages.append(_pi_continuation(reason))
-        assert STALE_CLEAR.format(id="77") in messages[-1]["content"], (
-            "precondition: the second block names the stale-clear marker for #77"
-        )
+        messages.append(_pi_continuation(f"If #77 is stale, print:\n{STALE_CLEAR.format(id='77')}"))
 
     def test_pi_stop_does_not_obey_its_own_block_message(self, isolated_state, cfg):
         session_id = "pi-stale-self"

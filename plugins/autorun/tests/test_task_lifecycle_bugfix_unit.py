@@ -25,7 +25,7 @@ from autorun.core import EventContext
 from autorun.task_lifecycle import (
     TaskLifecycle,
     TaskLifecycleConfig,
-    _reset_ghost_counter,
+    _reset_stop_block_sequence,
 )
 from autorun.session_manager import SessionStateManager
 
@@ -442,7 +442,7 @@ class TestFix4BlockCountReset:
 
 
 class TestMetadataNoOpPersistence:
-    def test_noop_ghost_reset_does_not_save_shared_state(
+    def test_noop_stop_sequence_reset_does_not_save_shared_state(
         self,
         isolated_config,
         monkeypatch,
@@ -464,7 +464,6 @@ class TestMetadataNoOpPersistence:
                 "session_metadata": {
                     "session_id": manager.session_id,
                     "stop_block_count": 0,
-                    "consecutive_identical_stop_block_count": 0,
                 }
             }
         )
@@ -475,11 +474,11 @@ class TestMetadataNoOpPersistence:
 
         monkeypatch.setattr(manager, "_session_state", isolated_state)
 
-        manager.atomic_update_metadata(_reset_ghost_counter)
+        manager.atomic_update_metadata(_reset_stop_block_sequence)
 
-        assert state.writes == 0, "An already-clear ghost counter must not rewrite shared state"
+        assert state.writes == 0, "An already-reset Stop sequence must not rewrite shared state"
 
-    def test_changed_ghost_metadata_saves_once(
+    def test_legacy_identical_block_counter_is_dropped_in_one_save(
         self,
         isolated_config,
         monkeypatch,
@@ -513,11 +512,11 @@ class TestMetadataNoOpPersistence:
 
         monkeypatch.setattr(manager, "_session_state", isolated_state)
 
-        manager.atomic_update_metadata(_reset_ghost_counter)
+        manager.atomic_update_metadata(_reset_stop_block_sequence)
 
         assert state.writes == 1
         metadata = state["session_metadata"]
-        assert metadata.get("consecutive_identical_stop_block_count") == 0
+        assert "consecutive_identical_stop_block_count" not in metadata, "the identical-block counter older builds kept is dropped"
         assert "last_stop_block_id_hash" not in metadata
 
 

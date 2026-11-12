@@ -50,7 +50,6 @@ def isolated_task_config(tmp_path):
         task_ttl_days=30,
         max_resume_tasks=10,
         ghost_clear_enabled=True,
-        ghost_clear_min_consecutive_blocks=2,
     )
 
 
@@ -173,7 +172,6 @@ def test_override_visible_in_pending_injection_every_block(
         max_resume_tasks=10,
         stop_block_max_count=block_count,
         ghost_clear_enabled=ghost_enabled,
-        ghost_clear_min_consecutive_blocks=2,
     )
     sid = f"stop-override-{cli_type}-{block_count}-{int(ghost_enabled)}-{int(change_tasks)}-{time.time_ns()}"
     manager = TaskLifecycle(session_id=sid, config=cfg)
@@ -248,7 +246,6 @@ def test_override_visible_for_codex_cli_type(
         max_resume_tasks=10,
         stop_block_max_count=block_count,
         ghost_clear_enabled=True,
-        ghost_clear_min_consecutive_blocks=2,
     )
     sid = f"stop-codex-{block_count}-{time.time_ns()}"
     manager = TaskLifecycle(session_id=sid, config=cfg)
@@ -291,7 +288,6 @@ def test_pending_injection_set_when_consecutive_below_min_threshold(
         storage_dir=tmp_path / "task_lifecycle",
         max_resume_tasks=10,
         ghost_clear_enabled=True,
-        ghost_clear_min_consecutive_blocks=2,
     )
     sid = f"stop-churn-{time.time_ns()}"
     manager = TaskLifecycle(session_id=sid, config=cfg)
@@ -355,12 +351,11 @@ def test_base_injection_includes_task_subject_and_count(
 #   The AI gave up because the Stop-block message said:
 #     "6. Override: only the user can type /ar:estop or /ar:task ignore"
 #   …without mentioning that an AI-callable stale-clear marker
-#   (AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)) becomes available after
-#   ghost_clear_min_consecutive_blocks identical blocks.
+#   (AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)) exists.
 #
-#   The base message MUST tell the AI that the stale-clear marker exists and
-#   becomes printable after a small number of identical re-stops. That is the
-#   "text that can be supplied by the AI to override" the user asked for.
+#   The base message MUST tell the AI that the stale-clear marker exists. It
+#   works from the first block. That is the "text that can be supplied by the
+#   AI to override" the user asked for.
 
 
 def test_first_stop_block_mentions_stale_task_ai_escape_path(

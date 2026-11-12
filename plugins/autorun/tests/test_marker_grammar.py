@@ -263,7 +263,6 @@ class TestAppliedToTasks:
         for _ in range(5):
             ctx = _stop_context(
                 session_id, "AUTORUN_TASKS_CLEAR_STALE_TASK(1, 2)")
-            ctx.ghost_clear_min_consecutive_blocks_override = 1
             blocked = TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx)
             if blocked is None:
                 break

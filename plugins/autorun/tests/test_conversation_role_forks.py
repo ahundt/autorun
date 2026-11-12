@@ -148,7 +148,7 @@ def test_zero_task_nag_offers_in_fork(gate_env):
     """A fork with no tasks of its own is offered a task list, never ordered to make one or denied a tool."""
     fork = _session("claude", "nag")
     fork.dispatch("SessionStart", source="fork")
-    pre, post = _drive_tools(fork, 60)
+    pre, post = _drive_tools(fork, 80)
 
     messages = [text(response) for response in pre + post]
     assert not [m for m in messages if "BLOCKED" in m], "a fork with no tasks was denied a tool"
@@ -159,7 +159,8 @@ def test_zero_task_nag_offers_in_fork(gate_env):
     # Control: a main conversation with no tasks is ordered and then denied.
     main = _session("claude", "nagmain")
     main.dispatch("SessionStart", source="startup")
-    pre, post = _drive_tools(main, 60)
+    # The denial follows the second threshold crossing: 25 then 50 more calls.
+    pre, post = _drive_tools(main, 80)
     assert [r for r in pre if "BLOCKED" in text(r)], "control: the main conversation's zero-task nag never denied"
 
 

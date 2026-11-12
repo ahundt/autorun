@@ -73,13 +73,10 @@ def _stop_context(event: str = "Stop", transcript_path: str = "") -> EventContex
     return ctx
 
 
-def _seed_delegation(lifecycle: TaskLifecycle, *, expired: bool = False) -> str:
+def _seed_delegation(lifecycle: TaskLifecycle, *, harness_pid: int | None = None) -> str:
+    """A marker delegation; with ``harness_pid``, one recorded by this build."""
     agent_id = "a1b2c3d4e5f6a7b8c"
-    delegated_at = (
-        time.time() - float(CONFIG["delegation_ttl_seconds"]) - 60
-        if expired
-        else time.time()
-    )
+    delegated_at = time.time()
     lifecycle.create_task("delegated", {"subject": "Delegated"}, "created")
     repository = sm.get_session_manager().task_repository()
     task = repository.get_task(lifecycle.global_key, "delegated")
@@ -88,6 +85,8 @@ def _seed_delegation(lifecycle: TaskLifecycle, *, expired: bool = False) -> str:
         "delegated_to_session": agent_id,
         "delegated_at": delegated_at,
     }
+    if harness_pid is not None:
+        task["metadata"]["delegation"] = {"agent_id": agent_id, "harness_pid": harness_pid, "mode": "async"}
     repository.put_task(lifecycle.global_key, "delegated", task)
     with session_state(lifecycle.global_key) as state:
         state["session_metadata"] = {
@@ -416,8 +415,13 @@ def test_codex_child_session_returns_parent_row_backed_delegation(
     assert parent.tasks["codex"]["status"] == "delegation-returned"
 
 
-def test_expired_row_backed_delegation_reverts_to_pending(sqlite_lifecycle):
-    _seed_delegation(sqlite_lifecycle, expired=True)
+def test_row_backed_delegation_reverts_when_its_harness_process_exited(sqlite_lifecycle):
+    import subprocess
+    import sys
+
+    exited = subprocess.Popen([sys.executable, "-c", "pass"])
+    exited.wait()
+    _seed_delegation(sqlite_lifecycle, harness_pid=exited.pid)
     ctx = _stop_context()
 
     response = TaskLifecycle(ctx=ctx, config=sqlite_lifecycle.config).handle_stop(ctx)

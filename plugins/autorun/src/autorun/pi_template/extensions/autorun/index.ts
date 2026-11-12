@@ -216,7 +216,10 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
   // before_agent_start frame that follows it.
   let pendingPromptAuthor: "user" | "automation" | undefined;
 
-  async function reprojectTaskReceipts(ctx: ExtensionContext): Promise<void> {
+  // `source` is the session_start reason. A "fork" reason tells the daemon
+  // these snapshots are the parent's history, so the fork does not own them
+  // (autorun.core.record_conversation_fork).
+  async function reprojectTaskReceipts(ctx: ExtensionContext, source?: string): Promise<void> {
     const taskRecords: Record<string, unknown>[] = [];
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "message") continue;
@@ -234,6 +237,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     }
     await bridge.askDaemon({
       ...operationFrame(ctx, "task_reproject_v1", pi),
+      ...(source ? { source } : {}),
       task_records: taskRecords,
     });
   }
@@ -375,7 +379,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (event, ctx) => {
     continuationInFlight = false;
-    await reprojectTaskReceipts(ctx);
+    await reprojectTaskReceipts(ctx, event.reason);
     await bridge.askDaemon({ ...frame(ctx, "SessionStart", pi), source: event.reason });
   });
 
