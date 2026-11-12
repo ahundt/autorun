@@ -310,6 +310,37 @@ def test_expired_min_tokens_sets_the_smallest_context_checked(clock):
     assert "expired-min-tokens" in text_of(unknown), f"the unknown-key reply does not list the valid keys: {unknown}"
 
 
+def test_the_expiry_test_reads_the_written_lifetime_and_the_floor(clock, tmp_path):
+    from autorun.cache_guard import CacheGuardConfig, _expired_trip, _usage_from_assistant, cache_command
+
+    def reading(written: dict, age: float, total: int = 250_000):
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(NOW - age))
+        usage = {"input_tokens": 3, "cache_read_input_tokens": total - 1003, "cache_creation_input_tokens": 1000}
+        if written is not None:
+            usage["cache_creation"] = written
+        return _usage_from_assistant({"timestamp": stamp}, usage, cli="claude")
+
+    one_hour = {"ephemeral_1h_input_tokens": 1000, "ephemeral_5m_input_tokens": 0}
+    five_min = {"ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 1000}
+    both = {"ephemeral_1h_input_tokens": 500, "ephemeral_5m_input_tokens": 500}
+    assert [reading(w, 0).cache_lifetime_seconds for w in (one_hour, five_min, both, None)] == [3600, 300, 3600, None]
+
+    default = CacheGuardConfig()
+    assert not _expired_trip(reading(one_hour, 3599), default)
+    assert _expired_trip(reading(one_hour, 3601), default)
+    assert _expired_trip(reading(five_min, 301), default)
+    assert not _expired_trip(reading(one_hour, 7200, total=99_999), default), "below the 100k default floor"
+    assert not _expired_trip(reading(None, 7200), default), "no lifetime and no age set"
+    assert _expired_trip(reading(None, 7200), CacheGuardConfig(cache_age_max_seconds=3600))
+    assert not _expired_trip(None, default)
+
+    sid = f"k3-{uuid.uuid4().hex[:8]}"
+    for value, stored in (("0", 0), ("200k", 200_000)):
+        reply = cache_command(f"set expired-min-tokens {value}", sid)
+        assert "unknown" not in reply and CacheGuardConfig.load(sid).expired_min_tokens == stored, reply
+    assert "cannot parse" in cache_command("set expired-min-tokens lots", sid)
+
+
 # ─── Pi and Prime Agent: no lifetime, so only a user-set age speaks ───────
 
 

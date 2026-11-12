@@ -177,6 +177,9 @@ class CacheGuardConfig:
     compaction_used_max:   float | None = None
     rate_limit_5h_max:     float | None = None
     rate_limit_7d_max:     float | None = None
+    # Smallest context the prompt-time expiry check applies to; None reads
+    # CONFIG cache_guard_expired_min_tokens. Not an axis: see _expired_trip.
+    expired_min_tokens:    int   | None = None
 
     @classmethod
     def load(cls, session_id: str) -> "CacheGuardConfig":
@@ -226,6 +229,9 @@ class UsageReading:
     cache_creation_tokens:  int   | None = None
     cache_hit_ratio:        float | None = None
     cache_age_seconds:      float | None = None
+    # How long the cache this response wrote lives: 3600 for a 1-hour write,
+    # 300 for a 5-minute one, None when the record does not say (Pi, Prime).
+    cache_lifetime_seconds: float | None = None
     context_window_size:    int   | None = None
     compaction_proximity:   float | None = None
     rate_limit_5h:          float | None = None
@@ -354,6 +360,19 @@ def _usage_from_assistant(entry: dict, usage: dict, *, cli: str) -> UsageReading
     denom = input_tokens + cache_read + cache_creation
     ratio: float | None = (cache_read / denom) if denom > 0 else None
 
+    # Claude Code records which lifetime the response wrote. The longer one
+    # decides: its part of the cache is the last to expire.
+    lifetime: float | None = None
+    written = usage.get("cache_creation")
+    if isinstance(written, dict):
+        for key, seconds in (("ephemeral_1h_input_tokens", 3600.0), ("ephemeral_5m_input_tokens", 300.0)):
+            try:
+                if int(written.get(key) or 0) > 0:
+                    lifetime = seconds
+                    break
+            except (TypeError, ValueError):
+                continue
+
     # Clock-skew handling: far-future timestamps (beyond tolerance) → age = None
     # (fail-open), not clamped 0 which would silently suppress age-axis trips.
     age: float | None = None
@@ -381,6 +400,7 @@ def _usage_from_assistant(entry: dict, usage: dict, *, cli: str) -> UsageReading
         cache_creation_tokens=cache_creation,
         cache_hit_ratio=ratio,
         cache_age_seconds=age,
+        cache_lifetime_seconds=lifetime,
         observed_at=time.time(),
     )
 
@@ -442,6 +462,29 @@ _AXES: tuple[_Axis, ...] = (
 
 # Only axes that are user-settable (set_key != "")
 _AXES_SET_MAP: dict[str, _Axis] = {ax.set_key: ax for ax in _AXES if ax.set_key}
+# The prompt-time expiry check's context floor; a `set` key that is not an axis.
+_EXPIRED_MIN_TOKENS_KEY = "expired-min-tokens"
+
+
+def _expired_min_tokens(cfg: CacheGuardConfig) -> int:
+    floor = cfg.expired_min_tokens
+    return CONFIG["cache_guard_expired_min_tokens"] if floor is None else floor
+
+
+def _expired_trip(usage: Optional[UsageReading], cfg: CacheGuardConfig) -> bool:
+    """True when the last response's cache has expired on a large context.
+
+    Two measurements against each other, which an `_AXES` row (one field
+    against one threshold) cannot express. The lifetime is the one the
+    record wrote, else the user's `age` (Pi and Prime Agent records carry
+    none); with neither it does not trip. Missing data never trips.
+    """
+    if usage is None or usage.cache_age_seconds is None or usage.total_input_tokens is None:
+        return False
+    lifetime = usage.cache_lifetime_seconds or cfg.cache_age_max_seconds
+    if lifetime is None:
+        return False
+    return usage.cache_age_seconds > lifetime and usage.total_input_tokens >= _expired_min_tokens(cfg)
 
 
 def _which_axes_trip(cfg: CacheGuardConfig, usage: Optional[UsageReading]) -> list[str]:
@@ -758,15 +801,24 @@ def _cmd_off(rest: list, session_id: str) -> str:
 
 def _cmd_set(rest: list, session_id: str) -> str:
     """Data-driven: /ar:cache set <axis> <value>. Adding a settable axis = 1 row in _AXES."""
+    keys = ", ".join([*_AXES_SET_MAP, _EXPIRED_MIN_TOKENS_KEY])
     if len(rest) < 2:
-        keys = ", ".join(_AXES_SET_MAP)
-        return f"ar:cache set: usage `/ar:cache set <axis> <value>`. Axes: {keys}"
+        return f"ar:cache set: usage `/ar:cache set <key> <value>`. Keys: {keys}"
     axis, value = rest[0].lower(), rest[1]
+    cfg = CacheGuardConfig.load(session_id)
+    if axis == _EXPIRED_MIN_TOKENS_KEY:
+        try:
+            floor = parse_quantity(value, expect="tokens")
+        except ValueError as e:
+            return f"ar:cache set {axis}: {e}"
+        if floor is PERMANENT:
+            return f"ar:cache set {axis}: takes a token count such as 0, 100k or 200k."
+        cfg.expired_min_tokens = int(floor)
+        cfg.save(session_id)
+        return f"ar:cache threshold updated: {axis} = {value}"
     ax = _AXES_SET_MAP.get(axis)
     if ax is None:
-        keys = ", ".join(_AXES_SET_MAP)
         return f"ar:cache set: unknown axis {axis!r}. Try: {keys}"
-    cfg = CacheGuardConfig.load(session_id)
     try:
         if ax.parser == "duration":
             v = parse_duration(value)

@@ -773,6 +773,10 @@ CONFIG = {
     # Clock-skew tolerance: timestamps this far in the future are treated as
     # "just now" (age=0) instead of unknown (fail-open).
     "cache_guard_clock_skew_tolerance_s": 60.0,
+    # The prompt-time expiry check applies only to a context (input + cache
+    # read + cache write tokens) at least this large. 0 checks every size.
+    # `/ar:cache set expired-min-tokens <tokens>` overrides it per session.
+    "cache_guard_expired_min_tokens": 100_000,
     # ─── Hook Performance Budgets ───────────────────────────────────────────
     # Maximum time a hook-path state read/write may wait on the shared JSON
     # state lock. Longer waits cause Claude/Codex hook timeouts under many
