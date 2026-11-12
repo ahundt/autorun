@@ -128,7 +128,7 @@ class TestFix1NonBlockingStatuses:
         assert not hasattr(TaskLifecycle, "BLOCKING_STATUSES"), "TaskLifecycle should NOT have old BLOCKING_STATUSES attribute"
 
     def test_non_blocking_statuses_values(self):
-        assert TaskLifecycle.NON_BLOCKING_STATUSES == frozenset(["completed", "deleted", "paused", "ignored", "delegated"])
+        assert TaskLifecycle.NON_BLOCKING_STATUSES == frozenset(["completed", "deleted", "paused", "ignored", "delegated", "awaiting-user"])
 
 
 # --- Fix 2: Ghost task returns sentinel ---

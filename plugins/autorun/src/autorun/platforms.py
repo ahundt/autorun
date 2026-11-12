@@ -1032,6 +1032,24 @@ class Platform:
     # (codex-rs/core/src/tools/hook_names.rs:46). Empty means this harness
     # exposes no subagent spawn autorun can observe.
     agent_spawn_tools: frozenset[str] = field(default_factory=frozenset)
+    # What a spawn tool's result "status" says about the child. Running: it
+    # works in the background and reports by SubagentStop. Finished: it had
+    # already ended when PostToolUse fired, so no delegation can wait on it.
+    # A value in neither tuple is treated as running, because ending a
+    # delegation without evidence is what the Stop gate must never do.
+    agent_spawn_running_results: tuple[str, ...] = ()
+    agent_spawn_finished_results: tuple[str, ...] = ()
+    # True only when a captured Stop payload lists the subagents still
+    # running by id (tests/fixtures/running_agents/<name>.json), so that a
+    # delegated child missing from it can be taken as ended. False until then.
+    stop_payload_lists_running_agents: bool = False
+    # SessionStart ``source`` values that mean this conversation was forked
+    # from another and arrived with its history (core.resolve_conversation_role).
+    # Empty where no capture shows what a fork sends.
+    fork_session_start_sources: tuple[str, ...] = ()
+    # The harness's own command that ends a goal a fork copied from its parent,
+    # named once in the fork notice. Empty where the harness has none.
+    goal_clear_command: str = ""
     # True when this harness can carry a Conductor plan whose conductor/tracks
     # files autorun merges into its own task list. Declared rather than
     # inferred from the harness name so a family member that gains Conductor
@@ -1456,6 +1474,15 @@ CLAUDE = register(
         task_create_tools=frozenset({"TaskCreate"}),
         task_update_tools=frozenset({"TaskUpdate"}),
         agent_spawn_tools=frozenset({"Agent", "Task"}),
+        # "async_launched" from a live claude -p fan-out, 2026-08-05
+        # (tests/test_delegation_ledger.py SPAWN_RESULT_STRUCTURED). The shape
+        # of a synchronous Agent result is not captured, so nothing is
+        # declared finished.
+        agent_spawn_running_results=("async_launched",),
+        # --fork-session (https://code.claude.com/docs/en/hooks, SessionStart
+        # source). What a desktop side chat sends is not captured.
+        fork_session_start_sources=("fork",),
+        goal_clear_command="/goal clear",
         # TaskUpdate declares addBlockedBy and addBlocks.
         task_dependency_syntax="{task_update}({task_id_param}=N, addBlockedBy=[M])",
         task_review_tools=frozenset({"TaskList", "TaskGet"}),
@@ -1845,6 +1872,8 @@ CODEX = register(
         # checklist-only denial.
         task_enforcement_requires_tool_evidence=True,
         agent_spawn_tools=frozenset({"spawn_agent"}),
+        # codex-rs core/src/tools/handlers/multi_agents_tests.rs:257.
+        agent_spawn_running_results=("spawned",),
         policy_commands_arrive_in_transcript=True,
         fingerprint_ignores_session_id=True,
         command_display_prefix="ar:",
@@ -1912,6 +1941,8 @@ PI = register(
         native_task_statuses=frozenset(
             {"pending", "in_progress", "completed", "deleted"}
         ),
+        # session_start reason "fork" (Pi 1.0.4 dist/core/extensions/types.d.ts).
+        fork_session_start_sources=("fork",),
         config_dir="~/.pi/agent/",
         config_dir_env_vars=("PI_CODING_AGENT_DIR",),
         skill_search_routes=(ConfigDirSkills("skills"),),

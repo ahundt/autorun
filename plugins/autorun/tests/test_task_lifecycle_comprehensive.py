@@ -367,7 +367,7 @@ class TestStatusTransitionMatrix:
         assert mgr.tasks["1"]["status"] == "in_progress"
 
     def test_all_non_blocking_statuses_in_frozenset(self):
-        expected = frozenset(["completed", "deleted", "paused", "ignored", "delegated"])
+        expected = frozenset(["completed", "deleted", "paused", "ignored", "delegated", "awaiting-user"])
         assert TaskLifecycle.NON_BLOCKING_STATUSES == expected
 
     def test_delegated_not_in_prunable(self):
@@ -599,7 +599,6 @@ class TestStopHookBehavioralInvariants:
             The historical deadlock that motivated suppression required
             PreToolUse deny, which has since been removed.
         """
-        # default ghost_clear_min_consecutive_blocks=2
         mgr = _mgr("sh-inject", cfg)
         mgr.create_task("t1", {"subject": "Task"}, "created")
         mgr.update_task("t1", {"status": "in_progress"}, "started")
