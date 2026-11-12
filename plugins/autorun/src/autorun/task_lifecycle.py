@@ -2952,19 +2952,22 @@ class TaskLifecycle:
         return entered, unstated
 
     def restore_awaiting_user(self, ctx: EventContext) -> None:
-        """A new prompt: restart the loop guard, and if the user wrote it, end awaiting-user.
+        """A prompt the user wrote: restart the loop guard and end awaiting-user.
 
-        Reads the session metadata without the writer slot first, so a prompt
-        with nothing to reset and nothing waiting on the user writes nothing
-        and reads no task row. Only a prompt ``resolve_prompt_author`` credits
-        to the user restores the tasks; a subagent, harness or automation
-        prompt leaves them waiting.
+        Only a prompt ``resolve_prompt_author`` credits to the user does
+        either. A subagent, harness or automation prompt changes nothing: the
+        Pi-family bridge answers every blocked Stop with an automation-authored
+        continuation turn, and letting that restart the guard kept a model that
+        stops without acting blocked forever. Reads the session metadata
+        without the writer slot first, so a prompt with nothing to reset and
+        nothing waiting on the user writes nothing and reads no task row.
         """
+        if resolve_prompt_author(ctx) != "user":
+            return
         metadata = get_session_manager().read_field(self.global_key, "session_metadata", {}, timeout=self._state_lock_timeout)
         metadata = metadata if isinstance(metadata, dict) else {}
         waiting = [str(task_id) for task_id in metadata.get(_AWAITING_USER_INDEX, [])]
-        restore = bool(waiting) and resolve_prompt_author(ctx) == "user"
-        if not restore:
+        if not waiting:
             if not _stop_sequence_is_reset(metadata):
                 self.atomic_update_metadata(_reset_stop_block_sequence)
             return
@@ -4465,7 +4468,7 @@ def register_hooks(app_instance) -> None:
 
     @app_instance.on("UserPromptSubmit")
     def reset_stop_sequence_on_user_prompt(ctx: EventContext) -> Optional[Dict]:
-        """A new prompt: restart the Stop loop guard and end awaiting-user if the user wrote it.
+        """A prompt the user wrote: restart the Stop loop guard and end awaiting-user.
 
         Registered first on UserPromptSubmit and always returns None: the
         chain is first-wins, so a handler that answers the prompt (the

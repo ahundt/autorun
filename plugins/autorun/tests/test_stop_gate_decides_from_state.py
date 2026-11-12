@@ -181,6 +181,44 @@ def test_loop_guard_counts_only_toolless_main_agent_stops(gate_env, cli_type):
     assert "[STOP_LOOP_GUARD]" in session.audit(), "the release was not logged as STOP_LOOP_GUARD"
 
 
+# The Pi-family bridge (pi_template/extensions/autorun/index.ts): a blocked
+# Stop makes agent_settled send the block reason with triggerTurn; that turn's
+# before_agent_start has no input event before it, so it sends
+# UserPromptSubmit with prompt_author "automation".
+PI_FAMILY = sorted(name for name in HOOK_PLATFORMS if PLATFORMS[name].memory_template == "pi_template/AGENTS.md")
+
+
+@pytest.mark.parametrize("cli_type", PI_FAMILY)
+def test_bridge_continuation_prompt_does_not_restart_the_loop_guard(gate_env, cli_type):
+    """Replay of the bridge's frames for a model that stops without acting:
+    Stop (blocked), the continuation UserPromptSubmit, Stop, ... The
+    continuation is automation, not the user, so the guard still releases
+    after ``stop_block_max_count`` blocks; a typed prompt does restart it."""
+    session = _session(cli_type, "bridgeloop")
+    session.seed("1", "Finish the migration")
+    limit = session.manager.config.stop_block_max_count
+
+    def settle():
+        response = session.stop("I will stop here.")
+        if blocks(response, cli_type):
+            reason = response.get("reason") or text(response)
+            session.prompt(reason, prompt_author="automation")
+        return response
+
+    for cycle in range(limit):
+        assert blocks(settle(), cli_type), f"{cli_type}: Stop {cycle + 1} was not blocked"
+    released = settle()
+    assert not blocks(released, cli_type), (
+        f"{cli_type}: {limit + 1} Stops with only the bridge's automation-authored continuation "
+        f"prompts between them still blocked; the continuation restarted the loop guard: {released}"
+    )
+
+    session.prompt("please keep going")  # typed by the user (interactive input)
+    assert blocks(session.stop("I will stop here."), cli_type), (
+        f"{cli_type}: a user-authored prompt did not restart the loop guard"
+    )
+
+
 @pytest.mark.parametrize("cli_type", HOOK_PLATFORMS)
 def test_loop_guard_release_passes_through_to_stage_verification(gate_env, cli_type):
     """The release returns None, not allow, so autorun_injection still answers."""
