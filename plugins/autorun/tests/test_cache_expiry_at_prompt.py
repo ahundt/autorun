@@ -60,7 +60,10 @@ SMALL_EXPIRED_1H = FIXTURES / "claude_1h_lifetime_idle_2h_20k_tokens.jsonl"
 PI_NO_LIFETIME = FIXTURES / "pi_no_lifetime_idle_2h_250k_tokens.jsonl"
 CODEX_ROLLOUT = FIXTURES / "codex_rollout_no_usable_record.jsonl"
 NO_USAGE = FIXTURES / "claude_no_usage_record.jsonl"
-UNREADABLE = FIXTURES / "unreadable_transcript.jsonl"
+# Built at test time: a repository test forbids tracked binary files.
+UNREADABLE_BYTES = (
+    b"\xff\xfe\x00\x00\x89PNG\r\n\x1a\n" + bytes(range(256)) + b"\n" + b'{"type": "assistant", "message": {"usage": \n'
+)
 
 EXPIRED_NOTICE = "cache expired"  # section 5.4.2 item 4: "this session's prompt cache expired ..."
 RESEND_LINE = "Send the same prompt again"
@@ -162,8 +165,9 @@ def test_prompt_time_blocks_exactly_the_expired_large_contexts(clock, tmp_path):
         "pi, no lifetime, no age set": ("pi", PI_NO_LIFETIME),
         "codex rollout, no usable record": ("codex", CODEX_ROLLOUT),
         "claude, no usage record": ("claude", NO_USAGE),
-        "claude, unreadable bytes": ("claude", UNREADABLE),
+        "claude, unreadable bytes": ("claude", tmp_path / "unreadable_transcript.jsonl"),
     }
+    runs["claude, unreadable bytes"][1].write_bytes(UNREADABLE_BYTES)
     if sys.platform != "win32" and os.geteuid() != 0:
         locked = tmp_path / "locked.jsonl"
         shutil.copy2(EXPIRED_1H, locked)
