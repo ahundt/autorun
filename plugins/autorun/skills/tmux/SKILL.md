@@ -122,7 +122,9 @@ background, behind an editor, is not listed, since typed keys reach the editor.
 `autorun tmux send` types text and Enter only. To interrupt a Claude Code
 turn, ask first, then send `tmux send-keys -t <target> Escape` and
 capture the pane. Commands to resume each harness in place after it exits are
-in the `tmux-automation` skill.
+in the `tmux-automation` skill, part of the separate `autorun-skills` plugin;
+if it is not listed, it is installed with `autorun --install autorun-skills`
+(Claude Code marketplace: `claude plugin install autorun-skills@autorun`).
 
 ## When `autorun` is not on PATH
 

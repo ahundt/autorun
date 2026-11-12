@@ -395,3 +395,17 @@ def test_no_moved_skill_reaches_into_ar_or_invokes_a_moved_skill_through_it():
             for match in forbidden.finditer(line)
         )
     assert not found, "\n".join(found)
+
+
+def test_an_ar_skill_pointing_to_a_moved_skill_names_the_plugin_that_ships_it():
+    """`autorun --install ar` installs `ar` without `autorun-skills`, so an
+    `ar` skill that sends the reader to a moved skill must say where that
+    skill comes from, or the pointer leads nowhere on such an install."""
+    missing = [
+        f"{path.relative_to(REPO)}: `{name}`"
+        for path in sorted((REPO / "plugins" / "autorun" / "skills").glob("*/SKILL.md"))
+        for name in sorted(_moved(REPO))
+        if f"`{name}`" in (text := path.read_text(encoding="utf-8")) and SKILLS_PLUGIN not in text
+    ]
+    assert not missing, missing
+
