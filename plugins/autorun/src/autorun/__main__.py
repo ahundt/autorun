@@ -274,15 +274,17 @@ def add_tmux_arguments(tmux_parser: argparse.ArgumentParser) -> None:
         "send",
         help="Type TEXT into the panes --to names, then press Enter",
         description="Type TEXT into the panes --to names, then press Enter in a separate call. "
-        "Prints each target's session, window, pane, directory and harness before typing, "
-        "then reads each pane back and reports text left on its input line as "
-        "'typed, not submitted'. Exits 1 if any send failed or nothing was sent.",
+        "Prints each target's session, window, pane, directory and harness before typing. "
+        "Reads each pane just before typing and refuses, typing nothing, a pane showing a "
+        "permission, plan or question dialog, one mid-turn, or one with text already typed. "
+        "Then reads each pane back and reports text left on its input line as "
+        "'typed, not submitted'. Exits 1 if any target was refused or failed, or nothing was sent.",
     )
     tmux_send_parser.add_argument(
         "--to",
         metavar="TARGETS",
         help="Letters from `autorun tmux list` (A, or A,C), all, or awaiting-input "
-        "(Claude Code panes waiting at a prompt; awaiting is accepted)",
+        "(panes listed at their plain input prompt; awaiting is accepted)",
     )
     tmux_send_parser.add_argument(
         "text",

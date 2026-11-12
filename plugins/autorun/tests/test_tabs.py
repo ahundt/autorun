@@ -14,12 +14,17 @@ Tests:
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
+import tmux_screens
 from autorun.platforms import PLATFORMS
 from autorun.tmux_utils import (
     TmuxUtilities,
     discover_claude_sessions,
     execute_session_selections,
+    TypedNotSubmitted,
+    pane_prompt_type,
+    send_text_and_enter,
     send_to_session,
+    tmux_detect_claude_active,
 )
 from autorun.tmux_tab_ai_session_status import (
     analyze_sessions_heuristic,
@@ -390,10 +395,19 @@ class TestAnalyzeSessionsHeuristic:
     def test_detects_awaiting_input(self):
         sessions = [{
             'session_name': 'test', 'window_id': '0', 'tmux_target': 'test:0',
-            'content': 'Some output here\nWould you like to proceed?\n❯ 1. Yes\n  2. No\n'
+            'content': tmux_screens.READY,
         }]
         result = analyze_sessions_heuristic(sessions)
         assert result[0]['awaiting'] is True
+
+    def test_a_plan_approval_dialog_is_not_awaiting_input(self):
+        """Enter there accepts the highlighted option, so typed text would answer it."""
+        sessions = [{
+            'session_name': 'test', 'window_id': '0', 'tmux_target': 'test:0',
+            'content': 'Some output here\nWould you like to proceed?\n❯ 1. Yes\n  2. No\n'
+        }]
+        result = analyze_sessions_heuristic(sessions)
+        assert (result[0]['awaiting'], result[0]['status']) == (False, 'dialog')
 
 
 class TestFormatOutput:
@@ -466,6 +480,7 @@ class TestSelectionParsing:
 
     def _make_mock_tmux(self):
         mock_tmux = MagicMock()
+        mock_tmux.execute_tmux_command.return_value = {'returncode': 0, 'stdout': tmux_screens.READY}
         mock_tmux.send_keys.return_value = True
         return mock_tmux
 
@@ -514,9 +529,9 @@ class TestSelectionParsing:
     def test_parse_awaiting_selector(self):
         """Test 'awaiting:continue' format — only executes on awaiting=True sessions."""
         sessions = [
-            {'tmux_target': 'dev:0', 'awaiting': False},
-            {'tmux_target': 'test:1', 'awaiting': True},
-            {'tmux_target': 'docs:2', 'awaiting': True},
+            {'tmux_target': 'dev:0', 'awaiting': False, 'prompt_type': 'question'},
+            {'tmux_target': 'test:1', 'awaiting': True, 'prompt_type': 'input'},
+            {'tmux_target': 'docs:2', 'awaiting': True, 'prompt_type': 'input'},
         ]
         with patch('autorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
             result = execute_selections('awaiting:continue', sessions)
@@ -540,6 +555,7 @@ class TestSelectionsSendOnlyWhatWasMeant:
 
     def _tmux(self, *send_results):
         tmux = MagicMock()
+        tmux.execute_tmux_command.return_value = {'returncode': 0, 'stdout': tmux_screens.READY}
         tmux.send_literal.return_value = True
         tmux.send_keys.side_effect = list(send_results) if send_results else None
         tmux.send_keys.return_value = True
@@ -812,6 +828,17 @@ class TestSendIsVerifiedOnThePrivateServer:
         finally:
             subprocess.run(["tmux", "kill-session", "-t", name], check=False, capture_output=True)
 
+    @staticmethod
+    def _send(tmux, pane, text):
+        """(sent, error) from send_text_and_enter, the layer that verifies.
+        These panes run a shell, not a harness, so the prompt check that
+        send_to_session adds in front would refuse them; it is tested in
+        TestNoSendTypesIntoADialogOrAMidTurnPane."""
+        try:
+            return send_text_and_enter(tmux, text, pane, '0'), None
+        except TypedNotSubmitted as e:
+            return False, str(e)
+
     def _wait_for_prompt(self, tmux, name):
         import time
 
@@ -836,9 +863,9 @@ class TestSendIsVerifiedOnThePrivateServer:
             return real_type(text, *args, **kwargs)
 
         tmux.send_keys, tmux.send_literal = lose_enter, type_text
-        result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, ': autorun-marker-1')
+        result = self._send(tmux, pane, ': autorun-marker-1')
 
-        assert (result['success'], result['error']) == (False, 'typed, not submitted')
+        assert result == (False, 'typed, not submitted')
         assert sent == [': autorun-marker-1', 'C-m']
 
     def test_text_echoed_above_an_empty_input_line_is_reported_as_sent(self, pane):
@@ -847,19 +874,19 @@ class TestSendIsVerifiedOnThePrivateServer:
         tmux = TmuxUtilities(session_name=pane)
         self._wait_for_prompt(tmux, pane)
 
-        result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, 'echo autorun-marker-3')
+        result = self._send(tmux, pane, 'echo autorun-marker-3')
         screen = tmux.execute_tmux_command(['capture-pane', '-p'], pane, '0')['stdout']
 
-        assert (result['success'], result['error']) == (True, None)
+        assert result == (True, None)
         assert screen.count('autorun-marker-3') >= 2, screen
 
     def test_submitted_text_is_reported_as_sent(self, pane):
         tmux = TmuxUtilities(session_name=pane)
         self._wait_for_prompt(tmux, pane)
 
-        result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, ': autorun-marker-2')
+        result = self._send(tmux, pane, ': autorun-marker-2')
 
-        assert (result['success'], result['error']) == (True, None)
+        assert result == (True, None)
 
     @pytest.mark.parametrize('text', ['C-c', '-R', 'Up', 'Escape', 'a;b', 'ends;', 'back\\;'])
     def test_text_that_reads_as_a_key_name_or_flag_arrives_as_those_characters(self, pane, text):
@@ -873,8 +900,116 @@ class TestSendIsVerifiedOnThePrivateServer:
                        check=True, capture_output=True)
         tmux = TmuxUtilities(session_name=pane)
 
-        result = send_to_session(tmux, {'tmux_target': f'{pane}:0'}, text)
+        result = self._send(tmux, pane, text)
         screen = tmux.execute_tmux_command(['capture-pane', '-p'], pane, '0')['stdout']
 
-        assert (result['success'], result['error']) == (True, None), (result, screen)
+        assert result == (True, None), (result, screen)
         assert screen.split('\n')[:2] == [text, text], screen
+
+
+class TestNoSendTypesIntoADialogOrAMidTurnPane:
+    """`awaiting-input` counted any recognised prompt as waiting, so `send`
+    typed text and Enter into Claude Code's permission dialog, where Enter
+    accepts the highlighted "1. Yes", and into plan approvals and question
+    menus; `all` and letters typed into them too, and into a pane mid-turn.
+    Every text send now reads the pane just before typing and goes through
+    check_safe_to_send; a pane not at its plain input prompt is refused by
+    letter with the reason, and nothing is typed into it."""
+
+    READABLE = sorted(n for n, p in PLATFORMS.items() if p.tmux_prompt_state_readable)
+
+    @staticmethod
+    def _tmux(screen):
+        tmux = MagicMock()
+        tmux.execute_tmux_command.return_value = {'returncode': 0, 'stdout': screen}
+        tmux.send_literal.return_value = True
+        tmux.send_keys.return_value = True
+        return tmux
+
+    @staticmethod
+    def _session(harness, **fields):
+        return {'tmux_target': 's:0.0', 'harness': harness, 'prompt_type': 'input',
+                'is_active': False, 'actions': ['continue'], **fields}
+
+    @pytest.fixture(autouse=True)
+    def _pane_reads_back_submitted(self):
+        with patch('autorun.tmux_utils._text_on_cursor_line', return_value=False), \
+                patch('time.sleep'):
+            yield
+
+    @pytest.mark.parametrize('harness', READABLE)
+    @pytest.mark.parametrize('reason', sorted(tmux_screens.NOT_READY))
+    @pytest.mark.parametrize('selection,command', [
+        ('A', 'continue'), ('A', None), ('A:continue', None),
+        ('all', 'continue'), ('awaiting-input', 'continue')])
+    def test_a_pane_not_at_its_input_prompt_when_typed_into_is_refused(
+            self, harness, reason, selection, command):
+        """Discovery saw the plain input prompt; by send time the pane shows
+        the dialog (or is mid-turn, or has text typed), as a race would."""
+        tmux = self._tmux(tmux_screens.NOT_READY[reason])
+
+        results = execute_session_selections(selection, [self._session(harness)], tmux,
+                                             command=command)
+
+        tmux.send_literal.assert_not_called()
+        tmux.send_keys.assert_not_called()
+        assert [(r['letter'], r['success'], r['refused']) for r in results] == [('A', False, True)]
+        assert reason in results[0]['error'], results
+
+    @pytest.mark.parametrize('harness', READABLE)
+    def test_the_same_selections_type_into_a_pane_at_its_input_prompt(self, harness):
+        for selection in ('A', 'all', 'awaiting-input'):
+            tmux = self._tmux(tmux_screens.READY)
+            results = execute_session_selections(selection, [self._session(harness)], tmux,
+                                                 command='continue')
+
+            assert [(r['letter'], r['success']) for r in results] == [('A', True)], results
+            assert tmux.send_literal.call_args.args[0] == 'continue'
+
+    @pytest.mark.parametrize('harness', READABLE)
+    @pytest.mark.parametrize('reason', tmux_screens.DIALOGS + ['active'])
+    def test_awaiting_input_does_not_select_a_pane_listed_in_a_dialog_or_mid_turn(
+            self, harness, reason):
+        screen = tmux_screens.NOT_READY[reason]
+        session = analyze_sessions_heuristic([{
+            'tmux_target': 's:0.0', 'harness': harness, 'content': screen,
+            'prompt_type': pane_prompt_type(screen, harness),
+            'is_active': tmux_detect_claude_active(screen)}])[0]
+        tmux = self._tmux(tmux_screens.READY)
+
+        results = execute_session_selections('awaiting-input', [session], tmux, command='go')
+
+        assert session['awaiting'] is False and results == []
+        tmux.send_literal.assert_not_called()
+
+    @pytest.mark.parametrize('harness', READABLE)
+    @pytest.mark.parametrize('reason', tmux_screens.DIALOGS)
+    def test_list_shows_a_dialog_pane_as_needing_the_person(self, harness, reason):
+        screen = tmux_screens.NOT_READY[reason]
+        session = analyze_sessions_heuristic([{
+            'tmux_target': 's:0.0', 'harness': harness, 'content': screen,
+            'prompt_type': pane_prompt_type(screen, harness), 'is_active': False}])[0]
+
+        assert (session['awaiting'], session['status']) == (False, 'dialog')
+        assert 'continue' not in session['actions']
+        row = [line for line in format_output([session]).splitlines() if line.startswith('A ')]
+        assert 'dialog' in row[0], row
+
+    @pytest.mark.parametrize('harness', sorted(n for n, p in PLATFORMS.items()
+                                              if not p.tmux_prompt_state_readable))
+    def test_a_harness_autorun_cannot_read_is_refused_by_a_batch_and_sent_to_by_letter(
+            self, harness):
+        """Its dialogs cannot be told from its input prompt, so only a send
+        that names the pane types into it."""
+        for selection, sent in (('all', False), ('awaiting-input', None), ('A', True)):
+            tmux = self._tmux(tmux_screens.READY)
+            session = self._session(harness, prompt_type='unknown')
+            results = execute_session_selections(selection, [session], tmux, command='go')
+
+            if sent is None:
+                assert results == []
+            else:
+                assert [(r['letter'], r['success']) for r in results] == [('A', sent)], results
+                assert bool(tmux.send_literal.called) is sent
+            if sent is False:
+                assert results[0]['refused'] and 'cannot read' in results[0]['error'], results

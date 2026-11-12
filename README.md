@@ -583,13 +583,18 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 | `/ar:restart-daemon` | restart the daemon for this install |
 
 `autorun tmux list` only reads. It finds a pane running any of the nine
-harnesses, and shows each session's status as `idle`, `active`, `error`,
-`completed` or `unknown`; only Claude Code's prompts can be read, so every other
-harness shows `unknown`. `autorun tmux send --to <A | A,C | all | awaiting-input>
+harnesses, and shows each session's status as `idle`, `active`, `dialog`,
+`error`, `completed` or `unknown`; only Claude Code's prompts can be read, so
+every other harness shows `unknown`. `dialog` is a permission, plan or question
+prompt: Enter there answers it, so it needs you in that pane. `autorun tmux send --to <A | A,C | all | awaiting-input>
 -- <text>` prints each target's session, window, pane, directory and harness,
 types the text, presses Enter in a second call, and reports text still on the
 input line as `typed, not submitted` and a pane it could not read back as
-`sent, not confirmed`, resending neither. `awaiting-input` skips `unknown` sessions.
+`sent, not confirmed`, resending neither. It reads each pane just before typing
+and refuses, typing nothing, a pane in a dialog, mid-turn or with text already
+typed, naming it by letter with the reason and exiting 1. `awaiting-input`
+selects only sessions at their plain input prompt; it and `all` never type into
+an `unknown` session, which only its letter reaches.
 
 ### Renamed commands
 

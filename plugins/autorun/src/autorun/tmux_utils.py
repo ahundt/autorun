@@ -1352,6 +1352,9 @@ PROMPT_TYPE_ERROR = 'error_prompt'
 #: A pane runs a harness whose prompts tmux_detect_prompt_type cannot read
 #: (Platform.tmux_prompt_state_readable is False).
 PROMPT_TYPE_UNKNOWN = 'unknown'
+#: check_safe_to_send's reason for such a pane: its dialogs and its input
+#: prompt look alike to autorun, so only a send naming the pane types there.
+PROMPT_STATE_UNREADABLE = 'prompt_state_unreadable'
 
 
 def _prompt_lines(content: str) -> List[str]:
@@ -1717,24 +1720,29 @@ def send_text_and_enter(
                             else TypedNotSubmitted.TYPED)
 
 
-def check_safe_to_send(content: str) -> tuple[bool, str]:
-    """Check if it's safe to send a message to a Claude Code window.
+def check_safe_to_send(content: str, harness: Optional[str] = None) -> tuple[bool, str]:
+    """Whether text may be typed into a pane: the one check every text send uses.
 
-    Performs safety checks to avoid interfering with:
-    - Claude actively generating output
+    Safe only at the plain, empty input prompt. Refuses:
+    - Claude actively generating output (mid-turn)
     - User actively typing in the input field
-    - Non-input states (permission prompts, plan approval, etc.)
+    - Non-input states (permission prompts, plan approval, etc.), where
+      Enter answers the dialog instead of submitting the text
+    - A harness whose prompts autorun cannot read (see pane_prompt_type)
 
     Args:
         content: Terminal content from the window
+        harness: Platform name of the harness the pane runs, when known
 
     Returns:
         Tuple of (is_safe, reason):
         - (True, "ready") - Safe to send, input prompt is empty
+        - (False, "no_content") - Nothing could be read from the pane
+        - (False, PROMPT_STATE_UNREADABLE) - autorun cannot read this harness's prompts
         - (False, "active") - Claude is actively generating
         - (False, "no_prompt") - No input prompt detected
         - (False, "user_typing") - User appears to be typing
-        - (False, "special_prompt") - Special prompt requiring specific response
+        - (False, "special_prompt:<type>") - A prompt that needs a specific answer
 
     Example:
         >>> safe, reason = check_safe_to_send(window['content'])
@@ -1746,12 +1754,13 @@ def check_safe_to_send(content: str) -> tuple[bool, str]:
     if not content:
         return False, "no_content"
 
+    prompt_type = pane_prompt_type(content, harness)
+    if prompt_type == PROMPT_TYPE_UNKNOWN:
+        return False, PROMPT_STATE_UNREADABLE
+
     # Check if Claude is actively generating
     if tmux_detect_claude_active(content):
         return False, "active"
-
-    # Check prompt type
-    prompt_type = tmux_detect_prompt_type(content)
 
     if prompt_type is None:
         return False, "no_prompt"
@@ -1788,7 +1797,9 @@ def send_message_to_claude(
     window: Optional[str] = None,
     pane: Optional[str] = None,
     force: bool = False,
-    delay_ms: int = 100
+    delay_ms: int = 100,
+    harness: Optional[str] = None,
+    unreadable_ok: bool = False,
 ) -> tuple[bool, str]:
     """Safely send a message to a Claude Code window.
 
@@ -1805,6 +1816,9 @@ def send_message_to_claude(
         pane: Target pane
         force: If True, skip safety checks (use with caution!)
         delay_ms: Delay between text and Enter (default 100ms)
+        harness: Platform name of the harness the pane runs (check_safe_to_send)
+        unreadable_ok: Send to a harness whose prompts autorun cannot read;
+            only for a pane the user named, never for a batch
 
     Returns:
         Tuple of (success, reason):
@@ -1827,8 +1841,8 @@ def send_message_to_claude(
             return False, "capture_failed"
 
         content = result.get('stdout', '')
-        safe, reason = check_safe_to_send(content)
-        if not safe:
+        safe, reason = check_safe_to_send(content, harness)
+        if not safe and not (unreadable_ok and reason == PROMPT_STATE_UNREADABLE):
             return False, reason
 
     # Safe to send (or force=True)
@@ -2441,44 +2455,83 @@ def _send_result(session: dict, command: str, send: Callable[..., bool]) -> dict
     """Run send(session_name, window_id, pane) for session['tmux_target'] and report it.
 
     The target is 'session:window.pane' (pane None for a bare 'session:window',
-    which tmux resolves to the window's active pane).
+    which tmux resolves to the window's active pane). send returns a bool, or
+    (sent, reason) as send_message_to_claude does.
     """
     target = session['tmux_target']
     session_name, window_id = target.split(':', 1)
     window_id, _, pane = window_id.partition('.')
     try:
-        success = bool(send(session_name, window_id, pane or None))
+        outcome = send(session_name, window_id, pane or None)
     except Exception as e:
-        return {'target': target, 'command': command, 'success': False, 'error': str(e)}
+        return {'target': target, 'command': command, 'success': False, 'refused': False,
+                'error': str(e)}
+    sent, reason = outcome if isinstance(outcome, tuple) else (bool(outcome), 'send_failed')
+    refused = not sent and (reason in _REFUSALS or reason.startswith('special_prompt:'))
     return {
         'target': target,
         'command': command,
-        'success': success,
-        'error': None if success else 'send_keys failed',
+        'success': bool(sent),
+        'refused': bool(refused),
+        'error': None if sent else _why_not_sent(reason),
     }
 
 
-def send_to_session(tmux: 'TmuxUtilities', session: dict, cmd: str) -> dict:
-    """Send a command to a tmux session with send_text_and_enter.
+# check_safe_to_send's reasons, in words. A refused pane had nothing typed into it.
+_REFUSALS = {
+    'no_content': 'the pane could not be read',
+    PROMPT_STATE_UNREADABLE: ("autorun cannot read this harness's prompts, so a batch "
+                              "never types into it; name its pane to send to it"),
+    'active': 'it is mid-turn',
+    'no_prompt': 'no input prompt is on screen',
+    'user_typing': 'text is already typed on its input line',
+    'unknown_state': 'its prompt is not the plain input prompt',
+    'capture_failed': 'the pane could not be read',
+}
+
+
+def _why_not_sent(reason: str) -> str:
+    if reason == 'send_failed':
+        return 'send_keys failed'
+    if reason.startswith('special_prompt:'):
+        return f'not sent: it shows a prompt that needs you to answer it ({reason})'
+    if reason in _REFUSALS:
+        return f'not sent: {_REFUSALS[reason]} ({reason})'
+    return reason
+
+
+def send_to_session(tmux: 'TmuxUtilities', session: dict, cmd: str, named: bool = False) -> dict:
+    """Type cmd and Enter into a session's pane, only if check_safe_to_send allows it.
+
+    The pane is read just before typing (send_message_to_claude), so a pane
+    that opened a dialog or started a turn since it was listed is refused.
 
     Args:
         tmux:    TmuxUtilities instance
-        session: Session dict with 'tmux_target' key ('session:window.pane' format)
+        session: Session dict with 'tmux_target' ('session:window.pane') and,
+                 when known, 'harness'
         cmd:     Command string to send
+        named:   The user named this pane (a letter), not a batch; only then
+                 is a harness whose prompts autorun cannot read typed into
 
     Returns:
-        {'target': str, 'command': str, 'success': bool, 'error': str|None};
-        success is False when either the text or the Enter was not delivered.
+        {'target', 'command', 'success', 'refused', 'error'}; success is False
+        when the pane was refused (refused True, nothing typed) or when the
+        text or the Enter was not delivered or not shown submitted.
     """
-    return _send_result(session, cmd, lambda s, w, p: send_text_and_enter(tmux, cmd, s, w, p))
+    return _send_result(session, cmd, lambda s, w, p: send_message_to_claude(
+        tmux, cmd, s, w, p, harness=session.get('harness'), unreadable_ok=named))
 
 
 # Default-action labels (tmux_tab_ai_session_status.get_default_actions) that
 # name something to send. The others ('let it work', 'new task', 'status', ...)
 # are advice for a person; typing one would submit it to Claude as a prompt.
-_DEFAULT_ACTION_SENDERS: Dict[str, Callable[..., bool]] = {
-    'continue': lambda tmux, s, w, p: send_text_and_enter(tmux, 'continue', s, w, p),
-    'interrupt': lambda tmux, s, w, p: send_escape(tmux, s, w, p),
+# Escape types no text, so it needs no prompt check; 'continue' is text and
+# goes through send_to_session's.
+_DEFAULT_ACTION_SENDERS: Dict[str, Callable[..., dict]] = {
+    'continue': lambda tmux, session: send_to_session(tmux, session, 'continue', named=True),
+    'interrupt': lambda tmux, session: _send_result(
+        session, 'interrupt', lambda s, w, p: send_escape(tmux, s, w, p)),
 }
 
 
@@ -2487,8 +2540,9 @@ def _run_default_action(tmux: 'TmuxUtilities', session: dict, letter: str) -> di
     sender = _DEFAULT_ACTION_SENDERS.get(label.strip().lower())
     if sender is None:
         return {'target': session['tmux_target'], 'command': label, 'success': False,
+                'refused': False,
                 'error': f"'{label}' is advice, not a command; use {letter}:<command>"}
-    return _send_result(session, label, lambda s, w, p: sender(tmux, s, w, p))
+    return dict(sender(tmux, session), command=label)
 
 
 def execute_session_selections(selection_str: str, sessions: list,
@@ -2503,8 +2557,13 @@ def execute_session_selections(selection_str: str, sessions: list,
                              labels are refused per session
       'A:git status, B:pwd'  Execute custom commands per session
       'all:continue'         Execute on every session in the list
-      'awaiting:continue'    Execute only on sessions where awaiting=True and the
-                             prompt state is known ('awaiting-input' is the same)
+      'awaiting:continue'    Execute only on sessions listed at their plain input
+                             prompt and not mid-turn ('awaiting-input' is the same)
+
+    Every text send reads the pane just before typing and types only where
+    check_safe_to_send allows: a pane showing a dialog, mid-turn, or with text
+    already typed is refused and reported, never typed into. A harness whose
+    prompts autorun cannot read is typed into only when named by letter.
 
     A group of letters must name distinct existing sessions, and a command
     takes exactly one letter. If any group fails that ('awaiting', 'all',
@@ -2522,7 +2581,8 @@ def execute_session_selections(selection_str: str, sessions: list,
                        first key is sent
 
     Returns:
-        List of result dicts: [{'target', 'command', 'success', 'error'}, ...]
+        List of result dicts: [{'letter', 'target', 'command', 'success',
+        'refused', 'error'}, ...]; letter is the session's letter in sessions.
         Caller is responsible for formatting (see tmux_tab_ai_session_status.format_execution_results).
     """
     if tmux is None:
@@ -2544,12 +2604,14 @@ def execute_session_selections(selection_str: str, sessions: list,
             if not cmd:
                 return [{'target': selection_str, 'command': '', 'success': False,
                          'error': f"'{selection_str}'{empty}"}]
-            # An unknown prompt state may be mid-turn; awaiting never types there.
-            targets = [s for s in sessions if group == 'all'
-                       or (s.get('awaiting') and s.get('prompt_type') != PROMPT_TYPE_UNKNOWN)]
+            # Awaiting means listed at the plain input prompt, not mid-turn;
+            # discovery's reading, not an analysis' guess. The send-time check
+            # in send_to_session still decides whether anything is typed.
+            targets = [(i, s) for i, s in enumerate(sessions) if group == 'all'
+                       or (s.get('prompt_type') == PROMPT_TYPE_INPUT and not s.get('is_active'))]
             if announce:
-                announce(targets)
-            return [send_to_session(tmux, s, cmd) for s in targets]
+                announce([s for _, s in targets])
+            return [dict(send_to_session(tmux, s, cmd), letter=chr(65 + i)) for i, s in targets]
 
     plan = []  # (letter, session, command or None for the default action)
     errors = []
@@ -2584,6 +2646,7 @@ def execute_session_selections(selection_str: str, sessions: list,
     if announce:
         announce([s for _, s, _ in plan])
     return [
-        send_to_session(tmux, s, cmd) if cmd is not None else _run_default_action(tmux, s, c)
+        dict(send_to_session(tmux, s, cmd, named=True) if cmd is not None
+             else _run_default_action(tmux, s, c), letter=c)
         for c, s, cmd in plan
     ]

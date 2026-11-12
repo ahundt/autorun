@@ -21,6 +21,7 @@ import sys
 from typing import Dict, List
 
 from .tmux_utils import (
+    PROMPT_TYPE_INPUT,
     PROMPT_TYPE_UNKNOWN,
     discover_claude_sessions,
     execute_session_selections,
@@ -87,6 +88,7 @@ def get_default_actions(status: str) -> List[str]:
         'error':     ['interrupt', 'retry'],
         'completed': ['new task', 'close'],
         'blocked':   ['unblock', 'skip'],
+        'dialog':    ['answer it in the pane', 'status'],
         'unknown':   ['let it work', 'status'],
     }.get(status, ['continue', 'status'])
 
@@ -98,14 +100,17 @@ def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
     session dict in-place. Uses pre-populated tmux_list_windows() fields (path,
     title) when available, falling back to regex extraction from content.
 
-    'awaiting' is tmux_utils' own answer: a prompt tmux_detect_prompt_type
-    recognises while tmux_detect_claude_active sees no generation. The
+    'awaiting' is tmux_utils' own answer: the plain input prompt
+    (prompt_type 'input') while tmux_detect_claude_active sees no generation.
+    A permission dialog, plan approval or question menu is not awaiting
+    input: Enter there answers the dialog, so it needs the person. The
     prompt_type and is_active from discover_claude_sessions are used when
     present, otherwise detected from content.
 
     Status detection (in priority order):
       'unknown'   — the harness's prompts cannot be read (prompt_type 'unknown')
       'active'    — Claude is generating
+      'dialog'    — any other prompt it recognises: answer it in the pane
       'error'     — 'error', 'failed', or 'exception' in content
       'idle'      — awaiting input
       'completed' — 'completed' or 'done' in content
@@ -121,13 +126,15 @@ def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
                      else tmux_detect_claude_active(content))
         prompt_type = (session['prompt_type'] if 'prompt_type' in session
                        else tmux_detect_prompt_type(content))
-        session['awaiting'] = prompt_type not in (None, PROMPT_TYPE_UNKNOWN) and not is_active
+        session['awaiting'] = prompt_type == PROMPT_TYPE_INPUT and not is_active
 
         if prompt_type == PROMPT_TYPE_UNKNOWN:
             # autorun cannot read this harness's prompts: neither idle nor busy.
             session['status'] = 'unknown'
         elif is_active:
             session['status'] = 'active'
+        elif prompt_type not in (None, PROMPT_TYPE_INPUT):
+            session['status'] = 'dialog'
         elif 'error' in content_lower or 'failed' in content_lower or 'exception' in content_lower:
             session['status'] = 'error'
         elif session['awaiting']:
@@ -251,7 +258,9 @@ def format_output(sessions: List[Dict]) -> str:
         "  autorun tmux send --to A -- <text>               into session A",
         "  autorun tmux send --to A,C -- <text>             into A and C",
         "  autorun tmux send --to all -- <text>             into every session listed",
-        "  autorun tmux send --to awaiting-input -- <text>  into Claude Code sessions waiting at a prompt",
+        "  autorun tmux send --to awaiting-input -- <text>  into sessions at their plain input prompt",
+        "Nothing is typed into a session showing a dialog, mid-turn or with text typed;",
+        "status 'dialog' (a permission, plan or question prompt) needs you in that pane.",
         f"{'-' * term_width}",
     ]
     return '\n'.join(lines)
@@ -263,12 +272,18 @@ def format_execution_results(results: List[Dict]) -> str:
         return 'No commands executed.'
     lines = ['\nExecuting...\n']
     success_count = sum(1 for r in results if r['success'])
+    refused = sum(1 for r in results if r.get('refused'))
     for r in results:
+        who = f"{r['letter']} {r['target']}" if r.get('letter') else r['target']
         if r['success']:
-            lines.append(f"  [ok] {r['target']}: '{r['command']}' sent")
+            lines.append(f"  [ok] {who}: '{r['command']}' sent")
+        elif r.get('refused'):
+            lines.append(f"  [refused] {who}: {r['error']}")
         else:
-            lines.append(f"  [FAIL] {r['target']}: {r['error']}")
+            lines.append(f"  [FAIL] {who}: {r['error']}")
     lines.append(f'\nDone! {success_count}/{len(results)} commands sent.')
+    if refused:
+        lines.append(f'{refused} refused: nothing was typed into them.')
     return '\n'.join(lines)
 
 

@@ -543,6 +543,7 @@ class TestASendThatCannotBeReadBackIsNotReportedAsSubmitted:
 
     def _tmux(self):
         tmux = Mock()
+        tmux.execute_tmux_command.return_value = {"returncode": 0, "stdout": CLAUDE_IDLE_SCREEN}
         tmux.send_literal.return_value = True
         tmux.send_keys.return_value = True
         return tmux

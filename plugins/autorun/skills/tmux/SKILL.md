@@ -85,11 +85,20 @@ the sessions and ask what to do.
 | `A` | session A of the list |
 | `A,C` | sessions A and C |
 | `all` | every session listed |
-| `awaiting-input` (`awaiting` is accepted) | Claude Code sessions waiting at a prompt |
+| `awaiting-input` (`awaiting` is accepted) | sessions listed at their plain input prompt, not mid-turn |
+
+Every send reads the pane just before typing. A pane showing a permission
+dialog, plan approval or question menu (status `dialog`), a pane mid-turn,
+and a pane with text already on its input line are refused: nothing is typed
+into them, the output names each by letter with the reason
+(`[refused] B work:2.0: not sent: ...`), and the exit status is 1. Enter in a
+dialog answers it, so a `dialog` session needs the user in that pane; tell
+them, never answer it with `send`.
 
 autorun reads only Claude Code's prompts. Every other harness shows status
-`unknown`, and `awaiting-input` skips it, so a batch send never types into a
-session in the middle of a turn. Name such a session by its letter instead.
+`unknown`: `awaiting-input` skips it and `all` refuses it, because its
+dialogs cannot be told from its input prompt. Name such a session by its
+letter to send to it, after the user has looked at it.
 
 With no `--to`, or no text after `--`, `send` types nothing and exits 1.
 

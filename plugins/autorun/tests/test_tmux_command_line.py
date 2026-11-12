@@ -17,7 +17,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import tmux_screens
 from autorun import tmux_tab_ai_session_status as status
+from autorun.platforms import PLATFORMS
 from autorun.__main__ import main
 
 SESSIONS = [
@@ -48,6 +50,7 @@ def discovered():
 def tmux():
     """The tmux every send reaches; send_keys succeeds and nothing is left on the input line."""
     fake = MagicMock()
+    fake.execute_tmux_command.return_value = {'returncode': 0, 'stdout': tmux_screens.READY}
     fake.send_literal.return_value = True
     fake.send_keys.return_value = True
     with patch('autorun.tmux_utils.get_tmux_utilities', return_value=fake), \
@@ -189,9 +192,11 @@ def test_tmux_exec_runs_the_same_subcommand_without_autorun_on_path():
 # ─── End to end, on a private tmux server ──────────────────────────────────
 
 # A stand-in for an AI coding harness. `exec -a <name>` gives it the
-# executable name autorun's discovery matches (argv[0]); `tui` draws the input
-# line inside a bordered box with the cursor hidden, as Claude Code does, and
+# executable name autorun's discovery matches (argv[0]); `tui` draws Claude
+# Code's input line, `❯ ` between two rules, with the cursor hidden, and
 # `stuck` is the same screen with Enter ignored, so the text stays typed.
+# `screen=<file>` draws that file (a tmux_screens capture) and then shows
+# every byte it is sent, so a test can see that nothing was typed into it.
 _STUB = r'''
 import os, sys, tty
 name, mode = sys.argv[1], sys.argv[2]
@@ -203,14 +208,23 @@ if mode == "plain":
     sys.exit(0)
 fd = sys.stdin.fileno()
 tty.setraw(fd)
+if mode.startswith("screen="):
+    with open(mode[len("screen="):], encoding="utf-8") as f:
+        out.write(f.read().replace("\n", "\r\n")); out.flush()
+    while True:
+        ch = os.read(fd, 1)
+        if ch == b"\x03":
+            break
+        out.write(f"\r\nRECEIVED {ch!r}"); out.flush()
+    sys.exit(0)
 buf, last = "", ""
 def draw():
     out.write("\x1b[?25l\x1b[2J\x1b[H")
     out.write(f"{name} {mode} last: {last}\r\n")
-    out.write("╭" + "─" * 40 + "╮\r\n")
-    out.write("│ > " + buf.ljust(37) + "│\r\n")
-    out.write("╰" + "─" * 40 + "╯\r\n")
-    out.write(f"\x1b[3;{5 + len(buf)}H")  # back onto the input line, after the text
+    out.write("─" * 40 + "\r\n")
+    out.write("❯ " + buf + "\r\n")
+    out.write("─" * 40 + "\r\n")
+    out.write(f"\x1b[3;{3 + len(buf)}H")  # back onto the input line, after the text
     out.flush()
 draw()
 while True:
@@ -285,7 +299,12 @@ def private_tmux(request, tmp_path):
                               encoding='utf-8', env=env, timeout=10)
 
     def stub_argv(exe, screen, how='own'):
-        launch = f'exec -a {exe} {shlex.quote(sys.executable)} {shlex.quote(str(stub))} {exe} {screen}'
+        if screen in tmux_screens.NOT_READY:  # draw that capture
+            drawn = tmp_path / f'{screen}.txt'
+            drawn.write_text(tmux_screens.NOT_READY[screen], encoding='utf-8')
+            screen = f'screen={drawn}'
+        launch = (f'exec -a {exe} {shlex.quote(sys.executable)} {shlex.quote(str(stub))} '
+                  f'{exe} {shlex.quote(screen)}')
         if how == 'shell':  # a subshell execs the stub, so bash stays as its parent
             launch = f'({launch}); echo exited'
         return ['bash', '-c', launch]
@@ -367,11 +386,11 @@ class TestTmuxCommandOnAPrivateServer:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert 'h9:0.0: session h9, window 0, pane 0' in result.stdout
-        assert 'harness claude' in result.stdout and '[ok] h9:0.0' in result.stdout
+        assert 'harness claude' in result.stdout and '[ok] A h9:0.0' in result.stdout
         after = self._screens(tmux)
         # The TUI took the line: it shows it as the last submission and the
         # boxed input line is empty again.
-        assert 'last: hello' in after[0] and '│ > hello' not in after[0], after[0]
+        assert 'last: hello' in after[0] and '❯ hello' not in after[0], after[0]
         assert after[1:] == before[1:], 'a pane --to did not name changed'
 
     def test_text_left_in_a_tui_input_box_is_reported_and_exits_nonzero(self, server):
@@ -383,9 +402,9 @@ class TestTmuxCommandOnAPrivateServer:
         result = self._autorun(env, 'send', '--to', letter, '--', 'stays')
 
         assert result.returncode == 1, result.stdout + result.stderr
-        assert f'[FAIL] h9:{stuck}.0: typed, not submitted' in result.stdout
+        assert f'[FAIL] {letter} h9:{stuck}.0: typed, not submitted' in result.stdout
         after = self._screens(tmux)
-        assert '│ > stays' in after[stuck], after[stuck]
+        assert '❯ stays' in after[stuck], after[stuck]
         assert after[:stuck] == before[:stuck]
 
     def test_send_with_no_target_changes_no_pane(self, server):
@@ -483,3 +502,96 @@ class TestSplitWindowsOnAPrivateServer:
         after = self._screens(tmux)
         assert 'got: yo' in after['sp:2.0'], after['sp:2.0']
         assert {t: after[t] for t in self.PANES[:-1]} == {t: before[t] for t in self.PANES[:-1]}
+
+
+@pytest.mark.tmux
+class TestNoSendTypesIntoADialogOnAPrivateServer:
+    """`--to awaiting-input` treated every prompt autorun recognises as
+    waiting, so it typed text and Enter into Claude Code's permission dialog
+    (Enter accepts the highlighted "1. Yes"), plan approval and question
+    menus; `--to all` and letters typed into them too, and into a pane
+    mid-turn. Each pane here runs a stub named `claude` (the harness whose
+    prompts autorun reads) drawing one tmux_screens capture, and shows any
+    byte it receives; window 0 is Claude Code idle at its input prompt."""
+
+    READABLE = sorted(n for n, p in PLATFORMS.items() if p.tmux_prompt_state_readable)
+    NOT_READY = sorted(tmux_screens.NOT_READY)
+
+    @pytest.fixture(params=READABLE)
+    def server(self, request, private_tmux):
+        tmux, env, stub_argv = private_tmux
+        exe = PLATFORMS[request.param].binary
+        for index, screen in enumerate(['tui', *self.NOT_READY]):
+            argv = stub_argv(exe, screen)
+            if index == 0:
+                result = tmux('new-session', '-d', '-s', 'dg', '-x', '100', '-y', '20', *argv)
+            else:
+                result = tmux('new-window', '-d', '-t', f'dg:{index}', *argv)
+            assert result.returncode == 0, result.stderr
+        _wait_for_screens(tmux, [f'dg:{i}' for i in range(len(self.NOT_READY) + 1)])
+        return tmux, env
+
+    def _screens(self, tmux):
+        return [tmux('capture-pane', '-p', '-t', f'dg:{i}').stdout
+                for i in range(len(self.NOT_READY) + 1)]
+
+    def _assert_untouched(self, before, after, result):
+        for i, reason in enumerate(self.NOT_READY, start=1):
+            assert 'RECEIVED' not in after[i] and after[i] == before[i], (reason, after[i])
+            letter = chr(ord('A') + i)
+            assert f'[refused] {letter} dg:{i}.0: not sent' in result.stdout, result.stdout
+            assert f'({reason})' in result.stdout or f'special_prompt:{reason}' in result.stdout, \
+                (reason, result.stdout)
+
+    def test_all_types_only_into_the_pane_at_its_input_prompt(self, server):
+        tmux, env = server
+        before = self._screens(tmux)
+
+        result = _autorun_tmux(env, 'send', '--to', 'all', '--', 'continue')
+
+        assert result.returncode == 1, result.stdout + result.stderr
+        after = self._screens(tmux)
+        assert 'last: continue' in after[0], after[0]
+        assert '[ok] A dg:0.0' in result.stdout
+        self._assert_untouched(before, after, result)
+
+    def test_letters_naming_each_such_pane_type_into_none_of_them(self, server):
+        tmux, env = server
+        before = self._screens(tmux)
+        letters = ','.join(chr(ord('A') + i) for i in range(1, len(self.NOT_READY) + 1))
+
+        result = _autorun_tmux(env, 'send', '--to', letters, '--', 'continue')
+
+        assert result.returncode == 1, result.stdout + result.stderr
+        after = self._screens(tmux)
+        assert after[0] == before[0]
+        self._assert_untouched(before, after, result)
+
+    def test_awaiting_input_types_into_no_dialog_and_no_pane_mid_turn(self, server):
+        tmux, env = server
+        before = self._screens(tmux)
+
+        result = _autorun_tmux(env, 'send', '--to', 'awaiting-input', '--', 'continue')
+
+        after = self._screens(tmux)
+        assert 'last: continue' in after[0], after[0]
+        for i, reason in enumerate(self.NOT_READY, start=1):
+            assert 'RECEIVED' not in after[i] and after[i] == before[i], (reason, after[i])
+        # Only the half-typed prompt is an input prompt, so only it is a
+        # target to refuse; the exit status says not every target was sent.
+        typing = chr(ord('A') + 1 + self.NOT_READY.index('user_typing'))
+        assert f'[refused] {typing} ' in result.stdout and result.returncode == 1, result.stdout
+
+    def test_list_shows_each_dialog_as_needing_the_person(self, server):
+        _, env = server
+
+        result = _autorun_tmux(env, 'list', '--json')
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        found = {s['tmux_target']: (s['status'], s['awaiting'])
+                 for s in json.loads(result.stdout)['sessions']}
+        assert found['dg:0.0'] == ('idle', True)
+        for i, reason in enumerate(self.NOT_READY, start=1):
+            if reason in tmux_screens.DIALOGS:
+                assert found[f'dg:{i}.0'] == ('dialog', False), (reason, found)
+
