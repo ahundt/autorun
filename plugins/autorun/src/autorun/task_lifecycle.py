@@ -3528,6 +3528,9 @@ class TaskLifecycle:
         try:
             config = config or cls._get_config()
             ttl = ttl_days if ttl_days is not None else config.task_ttl_days
+            if ttl < 0:
+                print(f"Error: --ttl must be 0 or more days (got {ttl}). Nothing was deleted.")
+                return 1
             ttl_seconds = ttl * _SECONDS_PER_DAY
             mgr = get_session_manager()
             sessions_dir = mgr.state_dir
@@ -3546,6 +3549,8 @@ class TaskLifecycle:
                         )
                         return 1
             current = current_session_id or ""
+            if not current:
+                print("No current harness session found: no session is protected as current.")
             archive_dir = config.storage_dir / "archive"
 
             # The code below scans and rewrites daemon_state.json prefixes
@@ -3613,7 +3618,7 @@ class TaskLifecycle:
             if not dry_run and confirm:
                 if not can_prompt():
                     print("⚠️  ERROR: Cannot prompt for confirmation in non-interactive mode")
-                    print("Use --task-dry-run to preview, or --task-no-confirm to force")
+                    print("Use --dry-run to preview, or --no-confirm to proceed")
                     return 2
 
                 print("=" * 70)

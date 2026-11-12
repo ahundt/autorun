@@ -1252,8 +1252,11 @@ def _main(argv: Sequence[str] | None = None) -> int:
                     getattr(args, "session", None),
                 ).session_id
             except SessionIdentityResolutionError as exc:
-                print(f"Error: {exc}")
-                return 1
+                # gc from a plain terminal has no session to protect;
+                # cli_gc says so. Every other task command needs one.
+                if not (args.task_command == "gc" and exc.reason == "missing"):
+                    print(f"Error: {exc}")
+                    return 1
 
         # task status
         if args.task_command == "status":

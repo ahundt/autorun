@@ -1060,3 +1060,48 @@ def test_task_gc_on_sqlite_refuses_flags_the_sweep_cannot_honor(
     assert flags[0] in capsys.readouterr().out
     assert _has_task(store, "__task_lifecycle__expired")
     assert not archive_dir.exists()
+
+
+def test_task_gc_from_a_plain_terminal_protects_no_session_and_says_so(
+    sqlite_gc, capsys, monkeypatch,
+):
+    """A person at a shell has no harness session; gc must still run."""
+    from autorun.__main__ import main
+
+    monkeypatch.delenv("CODEX_THREAD_ID")
+    store, archive_dir = sqlite_gc
+    assert main(["task", "gc", "--dry-run", "--ttl", "7"]) == 0
+    out = capsys.readouterr().out
+    assert "no session is protected as current" in out
+    assert "__task_lifecycle__current-thread" in out
+
+    assert main(["task", "gc", "--no-confirm", "--ttl", "7"]) == 0
+    assert not _has_task(store, "__task_lifecycle__expired")
+    assert not _has_task(store, "__task_lifecycle__current-thread")
+
+
+def test_task_gc_rejects_a_negative_ttl_and_names_the_range(sqlite_gc, capsys):
+    from autorun.__main__ import main
+
+    store, archive_dir = sqlite_gc
+    assert main(["task", "gc", "--no-confirm", "--ttl", "-1"]) != 0
+    out = capsys.readouterr().out
+    assert "--ttl" in out and "0 or more" in out, out
+    assert _has_task(store, "__task_lifecycle__expired")
+    assert not archive_dir.exists()
+
+
+def test_task_gc_without_a_tty_deletes_nothing_and_says_how_to_confirm(
+    sqlite_gc, capsys, monkeypatch,
+):
+    """The default path: confirmation required, and no terminal to ask on."""
+    import io
+
+    from autorun.__main__ import main
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    store, archive_dir = sqlite_gc
+    assert main(["task", "gc", "--ttl", "7"]) != 0
+    assert "--no-confirm" in capsys.readouterr().out
+    assert _has_task(store, "__task_lifecycle__expired")
+    assert not archive_dir.exists()

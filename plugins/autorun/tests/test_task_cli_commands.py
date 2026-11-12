@@ -471,6 +471,25 @@ def test_cli_gc_dry_run_previews_without_changes():
     print("✅ cli_gc dry-run previews without changes")
 
 
+def test_task_gc_json_without_a_tty_deletes_nothing_and_says_how_to_confirm(monkeypatch):
+    """The default path through main(argv): it must ask, and cannot."""
+    from autorun.__main__ import main
+
+    session_id = 'test-cli-gc-no-tty'
+    manager = TaskLifecycle(session_id=session_id)
+    manager.create_task('1', {'subject': 'Old task', 'description': '', 'activeForm': ''}, 'Created')
+    manager.update_task('1', {'status': 'completed'}, 'Completed')
+
+    monkeypatch.setattr(sys, 'stdin', StringIO(''))
+    exit_code, output = capture_stdout(
+        main, ['task', 'gc', '--ttl', '0', '--pattern', session_id, '--session', 'another-session'],
+    )
+
+    assert exit_code != 0, output
+    assert '--no-confirm' in output, output
+    assert set(TaskLifecycle(session_id=session_id).tasks) == {'1'}
+
+
 def test_cli_gc_archives_before_deletion():
     """Test cli_gc archives data to JSON before deletion."""
     session_id = 'test-cli-gc-archive'
