@@ -29,7 +29,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from autorun.core import app, EventContext, ThreadSafeDB
+from autorun.core import app, apply_command_match, EventContext, ThreadSafeDB
 from autorun.config import CONFIG
 from autorun import plugins
 from autorun.platforms import PLATFORMS, hook_platforms
@@ -1941,7 +1941,9 @@ class TestLegacyAutoFileCommandsDispatchInEveryAdvertisedSpelling:
             prompt=prompt,
             store=store,
         )
-        ctx.activation_prompt = prompt
+        # The old name now stands for `/ar:file <word>`, whose word the
+        # handler reads from the matched command line, as dispatch sets it.
+        apply_command_match(ctx, match)
         match.handler(ctx)
 
         assert ctx.file_policy == policy

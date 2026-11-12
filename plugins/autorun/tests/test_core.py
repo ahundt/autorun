@@ -1175,17 +1175,17 @@ class TestAutorunApp:
         """_find_command should find commands via CONFIG mappings."""
         test_app = AutorunApp()
 
-        @test_app.command("ALLOW")
-        def handle_allow(ctx):
-            return "allowed"
+        @test_app.command("STATUS")
+        def handle_status(ctx):
+            return "status"
 
-        # /ar:a maps to "ALLOW" in CONFIG
-        result = test_app._find_command("/ar:a")
+        # /ar:status maps to "STATUS" in CONFIG
+        result = test_app._find_command("/ar:status")
 
         assert result is not None
-        assert result.alias == "ALLOW"
-        assert result.handler is handle_allow
-        assert result.activation_prompt == "/ar:a"
+        assert result.alias == "STATUS"
+        assert result.handler is handle_status
+        assert result.activation_prompt == "/ar:status"
 
     def test_find_command_direct_alias(self):
         """_find_command should find commands by direct alias."""
