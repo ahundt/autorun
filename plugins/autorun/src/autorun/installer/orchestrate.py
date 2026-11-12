@@ -746,8 +746,10 @@ def _registrations(
                                 if filled is not None:
                                     cached = filled
                             if cached is not None:
-                                claude.refresh_cache(source, cached)
-                                claude.substitute_root(cached)
+                                claude.refresh_cache(source, cached, plugin=plugin)
+                                if claude.substitute_root(cached):
+                                    if not claude.record_cache(source, cached, plugin=plugin):
+                                        raise RuntimeError(f"could not record substituted cache payload at {cached}")
                                 manifest = cached / "hooks" / "hooks.json"
                                 if manifest.is_file():
                                     # A checkout's cached Claude copy gets its
@@ -762,13 +764,17 @@ def _registrations(
                                         )
                                         if not cache_runtime.ok:
                                             raise RuntimeError(cache_runtime.detail)
-                                        claude.pin_hook_command(cached, claude.cache_hook_command(cached))
+                                        if claude.pin_hook_command(cached, claude.cache_hook_command(cached)):
+                                            if not claude.record_cache(source, cached, plugin=plugin):
+                                                raise RuntimeError(f"could not record pinned cache payload at {cached}")
                                     else:
                                         # A wheel-installed CLI's tool venv is
                                         # already non-editable; pin to it.
-                                        claude.pin_hook_command(
+                                        if claude.pin_hook_command(
                                             cached, str(ctx.settings.get("_claude_hook_command") or "")
-                                        )
+                                        ):
+                                            if not claude.record_cache(source, cached, plugin=plugin):
+                                                raise RuntimeError(f"could not record pinned cache payload at {cached}")
                         except Exception as error:
                             cache_failure = Outcome(
                                 f"{name}: cache fallback",

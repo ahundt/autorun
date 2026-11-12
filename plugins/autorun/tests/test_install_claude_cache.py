@@ -71,13 +71,14 @@ def test_the_fallback_writes_the_cache_entry_the_cli_could_not(source, home):
     assert written.parts[-3:] == ("autorun", "ar", "1.2.3")
 
 
-def test_the_fallback_leaves_no_ownership_marker(source, home):
-    """The cache belongs to Claude. A marker there would offer state Claude
-    still tracks to autorun's retirement sweep."""
+def test_the_fallback_records_file_hash_ownership(source, home):
     written = install(source, home)
 
-    assert not (written / OWNED_MARKER_NAME).exists()
-    assert read_marker(written) is None
+    marker = read_marker(written)
+    assert (written / OWNED_MARKER_NAME).is_file()
+    assert marker is not None
+    assert marker.plugin == "ar"
+    assert "hooks/hooks.json" in marker.files
 
 
 def test_same_version_cache_mismatch_names_stale_and_changed_files(source, home):
@@ -93,11 +94,12 @@ def test_same_version_cache_mismatch_names_stale_and_changed_files(source, home)
 
 
 def test_refresh_replaces_plugin_payload_in_place_and_preserves_managed_runtime(source, home):
+    (source / "stale.txt").write_text("old payload\n", encoding="utf-8")
     written = install(source, home)
     runtime = written / ".venv" / "lib" / "python" / "site-packages"
     runtime.mkdir(parents=True)
     (runtime / "keep.txt").write_text("managed runtime\n", encoding="utf-8")
-    (written / "stale.txt").write_text("old payload\n", encoding="utf-8")
+    (source / "stale.txt").unlink()
     root_inode = written.stat().st_ino
     venv_inode = (written / ".venv").stat().st_ino
 
@@ -147,6 +149,10 @@ def _make_cache_python(root: Path) -> None:
         python.symlink_to(sys.executable)
 
 
+def _record_cache(root: Path) -> None:
+    assert fs.record_tree(root, plugin="ar", ownership_proof=lambda installed: installed == root)
+
+
 def _round_trip(root: Path) -> str:
     import shlex
 
@@ -170,6 +176,7 @@ def test_refresh_crash_after_each_file_keeps_hook_entry_manifest_and_venv_usable
     written = install(source, home)
     _write_round_trip_hook(written, "old")
     _make_cache_python(written)
+    _record_cache(written)
     venv = written / ".venv"
     steps = []
 
@@ -183,6 +190,7 @@ def test_refresh_crash_after_each_file_keeps_hook_entry_manifest_and_venv_usable
         crashed = install(source, home, version=f"1.2.{crash_after + 3}")
         _write_round_trip_hook(crashed, "old")
         _make_cache_python(crashed)
+        _record_cache(crashed)
         seen = 0
 
         def crash(_step: str) -> None:
@@ -200,9 +208,11 @@ def test_refresh_crash_after_each_file_keeps_hook_entry_manifest_and_venv_usable
         assert _round_trip(crashed) in {"old", "new"}
 
 
-def test_retirement_removes_only_proven_plugin_cache_versions(source, home):
+def test_retirement_removes_only_hash_proven_unmodified_cache_versions(source, home):
     current = install(source, home, version="1.2.4")
     old = install(source, home, version="1.2.3")
+    edited = install(source, home, version="1.2.2")
+    (edited / "hooks" / "hooks.json").write_text("user edit\n", encoding="utf-8")
     unproven = claude.cache_dir(Harness(), market="autorun", plugin="ar", version="0.9.0", home=home)
     assert unproven is not None
     unproven.mkdir(parents=True)
@@ -213,10 +223,41 @@ def test_retirement_removes_only_proven_plugin_cache_versions(source, home):
     )
 
     assert removed == (old,)
-    assert kept == (unproven,)
+    assert kept == (unproven, edited)
     assert current.is_dir()
     assert not old.exists()
+    assert (edited / "hooks" / "hooks.json").read_text(encoding="utf-8") == "user edit\n"
     assert (unproven / "mine.txt").is_file()
+
+
+def test_refresh_keeps_an_edited_recorded_file_and_an_unrecorded_file(source, home):
+    written = install(source, home)
+    hook = written / "hooks" / "hooks.json"
+    hook.write_text("user hook edit\n", encoding="utf-8")
+    extra = written / "notes.txt"
+    extra.write_text("user notes\n", encoding="utf-8")
+    (source / "hooks" / "hooks.json").write_text("new shipped hook\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="KEEP.*hooks/hooks.json.*notes.txt"):
+        claude.refresh_cache(source, written)
+
+    assert hook.read_text(encoding="utf-8") == "user hook edit\n"
+    assert extra.read_text(encoding="utf-8") == "user notes\n"
+
+
+def test_unmarked_matching_cache_is_adopted_but_same_named_fork_is_kept(source, home):
+    matching = install(source, home, version="1.2.4")
+    (matching / OWNED_MARKER_NAME).unlink()
+    assert claude.refresh_cache(source, matching) is None
+    assert read_marker(matching) is not None
+
+    fork = install(source, home, version="1.2.5")
+    (fork / OWNED_MARKER_NAME).unlink()
+    (fork / "fork.txt").write_text("same manifest name, different payload\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="KEEP.*unproven"):
+        claude.refresh_cache(source, fork)
+    assert not (fork / OWNED_MARKER_NAME).exists()
+    assert (fork / "fork.txt").is_file()
 
 
 def test_fallback_never_replaces_a_harness_managed_cache(source, home):

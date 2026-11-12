@@ -32,6 +32,7 @@ from autorun.installer.fs import (  # noqa: E402
     publish_files,
     publish_tree,
     read_marker,
+    record_tree,
     withdraw_files,
     withdrawn,
 )
@@ -1562,11 +1563,15 @@ def test_plain_claude_registration_repairs_same_version_cache_payload(tmp_path, 
     )
     (plugin / "skills" / "commit").mkdir(parents=True)
     (plugin / "skills" / "commit" / "SKILL.md").write_text("current\n", encoding="utf-8")
+    moved = plugin / "skills" / "moved-away" / "SKILL.md"
+    moved.parent.mkdir()
+    moved.write_text("stale\n", encoding="utf-8")
     cached = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
     cached.parent.mkdir(parents=True)
     shutil.copytree(plugin, cached)
-    (cached / "skills" / "moved-away").mkdir()
-    (cached / "skills" / "moved-away" / "SKILL.md").write_text("stale\n", encoding="utf-8")
+    assert record_tree(cached, plugin="ar", ownership_proof=lambda installed: installed == cached)
+    moved.unlink()
+    moved.parent.rmdir()
     runtime = cached / ".venv" / "keep.txt"
     runtime.parent.mkdir()
     runtime.write_text("runtime\n", encoding="utf-8")
@@ -1657,6 +1662,7 @@ def test_claude_uninstall_retires_owned_cache_and_keeps_unproven_tree(tmp_path, 
     unproven = root / "handmade"
     root.mkdir(parents=True)
     shutil.copytree(plugin, owned)
+    assert record_tree(owned, plugin="ar", ownership_proof=lambda installed: installed == owned)
     unproven.mkdir()
     (unproven / "notes.txt").write_text("keep me\n", encoding="utf-8")
 

@@ -100,15 +100,19 @@ that need it. No disk access: stage generated content to a temp dir and point th
   it in `Platform.retired_config_dirs` (Antigravity's
   `~/.gemini/antigravity-cli/`), or its trees leak forever carrying our
   marker and no decision names them.
-- **Claude cache payloads use cache-specific ownership.**
-  `<config>/plugins/cache/<market>/<plugin>/<version>/` is handled outside the
-  general publication sweep. A plain install refreshes a proven mismatched
-  payload one file at a time, with each changed file published by same-directory
-  atomic rename; the version root and `.venv` are never moved. Upgrades retain
-  every old version because a running session may still invoke its captured
-  hook command. Only explicit uninstall may retire proven selected-plugin
-  versions. A malformed or foreign same-name tree is left and reported; caches
-  under another market or plugin are never visited.
+- **Claude cache payloads use the ordinary hash receipt, but a cache-specific walk.**
+  `<config>/plugins/cache/<market>/<plugin>/<version>/` carries `.autorun-owned`
+  with the hashes autorun recorded after fallback, placeholder substitution and
+  command pinning, but remains outside the general publication sweep. A plain
+  install refreshes only recorded, unchanged payload files, one file at a time,
+  with each changed file published by same-directory atomic rename; edited and
+  unrecorded files are kept and reported. A markerless cache is adopted only
+  when it exactly matches the bundled payload for that version. The version
+  root and `.venv` are never moved. Upgrades retain every old version because a
+  running session may still invoke its captured hook command. Only explicit
+  uninstall may retire a hash-proven, unmodified selected-plugin version.
+  Foreign same-name trees are left and reported; caches under another market or
+  plugin are never visited.
 - **Never `uv tool uninstall` a name whose console script is also ours.** uv
   removes scripts by *name*, not by owner, and every uv tool shares one bin
   directory. Measured, with `autorun-ai` installed and providing all three:

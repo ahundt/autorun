@@ -398,22 +398,32 @@ def _install_all(autorun: Path, cwd: Path, env: dict[str, str], *args: str) -> N
 def _owned_trees(env: dict[str, str], plugin: str) -> list[Path]:
     """Every tree autorun wrote and recorded as ``plugin``'s.
 
-    Claude's plugin cache is never among them: Claude's own CLI copies a
-    plugin's whole source directory into it, and autorun's fallback that fills
-    it when that CLI fails mirrors the same copy and deliberately records no
-    marker (fs.fill_tree). Measured with Claude Code: a `"source": "./"`
-    plugin's cache kept a .gitignored directory, and a sibling entry
+    Claude's plugin cache is not a publication tree: Claude's own CLI copies a
+    plugin's whole source directory into it, and autorun's fallback mirrors the
+    same copy. The cache now carries the ordinary hash receipt so refresh and
+    uninstall can preserve edits, but its cache-specific walk never publishes
+    nested products from that copy. Measured with Claude Code: a `"source":
+    "./"` plugin's cache kept a .gitignored directory, and a sibling entry
     `"../side/q"` was refused with `source: Invalid string: must start with
-    "./"`. In a wheel, ar's source is the marketplace root itself, so the
-    other bundled plugins land in ar's Claude cache whatever autorun does;
-    test (c) below pins why that copy is inert there.
+    "./"`. In a wheel, ar's source is the marketplace root itself, so the other
+    bundled plugins land in ar's Claude cache whatever autorun does; test (c)
+    below pins why that copy is inert there.
     """
-    return [
-        marker.parent
-        for root in (Path(env["HOME"]), Path(env["AUTORUN_HOME"]))
-        for marker in root.rglob(".autorun-owned")
-        if json.loads(marker.read_text(encoding="utf-8")).get("plugin") == plugin
-    ]
+    trees = []
+    for root in (Path(env["HOME"]), Path(env["AUTORUN_HOME"])):
+        for marker in root.rglob(".autorun-owned"):
+            tree = marker.parent
+            parts = tree.parts
+            is_claude_cache = any(
+                parts[index:index + 2] == ("plugins", "cache")
+                for index in range(len(parts) - 1)
+            )
+            if (
+                not is_claude_cache
+                and json.loads(marker.read_text(encoding="utf-8")).get("plugin") == plugin
+            ):
+                trees.append(tree)
+    return trees
 
 
 def test_wheel_install_publishes_every_marketplace_plugin_a_clone_install_does(

@@ -1132,16 +1132,11 @@ def refresh_unmarked_tree(
 def fill_tree(source: Path, target: Path) -> Path | None:
     """Atomically fill an absent harness-owned tree without replacing it.
 
-    Every other write here records a marker, which is what makes a user edit
-    detectable and a retirement possible. This one deliberately does not, and
-    there is exactly one legitimate caller: the fallback that fills a harness's
-    *own* plugin cache when that harness's CLI failed to.
-
-    Leaving no marker is the point. That cache belongs to the harness, it is
-    keyed by version, the harness's installer writes and prunes it, and a marker
-    there would make autorun's retirement sweep offer to delete state the
-    harness still tracks. Ownership is established by the path instead — nothing
-    but a plugin cache is at ``<harness>/plugins/cache/<market>/<name>/<ver>``.
+    This primitive only fills an absent tree. Its Claude-cache caller records
+    the ordinary file-hash marker immediately after publication, outside this
+    function, because the caller owns the plugin identity and adoption proof.
+    The cache remains outside the general retirement sweep even though it uses
+    the same receipt format for edit detection.
 
     Autorun callers share the lock. A native installer does not, so publication
     also uses non-replacing ``rename``; if that installer wins the race, its

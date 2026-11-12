@@ -14,11 +14,13 @@ path. When it does, the files are simply absent and every hook autorun installs
 is silently inert. The fallback writes the cache entry directly, so the failure
 degrades to "installed but not registered" rather than "not installed".
 
-Ownership there is checked separately from ordinary publication. Autorun
-refreshes only a proven cache, preserves Claude's managed ``.venv``, and removes
-cache versions only during an explicit uninstall. Upgrades retain every older
-version because a running Claude session keeps invoking the directory and
-private interpreter it captured at session start.
+Ownership there uses the installer's ordinary ``.autorun-owned`` file-hash
+receipt, but a cache-specific walk. Autorun adopts a markerless cache only when
+it exactly matches the bundled payload, refreshes only recorded and unchanged
+files, preserves Claude's managed ``.venv``, and removes cache versions only
+during an explicit uninstall. Upgrades retain every older version because a
+running Claude session keeps invoking the directory and private interpreter it
+captured at session start.
 
 THE PLACEHOLDER
 ===============
@@ -45,11 +47,21 @@ from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
 from . import discovery, harness
-from .fs import atomic_write, fill_tree, refresh_unmarked_tree, scan_tree, withdrawn
+from .fs import (
+    atomic_write,
+    compare,
+    fill_tree,
+    owns,
+    read_marker,
+    record_tree,
+    refresh_unmarked_tree,
+    scan_tree,
+    withdrawn,
+)
 
 __all__ = [
     "CACHE_SUBDIR", "SUBSTITUTED_NAMES",
-    "cache_dir", "cache_fallback", "cache_mismatches", "refresh_cache",
+    "cache_dir", "cache_fallback", "cache_mismatches", "record_cache", "refresh_cache",
     "retire_cache_versions", "substitute_root", "installed_versions",
     "CONSOLE_HOOK_COMMAND", "pin_hook_command",
     "cache_hook_argv", "cache_hook_command",
@@ -118,8 +130,45 @@ def _manifest_name(directory: Path) -> str:
 
 
 def cache_owned(directory: Path, plugin: str) -> bool:
-    """Whether this exact unmarked cache tree proves it is ``plugin``."""
-    return directory.is_dir() and not directory.is_symlink() and _manifest_name(directory) == plugin
+    """Whether a file-hash receipt proves this cache belongs to ``plugin``."""
+    marker = read_marker(directory)
+    return (
+        directory.is_dir()
+        and not directory.is_symlink()
+        and marker is not None
+        and owns(marker, plugin)
+    )
+
+
+def _matches_shipped_payload(source: Path, directory: Path) -> bool:
+    """Whether an unmarked cache is an exact copy of this bundled payload."""
+    if not source.is_dir() or not directory.is_dir() or directory.is_symlink():
+        return False
+    expected = scan_tree(source)
+    actual = scan_tree(directory)
+    actual.pop(".orphaned_at", None)
+    return actual == expected
+
+
+def record_cache(source: Path, directory: Path, *, plugin: str = "") -> bool:
+    """Adopt an exact legacy payload or refresh this installer's hash receipt."""
+    plugin = plugin or _manifest_name(source)
+    if not plugin:
+        return False
+    marker = read_marker(directory)
+    if marker is None:
+        proof = lambda installed: _matches_shipped_payload(source, installed)
+    else:
+        proof = lambda installed: cache_owned(installed, plugin)
+    return record_tree(directory, plugin=plugin, ownership_proof=proof)
+
+
+def _cache_keep_paths(directory: Path, plugin: str) -> tuple[str, ...]:
+    marker = read_marker(directory)
+    if marker is None or not owns(marker, plugin):
+        return ("unproven cache payload",)
+    edited, _missing, extra = compare(directory, marker)
+    return tuple(sorted((*edited, *extra)))
 
 
 def cache_mismatches(source: Path, directory: Path) -> tuple[str, ...]:
@@ -152,21 +201,33 @@ def refresh_cache(
     source: Path,
     directory: Path,
     *,
+    plugin: str = "",
     after_step: Callable[[str], None] | None = None,
 ) -> Path | None:
     """Refresh stale payload files in place while retaining Claude's private venv."""
-    plugin = _manifest_name(source)
-    if not plugin or not cache_mismatches(source, directory):
+    plugin = plugin or _manifest_name(source)
+    if not plugin:
+        return None
+    if read_marker(directory) is None and not record_cache(source, directory, plugin=plugin):
+        raise RuntimeError(f"KEEP {directory}: unproven cache payload")
+    kept = _cache_keep_paths(directory, plugin)
+    if kept:
+        raise RuntimeError(f"KEEP {directory}: " + ", ".join(kept))
+    if not cache_mismatches(source, directory):
         return None
     refreshed = refresh_unmarked_tree(
         source,
         directory,
-        ownership_proof=lambda installed: cache_owned(installed, plugin),
+        ownership_proof=lambda installed: (
+            cache_owned(installed, plugin) and not _cache_keep_paths(installed, plugin)
+        ),
         preserve_names=(".venv",),
         after_step=after_step,
     )
     if not refreshed:
-        raise RuntimeError(f"{directory} differs from the shipped {plugin} plugin but ownership is unproven")
+        raise RuntimeError(f"KEEP {directory}: ownership proof failed")
+    if not record_cache(source, directory, plugin=plugin):
+        raise RuntimeError(f"KEEP {directory}: could not record refreshed payload")
     return directory
 
 
@@ -195,8 +256,7 @@ def retire_cache_versions(
     for directory in sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name):
         if directory.name in wanted:
             continue
-        proof = lambda installed, expected=plugin: cache_owned(installed, expected)
-        if withdrawn(directory, ownership_proof=proof):
+        if withdrawn(directory, plugin=plugin):
             removed.append(directory)
         else:
             unproven.append(directory)
@@ -238,7 +298,10 @@ def cache_fallback(
     target = cache_dir(platform, market=market, plugin=plugin, version=version, home=home)
     if target is None or not source.is_dir():
         return None
-    return fill_tree(source, target)
+    written = fill_tree(source, target)
+    if written is not None and not record_cache(source, written, plugin=plugin):
+        raise RuntimeError(f"could not record Claude cache ownership for {written}")
+    return written
 
 
 def substitute_root(directory: Path, *, names: Iterable[str] = SUBSTITUTED_NAMES) -> tuple[str, ...]:
@@ -351,14 +414,15 @@ def demo() -> None:
         assert written.parts[-5:-3] == ("plugins", "cache"), written
         assert (written / "hooks" / "hooks.json").is_file()
 
-        # No marker: this directory is Claude's, and a marker would offer it to
-        # autorun's retirement sweep.
-        assert not (written / OWNED_MARKER_NAME).exists()
-        assert read_marker(written) is None
+        # The cache-specific receipt records exactly what autorun installed.
+        marker = read_marker(written)
+        assert (written / OWNED_MARKER_NAME).is_file()
+        assert marker is not None and marker.plugin == "ar"
 
         # Substitution reaches the hook manifest and leaves prose alone.
         changed = substitute_root(written)
         assert changed == ("hooks/hooks.json",), changed
+        assert record_cache(source, written, plugin="ar")
         # As JSON writes it: a Windows path's backslashes arrive escaped.
         assert json.dumps(str(written))[1:-1] in (written / "hooks" / "hooks.json").read_text(encoding="utf-8")
         assert "${CLAUDE_PLUGIN_ROOT}" in (written / "README.md").read_text(encoding="utf-8")
