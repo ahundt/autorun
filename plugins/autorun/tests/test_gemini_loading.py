@@ -84,9 +84,10 @@ class TestGeminiEnvironmentSimulation:
 
     def test_gemini_task_tool_coverage(self):
         """Test Gemini task tool names are recognized."""
-        from autorun.config import TASK_CREATE_TOOLS
+        from autorun.platforms import PLATFORMS
 
-        assert "task_create" in TASK_CREATE_TOOLS, "Gemini's task_create not in TASK_CREATE_TOOLS"
+        assert "task_create" in PLATFORMS["gemini"].task_create_tools, \
+            "Gemini's task_create not in its platform's task_create_tools"
 
     def test_hook_accepts_gemini_bash_tool(self):
         """Test check_blocked_commands accepts Gemini's bash_command tool (daemon path)."""

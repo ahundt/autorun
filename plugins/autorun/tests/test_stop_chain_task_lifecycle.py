@@ -769,7 +769,7 @@ class TestPostToolUseTaskCreateBlocksStop:
         assert "Task 3" in stop_result.get("reason", ""), "Stop message must list the pending task"
 
 
-# === Test 11: Gemini write_todos routing (TASK_COMBINED_TOOLS) ===
+# === Test 11: Gemini write_todos routing (Platform.task_bulk_tools) ===
 
 
 class TestWriteTodosRouting:
@@ -781,7 +781,7 @@ class TestWriteTodosRouting:
     - "created" in tool_result → TaskCreate
     - Otherwise → list/get (activity update only)
 
-    Added: commit 10d3b72 (TASK_COMBINED_TOOLS), commit 72291c3 (defensive guard)
+    Added: commit 10d3b72 (write_todos routing), commit 72291c3 (defensive guard)
     """
 
     def test_write_todos_create_tracks_task(self, isolated_task_config, isolated_session):
@@ -966,13 +966,13 @@ class TestWriteTodosRouting:
             assert "CANNOT STOP" not in stop_result.get("reason", ""), "Stop should be allowed after write_todos completed all tasks"
 
 
-# === Test 12: Staleness counter reset for TASK_COMBINED_TOOLS ===
+# === Test 12: Staleness counter reset for write_todos (Platform.task_bulk_tools) ===
 
 
 class TestStalenessCounterWriteTodos:
     """Verify check_task_staleness resets counter on write_todos events.
 
-    Added in commit 10d3b72: TASK_COMBINED_TOOLS added to reset condition.
+    Added in commit 10d3b72: write_todos added to the reset condition.
     Without this, write_todos wouldn't reset the staleness counter, causing
     false staleness reminders on Gemini CLI.
     """

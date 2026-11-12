@@ -51,14 +51,6 @@ EDIT_TOOLS = {
 FILE_TOOLS = WRITE_TOOLS | EDIT_TOOLS
 PLAN_TOOLS = {"ExitPlanMode", "exit_plan_mode"}
 
-# Task Lifecycle Tools
-TASK_CREATE_TOOLS = {"TaskCreate", "task_create", "tracker_create_task"}
-TASK_UPDATE_TOOLS = {"TaskUpdate", "task_update", "tracker_update_task"}
-TASK_LIST_TOOLS = {"TaskList", "task_list", "tracker_list_tasks"}
-TASK_GET_TOOLS = {"TaskGet", "task_get", "tracker_get_task"}
-# Gemini CLI uses "write_todos" for ALL task operations (create, update, list).
-# Routing is handled in track_task_operations by inspecting tool_input.
-TASK_COMBINED_TOOLS = {"write_todos"}
 
 # Truncation limits for log/debug output (avoid magic numbers across codebase)
 LOG_SNIPPET_MAX_LEN = 120  # tool results, error messages, evidence in log output

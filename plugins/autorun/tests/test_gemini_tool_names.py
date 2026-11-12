@@ -9,8 +9,8 @@ sys.path.insert(0, str(plugin_root / 'src'))
 
 from autorun.config import (
     BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS,
-    TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS, TASK_LIST_TOOLS, TASK_GET_TOOLS
 )
+from autorun.platforms import PLATFORMS
 
 
 class TestGeminiToolNameCoverage:
@@ -40,22 +40,23 @@ class TestGeminiToolNameCoverage:
         assert "ExitPlanMode" in PLAN_TOOLS, "Claude Code's ExitPlanMode missing"
 
     def test_gemini_task_tools(self):
-        """Gemini task tool names must be in task tool sets."""
+        """Gemini and Claude Code task tool names are in each platform's task tool sets."""
+        gemini, claude = PLATFORMS["gemini"], PLATFORMS["claude"]
         # Task creation
-        assert "task_create" in TASK_CREATE_TOOLS, "Gemini's task_create missing"
-        assert "TaskCreate" in TASK_CREATE_TOOLS, "Claude Code's TaskCreate missing"
+        assert "task_create" in gemini.task_create_tools, "Gemini's task_create missing"
+        assert "TaskCreate" in claude.task_create_tools, "Claude Code's TaskCreate missing"
 
         # Task update
-        assert "task_update" in TASK_UPDATE_TOOLS
-        assert "TaskUpdate" in TASK_UPDATE_TOOLS
+        assert "task_update" in gemini.task_update_tools
+        assert "TaskUpdate" in claude.task_update_tools
 
         # Task list
-        assert "task_list" in TASK_LIST_TOOLS
-        assert "TaskList" in TASK_LIST_TOOLS
+        assert "task_list" in gemini.task_review_tools
+        assert "TaskList" in claude.task_review_tools
 
         # Task get
-        assert "task_get" in TASK_GET_TOOLS
-        assert "TaskGet" in TASK_GET_TOOLS
+        assert "task_get" in gemini.task_review_tools
+        assert "TaskGet" in claude.task_review_tools
 
     def test_no_cross_contamination(self):
         """Tool sets should not overlap (prevent incorrect matching)."""

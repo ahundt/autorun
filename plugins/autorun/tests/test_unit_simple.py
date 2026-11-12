@@ -3643,7 +3643,7 @@ def test_detect_cli_type_payload_overrides_env_vars(monkeypatch):
 def test_write_todos_none_tool_input_no_crash(tmp_path, monkeypatch):
     """A4 regression guard: write_todos routing must not crash when tool_input is None.
 
-    Gemini TASK_COMBINED_TOOLS routing accesses tool_input.get("todos")
+    Gemini write_todos routing accesses tool_input.get("todos")
     which raises AttributeError when tool_input is None.
     File: task_lifecycle.py track_task_operations()
     """
