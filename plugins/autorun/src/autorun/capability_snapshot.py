@@ -8,6 +8,7 @@ restarting daemons, or writing to user configuration paths.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import subprocess
 from pathlib import Path
@@ -18,6 +19,27 @@ from .command_docs import command_docs_inventory, marketplace_skill_docs_invento
 from .installer.codex import PLUGIN_NAME
 from .installer.discovery import is_marketplace_root, marketplace_root, plugin_dir
 from .platforms import PLATFORMS, Platform
+
+
+def _jsonable_registry_value(value: Any) -> Any:
+    """Stable JSON representation for nested immutable registry values."""
+    if dataclasses.is_dataclass(value):
+        return {
+            "type": type(value).__name__,
+            **{
+                field.name: _jsonable_registry_value(getattr(value, field.name))
+                for field in dataclasses.fields(value)
+            },
+        }
+    if isinstance(value, dict):
+        return {
+            str(key): _jsonable_registry_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (tuple, list, set, frozenset)):
+        items = [_jsonable_registry_value(item) for item in value]
+        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+    return value
 
 
 def _jsonable_platform(platform: Platform) -> dict[str, Any]:
@@ -48,6 +70,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "manifest_events_without_matchers": sorted(platform.hook_protocol.manifest_events_without_matchers),
         "config_dir": platform.config_dir,
         "runtime_version_max_exclusive": list(platform.runtime_version_max_exclusive),
+        "runtime_variants": _jsonable_registry_value(platform.runtime_variants),
         "template_dir": platform.template_dir,
         "hooks_path_var": platform.hooks_path_var,
         "extension_manifest_name": platform.extension_manifest_name,

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,22 +45,64 @@ _ALIASES = {"autorun": "ar"}
 _run = runtime._spawn
 
 
-def _runtime_contract_supported(platform: object, run=_run) -> tuple[bool, str]:
-    """Whether one installed harness is inside its registry-pinned range."""
+def _runtime_contract_platform(
+    platform: object, run=_run
+) -> tuple[bool, str, object, str]:
+    """Resolve registry-declared version capabilities for one installed harness."""
     upper = tuple(getattr(platform, "runtime_version_max_exclusive", ()))
-    if not upper:
-        return True, "unbounded"
+    variants = tuple(getattr(platform, "runtime_variants", ()))
+    if not upper and not variants:
+        return True, "unbounded", platform, ""
     binary = str(getattr(platform, "binary", ""))
     try:
         result = run((binary, "--version"))
     except (OSError, subprocess.SubprocessError) as error:
-        return False, type(error).__name__
+        return False, type(error).__name__, platform, ""
     text = f"{result.stdout or ''}\n{result.stderr or ''}"
     match = re.search(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)", text)
     if result.returncode != 0 or match is None:
-        return False, text.strip() or f"exit {result.returncode}"
+        return False, text.strip() or f"exit {result.returncode}", platform, ""
     parsed = tuple(int(part) for part in match.groups())
-    return parsed < upper, ".".join(match.groups())
+    installed = ".".join(match.groups())
+    for variant in variants:
+        minimum = tuple(getattr(variant, "minimum_inclusive", ()))
+        maximum = tuple(getattr(variant, "maximum_exclusive", ()))
+        if parsed < minimum or (maximum and parsed >= maximum):
+            continue
+        resolved = replace(platform, **dict(getattr(variant, "overrides", {})))
+        notice = str(getattr(variant, "install_notice", "")).format(version=installed)
+        return True, installed, resolved, notice
+    return (not upper or parsed < upper), installed, platform, ""
+
+
+def _runtime_contract_supported(platform: object, run=_run) -> tuple[bool, str]:
+    """Compatibility-only wrapper retained for callers that need no variant."""
+    compatible, installed, _resolved, _notice = _runtime_contract_platform(platform, run)
+    return compatible, installed
+
+
+def _resolve_runtime_variants(harnesses, step_table, run=_run):
+    """Apply registry variants and select their declarative install profiles."""
+    resolved_harnesses = []
+    table = dict(step_table)
+    notices = []
+    for harness in harnesses:
+        if not getattr(harness, "runtime_variants", ()):
+            resolved_harnesses.append(harness)
+            continue
+        compatible, _installed_version, resolved_harness, notice = (
+            _runtime_contract_platform(harness, run)
+        )
+        if not compatible or resolved_harness is harness:
+            resolved_harnesses.append(harness)
+            continue
+        resolved_harnesses.append(resolved_harness)
+        profile = str(getattr(resolved_harness, "install_flavor", ""))
+        if profile in steps.INSTALL_PROFILES:
+            table[getattr(resolved_harness, "name", "")] = steps.INSTALL_PROFILES[profile]
+        if notice:
+            notices.append(notice)
+    return tuple(resolved_harnesses), table, tuple(notices)
 
 
 # Distribution -> a console script it provides, used to decide whether this home
@@ -602,6 +645,9 @@ def install_plugins(
     if not harnesses:
         print("No maintained target CLI is installed; choose an explicit target or custom harness.")
         return 1
+    harnesses, table, notices = _resolve_runtime_variants(harnesses, table, _run)
+    for notice in notices:
+        print(notice)
     try:
         plugin = _runtime_settings(root, resolved, harnesses, custom)
     except ValueError as error:
@@ -793,6 +839,9 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
     if not harnesses:
         print("No maintained target CLI or configured custom harness was found.")
         return 1
+    harnesses, table, notices = _resolve_runtime_variants(harnesses, table, _run)
+    for notice in notices:
+        print(notice)
     try:
         plugin = _runtime_settings(root, resolved, harnesses, custom)
     except ValueError as error:

@@ -1458,14 +1458,11 @@ for (const spelling of {json.dumps(spellings)}) {{
     assert prompts == ["ar:", "ar:", "ar:", "ar:", "ar:", "ar:status", "ar:status", "ar:status", "ar:STATUS"], prompts
 
 
-# --- Prime Agent: Pi variant through the same pathway ------------------------
+# --- Prime Agent runtime variants --------------------------------------------
 #
-# prime-agent is PrimeIntellect's build of the Pi coding agent. The shipped
-# 0.7.1 bundle keeps Pi's runtime (its launcher is named __piBundleCreateRequire
-# and it still sets PI_CODING_AGENT=true in subprocesses) and rebrands only the
-# config dir through pkg.piConfig.configDir = ".prime/agent". autorun therefore
-# supports it as a registry entry over the existing Pi template, staging, and
-# extension step — no second template, step function, or protocol class.
+# Prime through 0.9.x keeps the Pi runtime and extension API. Prime 0.10.x is a
+# Rust runtime that still reads AGENTS.md and skills but exposes no external
+# lifecycle hook. The registry selects those surfaces by version.
 
 
 def test_pi_and_prime_runtime_contract_fixture():
@@ -1479,6 +1476,10 @@ def test_pi_and_prime_runtime_contract_fixture():
     assert "aborted" in contract["pi"]["agent_settled"]["fields"]
     assert contract["prime"]["last_typescript_version"] == "0.9.8"
     assert contract["prime"]["autorun_runtime_max_exclusive"] == "0.10.0"
+    assert contract["prime"]["current_surfaces"]["external_lifecycle_hooks"] is False
+    assert contract["prime"]["current_surfaces"]["global_skills"] == (
+        "<agent_dir>/skills and ~/.agents/skills"
+    )
 
 
 def test_prime_platform_is_a_pi_variant_with_its_own_identity():
@@ -1503,6 +1504,11 @@ def test_prime_platform_is_a_pi_variant_with_its_own_identity():
     assert prime.memory_sentinel_slug == "prime-agents-md"
     assert prime.task_record_source == "prime_task_tool"
     assert prime.runtime_version_max_exclusive == (0, 10, 0)
+    assert len(prime.runtime_variants) == 1
+    rust = prime.runtime_variants[0]
+    assert rust.minimum_inclusive == (0, 10, 0)
+    assert rust.overrides["install_flavor"] == "prime-rust"
+    assert rust.overrides["has_hooks"] is False
     # Unified pathway through the final TypeScript release line.
     assert prime.has_hooks is True
     assert prime.tool_names == pi.tool_names
@@ -1519,10 +1525,11 @@ def test_prime_platform_is_a_pi_variant_with_its_own_identity():
     assert prime.loads_shared_agents_skills is True
 
 
-def test_prime_reuses_the_pi_extension_step_row():
+def test_prime_runtime_rows_select_only_supported_surfaces():
     from autorun.installer import steps
 
     assert steps.STEPS["prime"] == steps.STEPS["pi"]
+    assert steps.INSTALL_PROFILES["prime-rust"] == (steps.skills_step,)
     assert steps.pi_family_names() == ("pi", "prime")
 
 
@@ -1600,10 +1607,56 @@ def test_prime_install_lands_in_the_prime_home_with_prime_cli_type(tmp_path, mon
     assert not installed.exists()
 
 
-def test_prime_010_rust_runtime_does_not_receive_the_pi_extension(tmp_path, monkeypatch):
-    home = _install_prime(tmp_path, monkeypatch, version="0.10.2", expected_status=1)
+def test_prime_010_installs_guidance_and_skills_without_pi_extension(
+    tmp_path, monkeypatch, capsys
+):
+    home = _install_prime(tmp_path, monkeypatch, version="0.10.2")
 
     assert not (home / ".prime" / "agent" / "packages" / "ar").exists()
+    guidance = (home / ".prime" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
+    assert "do not expose an external lifecycle hook API" in guidance
+    assert (home / ".prime" / "agent" / "skills" / "commit" / "SKILL.md").is_file()
+    settings_path = home / ".prime" / "agent" / "settings.json"
+    assert not settings_path.exists() or "packages" not in settings_path.read_text(encoding="utf-8")
+    output = capsys.readouterr().out
+    assert "Prime Agent 0.10.2 has no external enforcement hook" in output
+
+
+def test_prime_runtime_resolver_preserves_legacy_and_selects_rust_variant():
+    from autorun.installer import entrypoint, steps
+    from autorun.platforms import PLATFORMS
+
+    def version(value):
+        return lambda argv: subprocess.CompletedProcess(
+            argv, 0, f"prime-agent {value}\n", ""
+        )
+
+    compatible, installed, legacy, notice = entrypoint._runtime_contract_platform(
+        PLATFORMS["prime"], version("0.9.8")
+    )
+    assert compatible is True
+    assert installed == "0.9.8"
+    assert legacy.has_hooks is True
+    assert notice == ""
+
+    compatible, installed, rust, notice = entrypoint._runtime_contract_platform(
+        PLATFORMS["prime"], version("0.10.2")
+    )
+    assert compatible is True
+    assert installed == "0.10.2"
+    assert rust.has_hooks is False
+    assert rust.install_flavor == "prime-rust"
+    assert rust.installed_hook_events == frozenset()
+    assert "no external enforcement hook" in notice
+
+    harnesses, table, notices = entrypoint._resolve_runtime_variants(
+        (PLATFORMS["prime"],),
+        {"prime": steps.STEPS["prime"]},
+        version("0.10.2"),
+    )
+    assert harnesses[0].has_hooks is False
+    assert table["prime"] == steps.INSTALL_PROFILES["prime-rust"]
+    assert notices == (notice,)
 
 
 def test_prime_backend_declares_an_e2e_contract():

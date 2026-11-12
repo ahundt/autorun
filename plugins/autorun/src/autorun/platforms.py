@@ -1013,6 +1013,16 @@ class StopPayloadRunningAgents:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeVariant:
+    """Registry-owned capability changes for a native runtime version range."""
+
+    minimum_inclusive: tuple[int, ...]
+    maximum_exclusive: tuple[int, ...] = ()
+    overrides: Mapping[str, object] = field(default_factory=dict)
+    install_notice: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Platform:
     """Immutable specification for one AI coding CLI platform.
 
@@ -1247,6 +1257,10 @@ class Platform:
     # --version` before writing when this is set and refuses incompatible or
     # unreadable runtimes instead of publishing dead hooks.
     runtime_version_max_exclusive: tuple[int, ...] = ()
+    # Versioned capability changes are data, not installer name branches. The
+    # installer resolves one matching row and replaces only these declared
+    # fields before choosing steps and reporting enforcement.
+    runtime_variants: tuple[RuntimeVariant, ...] = ()
     config_dir: str = ""
     # Env vars the harness itself documents as relocating its config root
     # (e.g. CODEX_HOME). install.platform_config_dir() honors them between the
@@ -2128,6 +2142,27 @@ PRIME = register(
         task_record_source="prime_task_tool",
         memory_sentinel_slug="prime-agents-md",
         runtime_version_max_exclusive=(0, 10, 0),
+        runtime_variants=(
+            RuntimeVariant(
+                minimum_inclusive=(0, 10, 0),
+                overrides={
+                    "install_flavor": "prime-rust",
+                    "has_hooks": False,
+                    "schema_type": "none",
+                    "hook_protocol": NO_HOOKS,
+                    "native_hook_events": frozenset(),
+                    "installed_hook_events": frozenset(),
+                    "supports_additional_context_events": frozenset(),
+                    "runtime_version_max_exclusive": (),
+                    "native_skills": ConfigDirSkills("skills"),
+                    "memory_template": "prime_rust_template/AGENTS.md",
+                },
+                install_notice=(
+                    "Prime Agent {version} has no external enforcement hook; "
+                    "installing its AGENTS.md guidance and skill surfaces."
+                ),
+            ),
+        ),
     )
 )
 

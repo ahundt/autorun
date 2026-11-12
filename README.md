@@ -94,7 +94,7 @@ Preview the writes with `autorun --install-dry-run` and check them with `autorun
 | Qwen Code | native hooks (extension) | `--qwen` | `/ar:status` |
 | Codex CLI | native hooks | `--codex` | `ar:status` |
 | Pi | in-process extension that vetoes tool calls | `--pi` | `/ar status` |
-| Prime Agent | Pi extension on versions below 0.10.0; newer Rust runtimes are refused | `--prime` | `/ar status` |
+| Prime Agent | Pi extension below 0.10.0; 0.10+ gets guidance and skills without enforcement hooks | `--prime` | below 0.10: `/ar status`; 0.10+: skills only |
 | OpenCode | in-process prompt, tool, Stop and compaction plugin | when found | `/ar-status` |
 | ForgeCode | installed guidance only; ForgeCode sends autorun no events | when found | `/ar-status` |
 | Gemini CLI (legacy) | native hooks; never installed unless you pass the flag | `--gemini` | `/ar:status` |
@@ -169,9 +169,9 @@ pi
 /ar status
 ```
 
-The extension in `~/.pi/agent/extensions/ar/` (`~/.prime/agent/extensions/ar/`
-for Prime Agent) passes Pi's tool calls, prompts, results and session events to
-the same autorun daemon the other agents use. A blocked tool call comes back as
+The extension in `~/.pi/agent/extensions/ar/` (and Prime Agent's
+`~/.prime/agent/extensions/ar/` before version 0.10) passes tool calls, prompts,
+results and session events to the same autorun daemon the other agents use. A blocked tool call comes back as
 Pi's `{ block: true, reason }`. When autorun keeps the agent from finishing
 (`agent_settled`), it starts the next turn with a hidden
 `autorun-continuation` message, so the transcript never shows it as something
@@ -179,9 +179,13 @@ you typed. A cancelled (`aborted`) turn is not continued. Pi also accepts
 `ar:status`, `ar-status` and `/ar:status`, and loads skills with `/skill:<name>`.
 
 Prime Agent releases below 0.10.0 use this Pi-compatible extension contract.
-Prime 0.10.x uses a different Rust runtime without the Pi extension API;
-`autorun --install --prime` reports the unsupported version and installs no
-hooks rather than claiming enforcement.
+Prime 0.10.x uses a Rust runtime without the Pi extension API, but it reads
+`~/.prime/agent/AGENTS.md`, `~/.prime/agent/skills`, and `~/.agents/skills`.
+`autorun --install --prime` installs guidance and skills on that runtime and
+reports that external enforcement is unavailable; it does not publish the dead
+Pi adapter or claim tool/Stop interception. Prime also supports MCP through
+`mcpServers` and `~/.prime/agent/mcp-services.json`; autorun currently ships no
+Prime-specific MCP server, so there is no MCP artifact to add.
 
 Pi gets `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet` tools backed by
 the same task tracking as Claude. `TaskUpdate` takes one `taskId` or an atomic

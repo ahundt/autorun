@@ -327,9 +327,16 @@ STEPS: Mapping[str, tuple[Step, ...]] = {
     "forgecode": (skills_step, commands_step),
     "opencode": (skills_step, commands_step, opencode_shim_step),
     "pi": (pi_shared_skills_step, pi_extension_step),
-    # Prime Agent is Pi rebranded (see platforms.PRIME); same steps, and the
-    # staged adapter carries its own cliType.
+    # Prime Agent below 0.10 is Pi-compatible; the registry resolves 0.10+
+    # to prime-rust, whose native runtime reads AGENTS.md and skills but has no
+    # external lifecycle hook package.
     "prime": (pi_shared_skills_step, pi_extension_step),
+}
+
+# Version variants select an install profile through registry data while STEPS
+# remains exactly one row per registered harness.
+INSTALL_PROFILES: Mapping[str, tuple[Step, ...]] = {
+    "prime-rust": (skills_step,),
 }
 
 
@@ -451,8 +458,9 @@ def switches_for(
         ))
     staged_pi = ctx.settings.get("_staged_pi")
     family = getattr(platform, "name", "")
+    install_row = getattr(platform, "install_flavor", "") or family
     staged = staged_pi.get(family, {}) if isinstance(staged_pi, Mapping) else {}
-    if family in pi_family_names() and isinstance(staged, Mapping):
+    if install_row in pi_family_names() and isinstance(staged, Mapping):
         for plugin in staged:
             package = base / "packages" / plugin
             entries.append(Switch(

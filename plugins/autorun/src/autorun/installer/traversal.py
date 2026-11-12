@@ -203,7 +203,14 @@ def targets(
     for it.
     """
     return tuple(
-        Target(p, steps.get(getattr(p, "name", ""), ())) for p in platforms
+        Target(
+            p,
+            steps.get(
+                getattr(p, "name", ""),
+                steps.get(getattr(p, "install_flavor", ""), ()),
+            ),
+        )
+        for p in platforms
     )
 
 

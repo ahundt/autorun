@@ -805,18 +805,19 @@ def test_receipt_owned_legacy_gemini_refreshes_without_binary(
     assert not (installed / "stale-hook.py").exists()
     hooks = json.loads((installed / "hooks" / "hooks.json").read_text())
     commands = [
-        hook["command"]
-        for groups in hooks["hooks"].values()
+        (event, hook["command"])
+        for event, groups in hooks["hooks"].items()
         for group in groups
         for hook in group.get("hooks", [])
     ]
     assert commands
-    expected = runtime.UvCommand(
-        project=plugin,
-        script=plugin / "hooks" / "hook_entry.py",
-        args=("--cli", "gemini"),
-    ).shell(runtime.hook_command_shell(PLATFORMS["gemini"]))
-    assert all(command == expected for command in commands)
+    for event, command in commands:
+        expected = runtime.UvCommand(
+            project=plugin,
+            script=plugin / "hooks" / "hook_entry.py",
+            args=("--cli", "gemini"),
+        ).shell(runtime.hook_command_shell(PLATFORMS["gemini"]))
+        assert command == f"{expected} --event {event}"
     assert not any(call and call[0] == "gemini" for call in calls)
 
 
@@ -1559,7 +1560,8 @@ def test_a_custom_uv_tool_dir_is_recognised_as_a_uv_tool_env(monkeypatch, isolat
     _bootstrap_only(monkeypatch, entrypoint, checkout, tmp_path / "tools" / "autorun-ai" / "bin" / "python", calls)
 
     assert entrypoint.install_plugins("ar", tool=False, conductor=False) == 0
-    assert calls[0][:3] == ("uv", "pip", "install"), calls
+    bootstrap = next(call for call in calls if call[:3] == ("uv", "pip", "install"))
+    assert bootstrap[:3] == ("uv", "pip", "install"), calls
 
 
 @pytest.mark.parametrize("layout", [(".forge",), ("forge",), (".forge", "forge")])
