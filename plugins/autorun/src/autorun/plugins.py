@@ -918,6 +918,11 @@ def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
         return None
 
     fallback_ctx = _transcript_policy_context(ctx, command.prompt)
+    # The record carries no mark of who wrote it, so the author is what the
+    # request says: a subagent's session is refused like its prompts are.
+    refusal = app.refuse_unless_user(fallback_ctx, match)
+    if refusal is not None:
+        return refusal
     # Same preparation dispatch does. Every command this path can replay reads
     # activation_prompt today, so setting only that worked; it would stop
     # working silently the first time one of them reads command_arguments

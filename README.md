@@ -412,6 +412,35 @@ The first match in this order decides:
 
 `/ar:reload` rereads the rule files.
 
+#### Only you can change permissions
+
+`/ar:ok`, `/ar:no` and `/ar:clear` (each with or without `--global`),
+`/ar:file`, `/ar:cache`, `/ar:task pause` and `/ar:task ignore` change what the
+agent may do, so they take effect only when you type them. When anything else
+sends one (a subagent, the model through a skill or a tool, a program using
+Pi's RPC, another Pi extension, or a turn the agent's harness writes itself),
+autorun changes nothing and answers "Only the user can run /ar:ok. Ask them to
+type it." Other commands, such as `/ar:status`, `/ar:task status` and
+`/ar:go`, run whoever sends them.
+
+| Agent | You change permissions by | Refused |
+|---|---|---|
+| Claude Code | typing `/ar:ok` | the model launching `ar:ok` as a skill; a prompt from inside a subagent; background-task notifications, subagent replies and messages from other sessions |
+| Codex CLI | typing `ar:ok` or `ar ok` | a prompt, or a command read back from the transcript, in a subagent's session |
+| Qwen Code, Gemini CLI | typing the command | none found |
+| Pi, Prime Agent | `/ar ok`, or typing `ar:ok` or `ar ok` | `ar:ok` and `ar ok` sent over RPC or by another extension |
+| OpenCode | no way inside a session: OpenCode hands autorun no typed prompt | the model's `autorun` tool |
+| Antigravity | no way: it sends autorun no prompt event | nothing reaches autorun |
+| ForgeCode | no way: it sends autorun no events, and its guards are advice | nothing reaches autorun |
+
+Two routes stay open:
+
+- In a Codex session that sends no prompt hook, autorun reads commands back
+  from the session's transcript, and a user-role record that begins with
+  `ar:ok` is honored whoever wrote it.
+- Pi runs its registered `/ar` command without saying where it came from, so
+  `/ar ok` sent over Pi's RPC cannot be told from one you typed, and it grants.
+
 ### Autonomous runs
 
 `/ar:go <task>` starts a run that may not end at the first "done".
