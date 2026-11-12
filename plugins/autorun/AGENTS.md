@@ -104,6 +104,40 @@ or they reach the live daemon; spec:
     of which say "real money". The two marker queries are in the root
     `AGENTS.md` section 4.
 
+## State database versions and task statuses
+
+Releases on users' machines (1.0.0rc1 to rc3) cannot change, and a rollback
+runs their code against whatever a newer build left on disk. Every one of
+them refuses any `PRAGMA user_version` but 2 at daemon start ("is not an
+autorun schema generation"), and none reads the stored table definitions.
+So two numbers, with different jobs:
+
+- **`user_version` is the compatibility major** (`SCHEMA_USER_VERSION`).
+  Raise it only for a change older builds cannot read or would damage. The
+  release that raises it also ships the reverse step (`autorun
+  --state-downgrade`) and names it in its release notes, and deletes
+  `tests/test_schema_rollback_older_builds.py::test_older_builds_refuse_a_bumped_user_version`
+  knowingly. A build refuses only a greater `user_version`, naming the build
+  that wrote it and a command that works (`_check_schema_compatibility`, the
+  one rule both validators use).
+- **`schema_meta('schema_revision')` is additive** (`SCHEMA_REVISION`). Any
+  revision opens; a lower one is migrated up inside `initialize`'s `BEGIN
+  IMMEDIATE`, re-read under that lock, never down. A revision step holds the
+  write lock for a time that does not grow with the database (measured in
+  `tests/test_state_store_benchmark.py::TestRevision3Upgrade`) and copies no
+  database.
+
+Task status policy has one owner, `task_status.py`. The tasks table has no
+status CHECK; its `blocks_stop` and `prunable` columns exist for older builds
+and fail closed for statuses written after them. Code here never takes
+policy from them: `list_incomplete` passes `task_status.py`'s lists as
+parameters and uses `blocks_stop` only to narrow rows through its partial
+index while `schema_meta('blocks_stop_non_blocking')` shows that is exact.
+Adding a status changes `task_status.py` only. Changing what an existing
+status means (`blocks_stop`, `prunable`) is an incompatible change:
+`test_existing_status_policy_never_changes` freezes them, because skipping
+REINDEX in the revision-3 rewrite depends on it.
+
 ## Bug workaround policy
 
 Every SDK bug workaround (Claude Code, Gemini-family, future CLIs):
