@@ -263,7 +263,7 @@ def _command_prefixes_for_cli(cli_type: str | None) -> tuple[str, ...]:
 _RETIRED_COMMAND_SPELLINGS = {
     "task-status": "task status",
     "task-ignore": "task ignore",
-    # Advertised until 1.0.0rc4, when each command kept one name.
+    # Names autorun advertised before each command kept a single name.
     "st": "status",
     "afst": "status",
     "blocks": "status",
