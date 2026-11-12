@@ -124,9 +124,9 @@ uv tool install --force 'autorun-ai[pdf]' && extract-pdfs --list-backends
 No uv yet? `curl -LsSf https://astral.sh/uv/install.sh | sh`, `brew install
 uv`, or on Windows `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`.
 
-The PyPI package carries the `ar` plugin. The `pdf-extractor` plugin's slash
-commands install from the Claude Code marketplace or a clone (`autorun
---install pdf-extractor`); its extraction code is the `[pdf]` extra above.
+`autorun --install` from the PyPI or git package registers both plugins, `ar`
+and `pdf-extractor`, on every detected agent; `autorun --install pdf-extractor`
+installs only that one. The `[pdf]` extra adds only the extraction backends.
 
 Changing autorun itself? Development installs run in a sandbox: see
 [AGENTS.md](AGENTS.md).

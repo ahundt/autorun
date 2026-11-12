@@ -321,8 +321,7 @@ For more information: https://github.com/ahundt/autorun
         metavar="PLUGINS",
         help="Install plugins for detected supported harnesses. This publishes each "
         "harness's native hooks, commands, skills, guidance, plugins, or extensions. "
-        "Default: every plugin embedded in this distribution (the standalone "
-        "autorun wheel embeds ar; a source marketplace checkout also exposes "
+        "Default: every plugin this distribution carries (ar and "
         "pdf-extractor). Select with --install ar or a comma-separated list.",
     )
     install_group.add_argument(

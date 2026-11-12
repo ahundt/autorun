@@ -40,15 +40,17 @@ The `pdf-extractor` plugin adds `/pdf-extractor:extract` and a skill that loads
 when you ask an agent to extract, convert, parse or read a PDF.
 
 ```bash
-claude plugin marketplace add https://github.com/ahundt/autorun.git   # Claude Code
-claude plugin install pdf-extractor@autorun
+uv tool install --force autorun-ai && autorun --install pdf-extractor   # every detected agent
 
-git clone https://github.com/ahundt/autorun.git && cd autorun   # other agents
-uv run --project plugins/autorun python -m autorun --install pdf-extractor --force
+claude plugin marketplace add https://github.com/ahundt/autorun.git    # Claude Code alone
+claude plugin install pdf-extractor@autorun
 ```
 
-The PyPI package carries only the `ar` plugin, so the `pdf-extractor` install
-runs from a clone. Limit it to one agent with `--claude`, `--gemini`, `--qwen`,
+`autorun --install` registers both plugins, `ar` and `pdf-extractor`, on
+every detected agent; `autorun --install pdf-extractor` installs only this
+one. Both work from the PyPI package and from a git install. The `[pdf]` extra
+adds only the extraction backends, not the plugin. Limit the install to one
+agent with `--claude`, `--gemini`, `--qwen`,
 `--antigravity`, `--codex`, `--pi`, or `--prime`. Claude, Codex, Gemini,
 Qwen, Antigravity, Pi, and Prime load the skill from their installed plugin,
 extension, or package. ForgeCode and OpenCode use their own global skill roots;
