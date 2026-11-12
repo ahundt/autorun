@@ -111,6 +111,7 @@ __all__ = [
     "dereference_links",
     "fill_tree",
     "refresh_unmarked_tree",
+    "record_tree_intent",
     "json_document",
     "render_json_like",
     "read_text_exact",
@@ -366,6 +367,11 @@ class TreeManifest:
     ``settings`` carries the bridge mode and anything else uninstall must know
     to reverse an install it did not perform.
 
+    ``intended_files`` is a durable refresh journal in the same marker. During
+    an in-place cache refresh, either the previously recorded hash or the target
+    hash proves that autorun wrote a file. A completed refresh records one final
+    ``files`` snapshot and omits the intent again.
+
     ``inherited_from`` is never written: it names the plugin the marker on disk
     records when :func:`handed_over` gave the tree to ``plugin``, so a current
     copy is still republished once to record its new owner.
@@ -374,6 +380,7 @@ class TreeManifest:
     plugin: str = ""
     files: Mapping[str, str] = field(default_factory=dict)
     settings: Mapping[str, str] = field(default_factory=dict)
+    intended_files: Mapping[str, str] = field(default_factory=dict)
     inherited_from: str = ""
 
     @classmethod
@@ -384,26 +391,39 @@ class TreeManifest:
     def from_marker(cls, payload: Mapping[str, object]) -> "TreeManifest":
         """Decode a marker payload, tolerating the pre-manifest list form."""
         raw, plugin, cfg = payload.get("files"), payload.get("plugin"), payload.get("settings")
+        intent = payload.get("intent")
+        intended = intent.get("files") if isinstance(intent, Mapping) else None
         return cls(
             plugin=plugin if isinstance(plugin, str) else "",
             files=({k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
                    if isinstance(raw, Mapping) else {}),
             settings=({k: v for k, v in cfg.items() if isinstance(k, str) and isinstance(v, str)}
                       if isinstance(cfg, Mapping) else {}),
+            intended_files=(
+                {k: v for k, v in intended.items() if isinstance(k, str) and isinstance(v, str)}
+                if isinstance(intended, Mapping) else {}
+            ),
         )
 
     def as_payload(self) -> dict:
-        return {
+        payload = {
             "note": _MARKER_NOTE,
             "plugin": self.plugin,
             "files": dict(self.files),
             "settings": dict(self.settings),
         }
+        if self.intended_files:
+            payload["intent"] = {"files": dict(self.intended_files)}
+        return payload
 
     def state_of(self, root: Path, relative: str) -> FileState:
-        recorded = self.files.get(relative)
+        recorded = tuple(
+            fingerprint
+            for fingerprint in (self.files.get(relative), self.intended_files.get(relative))
+            if fingerprint is not None
+        )
         path = root / relative
-        if recorded is None:
+        if not recorded:
             return FileState.MISSING
         if not path.is_symlink() and not path.is_file():
             return FileState.MISSING
@@ -411,7 +431,7 @@ class TreeManifest:
             current = _fingerprint(path)
         except FileNotFoundError:
             return FileState.MISSING  # swapped away between the check and the read
-        return FileState.UNCHANGED if current == recorded else FileState.EDITED
+        return FileState.UNCHANGED if current in recorded else FileState.EDITED
 
 
 def read_marker(directory: Path, *, name: str = "") -> TreeManifest | None:
@@ -470,6 +490,48 @@ def record_tree(
     return True
 
 
+def record_tree_intent(
+    directory: Path,
+    *,
+    plugin: str,
+    intended_files: Mapping[str, str],
+    ownership_proof: Callable[[Path], bool],
+) -> bool:
+    """Durably record a file-by-file refresh target before any replacement.
+
+    Files already matching an earlier interrupted target are promoted into the
+    previous-hash set before a newer target is recorded. A subsequent recovery
+    therefore recognizes bytes autorun wrote during either refresh, while bytes
+    matching neither receipt remain user edits.
+    """
+    if not directory.is_dir() or directory.is_symlink():
+        return False
+    with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+        marker = read_marker(directory)
+        if (
+            marker is None
+            or not owns(marker, plugin)
+            or not ownership_proof(directory)
+        ):
+            return False
+        current = scan_tree(directory)
+        previous = dict(marker.files)
+        for relative, fingerprint in marker.intended_files.items():
+            if current.get(relative) == fingerprint:
+                previous[relative] = fingerprint
+        pending = TreeManifest(
+            plugin=marker.plugin,
+            files=previous,
+            settings=marker.settings,
+            intended_files=dict(intended_files),
+        )
+        atomic_write(
+            directory / OWNED_MARKER_NAME,
+            json.dumps(pending.as_payload(), indent=2) + "\n",
+        )
+    return True
+
+
 def compare(
     root: Path, manifest: TreeManifest
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -479,11 +541,12 @@ def compare(
     extra: there is no byte receipt proving it is disposable.
     """
     current = scan_tree(root)
-    states = {p: manifest.state_of(root, p) for p in manifest.files}
+    known = set(manifest.files) | set(manifest.intended_files)
+    states = {p: manifest.state_of(root, p) for p in known}
     return (
         tuple(sorted(p for p, s in states.items() if s is FileState.EDITED)),
         tuple(sorted(p for p, s in states.items() if s is FileState.MISSING)),
-        tuple(sorted(set(current) - set(manifest.files))),
+        tuple(sorted(set(current) - known)),
     )
 
 

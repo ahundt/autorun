@@ -206,6 +206,40 @@ def test_refresh_crash_after_each_file_keeps_hook_entry_manifest_and_venv_usable
         assert (crashed / "hooks" / "hooks.json").is_file()
         assert (crashed / ".venv").is_dir()
         assert _round_trip(crashed) in {"old", "new"}
+        interrupted_receipt = json.loads(
+            (crashed / OWNED_MARKER_NAME).read_text(encoding="utf-8")
+        )
+        assert interrupted_receipt["intent"]["files"] == fs.scan_tree(source)
+
+        assert claude.refresh_cache(source, crashed) == crashed
+        assert claude.cache_mismatches(source, crashed) == ()
+        assert fs.scan_tree(crashed) == fs.scan_tree(source)
+        assert _round_trip(crashed) == "new"
+        final_receipt = json.loads(
+            (crashed / OWNED_MARKER_NAME).read_text(encoding="utf-8")
+        )
+        assert "intent" not in final_receipt
+
+
+def test_interrupted_refresh_still_keeps_a_later_user_edit(source, home):
+    _write_round_trip_hook(source, "new")
+    crashed = install(source, home)
+    _write_round_trip_hook(crashed, "old")
+    _make_cache_python(crashed)
+    _record_cache(crashed)
+
+    def crash(_step: str) -> None:
+        raise RuntimeError("simulated refresh crash")
+
+    with pytest.raises(RuntimeError, match="simulated refresh crash"):
+        claude.refresh_cache(source, crashed, after_step=crash)
+
+    hook = crashed / "hooks" / "hook_entry.py"
+    hook.write_text("user edit after interrupted refresh\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match=r"KEEP.*hooks/hook_entry\.py"):
+        claude.refresh_cache(source, crashed)
+    assert hook.read_text(encoding="utf-8") == "user edit after interrupted refresh\n"
 
 
 def test_retirement_removes_only_hash_proven_unmodified_cache_versions(source, home):

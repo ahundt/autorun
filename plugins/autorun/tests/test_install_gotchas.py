@@ -1593,6 +1593,47 @@ def test_plain_claude_registration_repairs_same_version_cache_payload(tmp_path, 
     assert runtime.read_text(encoding="utf-8") == "runtime\n"
 
 
+def test_plain_claude_registration_recovers_an_interrupted_same_version_refresh(
+    tmp_path, monkeypatch
+):
+    import subprocess
+    from autorun.installer import claude
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    ctx = _home_context(tmp_path, monkeypatch, tmp_path)
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+    )
+    (plugin / "client.py").write_text("client = 'old'\n", encoding="utf-8")
+    (plugin / "config.py").write_text("config = 'old'\n", encoding="utf-8")
+    cached = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
+    cached.parent.mkdir(parents=True)
+    shutil.copytree(plugin, cached)
+    assert record_tree(cached, plugin="ar", ownership_proof=lambda installed: installed == cached)
+    (plugin / "client.py").write_text("client = 'new'\n", encoding="utf-8")
+    (plugin / "config.py").write_text("config = 'new'\n", encoding="utf-8")
+
+    def crash(_step: str) -> None:
+        raise RuntimeError("simulated refresh crash")
+
+    with pytest.raises(RuntimeError, match="simulated refresh crash"):
+        claude.refresh_cache(plugin, cached, plugin="ar", after_step=crash)
+
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", ctx,
+        removing=False,
+        run=lambda argv: subprocess.CompletedProcess(argv, 0, "", ""),
+        available=("claude",),
+    )
+
+    assert outcomes and all(outcome.ok for outcome in outcomes)
+    assert (cached / "client.py").read_text(encoding="utf-8") == "client = 'new'\n"
+    assert (cached / "config.py").read_text(encoding="utf-8") == "config = 'new'\n"
+
+
 def test_forced_same_version_claude_refresh_preserves_runtime_and_backs_up_edit(
     tmp_path, monkeypatch
 ):

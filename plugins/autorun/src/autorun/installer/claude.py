@@ -55,6 +55,7 @@ from .fs import (
     owns,
     read_marker,
     record_tree,
+    record_tree_intent,
     refresh_unmarked_tree,
     scan_tree,
     withdrawn,
@@ -224,8 +225,21 @@ def refresh_cache(
         raise RuntimeError(f"KEEP {directory}: " + ", ".join(kept))
     if kept and backup_root is None:
         raise RuntimeError(f"KEEP {directory}: backup root required before forced refresh")
-    if not cache_mismatches(source, directory):
+    mismatches = cache_mismatches(source, directory)
+    marker = read_marker(directory)
+    if not mismatches:
+        if marker is not None and marker.intended_files:
+            if not record_cache(source, directory, plugin=plugin):
+                raise RuntimeError(f"KEEP {directory}: could not finalize refresh receipt")
+            return directory
         return None
+    if not record_tree_intent(
+        directory,
+        plugin=plugin,
+        intended_files=scan_tree(source),
+        ownership_proof=lambda installed: cache_owned(installed, plugin),
+    ):
+        raise RuntimeError(f"KEEP {directory}: could not record refresh intent")
     refreshed = refresh_unmarked_tree(
         source,
         directory,
