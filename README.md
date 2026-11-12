@@ -109,6 +109,7 @@ autorun --install
 # Claude Code only, through its plugin marketplace
 claude plugin marketplace add https://github.com/ahundt/autorun.git
 claude plugin install ar@autorun
+claude plugin install autorun-skills@autorun
 
 # From a clone
 git clone https://github.com/ahundt/autorun.git && cd autorun
@@ -124,8 +125,8 @@ uv tool install --force 'autorun-ai[pdf]' && extract-pdfs --list-backends
 No uv yet? `curl -LsSf https://astral.sh/uv/install.sh | sh`, `brew install
 uv`, or on Windows `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`.
 
-`autorun --install` from the PyPI or git package registers both plugins, `ar`
-and `pdf-extractor`, on every detected agent; `autorun --install pdf-extractor`
+`autorun --install` from the PyPI or git package registers all three plugins,
+`ar`, `autorun-skills`, and `pdf-extractor`, on every detected agent; `autorun --install pdf-extractor`
 installs only that one. The `[pdf]` extra adds only the extraction backends.
 
 Changing autorun itself? Development installs run in a sandbox: see

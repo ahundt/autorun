@@ -376,6 +376,9 @@ For more information: https://github.com/ahundt/autorun
     )
 
     # Install options
+    from .installer.entrypoint import _marketplace_root, parse_selection
+
+    plugin_names = ", ".join(parse_selection(_marketplace_root()))
     install_group = parser.add_argument_group("Installation (Start Here!)")
     install_group.add_argument(
         "--install",
@@ -385,8 +388,8 @@ For more information: https://github.com/ahundt/autorun
         metavar="PLUGINS",
         help="Install plugins for detected supported harnesses. This publishes each "
         "harness's native hooks, commands, skills, guidance, plugins, or extensions. "
-        "Default: every plugin this distribution carries (ar and "
-        "pdf-extractor). Select with --install ar or a comma-separated list.",
+        f"Default: every plugin this distribution carries ({plugin_names}). "
+        "Select with --install ar or a comma-separated list.",
     )
     install_group.add_argument(
         "--force",

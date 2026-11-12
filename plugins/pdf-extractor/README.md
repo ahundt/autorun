@@ -46,7 +46,7 @@ claude plugin marketplace add https://github.com/ahundt/autorun.git    # Claude 
 claude plugin install pdf-extractor@autorun
 ```
 
-`autorun --install` registers both plugins, `ar` and `pdf-extractor`, on
+`autorun --install` registers all three plugins, `ar`, `autorun-skills`, and `pdf-extractor`, on
 every detected agent; `autorun --install pdf-extractor` installs only this
 one. Both work from the PyPI package and from a git install. The `[pdf]` extra
 adds only the extraction backends, not the plugin. Limit the install to one

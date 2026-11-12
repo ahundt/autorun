@@ -149,6 +149,6 @@ git clone https://github.com/ahundt/autorun.git && cd autorun && uv tool install
 ```
 
 Claude Code alone can instead use the marketplace: `claude plugin marketplace
-add https://github.com/ahundt/autorun.git && claude plugin install ar@autorun`.
+add https://github.com/ahundt/autorun.git && claude plugin install ar@autorun && claude plugin install autorun-skills@autorun`.
 Full options, extras (`autorun-ai[pdf]`), and verification: `README.md`. Inside a
 development session these commands fall under section 1.
