@@ -138,6 +138,33 @@ status means (`blocks_stop`, `prunable`) is an incompatible change:
 `test_existing_status_policy_never_changes` freezes them, because skipping
 REINDEX in the revision-3 rewrite depends on it.
 
+## The Stop gate decides from state
+
+`TaskLifecycle._stop_decision` blocks only on a task the agent can act on now
+and lists every task that waits (`task_status.WAITING_TASK_STATUSES`, a
+blocker that is still open, a row a fork inherited). Keep it that way:
+
+- No clock and no block count decides anything. A delegation ends on
+  evidence: SubagentStop, the recorded parent harness process gone, or a task
+  update. `stop_block_max_count` is only a loop guard for Stops with no
+  main-agent tool call between them.
+- When nothing is actionable the gate returns `None`, never `ctx.allow()`:
+  `autorun_injection` registers after it on Stop and must still answer.
+- The awaiting-user clear runs inside `reset_stop_sequence_on_user_prompt`,
+  the first UserPromptSubmit handler, and returns `None`; the prompt-time
+  cache check stays last (`tests/test_cache_expiry_at_prompt.py`).
+- Who wrote a prompt is `core.resolve_prompt_author`; which conversation an
+  event belongs to is `core.resolve_conversation_role`. New code asks these
+  rather than reading `agent_id` or `source` to decide either.
+- Harness differences are `Platform` fields (`agent_spawn_running_results`,
+  `stop_payload_lists_running_agents`, `fork_session_start_sources`,
+  `goal_clear_command`). Set a field true or non-empty only with a captured
+  payload, and say where it came from.
+- Cost per hook: one task snapshot per Stop (`_open_task_snapshot`), waits
+  derived in memory, one `pid_exists` per distinct recorded pid at Stop and
+  SessionStart only, no task-row read on a prompt with nothing awaiting the
+  user (`tests/test_stop_gate_hot_path.py`).
+
 ## Bug workaround policy
 
 Every SDK bug workaround (Claude Code, Gemini-family, future CLIs):

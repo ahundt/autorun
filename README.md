@@ -518,8 +518,9 @@ session that wrote them. It is on by default. Each plan you accept goes to
 
 ### Task tracking
 
-While tracked tasks are open, autorun's Stop hook lists them and sends the agent
-back to work. To talk something through first, run `/ar:tasks pause <reason>`.
+While a tracked task is the agent's to act on, autorun's Stop hook lists it and
+sends the agent back to work. To talk something through first, run
+`/ar:tasks pause <reason>`.
 Reminders and task-based Stop enforcement pause; task status and command guards
 stay as they are.
 
@@ -532,7 +533,7 @@ stay as they are.
 | `/ar:task prompts on\|off\|<N>` | turn staleness reminders on or off, or set both intervals to `N` (legacy `/ar:task on\|off\|<N>`); Stop enforcement is unaffected |
 | `/ar:task prompts initial <N>`, `subsequent <N>` | set one interval for this session |
 | `/ar:task prompts scope all\|user\|subagent` | which agents get reminders |
-| `/ar:task recovery on\|off\|min <N>` | stale-task recovery, and how many identical Stops trigger it |
+| `/ar:task recovery on\|off` | turn the stale-task marker on or off |
 
 **Staleness reminders.** If the agent stops updating its tasks, autorun reminds
 it after 25 tool calls in a new session and every 50 calls after that. Any real
@@ -543,17 +544,54 @@ subagents count separately. The defaults are the
 `task_staleness_agent_scope` config keys. Resume and compaction keep the current
 phase; a fresh start or clear begins again at 25.
 
-**Stale tasks.** A harness can lose a task that autorun still tracks, and that
-task would keep blocking Stop. If the same task IDs block Stop twice in a row with
-only task updates in between, the Stop message tells the agent to print
-`AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` for each task its harness no longer has,
-and autorun marks that task ignored. For a real task that needs discussion, use
-`/ar:tasks pause <reason>`.
+**What blocks a Stop.** autorun decides from recorded task state, never from a
+clock or a count of blocks. A `pending`, `in_progress` or `delegation-returned`
+task blocks Stop unless it waits on someone else; the Stop message names the
+tasks that block and then lists each waiting task on its own line:
 
-**Bounded Stops.** autorun blocks the first 3 consecutive Stops
-(`stop_block_max_count`) while tasks remain; the next one may end that
-exchange without completing, ignoring, deleting or pausing any task. Tool
-activity, a new prompt, or a new session starts a fresh count.
+- `⏳ Waiting on you: #7 Push release-1.0: approve pushing to origin/main` — the
+  agent printed `AUTORUN_TASK_AWAITING_USER(7): <the decision it needs>` on its
+  own line. The task becomes `awaiting-user`, keeps the decision, and stops
+  blocking. The next prompt you type puts it back to the status it had, and so
+  does the agent's own update of it. A prompt from a subagent, a harness
+  notification or automation changes nothing. A marker with no decision text is
+  refused and the block says so.
+- `🤝 Waiting on subagent a1b2c3d4: #3 Sweep the fixtures` — the agent printed
+  `AUTORUN_TASK_DELEGATED(3)`. autorun records the subagent and the harness
+  process that ran it. The task blocks again when the subagent's SubagentStop
+  arrives (`delegation-returned`, so the agent checks the result), and goes back
+  to `pending` if that harness process has exited by the next Stop or session
+  start. Nothing expires on a timer. A task delegated by marker before this
+  release has no recorded process; at its first Stop it returns as
+  `delegation-returned` for the agent to verify.
+- `⛓️ #2 waits on #3` — #2 is blocked by an open task. Its blockers block Stop
+  themselves if the agent can act on them. A blocker id that does not exist,
+  or a `blockedBy` cycle, makes the task block with a note saying what to fix.
+- `↪️ #1 ... is inherited from the conversation this one was forked from` — a
+  Pi or Prime Agent `/fork` carries the parent's tasks over; the fork lists
+  them and blocks on one only after it updates it.
+
+When nothing blocks, autorun's task check steps aside and the waiting lines are
+shown to you; during `/ar:go` the stage check still answers that Stop.
+
+**Stale tasks.** A harness can lose a task that autorun still tracks. Every
+block tells the agent that for a task its harness no longer lists it may print
+`AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` on its own line; autorun marks it
+ignored, logs `GHOST_CLEAR`, and shows you which. It works from the first
+block. For a real task that needs discussion, use `/ar:tasks pause <reason>`.
+
+**Loop guard.** If the agent stops 4 times in a row (`stop_block_max_count`
+blocks, then one more) with no tool call of its own between the Stops, the
+block reason is not reaching it, and autorun lets that Stop through with a
+notice instead of looping. No task changes. A subagent's tool calls do not
+count as the agent acting. The next tool call, prompt or session start
+restores enforcement. It is not how work ends; the states above are.
+
+**Forked conversations.** A conversation the harness reports as a fork
+(Claude Code `--fork-session`, Pi and Prime Agent `/fork`) is told so once. It
+is not ordered to create tasks or denied tools for having none. A goal Claude
+Code set in the parent conversation continues in the fork until you run
+`/goal clear` there.
 
 Settings live in `~/.autorun/task-lifecycle.config.json`:
 
@@ -561,12 +599,10 @@ Settings live in `~/.autorun/task-lifecycle.config.json`:
 |---|---|---|
 | `enabled` | `true` | task tracking on |
 | `max_resume_tasks` | `20` | tasks listed in a resume or Stop message |
-| `stop_block_max_count` | `3` | consecutive Stops blocked before one may end the exchange |
+| `stop_block_max_count` | `3` | loop guard: consecutive Stops with no tool call between them that are blocked before one passes |
 | `task_ttl_days` | `30` | completed tasks pruned after this many days |
 | `debug_logging` | `false` | audit logging |
-| `ghost_clear_enabled` | `true` | stale-task recovery on |
-| `ghost_clear_min_consecutive_blocks` | `2` | identical Stops before recovery is offered |
-| `ghost_clear_hash_length` | `12` | hex characters in the task-set digest |
+| `ghost_clear_enabled` | `true` | the stale-task marker is honored |
 
 Task state is in `~/.claude/sessions/daemon_state.json` (or its SQLite store after
 `autorun --state-migrate`); per-session audit logs

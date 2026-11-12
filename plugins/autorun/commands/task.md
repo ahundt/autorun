@@ -25,7 +25,7 @@ surface without implementing a second parser.
 /ar:task prompts initial 25
 /ar:task prompts subsequent 50
 /ar:task prompts scope all
-/ar:task recovery min 3
+/ar:task recovery off
 ```
 
 `pause` suppresses task reminders and task-based Stop continuation only. It
@@ -59,3 +59,14 @@ should temporarily suspend both.
 
 `pause` and `ignore` take effect only when the user types them; sent by the
 model or a subagent, they change nothing. Other operations run for anyone.
+
+`recovery on|off` decides whether autorun honors the stale-task marker
+`AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)`, which the agent prints for a task its
+harness no longer lists. It works from the first Stop block; no count of
+repeated blocks gates it.
+
+`/ar:task` lists, after the blocking tasks, every task that waits on someone
+else and so does not block Stop: `⏳` waiting on you for a decision the agent
+named with `AUTORUN_TASK_AWAITING_USER(<id>): <decision>` (your next prompt
+ends it), `🤝` delegated to a subagent, `⛓️` blocked by an open task, and `↪️`
+inherited by a forked conversation.
