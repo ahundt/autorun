@@ -394,6 +394,40 @@ class TestDaemonSocketFrames:
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
+    def test_prompt_author_cache_is_bounded_and_session_delete_evicts(
+        self, tmp_path, short_socket_dir
+    ):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {"OpenCodeAttach": {}, "UserPromptSubmit": {}},
+            connections=14,
+        )
+        result = _run_shim(tmp_path, socket_path, "prompt-cache-lru")
+        thread.join(timeout=25)
+
+        assert "session-get-count 12" in result.stdout
+        assert len(frames) == 14
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_failed_session_lookup_is_cached_for_three_prompts(
+        self, tmp_path, short_socket_dir
+    ):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {"OpenCodeAttach": {}, "UserPromptSubmit": {}},
+            connections=5,
+        )
+        result = _run_shim(tmp_path, socket_path, "prompt-unknown-repeat")
+        thread.join(timeout=25)
+
+        assert "session-get-count 2" in result.stdout
+        assert {frame["prompt_author"] for frame in frames[1:]} == {"automation"}
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
     @pytest.mark.parametrize(
         ("mode", "expected_author"),
         [
@@ -694,7 +728,7 @@ const client = {
   session: {
     get: async ({ path }) => {
       sessionGetCount += 1
-      if (process.argv[2] === "prompt-unknown-session") throw new Error("session missing")
+      if (process.argv[2].includes("prompt-unknown")) throw new Error("session missing")
       const child = process.argv[2].includes("child")
       return { data: { id: path.id, ...(child ? { parentID: "parent-session" } : {}) } }
     },
@@ -705,6 +739,28 @@ const client = {
 if (process.argv[2].startsWith("prompt-")) {
   const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
   const mode = process.argv[2]
+  const makeOutput = (text) => ({
+    message: { role: "user" },
+    parts: [{ type: "text", text }],
+  })
+  if (mode === "prompt-cache-lru") {
+    for (let index = 0; index < 10; index += 1) {
+      await hooks["chat.message"]({ sessionID: `session-${index}` }, makeOutput(`prompt ${index}`))
+    }
+    await hooks["chat.message"]({ sessionID: "session-9" }, makeOutput("recent"))
+    await hooks["chat.message"]({ sessionID: "session-0" }, makeOutput("evicted"))
+    await hooks.event({ event: { type: "session.deleted", properties: { sessionID: "session-9" } } })
+    await hooks["chat.message"]({ sessionID: "session-9" }, makeOutput("deleted"))
+    console.log("session-get-count", sessionGetCount)
+    process.exit(0)
+  }
+  if (mode === "prompt-unknown-repeat") {
+    for (let index = 0; index < 4; index += 1) {
+      await hooks["chat.message"]({ sessionID: "prompt-session" }, makeOutput(`unknown ${index}`))
+    }
+    console.log("session-get-count", sessionGetCount)
+    process.exit(0)
+  }
   const input = { sessionID: "prompt-session" }
   const command = mode.endsWith("-command")
   const reply = mode.endsWith("-reply")

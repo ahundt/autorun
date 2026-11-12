@@ -79,9 +79,27 @@ async function surfaceStopDenial(client, sessionID, directory, reason) {
 }
 
 export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
-  // A session's parent does not change. Cache the in-flight lookup too, so two
-  // prompts arriving together still make one SDK request.
+  // A session's parent does not change. Eight entries bound retained session
+  // ids; Map insertion order supplies the LRU. A failed SDK lookup covers this
+  // prompt plus the next two, then one later prompt retries.
   const promptAuthors = new Map()
+  const promptAuthorCacheLimit = 8
+  const failedLookupPromptCount = 3
+
+  function cachePromptAuthor(sessionID, entry) {
+    promptAuthors.delete(sessionID)
+    promptAuthors.set(sessionID, entry)
+    while (promptAuthors.size > promptAuthorCacheLimit) {
+      promptAuthors.delete(promptAuthors.keys().next().value)
+    }
+    return entry
+  }
+
+  function cachedPromptAuthor(sessionID) {
+    const entry = promptAuthors.get(sessionID)
+    if (entry) cachePromptAuthor(sessionID, entry)
+    return entry
+  }
 
   async function promptAuthor(sessionID, parts) {
     // OpenCode marks compaction, plugin-injected parts, and autorun's own Stop
@@ -89,23 +107,43 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
     if (hasSyntheticPart(parts)) return "automation"
     if (!sessionID || typeof client?.session?.get !== "function") return "automation"
 
-    let cached = promptAuthors.get(sessionID)
-    if (!cached) {
-      cached = client.session
-        .get({ path: { id: sessionID }, query: { directory: String(directory ?? "") } })
-        .then((result) => {
-          const session = sessionInfo(result)
-          if (!session || typeof session !== "object") throw new Error("session lookup returned no session")
-          return session.parentID ? "subagent" : "user"
+    const cached = cachedPromptAuthor(sessionID)
+    if (cached?.author) {
+      if (cached.author !== "automation") return cached.author
+      if (cached.promptsRemaining > 0) {
+        cached.promptsRemaining -= 1
+        return "automation"
+      }
+      promptAuthors.delete(sessionID)
+    } else if (cached?.lookup) {
+      try {
+        return await cached.lookup
+      } catch {
+        cachePromptAuthor(sessionID, {
+          author: "automation",
+          promptsRemaining: failedLookupPromptCount - 1,
         })
-      promptAuthors.set(sessionID, cached)
+        return "automation"
+      }
     }
+
+    const lookup = client.session
+      .get({ path: { id: sessionID }, query: { directory: String(directory ?? "") } })
+      .then((result) => {
+        const session = sessionInfo(result)
+        if (!session || typeof session !== "object") throw new Error("session lookup returned no session")
+        return session.parentID ? "subagent" : "user"
+      })
+    cachePromptAuthor(sessionID, { lookup })
     try {
-      return await cached
+      const author = await lookup
+      cachePromptAuthor(sessionID, { author })
+      return author
     } catch {
-      // Unknown origin must not gain user-only authority. Do not cache a
-      // transient SDK failure; a later prompt can retry the lookup.
-      if (promptAuthors.get(sessionID) === cached) promptAuthors.delete(sessionID)
+      cachePromptAuthor(sessionID, {
+        author: "automation",
+        promptsRemaining: failedLookupPromptCount - 1,
+      })
       return "automation"
     }
   }
@@ -156,6 +194,11 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
 
     event: async ({ event }) => {
       const properties = event?.properties ?? {}
+      if (event?.type === "session.deleted") {
+        const sessionID = properties.sessionID ?? properties.id ?? properties.info?.id
+        if (sessionID) promptAuthors.delete(String(sessionID))
+        return
+      }
       if (event?.type === "session.idle") {
         if (!properties.sessionID) return
         const response = await bridge.askDaemon({
