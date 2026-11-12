@@ -204,8 +204,7 @@ def test_a_fresh_database_is_created_at_revision_3(tmp_path):
     assert _read(db_path, "PRAGMA user_version") == [(2,)]
 
 
-def test_earlier_revision_3_awaiting_user_fails_closed_without_reindex(tmp_path, monkeypatch):
-    path = tmp_path / "earlier.sqlite3"
+def _create_earlier_revision_3(path):
     # The first revision-3 definition exempted awaiting-user for older readers.
     columns = dict(sm._TASK_COLUMNS)
     columns["blocks_stop"] = (
@@ -224,6 +223,11 @@ def test_earlier_revision_3_awaiting_user_fails_closed_without_reindex(tmp_path,
         ])
         conn.execute("INSERT INTO sessions VALUES ('old-r3', 'task_lifecycle', 1)")
         conn.execute("INSERT INTO tasks(session,task_id,status,updated_at,payload_json) VALUES ('old-r3','wait','awaiting-user',1,'{\"id\":\"wait\"}')")
+
+
+def test_earlier_revision_3_awaiting_user_fails_closed_without_reindex(tmp_path, monkeypatch):
+    path = tmp_path / "earlier.sqlite3"
+    _create_earlier_revision_3(path)
     statements = []
     store = SQLiteStore(path)
     real = store._connect
@@ -237,6 +241,37 @@ def test_earlier_revision_3_awaiting_user_fails_closed_without_reindex(tmp_path,
     assert _read(path, "PRAGMA integrity_check") == [("ok",)]
     assert TaskRepository(store).list_incomplete("old-r3") == [], "current Python policy must keep awaiting-user waiting"
     assert not any(sql.startswith(("REINDEX", "UPDATE tasks ", "INSERT INTO tasks ", "DROP ")) for sql in statements), statements
+
+
+def test_refused_earlier_revision_3_repair_encodes_existing_waiting_rows(tmp_path, monkeypatch):
+    path = tmp_path / "earlier-defensive.sqlite3"
+    _create_earlier_revision_3(path)
+    with sqlite3.connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO tasks(session,task_id,status,updated_at,payload_json) VALUES ('old-r3',?,'completed',1,'{}')",
+            [(str(i),) for i in range(30000)],
+        )
+    _force_defensive_sqlite(monkeypatch)
+    monkeypatch.setattr(sm, "_rebuild_tasks_table", lambda conn: pytest.fail("startup rebuilt tasks"))
+    store = SQLiteStore(path)
+    steps = [0]
+    statements = []
+    real = store._connect
+    def connect(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        def progress():
+            steps[0] += 100
+            return 0
+        conn.set_progress_handler(progress, 100)
+        conn.set_trace_callback(statements.append)
+        return conn
+    monkeypatch.setattr(store, "_connect", connect)
+    store.initialize()
+    assert steps[0] < 5000, f"repair visited completed history: {steps[0]} VM steps"
+    assert sum(sql.startswith("INSERT INTO tasks ") for sql in statements) == 1
+    assert _read(path, "SELECT status, blocks_stop FROM tasks WHERE task_id = 'wait'") == [("pending", 1)], "an existing awaiting-user row stayed exempt for older readers"
+    assert TaskRepository(store).get_task("old-r3", "wait")["status"] == "awaiting-user"
+    assert _read(path, "PRAGMA integrity_check") == [("ok",)]
 
 
 def test_a_version_1_database_reaches_revision_3_with_fail_closed_columns(tmp_path):

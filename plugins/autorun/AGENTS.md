@@ -149,6 +149,10 @@ statuses use a CHECK-accepted `pending` column and an internal payload marker,
 decoded at the repository boundary. An older writer advancing `updated_at`
 invalidates that marker; older builds see blocking `pending`. The same fallback
 applies to a historical CHECK-free layout whose indexes would need rebuilding.
+When an earlier revision-3 definition also refuses its compatibility repair,
+startup reads its open candidates without the writer slot and encodes each
+existing awaiting-user row in its own short transaction. Completed history
+is not visited, and older readers see blocking pending rows.
 `autorun --state-rebuild-tasks` is optional offline maintenance: stop **all**
 daemons using the store first. It refuses an active scoped daemon and checks
 free space before rebuilding; it can hold the write lock for the table's full

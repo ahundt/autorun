@@ -1825,12 +1825,41 @@ class SQLiteStore:
                 # journal_mode cannot change inside a transaction. Every
                 # initializer reaches this only after a validated commit.
                 self._enable_wal(conn, DEFAULT_SESSION_TIMEOUT)
+                if needs_rebuild and revision == 3:
+                    self._encode_legacy_waiting_rows(conn)
         except sqlite3.Error as exc:
             raise SessionBackendError(
                 f"Could not initialize state database {self._db_path}: {exc}"
             ) from exc
 
         self._initialized = True
+
+    def _encode_legacy_waiting_rows(self, conn) -> None:
+        """An earlier revision-3 definition exempted these rows for older readers.
+
+        Read open candidates without the writer slot, then encode one fresh
+        row per transaction. A refused DDL repair must not leave old rows exempt
+        or replace a metadata-only upgrade with a table-sized write lock.
+        """
+        keys = conn.execute(
+            "SELECT session, task_id FROM tasks INDEXED BY tasks_retention "
+            "WHERE session IN (SELECT session FROM sessions) AND prunable = 0 AND status = ?",
+            (task_status.AWAITING_USER_STATUS,),
+        ).fetchall()
+        repository = TaskRepository(self)
+        for session_id, task_id in keys:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT status, updated_at, payload_json FROM tasks WHERE session = ? AND task_id = ?",
+                    (session_id, task_id),
+                ).fetchone()
+                if row is not None and row[0] == task_status.AWAITING_USER_STATUS:
+                    repository._write_task(conn, session_id, task_id, repository._record_from_row(session_id, task_id, row))
+                conn.execute("COMMIT")
+            except BaseException:
+                _rollback_without_masking_original(conn)
+                raise
 
     def rebuild_tasks_offline(self) -> None:
         """Explicit maintenance only, after every daemon using this store is stopped."""
