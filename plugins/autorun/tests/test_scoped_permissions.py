@@ -745,6 +745,36 @@ class TestGlobalScopedAllow:
             sa = ScopedAllow.from_dict(allows[0])
             assert sa.remaining_uses == 3
 
+    @pytest.mark.parametrize("prompt", ["/ar:ok --global rm 3", "ar:ok --global rm 3"])
+    def test_ok_with_global_flag_writes_the_global_list_not_the_session(self, prompt):
+        with _isolated_global_store() as store:
+            db = ThreadSafeDB()
+            ctx = EventContext(session_id=f"test-global-flag-{time.time()}", event="UserPromptSubmit", prompt=prompt, store=db)
+            assert "3 uses" in plugins.app.dispatch(ctx).get("systemMessage", "")
+            assert [a["pattern"] for a in store.get("global_allowed_patterns", [])] == ["rm"]
+            assert not (ctx.session_allowed_patterns or [])
+
+    def test_no_and_clear_with_global_flag_act_on_the_global_list(self):
+        with _isolated_global_store() as store:
+            db = ThreadSafeDB()
+            sid = f"test-global-flag-{time.time()}"
+
+            def run(prompt):
+                ctx = EventContext(session_id=sid, event="UserPromptSubmit", prompt=prompt, store=db)
+                return plugins.app.dispatch(ctx).get("systemMessage", ""), ctx
+
+            msg, ctx = run("/ar:no --global cat")
+            assert "Blocked (global): cat" in msg
+            assert [b["pattern"] for b in store.get("global_blocked_patterns", [])] == ["cat"]
+            assert not (ctx.session_blocked_patterns or [])
+            msg, _ = run("/ar:clear --global")
+            assert "Cleared global" in msg
+            assert store.get("global_blocked_patterns") == []
+
+    def test_global_flag_without_a_pattern_shows_the_global_usage(self):
+        ctx = EventContext(session_id=f"test-global-usage-{time.time()}", event="UserPromptSubmit", prompt="/ar:no --global", store=ThreadSafeDB())
+        assert "Usage: /ar:no --global <pattern>" in plugins.app.dispatch(ctx).get("systemMessage", "")
+
 
 class TestSessionStartCleanup:
     def test_expired_entries_purged(self):

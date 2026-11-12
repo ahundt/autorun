@@ -299,8 +299,8 @@ AutoFile - control file creation (slash: /ar:file allow|justify|existing-only, /
   autorun file status
   autorun file allow
   autorun file justify
-  autorun file search
-  autorun file search --session SESSION_ID
+  autorun file existing-only
+  autorun file existing-only --session SESSION_ID
 
 Task lifecycle management:
   autorun task status --verbose
@@ -646,10 +646,10 @@ Equivalent slash command: /ar:file justify""",
         help="Rejected: there is no global AutoFile policy; every session starts at allow-all",
     )
 
-    # file search (find) - strict mode
+    # file existing-only - strict mode (`search`, `find`, `f` are older words)
     search_parser = file_subparsers.add_parser(
-        "search",
-        aliases=["find", "f"],
+        "existing-only",
+        aliases=["search", "find", "f"],
         help="Block all new file creation - only modify existing (CLI: file f, Slash: /ar:file existing-only)",
         description="""Set AutoFile policy to 'strict-search' mode (strictest).
 
@@ -660,7 +660,7 @@ This is the most restrictive mode - good when you want to prevent any
 accidental new file creation in a mature codebase.
 
 Examples:
-  autorun file search             # Set for current session
+  autorun file existing-only      # Set for current session
   autorun file f --session ID     # Set for session ID (short version)
 
 Hooks served by the autorun daemon (the default) cache session state, so
@@ -1172,7 +1172,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     # AutoFile (af) subcommand - file creation control
     if args.command == "file":
         from autorun.config import CONFIG
-        from autorun.core import EventContext, ThreadSafeDB, format_suggestion
+        from autorun.core import EventContext, ThreadSafeDB, format_command_for_cli, format_suggestion
         from autorun.platforms import (
             SessionIdentityResolutionError,
             resolve_standalone_session_identity,
@@ -1184,12 +1184,19 @@ def _main(argv: Sequence[str] | None = None) -> int:
             file_parser.print_help()
             return 1
 
-        file_cmd = {"a": "allow", "j": "justify", "f": "search", "find": "search", "st": "status", "s": "status"}.get(
-            args.file_command, args.file_command
-        )
+        file_cmd = {
+            "a": "allow",
+            "j": "justify",
+            "f": "existing-only",
+            "find": "existing-only",
+            "search": "existing-only",
+            "st": "status",
+            "s": "status",
+        }.get(args.file_command, args.file_command)
         # The key CONFIG["policies"] and the Write gate (plugins.enforce_file_policy) use.
-        policy = {"allow": "ALLOW", "justify": "JUSTIFY", "search": "SEARCH", "status": "STATUS"}[file_cmd]
-        slash = next(alias for alias, target in CONFIG["command_mappings"].items() if target == policy and alias.startswith("/ar:"))
+        words = CONFIG["file_policy_words"]
+        policy = next((key for key, word in words.items() if word == file_cmd), "STATUS")
+        slash = f"/ar:file {words[policy]}" if policy in words else "/ar:status"
         default_name = CONFIG["policies"]["ALLOW"][0]
 
         if args.file_global:
@@ -1202,10 +1209,12 @@ def _main(argv: Sequence[str] | None = None) -> int:
             return 1
 
         try:
-            session_id = resolve_standalone_session_identity(args.session).session_id
+            identity = resolve_standalone_session_identity(args.session)
         except SessionIdentityResolutionError as exc:
             print(f"Error: {exc}")
             return 1
+        session_id = identity.session_id
+        slash = format_command_for_cli(slash, identity.platform_name)
 
         # The same state access the /ar:file handler makes: ctx.file_policy.
         ctx = EventContext(session_id=session_id, event="UserPromptSubmit", store=ThreadSafeDB())

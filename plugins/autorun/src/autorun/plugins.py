@@ -196,6 +196,25 @@ _INTERNAL_COMMANDS: Dict[str, Callable] = {}
 for policy, aliases in _POLICY_ALIASES.items():
     _INTERNAL_COMMANDS[policy] = app.command(*aliases)(_make_policy_handler(policy))
 
+# `/ar:file <word>`: the advertised words, plus `search` (the command line's
+# older word) and `find` (the older slash name) for the strictest policy.
+_FILE_POLICY_BY_WORD = {
+    **{word: policy for policy, word in CONFIG["file_policy_words"].items()},
+    "search": "SEARCH",
+    "find": "SEARCH",
+}
+
+
+@app.command("/ar:file")
+def handle_file_policy(ctx: EventContext) -> str:
+    """Set this session's new-file policy: allow, justify or existing-only."""
+    words = _command_line_arguments(ctx).split()
+    policy = _FILE_POLICY_BY_WORD.get(words[0].lower()) if words else None
+    if policy is None:
+        usage = format_command_for_cli("/ar:file allow|justify|existing-only", ctx.cli_type)
+        return f"❌ Usage: {usage}"
+    return _INTERNAL_COMMANDS[policy](ctx)
+
 
 @app.command("/ar:st", "/ar:status", "/afst", "/ar:afst")
 def handle_status(ctx: EventContext) -> str:
@@ -735,14 +754,22 @@ def _make_block_op(scope: str, op: str):
         # A scope pattern stops at the line the command was typed on
         # (test_codex_native_multiline_ar_ok_uses_only_first_line).
         args = _command_line_arguments(ctx)
+        # `--global` as the first argument selects the global rules:
+        # `/ar:ok --global 'git push'`, `/ar:clear --global`.
+        rule_scope = scope
+        words = args.split(maxsplit=1)
+        if words and words[0] == "--global":
+            rule_scope, args = "global", (words[1] if len(words) > 1 else "")
+        flag = " --global" if rule_scope == "global" else ""
 
-        accessor = ScopeAccessor(ctx, scope)
+        accessor = ScopeAccessor(ctx, rule_scope)
         blocks = accessor.get()
 
         if op == "block":
             if not args:
-                prefix = "global" if scope == "global" else ""
-                return f"❌ Usage: /ar:{prefix}no <pattern>, or /ar:{prefix}no '<pattern>' [description]"
+                usage = format_command_for_cli(f"/ar:no{flag} <pattern>", ctx.cli_type)
+                quoted = format_command_for_cli(f"/ar:no{flag} '<pattern>' [description]", ctx.cli_type)
+                return f"❌ Usage: {usage}, or {quoted}"
             try:
                 pattern, desc, ptype = _parse_args(args)
             except ValueError as e:
@@ -752,13 +779,12 @@ def _make_block_op(scope: str, op: str):
             accessor.update_allowed(lambda allows: [a for a in allows if a["pattern"] != pattern])
             block = {"pattern": pattern, "suggestion": desc or _get_suggestion(pattern), "pattern_type": ptype}
             accessor.update(lambda current: current + [block])
-            return f"✅ Blocked ({scope}): {pattern}"
+            return f"✅ Blocked ({rule_scope}): {pattern}"
 
         if op == "allow":
             if not args:
-                prefix = "global" if scope == "global" else ""
                 usage = format_command_for_cli(
-                    f"/ar:{prefix}ok <pattern> [count] [duration] [permanent|perm|p]",
+                    f"/ar:ok{flag} <pattern> [count] [duration] [permanent|perm|p]",
                     ctx.cli_type,
                 )
                 return f"❌ Usage: {usage}"
@@ -796,14 +822,14 @@ def _make_block_op(scope: str, op: str):
         if op == "clear":
             accessor.set([])
             accessor.set_allowed([])
-            return f"✅ Cleared {scope} blocks and allows"
+            return f"✅ Cleared {rule_scope} blocks and allows"
 
         if op == "status":
             allows = accessor.get_allowed()
-            lines = _format_pattern_list(blocks, f"{scope.title()} Blocks", "🚫") + _format_pattern_list(
-                allows, f"{scope.title()} Allows", "✅", show_scope=True
+            lines = _format_pattern_list(blocks, f"{rule_scope.title()} Blocks", "🚫") + _format_pattern_list(
+                allows, f"{rule_scope.title()} Allows", "✅", show_scope=True
             )
-            return "\n".join(lines) if lines else f"ℹ️ No {scope} blocks or allows"
+            return "\n".join(lines) if lines else f"ℹ️ No {rule_scope} blocks or allows"
 
         return ""
 
@@ -1550,11 +1576,12 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 
 def _is_procedural_mode(prompt: str) -> bool:
     """Check if command indicates procedural mode."""
-    return any(x in prompt for x in ["/ar:gp", "/ar:proc", "/autoproc"])
+    return any(x in prompt for x in ["/ar:goprocess", "/ar:gp", "/ar:proc", "/autoproc"])
 
 
 @app.command(
     "/ar:go",
+    "/ar:goprocess",
     "/ar:run",
     "/ar:gp",
     "/ar:proc",

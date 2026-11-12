@@ -1087,6 +1087,8 @@ After every step and substep you must say "Wait," and execute this sequential th
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
         "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Search existing file names and contents first. NO new files."),
     },
+    # The word `/ar:file <word>` and `autorun file <word>` use for each policy.
+    "file_policy_words": {"ALLOW": "allow", "JUSTIFY": "justify", "SEARCH": "existing-only"},
     # ─── Policy Blocked Messages ──────────────────────────────────────────────
     "policy_blocked": {
         "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search existing file names for similar functionality with patterns like "*related-topic*", 3) Search file contents for relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
