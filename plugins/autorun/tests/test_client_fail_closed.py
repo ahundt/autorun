@@ -41,6 +41,14 @@ def test_every_harness_name_for_a_tool_gate_fails_closed():
                 assert is_tool_gate_event(harness_event), (platform.name, harness_event)
 
 
+def test_a_daemon_failure_on_a_prompt_never_blocks_the_prompt():
+    """A prompt denial blocks on Claude Code and Codex, so the daemon-failure
+    answer for UserPromptSubmit must stay a plain notice on every harness."""
+    for platform in hook_platforms():
+        response = build_daemon_failure_response("UserPromptSubmit", platform.name, "Daemon error: timed out")
+        assert "decision" not in response and response.get("continue") is True, (platform.name, response)
+
+
 def _fail_closed_reason(cli_type: str) -> str:
     """The text a blocked reader actually sees, whatever the platform shape."""
     response = build_daemon_failure_response(

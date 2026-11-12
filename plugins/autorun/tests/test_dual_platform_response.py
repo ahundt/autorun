@@ -223,16 +223,12 @@ class TestDualPlatformResponse:
                 "claude",
                 "UserPromptSubmit",
                 {
+                    "decision": "block",
+                    "reason": "Blocked",
                     "continue": True,
                     "stopReason": "",
                     "suppressOutput": False,
                     "systemMessage": "Blocked",
-                    "decision": "approve",
-                    "reason": "",
-                    "hookSpecificOutput": {
-                        "hookEventName": "UserPromptSubmit",
-                        "additionalContext": "Blocked",
-                    },
                 },
             ),
             (

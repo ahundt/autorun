@@ -48,7 +48,7 @@ import pytest
 from autorun import plugins as _plugins  # noqa: F401  (registers command handlers and chains)
 from autorun.config import CONFIG
 from autorun.core import EventContext, ThreadSafeDB, app
-from autorun.platforms import PLATFORMS
+from autorun.platforms import PLATFORMS, hook_platforms
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "cache_expiry"
 NOW = 1_794_398_400.0  # 2026-11-11T12:00:00Z; every fixture timestamp is relative to it
@@ -229,6 +229,48 @@ def test_user_thresholds_stay_at_tool_time(clock):
     assert not blocked(at_prompt), f"a user threshold blocked a prompt on an unexpired cache: {at_prompt}"
     at_tool = session.tool()
     assert blocked(at_tool), f"the same thresholds stopped working at tool time: {at_tool}"
+
+
+# ─── a prompt denial blocks only on a harness that declares it ────────────
+
+
+@pytest.mark.parametrize("cli_type", sorted(p.name for p in hook_platforms()))
+def test_a_prompt_denial_blocks_exactly_where_the_platform_declares_it(clock, cli_type):
+    protocol = PLATFORMS[cli_type].hook_protocol
+    reason = "k4 denial reason"
+    response = EventContext(session_id=f"k4-{cli_type}", event="UserPromptSubmit", prompt="hi", cli_type=cli_type).deny(reason)
+    assert blocked(response) == ("UserPromptSubmit" in protocol.context_events_with_block_decision), response
+    assert reason in text_of(response), f"the denial text was dropped on {cli_type}: {response}"
+    if blocked(response):
+        assert response.get("reason") == reason and response.get("systemMessage") == reason, response
+
+
+def test_claude_and_codex_block_a_denied_prompt():
+    blocking = {p.name for p in hook_platforms() if "UserPromptSubmit" in p.hook_protocol.context_events_with_block_decision}
+    assert {"claude", "codex"} <= blocking, blocking
+
+
+@pytest.mark.parametrize("cli_type", sorted(p.name for p in hook_platforms()))
+def test_a_typed_permission_command_is_answered_and_never_blocks_the_prompt(clock, cli_type):
+    """Every UserPromptSubmit reply that is not the cache check stays a reply.
+
+    `regex:((a+))+b` is an unsafe regex the /ar:ok handler rejects; the
+    quoted form without the prefix is stored as a literal. Both are typed on
+    a session whose cache has expired with the check set to block, and
+    neither reply may carry a decision. A subagent's copy is refused (the
+    user-only rule) and that refusal carries no decision either.
+    """
+    session = armed(EXPIRED_1H, cli_type) if cli_type in {"claude", "codex", "pi", "prime"} else Session(cli_type)
+    for text, wanted in (("/ar:ok 'regex:((a+))+b'", "Unsafe regex"), ("/ar:ok '((a+))+b'", "((a+))+b")):
+        reply = session.prompt(text)
+        assert not blocked(reply) and "decision" not in reply, f"{text!r} on {cli_type}: {reply}"
+        assert wanted in text_of(reply), f"{text!r} on {cli_type} was not answered: {reply}"
+
+    refused = session.prompt("/ar:ok 'git push'", agent_id="subagent-1")
+    assert not blocked(refused) and "decision" not in refused, f"the user-only refusal blocks on {cli_type}: {refused}"
+    from autorun.core import user_only_refusal
+
+    assert user_only_refusal("/ar:ok", cli_type) in text_of(refused), refused
 
 
 # ─── modes and the message ────────────────────────────────────────────────

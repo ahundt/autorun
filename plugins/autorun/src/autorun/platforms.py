@@ -853,11 +853,16 @@ class CodexHookProtocol(HookProtocol):
 CLAUDE_HOOKS = ClaudeHookProtocol(
     "claude",
     supports_ask_decision=True,
-    # Claude accepts top-level block/reason for PostToolUse, but autorun's
-    # established non-Codex behavior is feedback-only for context events.
-    # Keep that tested behavior instead of turning existing deny() calls into
-    # new prompt/result blocks merely because the wire format supports them.
+    # UserPromptSubmit: a denial rejects the prompt. Claude Code shows the
+    # reason to the user, keeps the prompt text in the message, and adds
+    # nothing to the context. The one handler that denies a prompt is the
+    # cache guard's expiry check; command replies go through command_response,
+    # which carries no decision, and a daemon failure on this event fails open.
+    # https://code.claude.com/docs/en/hooks#userpromptsubmit-decision-control
+    # PostToolUse stays feedback-only: Claude accepts block/reason there, but
+    # existing deny() calls on that event were written as feedback.
     # https://code.claude.com/docs/en/hooks#posttooluse-decision-control
+    context_events_with_block_decision=frozenset({"UserPromptSubmit"}),
 )
 
 # Legacy Gemini CLI: root allow/deny decisions; deny rejects AfterAgent

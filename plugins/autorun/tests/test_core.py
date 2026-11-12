@@ -701,13 +701,19 @@ class TestEventContext:
         assert response["systemMessage"] == "Success message"
 
     def test_respond_deny(self):
-        """respond with deny should return correct format."""
+        """A prompt denial rejects the prompt on Claude and stays feedback on Pi."""
         ctx = EventContext(session_id="test", event="UserPromptSubmit")
         response = ctx.respond("deny", "Blocked")
 
         # autorun mandate: Always keep AI working unless it's a local command
         assert response["continue"] is True
-        assert response["decision"] == "approve"
+        # Claude Code rejects the prompt and shows the reason to the user.
+        assert response["decision"] == "block"
+        assert response["reason"] == "Blocked"
+
+        feedback = EventContext(session_id="test", event="UserPromptSubmit", cli_type="pi").respond("deny", "Blocked")
+        assert feedback["continue"] is True
+        assert feedback["decision"] == "approve"
 
     def test_respond_pretooluse(self):
         """respond for PreToolUse should include hookSpecificOutput."""

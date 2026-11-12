@@ -77,6 +77,7 @@ def test_capability_snapshot_exposes_each_harness_hook_contract():
     assert platforms["qwen"]["pretool_decision_location"] == "hook_specific_output"
     assert platforms["antigravity"]["hook_manifest_container_key"] == "autorun"
     assert platforms["codex"]["context_events_with_block_decision"] == ["PostToolUse", "UserPromptSubmit"]
+    assert platforms["claude"]["context_events_with_block_decision"] == ["UserPromptSubmit"]
 
 
 def test_capability_snapshot_records_command_turn_behavior_without_replacing_handlers():
