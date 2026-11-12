@@ -540,7 +540,10 @@ class TestRevision3Upgrade:
         for task_count, _size, lock_ms, wal_bytes in rows:
             assert lock_ms < 1000.0, f"{task_count} tasks held the write lock {lock_ms:.1f} ms"
             assert wal_bytes < 1024 * 1024, f"{task_count} tasks wrote {wal_bytes} WAL bytes"
-        growth = rows[-1][2] / max(rows[0][2], 0.5)
+        # Floored at 5 ms: both sizes take about 1 ms, where one scheduler
+        # pause would decide the ratio. A step that reads tasks takes 100 ms
+        # at 20,000 tasks (quick_check(tasks) measured 199.9 ms).
+        growth = rows[-1][2] / max(rows[0][2], 5.0)
         assert growth < 3.0, (
             f"With 10x the tasks the upgrade held the write lock {growth:.2f}x as long; "
             "it is touching rows instead of only the table definition."
