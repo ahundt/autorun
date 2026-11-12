@@ -1,6 +1,6 @@
 ---
-name: parallel-subagent
-description: Eliminate a stubborn configuration bug by testing 8-10 fundamentally different fixes in parallel instead of one at a time. Use when the root cause is ambiguous and asked to "fix this stubborn bug", "we've tried everything", "run approaches in parallel", "use parallel subagents", or "find which config actually works". Builds a minimal test harness, evaluates every approach simultaneously, identifies the winners, and explains WHY they work.
+name: test-fixes-in-parallel
+description: Test 8 to 10 fundamentally different fixes for one stubborn bug side by side, with parallel subagents, instead of one at a time. Use when the root cause is ambiguous and asked to "fix this stubborn bug", "we've tried everything", "run approaches in parallel", "use parallel subagents", or "find which config actually works". Builds a minimal test harness, runs every approach, names the fixes that work, and explains why they work.
 ---
 
 # Fix Stubborn Bugs Fast By Parallelizing

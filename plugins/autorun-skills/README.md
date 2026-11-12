@@ -13,10 +13,10 @@ them needs autorun's hooks, commands or daemon, so they live apart from the
 | `cli-demo-recorder` | Records demo videos and GIFs of CLI and TUI programs with asciinema, agg, ffmpeg and tmux. |
 | `function-signature-and-parameter-guidance` | Designs and reviews caller-facing names: functions, CLI flags, config keys, parameters, errors and help text. |
 | `mermaid-diagrams` | Renders Mermaid diagrams to SVG with beautiful-mermaid and bun. |
-| `parallel-subagent` | Tests 8 to 10 different fixes for one stubborn bug side by side with parallel subagents and reports which work and why. |
 | `streamline-text` | Shortens and clarifies prose while keeping every fact, number, command and qualifier. |
 | `synthesize-project-requirements` | Collects requirements, decisions and gotchas from notes, git history and past AI sessions into one evidence-backed note. |
 | `task-lifecycle-workflow` | Runs long, correction-heavy work from evidence to a verified finish: plans, parallel agents, reviews and recovery. |
+| `test-fixes-in-parallel` | Tests 8 to 10 different fixes for one stubborn bug side by side with parallel subagents and reports which work and why. |
 | `tmux-automation` | Runs, watches and types into terminal programs in tmux or byobu panes without disturbing other sessions. |
 | `write-decision-ready-technical-reports` | Turns investigations, plans and status updates into reports that state what is true, what changed and what must be decided. |
 | `write-durable-goal-prompts` | Writes goal prompts for `/goal`, autorun or other long-running agents that stay valid as the repository changes. |

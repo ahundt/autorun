@@ -221,7 +221,7 @@ adds these, among others:
 | `ai-skill-builder` | create and review portable Agent Skills |
 | `cli-demo-recorder` | record reproducible CLI and TUI demos |
 | `mermaid-diagrams` | render Mermaid diagrams |
-| `parallel-subagent` | investigate an ambiguous failure with parallel approaches |
+| `test-fixes-in-parallel` | test several fixes for one ambiguous failure side by side with parallel subagents |
 | `pdf-extractor` | extract text and data from PDFs, trying backends in turn |
 | `synthesize-project-requirements` | recover cumulative requirements, corrections, and gotchas into an evidence-backed handoff |
 | `task-lifecycle-workflow` | coordinate long, correction-heavy work from evidence through readiness and recovery |

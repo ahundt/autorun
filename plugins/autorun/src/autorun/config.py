@@ -1162,11 +1162,13 @@ After every step and substep you must say "Wait," and execute this sequential th
     # which is exactly the kind of difference this key exists to absorb.
     "shared_agents_dir": "~/.agents",
     "shared_agents_skills_subdir": "skills",
-    # Old name -> replacement name for autorun-owned shared skill directories.
-    # Install removes an old directory only after publishing its replacement
-    # and rechecking the ownership marker under the shared install lock.
+    # Old skill name -> its replacement. A copy an earlier release installed
+    # under the old name is handed to the plugin that ships the new name
+    # (installer.skills.heirs), whose install then retires it as no longer
+    # shipped; a copy the user edited is kept and reported.
     "skill_name_migrations": {
         "claude-skill-builder": "ai-skill-builder",
+        "parallel-subagent": "test-fixes-in-parallel",
     },
     # Parent directory of the local plugin source the personal marketplace
     # references; the plugin name is appended to it.
