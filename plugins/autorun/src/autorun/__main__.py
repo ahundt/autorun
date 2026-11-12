@@ -544,10 +544,10 @@ For more information: https://github.com/ahundt/autorun
     info_group.add_argument(
         "--cache-snapshot",
         action="store_true",
-        help="Read Claude Code statusline JSON from stdin and persist "
-        "context_window/rate_limits snapshot for /ar:cache. Opt-in "
-        "tap; users invoke by piping their statusline stdin through "
-        "`autorun --cache-snapshot`. Always exits 0 (fail-open).",
+        # Accepted and ignored, so a statusline script that
+        # still pipes into it keeps working. It fed the removed context-window
+        # and rate-limit cache axes; nothing reads a snapshot any more.
+        help=argparse.SUPPRESS,
     )
     info_group.add_argument(
         "--capability-snapshot",
@@ -1143,11 +1143,9 @@ def _main(argv: Sequence[str] | None = None) -> int:
             replace_runtime_daemon=args.restart_daemon_after_install,
         )
 
-    # Cache snapshot tap (opt-in; user's statusline pipes JSON here)
-    if getattr(args, "cache_snapshot", False):
-        from autorun.cache_guard import persist_statusline_snapshot
-
-        return persist_statusline_snapshot(sys.stdin)
+    # Retired statusline tap: accepted so old statusline scripts keep working.
+    if args.cache_snapshot:
+        return 0
 
     # Capability snapshot (read-only diagnostic; does not install hooks or use daemon)
     if getattr(args, "capability_snapshot", None) is not None:

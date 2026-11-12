@@ -6,7 +6,7 @@ Covers:
   3.  _read_jsonl_tail — bounded reverse read, finds last assistant message.usage
   4.  CacheGuard.check() — full gate lifecycle via EventContext
   5.  Multiprocess safety — two concurrent writers under session_state filelock
-  6.  persist_statusline_snapshot — CLI tap; bad JSON fails-open
+  6.  `--cache-snapshot` — retired statusline tap, accepted and ignored
   7.  Compaction-event dispatch — PreCompact/PostCompact/PreCompress invalidate memo
   8.  Edge cases — combined axes, schema variants, clock-skew, huge entries
   9.  Regression fixes — global threshold visibility, stale GC, oversized stdin
@@ -98,10 +98,6 @@ class _FakeUsage:
         self.cache_creation_tokens = kw.get("cache_creation_tokens")
         self.cache_hit_ratio = kw.get("cache_hit_ratio")
         self.cache_age_seconds = kw.get("cache_age_seconds")
-        self.context_window_size = kw.get("context_window_size", 200_000)
-        self.compaction_proximity = kw.get("compaction_proximity")
-        self.rate_limit_5h = kw.get("rate_limit_5h")
-        self.rate_limit_7d = kw.get("rate_limit_7d")
         self.observed_at = kw.get("observed_at", time.time())
 
 
@@ -397,15 +393,6 @@ class TestCacheGuardDecision:
                         usage=_FakeUsage(cache_age_seconds=500))
         assert g.check(ctx) is not None
 
-    def test_rate_limit_renders_distinct_message(self, tmp_state_dir):
-        from autorun.cache_guard import CacheGuardConfig
-        g, ctx = _guard(tmp_state_dir,
-                        threshold=CacheGuardConfig(rate_limit_5h_max=0.90),
-                        usage=_FakeUsage(rate_limit_5h=0.94))
-        result = g.check(ctx)
-        assert result is not None
-        assert "rate" in str(result).lower()
-
     def test_grant_5m_allows(self, tmp_state_dir):
         from autorun.cache_guard import CacheGuardConfig, grant_override
         g, ctx = _guard(tmp_state_dir,
@@ -510,39 +497,26 @@ class TestCacheMultiprocess:
         assert gb.check(ctx_b) is not None  # no grant for B
 
 
-# === 6. persist_statusline_snapshot ==================================
+# === 6. --cache-snapshot, retired ===================================
 
-class TestStatuslineTap:
-    def test_valid_json_persists(self, tmp_state_dir):
-        from autorun.cache_guard import persist_statusline_snapshot
+class TestRetiredCacheSnapshotFlag:
+    def test_flag_is_accepted_does_nothing_and_is_hidden(self, tmp_state_dir, capsys):
+        """A statusline script that still pipes into `autorun --cache-snapshot`
+        keeps exiting 0, writes nothing, and the flag is gone from --help."""
+        from autorun.__main__ import main
         from autorun.session_manager import session_state
-        sid = _sid("tap")
-        payload = {
-            "session_id": sid,
-            "model": {"id": "claude-opus-4-7", "display_name": "Opus"},
-            "context_window": {
-                "total_input_tokens": 120,
-                "context_window_size": 200_000,
-                "used_percentage": 0.06,
-                "current_usage": {
-                    "input_tokens": 100,
-                    "output_tokens": 20,
-                    "cache_creation_input_tokens": 15,
-                    "cache_read_input_tokens": 80,
-                },
-            },
-            "rate_limits": {"five_hour": {"used_percentage": 23.5}},
-        }
-        rc = persist_statusline_snapshot(io.StringIO(json.dumps(payload)))
-        assert rc == 0
-        with session_state(sid) as st:
-            snap = st.get("cache/statusline_snapshot")
-        assert snap is not None
-        assert snap["context_window"]["current_usage"]["cache_read_input_tokens"] == 80
 
-    def test_bad_json_fails_open(self, tmp_state_dir):
-        from autorun.cache_guard import persist_statusline_snapshot
-        assert persist_statusline_snapshot(io.StringIO("not json")) == 0
+        before = sorted(tmp_state_dir.rglob("*"))
+        assert main(["--cache-snapshot"]) == 0
+        out = capsys.readouterr()
+        assert out.out == "" and out.err == ""
+        assert sorted(tmp_state_dir.rglob("*")) == before
+        with session_state("__global__") as st:
+            assert "cache/statusline_snapshot" not in st
+
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        assert "--cache-snapshot" not in capsys.readouterr().out
 
 
 # === 7. Compaction-event dispatch ====================================
@@ -626,12 +600,6 @@ class TestCombinedAxes:
         assert "ratio" in s
         assert "age" in s
 
-    def test_compaction_proximity_axis_blocks(self, tmp_state_dir):
-        from autorun.cache_guard import CacheGuardConfig
-        g, ctx = _guard(tmp_state_dir,
-                        threshold=CacheGuardConfig(compaction_used_max=0.90),
-                        usage=_FakeUsage(compaction_proximity=0.95))
-        assert g.check(ctx) is not None
 
 
 class TestUsageExtractionSchemaVariants:
@@ -722,13 +690,6 @@ class TestStaleOverrideGC:
         with session_state(sid) as st:
             remaining = st.get(_GRANT_KEY, [])
         assert len(remaining) == 1
-
-
-class TestPersistStatuslineBounded:
-    def test_oversized_stdin_fails_open_without_oom(self):
-        from autorun.cache_guard import persist_statusline_snapshot
-        huge = '{"session_id": "x", "pad": "' + ("A" * 300_000) + '"}'
-        assert persist_statusline_snapshot(io.StringIO(huge)) == 0
 
 
 # === 10. PERMANENT sentinel ==========================================
@@ -866,11 +827,17 @@ class TestCmdSetDataDriven:
         out = cache_command("set age xyz", _sid())
         assert "cannot parse duration" in out
 
-    def test_set_full_compaction(self, tmp_state_dir):
-        from autorun.cache_guard import cache_command, CacheGuardConfig
+    def test_set_full_is_retired(self, tmp_state_dir):
+        """`full` read the statusline snapshot, which is gone; a stored value
+        from an older build is ignored on load."""
+        from autorun.cache_guard import cache_command, CacheGuardConfig, _THRESHOLD_KEY
+        from autorun.session_manager import session_state
         sid = _sid()
-        cache_command("set full 90%", sid)
-        assert CacheGuardConfig.load(sid).compaction_used_max == pytest.approx(0.90)
+        out = cache_command("set full 90%", sid)
+        assert "unknown axis" in out and "expired-min-tokens" in out
+        with session_state(sid) as st:
+            st[_THRESHOLD_KEY] = {"compaction_used_max": 0.9, "rate_limit_5h_max": 0.8, "cache_age_max_seconds": 60}
+        assert CacheGuardConfig.load(sid) == CacheGuardConfig(cache_age_max_seconds=60)
 
     def test_set_unknown_axis_error(self, tmp_state_dir):
         from autorun.cache_guard import cache_command
@@ -882,10 +849,10 @@ class TestCmdSetDataDriven:
         out = cache_command("set ratio", _sid())
         assert "usage" in out.lower()
 
-    def test_set_rate_limit_axis_not_user_settable(self):
-        from autorun.cache_guard import _AXES_SET_MAP
-        assert "rate_limit_5h_max" not in _AXES_SET_MAP
-        assert "rate_limit_7d_max" not in _AXES_SET_MAP
+    def test_settable_axes_are_the_three_with_transcript_data(self):
+        from autorun.cache_guard import _AXES, _AXES_SET_MAP
+        assert sorted(_AXES_SET_MAP) == ["age", "ratio", "read"]
+        assert all(ax.set_key for ax in _AXES)
         assert "" not in _AXES_SET_MAP
 
 

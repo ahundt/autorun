@@ -413,6 +413,20 @@ def test_a_malformed_toggle_never_raises(clock, stored):
     assert "enabled" in cache_command("off 1h", session.id) or "disabled" in cache_command("off 1h", session.id)
 
 
+def test_on_and_status_name_the_four_tests_that_have_data(clock):
+    from autorun.cache_guard import cache_command
+
+    sid = f"k9-{uuid.uuid4().hex[:8]}"
+    reply = cache_command("on", sid)
+    assert "prompt-time expiry check only" in reply, reply
+    cache_command("set ratio 0.3", sid)
+    assert "prompt-time expiry check only" not in cache_command("on", sid)
+    status = cache_command("status", sid)
+    assert "prompt-time expiry check: block" in status and "ratio floor" in status, status
+    for retired in ("full", "rate-limit", "window ceiling"):
+        assert retired not in status, status
+
+
 # ─── the context-size floor ───────────────────────────────────────────────
 
 

@@ -5,12 +5,13 @@ Single-file feature. Exports:
     is_cache_enabled, set_cache_enabled — toggle query/update
     CacheGuardConfig, CacheGuard        — decision logic
     grant_override, purge_stale_overrides — ScopedAllow lifecycle
-    persist_statusline_snapshot         — CLI tap (`autorun --cache-snapshot`)
     cache_command                       — /ar:cache subcommand dispatcher
     _read_jsonl_tail                    — JSONL bounded-tail reader
 
-The feature is OFF by default. Design principle: "stay out of the way" — no
-statusline install, no new sync primitive, no new state file.
+Four tests, all read from the transcript: `expired` at prompt time
+(CacheGuard.check_prompt_after_expiry; on by default as a warning), and
+`ratio`, `read`, `age` at tool time (CacheGuard.check; off until
+`/ar:cache on`). No new sync primitive, no new state file.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import IO, Literal, Optional
+from typing import Literal, Optional
 
 from .config import CONFIG, detect_cli_type
 from .platforms import platform_for
@@ -107,7 +108,7 @@ def parse_quantity(s: str, *, expect: Literal["tokens", "percent"]):
 _GLOBAL_SESSION_ID = "__global__"
 # flat dict: {enabled, expired_prompt_action, expires_at, prior}. `prior` is
 # the whole entry a timed toggle replaced, or None when there was none;
-# entries written before 1.0.0rc4 hold a bool there.
+# entries written by older builds hold a bool there.
 _TOGGLE_KEY = "cache/toggle"
 _EXPIRED_PROMPT_ACTIONS = ("block", "warn")
 
@@ -215,9 +216,6 @@ class CacheGuardConfig:
     cache_hit_ratio_min:   float | None = None
     cache_read_tokens_min: int   | None = None
     cache_age_max_seconds: float | None = None
-    compaction_used_max:   float | None = None
-    rate_limit_5h_max:     float | None = None
-    rate_limit_7d_max:     float | None = None
     # Smallest context the prompt-time expiry check applies to; None reads
     # CONFIG cache_guard_expired_min_tokens. Not an axis: see _expired_trip.
     expired_min_tokens:    int   | None = None
@@ -273,10 +271,6 @@ class UsageReading:
     # How long the cache this response wrote lives: 3600 for a 1-hour write,
     # 300 for a 5-minute one, None when the record does not say (Pi, Prime).
     cache_lifetime_seconds: float | None = None
-    context_window_size:    int   | None = None
-    compaction_proximity:   float | None = None
-    rate_limit_5h:          float | None = None
-    rate_limit_7d:          float | None = None
     observed_at:            float = 0.0
 
 
@@ -490,15 +484,6 @@ _AXES: tuple[_Axis, ...] = (
     _Axis("cache_age_max_seconds", "cache_age_seconds",   "gt",
           "age {u:.0f}s > {t:.0f}s",
           "age ceiling:         {t:.0f}s", gemini_ok=True,  set_key="age",    parser="duration"),
-    _Axis("compaction_used_max",   "compaction_proximity","gt",
-          "window {u:.2f} > {t:.2f}",
-          "window ceiling:      {t:.2f}", gemini_ok=True,  set_key="full",   parser="percent"),
-    _Axis("rate_limit_5h_max",     "rate_limit_5h",       "gt",
-          "rate-limit 5h {u:.2%} > {t:.2%}",
-          "rate-limit 5h max:   {t:.2%}", gemini_ok=True,  set_key="",       parser="percent"),
-    _Axis("rate_limit_7d_max",     "rate_limit_7d",       "gt",
-          "rate-limit 7d {u:.2%} > {t:.2%}",
-          "rate-limit 7d max:   {t:.2%}", gemini_ok=True,  set_key="",       parser="percent"),
 )
 
 # Only axes that are user-settable (set_key != "")
@@ -549,7 +534,6 @@ _DEFAULT_JSONL_MAX_BYTES = CONFIG["cache_guard_jsonl_scan_bytes"]
 _MEMO_TTL_SECONDS        = CONFIG["cache_guard_memo_ttl_seconds"]
 _GRANT_KEY = "cache/overrides"
 _LAST_USAGE_KEY = "cache/last_usage"
-_SNAPSHOT_KEY = "cache/statusline_snapshot"
 # sha256 of prompts the expiry check blocked; the same text then passes.
 _RESENT_PROMPTS_KEY = "cache/blocked_prompts"
 _RESENT_PROMPTS_KEPT = 50  # ponytail: oldest dropped; a block is rare, 50 covers a session
@@ -638,30 +622,22 @@ class CacheGuard:
         """
         if (event or "") in self._INVALIDATING_EVENTS:
             with session_state(self.session_id) as st:
-                for key in (_LAST_USAGE_KEY, _SNAPSHOT_KEY):
-                    if key in st:
-                        del st[key]
+                if _LAST_USAGE_KEY in st:
+                    del st[_LAST_USAGE_KEY]
 
     # ── usage resolution ─────────────────────────────────────────
 
     def _read_usage(self, ctx: object) -> Optional[UsageReading]:
-        """Resolve current usage via memo → snapshot → JSONL scan.
+        """Resolve current usage via memo → JSONL scan.
 
-        Lock budget: one filelock in the common path (memo/snapshot hit);
-        two when falling back to JSONL (read + memoise write).
+        Lock budget: one filelock on a memo hit; two when falling back to
+        JSONL (read + memoise write).
         """
         with session_state(self.session_id) as st:
             memo = st.get(_LAST_USAGE_KEY)
-            snap = st.get(_SNAPSHOT_KEY)
 
         if memo and (time.time() - memo.get("observed_at", 0)) < _MEMO_TTL_SECONDS:
             return _usage_from_memo(memo)
-
-        if snap:
-            usage = _usage_from_snapshot(snap)
-            if usage is not None:
-                _memoise(self.session_id, usage)
-                return usage
 
         path = getattr(ctx, "transcript_path", None)
         if path:
@@ -689,9 +665,7 @@ class CacheGuard:
     # ── UX ──────────────────────────────────────────────────────
 
     def _render_block(self, usage: Optional[UsageReading], trips: list[str]) -> str:
-        rate_limit_tripped = any(t.startswith("rate-limit") for t in trips)
-        heading = ("ar:cache BLOCKED — rate limit" if rate_limit_tripped
-                   else "ar:cache BLOCKED — prompt cache is cold")
+        heading = "ar:cache BLOCKED — prompt cache is cold"
         axes = "\n".join(f"  • {t}" for t in trips)
         hint = (
             "\nTo proceed anyway:"
@@ -829,59 +803,6 @@ def _usage_from_memo(memo: dict) -> UsageReading:
     return UsageReading(**kwargs)
 
 
-def _usage_from_snapshot(snap: dict) -> "UsageReading | None":
-    """Build a UsageReading from a statusline-tap snapshot.
-
-    Note: cache_age_seconds is intentionally None — snapshot age ≠ cache age.
-    The age axis is only meaningful via a JSONL timestamp.
-    """
-    try:
-        cw = snap.get("context_window") or {}
-        cu = (cw.get("current_usage") or {}) if isinstance(cw, dict) else {}
-        input_tokens = int(cu.get("input_tokens") or 0)
-        cache_read = int(cu.get("cache_read_input_tokens") or 0)
-        cache_creation = int(cu.get("cache_creation_input_tokens") or 0)
-        denom = input_tokens + cache_read + cache_creation
-        ratio = (cache_read / denom) if denom > 0 else None
-        window = cw.get("context_window_size")
-        proximity = None
-        if isinstance(window, int) and window > 0 and denom > 0:
-            proximity = denom / window
-        rl = snap.get("rate_limits") or {}
-        rl5 = _rate_limit_frac((rl.get("five_hour") or {}).get("used_percentage"))
-        rl7 = _rate_limit_frac((rl.get("seven_day") or {}).get("used_percentage"))
-        observed = snap.get("observed_at") or time.time()
-        cli = "claude"
-        model = snap.get("model")
-        if isinstance(model, dict) and "gemini" in str(model.get("id", "")).lower():
-            cli = "gemini"
-        return UsageReading(
-            cli=cli,
-            total_input_tokens=denom if denom > 0 else None,
-            cache_read_tokens=cache_read,
-            cache_creation_tokens=cache_creation,
-            cache_hit_ratio=ratio,
-            cache_age_seconds=None,
-            context_window_size=window if isinstance(window, int) else None,
-            compaction_proximity=proximity,
-            rate_limit_5h=rl5,
-            rate_limit_7d=rl7,
-            observed_at=observed,
-        )
-    except Exception:
-        return None
-
-
-def _rate_limit_frac(v) -> float | None:
-    if v is None:
-        return None
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f / 100.0 if f > 1.0 else f
-
-
 # ── /ar:cache slash-command dispatcher ───────────────────────────────
 
 def _cmd_toggle(rest: list, session_id: str, target: bool, action: str = "block") -> str:
@@ -895,7 +816,13 @@ def _cmd_toggle(rest: list, session_id: str, target: bool, action: str = "block"
     dur = _ttl
     set_cache_enabled(session_id, target, duration=dur, expired_prompt_action=action)
     word = ("enabled (warn only at prompt time)" if action == "warn" else "enabled") if target else "disabled"
-    return f"ar:cache {word}{' for ' + ' '.join(rest) if dur else ''}."
+    reply = f"ar:cache {word}{' for ' + ' '.join(rest) if dur else ''}."
+    if target and not any(getattr(CacheGuardConfig.load(session_id), ax.field) is not None for ax in _AXES):
+        reply += (
+            " Active: the prompt-time expiry check only. Tool-time thresholds"
+            " are unset: /ar:cache set ratio|read|age <value>."
+        )
+    return reply
 
 
 def _cmd_on(rest: list, session_id: str) -> str:
@@ -1044,7 +971,7 @@ def _render_status(session_id: str, cli_type: str | None = None) -> str:
             lines.append(f"  {ax.status_fmt.format(t=t)}{fail}{hint}")
             configured = True
     if not configured:
-        lines.append("  (none configured — /ar:cache set ratio|read|age|full <value>)")
+        lines.append("  (none configured — /ar:cache set ratio|read|age <value>)")
     active = [ScopedAllow.from_dict(g) for g in grants_raw
               if isinstance(g, dict) and _safe_is_valid(g)]
     if active:
@@ -1056,33 +983,3 @@ def _render_status(session_id: str, cli_type: str | None = None) -> str:
     if not enabled:
         lines.append("enable with: /ar:cache on   (optionally `/ar:cache on 1h` for a window)")
     return "\n".join(lines)
-
-
-def persist_statusline_snapshot(fp: IO[str]) -> int:
-    """Read the Claude statusline JSON from ``fp`` and persist under ``cache/statusline_snapshot``.
-
-    Returns 0 always (fail-open — the user's statusline must keep working even if we choke).
-    """
-    try:
-        data = json.load(fp)
-    except Exception:
-        return 0
-    if not isinstance(data, dict):
-        return 0
-    sid = (data.get("session_id")
-           or os.environ.get("CLAUDE_SESSION_ID")
-           or os.environ.get("GEMINI_SESSION_ID"))
-    if not sid:
-        return 0
-    snap = {
-        "context_window": data.get("context_window"),
-        "rate_limits":    data.get("rate_limits"),
-        "model":          data.get("model"),
-        "observed_at":    time.time(),
-    }
-    try:
-        with session_state(sid) as st:
-            st[_SNAPSHOT_KEY] = snap
-    except Exception:
-        return 0
-    return 0

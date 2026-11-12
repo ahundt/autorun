@@ -559,7 +559,7 @@ commands in the [CLI Reference](#cli-reference) inspect, export and clean them.
 | `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
 | `/ar:tabs` | list the agent sessions running in your tmux windows, lettered A, B, C, with directory, purpose and status |
 | `/ar:tabw` | type into those sessions after stating what it will send, e.g. `/ar:tabw awaiting:continue` or `/ar:tabw A:git status, B:pwd` |
-| `/ar:cache` | off by default; blocks tool use while Claude Code's prompt cache is cold or the context is near compaction, so a resumed session does not pay to rebuild it: `on\|off [5m\|1h\|perm]` (a timed one reverts when it ends), `set ratio\|read\|age\|full <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`, `2d`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>` |
+| `/ar:cache` | off by default; blocks tool use while Claude Code's prompt cache is cold or the context is near compaction, so a resumed session does not pay to rebuild it: `on\|off [5m\|1h\|perm]` (a timed one reverts when it ends), `set ratio\|read\|age <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`, `2d`), `ok [5m\|N\|perm]`, `no`, `global <subcommand>` |
 | `/ar:restart-daemon` | restart the daemon for this install |
 
 `/ar:tabs` shows each session as `awaiting input`, `working`, `plan approval`,
@@ -637,7 +637,6 @@ autorun --status --gemini            # include the retired Gemini CLI
 autorun --status --custom-harness 'lab=codex:codex-lab:/path/to/config::Codex Lab'
 autorun --version
 autorun --capability-snapshot FILE   # platforms, commands, skills and hooks as JSON ('-' or no FILE: stdout)
-statusline-command | autorun --cache-snapshot   # pipe your Claude Code statusline JSON in so /ar:cache can see cache state
 ```
 
 **Maintain:**
