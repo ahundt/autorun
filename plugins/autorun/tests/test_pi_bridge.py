@@ -837,6 +837,36 @@ console.log(JSON.stringify({ before, tool }));
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
+def test_pi_aborted_settle_does_not_restart_the_cancelled_turn(tmp_path):
+    result, frames = _run_pi_adapter_driver(
+        tmp_path,
+        [{"decision": "block", "reason": "continue"}],
+        '''import extension from "__EXTENSION__";
+const handlers = new Map(), sent = [];
+const pi = {
+  registerCommand() {}, registerTool() {}, on(name, handler) { handlers.set(name, handler); },
+  sendMessage(message, options) { sent.push({ message, options }); },
+};
+extension(pi);
+const ctx = {
+  cwd: "/sandbox", mode: "rpc", isIdle: () => true, hasPendingMessages: () => false,
+  ui: { notify() {} },
+  sessionManager: {
+    getSessionId: () => "pi-session", getSessionFile: () => undefined,
+    buildSessionContext: () => ({ messages: [] }),
+  },
+};
+await handlers.get("agent_settled")({ aborted: true }, ctx);
+await handlers.get("session_shutdown")({}, ctx);
+console.log(JSON.stringify({ sent }));
+''',
+    )
+
+    assert result["sent"] == []
+    assert [frame["hook_event_name"] for frame in frames] == ["SessionEnd"]
+
+
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_settled_queues_only_one_continuation_until_next_agent_start(tmp_path):
     result, _frames = _run_pi_adapter_driver(
         tmp_path,
@@ -1438,6 +1468,19 @@ for (const spelling of {json.dumps(spellings)}) {{
 # extension step — no second template, step function, or protocol class.
 
 
+def test_pi_and_prime_runtime_contract_fixture():
+    contract = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures/hook_contracts/pi-prime-2026-11-12.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert "aborted" in contract["pi"]["agent_settled"]["fields"]
+    assert contract["prime"]["last_typescript_version"] == "0.9.8"
+    assert contract["prime"]["autorun_runtime_max_exclusive"] == "0.10.0"
+
+
 def test_prime_platform_is_a_pi_variant_with_its_own_identity():
     from autorun.platforms import PLATFORMS
 
@@ -1459,7 +1502,8 @@ def test_prime_platform_is_a_pi_variant_with_its_own_identity():
     assert prime.hook_protocol.name == "prime"
     assert prime.memory_sentinel_slug == "prime-agents-md"
     assert prime.task_record_source == "prime_task_tool"
-    # Unified pathway: every behavioral contract is Pi's, verbatim.
+    assert prime.runtime_version_max_exclusive == (0, 10, 0)
+    # Unified pathway through the final TypeScript release line.
     assert prime.has_hooks is True
     assert prime.tool_names == pi.tool_names
     assert prime.task_management_style == pi.task_management_style
@@ -1503,7 +1547,12 @@ def test_staged_pi_family_extensions_carry_their_own_cli_type(tmp_path):
         assert "__AUTORUN_CLI_TYPE__" not in text
 
 
-def _install_prime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _install_prime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    version: str = "0.7.1",
+    expected_status: int = 0,
+) -> Path:
     """Mirror ``_install_pi`` with only the prime-agent binary discoverable."""
     from autorun.installer import entrypoint
 
@@ -1525,9 +1574,11 @@ def _install_prime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(
         entrypoint,
         "_run",
-        lambda argv: subprocess.CompletedProcess(argv, 0, "", ""),
+        lambda argv: subprocess.CompletedProcess(
+            argv, 0, f"prime-agent {version}\n" if "--version" in argv else "", ""
+        ),
     )
-    assert entrypoint.install_plugins("ar", conductor=False, tool=False) == 0
+    assert entrypoint.install_plugins("ar", conductor=False, tool=False) == expected_status
     return home
 
 
@@ -1547,6 +1598,12 @@ def test_prime_install_lands_in_the_prime_home_with_prime_cli_type(tmp_path, mon
 
     assert entrypoint.uninstall_plugins("ar") == 0
     assert not installed.exists()
+
+
+def test_prime_010_rust_runtime_does_not_receive_the_pi_extension(tmp_path, monkeypatch):
+    home = _install_prime(tmp_path, monkeypatch, version="0.10.2", expected_status=1)
+
+    assert not (home / ".prime" / "agent" / "packages" / "ar").exists()
 
 
 def test_prime_backend_declares_an_e2e_contract():

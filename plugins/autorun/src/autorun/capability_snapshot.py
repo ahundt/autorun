@@ -47,6 +47,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "manifest_events_with_flat_handlers": sorted(platform.hook_protocol.manifest_events_with_flat_handlers),
         "manifest_events_without_matchers": sorted(platform.hook_protocol.manifest_events_without_matchers),
         "config_dir": platform.config_dir,
+        "runtime_version_max_exclusive": list(platform.runtime_version_max_exclusive),
         "template_dir": platform.template_dir,
         "hooks_path_var": platform.hooks_path_var,
         "extension_manifest_name": platform.extension_manifest_name,

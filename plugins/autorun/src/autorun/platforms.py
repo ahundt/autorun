@@ -1213,6 +1213,11 @@ class Platform:
     # False keeps an archived/legacy integration available through its explicit
     # CLI flag without selecting it during the default maintained-harness install.
     install_by_default: bool = True
+    # An exclusive upper bound for this integration's proven runtime contract.
+    # Empty means no upper bound is known. The installer probes `<binary>
+    # --version` before writing when this is set and refuses incompatible or
+    # unreadable runtimes instead of publishing dead hooks.
+    runtime_version_max_exclusive: tuple[int, ...] = ()
     config_dir: str = ""
     # Env vars the harness itself documents as relocating its config root
     # (e.g. CODEX_HOME). install.platform_config_dir() honors them between the
@@ -2093,6 +2098,7 @@ PRIME = register(
         hook_protocol=PRIME_HOOKS,
         task_record_source="prime_task_tool",
         memory_sentinel_slug="prime-agents-md",
+        runtime_version_max_exclusive=(0, 10, 0),
     )
 )
 

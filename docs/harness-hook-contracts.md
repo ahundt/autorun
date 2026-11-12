@@ -122,7 +122,7 @@ Each event cell states whether the harness emits the event and what its output c
 | before_agent_start | Emits after input expansion and before the run. It can return a displayed custom message to the model. AR forwards UserPromptSubmit. Pi cannot block the prompt through this return shape, so cache enforcement is a notice on Pi. [P1][AR2] |
 | tool_call | Can block with `{block:true, reason}` and can mutate input. AR forwards PreToolUse and blocks with the daemon reason. [P1][AR2] |
 | tool_result | Can replace or append result content. AR forwards PostToolUse, appends reminders, and fails the task-tool result when the daemon did not confirm a task mutation. [P1][AR2] |
-| agent_settled | Final-idle signal. AR forwards Stop; a block queues a hidden continuation message with `triggerTurn:true`, while an allowed response with text is now shown through `ctx.ui.notify`. [P1][AR2] |
+| agent_settled | Final-idle signal with an `aborted` flag. AR ignores aborted settles so cancellation cannot be immediately restarted. Otherwise it forwards Stop; a block queues one hidden continuation with `triggerTurn:true`, while allowed response text is shown through `ctx.ui.notify`. [P1][AR2] |
 | SubagentStop | Pi subagent children use the same `agent_settled` event and are identified by the extension environment. AR forwards SubagentStop and does not start a continuation from the child adapter. [P1][AR2] |
 | PermissionRequest | No separate extension event is needed for autorun; `tool_call` is the blocking gate. [P1][AR2] |
 | Compact | `session_before_compact` can cancel/customize and `session_compact` reports completion. AR forwards PreCompact and PostCompact. [P1][AR2] |
@@ -131,14 +131,14 @@ Each event cell states whether the harness emits the event and what its output c
 
 | Event | Contract, autorun behavior, and gap |
 |---|---|
-| SessionStart | Installed Prime Agent 0.7.1 uses the Pi-compatible runtime and the same autorun template, so behavior matches Pi: context is queued for the next turn and displayed. Current Prime 0.10.2 is a newer implementation; compatibility with the Pi event API is not established. [R1][AR1][AR2] |
-| Prompt | Installed 0.7.1 behavior matches Pi `before_agent_start`: notice/context, no prompt block. Current 0.10.2 contract is not established. [R1][AR2] |
-| PreToolUse | Installed 0.7.1 matches Pi `tool_call` and blocks with a reason. Current 0.10.2 contract is not established. [R1][AR2] |
-| PostToolUse | Installed 0.7.1 matches Pi `tool_result`. Current 0.10.2 contract is not established. [R1][AR2] |
-| Stop | Installed 0.7.1 matches Pi `agent_settled`; allowed notices are now visible and blocked Stops continue. Current 0.10.2 contract is not established. [R1][AR2] |
-| SubagentStop | Installed 0.7.1 matches the Pi child route. Current 0.10.2 contract is not established. [R1][AR2] |
-| PermissionRequest | Installed 0.7.1 uses the Pi tool-call gate; no separate event is used. Current 0.10.2 contract is not established. [R1][AR2] |
-| Compact | Installed 0.7.1 matches Pi compact events. Current 0.10.2 contract is not established. Proposal: add version detection and a separate protocol/installer entry if 0.10.x no longer loads Pi extensions. [R1][AR1][AR2] |
+| SessionStart | Installed Prime Agent 0.7.1 uses the Pi-compatible runtime and the same autorun template, so context is queued for the next turn and displayed. Prime 0.10.x has no Pi extension route, and autorun refuses this integration. [R1][AR1][AR2] |
+| Prompt | Installed 0.7.1 matches Pi `before_agent_start`: notice/context, no prompt block. Prime 0.10.x has no Pi extension route, so autorun refuses this integration. [R1][AR2] |
+| PreToolUse | Installed 0.7.1 matches Pi `tool_call` and blocks with a reason. Prime 0.10.x has no Pi extension route. [R1][AR2] |
+| PostToolUse | Installed 0.7.1 matches Pi `tool_result`. Prime 0.10.x has no Pi extension route. [R1][AR2] |
+| Stop | Installed 0.7.1 matches Pi `agent_settled`. Prime 0.10.2 is a Rust runtime without the Pi coding-agent extension package; autorun pins an exclusive 0.10.0 ceiling and refuses to install enforced hooks on 0.10.x instead of publishing a dead Pi adapter. [R1][AR2] |
+| SubagentStop | Installed 0.7.1 matches the Pi child route. Prime 0.10.x has no Pi extension route. [R1][AR2] |
+| PermissionRequest | Installed 0.7.1 uses the Pi tool-call gate; no separate event is used. Prime 0.10.x has no Pi extension route. [R1][AR2] |
+| Compact | Installed 0.7.1 matches Pi compact events. Prime 0.10.x does not load this extension API, so autorun does not install the Pi adapter there. [R1][AR1][AR2] |
 
 ### ForgeCode
 
@@ -164,7 +164,7 @@ Each event cell states whether the harness emits the event and what its output c
 | Antigravity | Enforced by Stop `decision:continue`. [A1][AR1] | Queued and injected exactly once at SessionStart/PreInvocation because allowed Stop has no notice field. [A1][AR1] | PreToolUse denial reason; invalid shape becomes deny. [A1][AR1] | Stop blocks; `fullyIdle=false` preserves delegated work; SessionStart/PreInvocation inject notices. [A1][AR1] | First PreInvocation (`invocationNum=0`) runs prompt policy; later invocations do not. [A1][AR1] |
 | OpenCode | Enforced at `session.idle` by a synthetic `promptAsync` continuation when the installed client exposes it. [O1][AR2] | The continuation text enters the conversation; allowed Stop notices need no separate idle output. [O1][AR2] | `tool.execute.before` throws the daemon reason. [O1][AR2] | Todo updates plus PreCompact/PostCompact and Stop. [O1][AR2] | `chat.message` runs prompt checks and appends visible feedback. [O1][AR2] |
 | Pi | Enforced by an `agent_settled` continuation message. [P1][AR2] | Fixed in `7f642ff2`: `ctx.ui.notify`. [P1][AR2] | `tool_call` returns `{block:true, reason}`. [P1][AR2] | Tool result, prompt, SessionStart, and Stop routes. [P1][AR2] | Warning only; before_agent_start cannot reject the prompt. [P1][AR2] |
-| Prime Agent | Same as installed Pi-compatible 0.7.1. [R1][AR2] | Fixed in `7f642ff2`. [R1][AR2] | Same as installed Pi-compatible 0.7.1. [R1][AR2] | Same as installed Pi-compatible 0.7.1. [R1][AR2] | Warning only on installed 0.7.1; current 0.10.2 not established. [R1][AR2] |
+| Prime Agent | Enforced only on Pi-compatible releases below 0.10.0; current 0.10.x is refused. [R1][AR2] | Visible on supported Pi-compatible releases. [R1][AR2] | Pi tool gate below 0.10.0; no claimed route on 0.10.x. [R1][AR2] | Pi lifecycle routes below 0.10.0. [R1][AR2] | Prompt warning below 0.10.0; no claimed route on 0.10.x. [R1][AR2] |
 | ForgeCode | Unsupported. [F1] | Unsupported. [F1] | Advisory memory/commands only. [F1][AR1] | Advisory memory only. [F1][AR1] | Unsupported. [F1] |
 
 ## What changed upstream that autorun should adopt
@@ -175,6 +175,6 @@ Each event cell states whether the harness emits the event and what its output c
 4. Qwen 0.21.15 supports `systemMessage` on Stop. Implemented in `942cddd2`; allowed Stop notices no longer disappear. [Q1]
 5. Antigravity 1.1.12 supports SessionStart/PreInvocation `injectSteps`; `invocationNum=0` identifies the first model call, and Stop `fullyIdle=false` means a background command or asynchronous task is active. AR now routes first-invocation prompt policy, defers allowed-Stop notices to the next injection point, and treats the inverse idle flag as running-work evidence without claiming it identifies a specific subagent. [A1]
 6. OpenCode 1.18.31's V1 API provides `chat.message`, `session.idle`, `experimental.session.compacting`, `session.compacted`, and `client.session.promptAsync`; V1 object entrypoints remain supported from 1.18.29. AR now uses those routes for prompt policy, Stop continuation, and compaction while feature-detecting promptAsync for older clients. The pinned source fixture is `tests/fixtures/hook_contracts/opencode-1.18.31-plugin-api.json`. [O1]
-7. Pi 1.5.2 removed `session_switch` and `session_fork` in favor of `session_start.reason`, and added `aborted` to `agent_settled`. Autorun already consumes `session_start.reason`; allowed lifecycle notices were fixed in `7f642ff2`. Add `aborted` to the forwarded Stop frame only if a policy needs to distinguish cancellation from normal completion. [P1][P2]
-8. Prime Agent's current release is 0.10.2 while the installed client is 0.7.1 and still Pi-compatible. Before claiming current-version support, detect the runtime version and establish whether 0.10.x loads the Pi extension API; use a separate Platform protocol if it does not. [R1]
+7. Pi 1.5.2 removed `session_switch` and `session_fork` in favor of `session_start.reason`, and added `aborted` to `agent_settled`. Autorun already consumes `session_start.reason`; it now suppresses Stop dispatch for an aborted settle so cancellation remains cancellation. [P1][P2]
+8. Prime Agent 0.10.2 replaced the Pi-derived TypeScript package with a Rust workspace and does not expose the Pi extension API. The Prime platform records `runtime_version_max_exclusive=(0, 10, 0)`; real installs probe `prime-agent --version` and skip the integration outside that proven range. [R1]
 9. ForgeCode still has no documented lifecycle hook API, and the lifecycle-hook proposal was closed as not planned. Continue using memory, skills, and commands; do not claim enforced guards or a Stop gate. [F1]

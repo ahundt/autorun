@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,25 @@ __all__ = [
 _FALLBACK_PLUGINS = ("ar", "autorun-skills", "pdf-extractor")
 _ALIASES = {"autorun": "ar"}
 _run = runtime._spawn
+
+
+def _runtime_contract_supported(platform: object, run=_run) -> tuple[bool, str]:
+    """Whether one installed harness is inside its registry-pinned range."""
+    upper = tuple(getattr(platform, "runtime_version_max_exclusive", ()))
+    if not upper:
+        return True, "unbounded"
+    binary = str(getattr(platform, "binary", ""))
+    try:
+        result = run((binary, "--version"))
+    except (OSError, subprocess.SubprocessError) as error:
+        return False, type(error).__name__
+    text = f"{result.stdout or ''}\n{result.stderr or ''}"
+    match = re.search(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)", text)
+    if result.returncode != 0 or match is None:
+        return False, text.strip() or f"exit {result.returncode}"
+    parsed = tuple(int(part) for part in match.groups())
+    return parsed < upper, ".".join(match.groups())
+
 
 # Distribution -> a console script it provides, used to decide whether this home
 # owns a uv tool install. Keyed by *distribution*, so the current name and every
@@ -621,6 +641,25 @@ def install_plugins(
                 status.metadata_document(__version__, commit=__commit__, env={"SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", "")}),
                 allowed=True,
             )
+
+    if not dry_run:
+        supported = []
+        for harness in harnesses:
+            compatible, installed_version = _runtime_contract_supported(harness, _run)
+            if compatible:
+                supported.append(harness)
+                continue
+            upper = ".".join(
+                str(part) for part in getattr(harness, "runtime_version_max_exclusive", ())
+            )
+            print(
+                f"{getattr(harness, 'display_name', getattr(harness, 'name', 'Harness'))} "
+                f"{installed_version} is outside autorun's proven runtime contract "
+                f"(< {upper}); enforced hooks will not be installed."
+            )
+        harnesses = tuple(supported)
+        if not harnesses:
+            return 1
 
     call = orchestrate.preview if dry_run else orchestrate.install
     result = call(

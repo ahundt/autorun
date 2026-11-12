@@ -495,8 +495,10 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
     continuationInFlight = false;
   });
 
-  pi.on("agent_settled", async (_event, ctx) => {
-    if (continuationInFlight || ctx.hasPendingMessages()) return;
+  pi.on("agent_settled", async (settled, ctx) => {
+    // Pi 1.5.2 marks a user-cancelled turn as aborted. Treating that settle as
+    // Stop can immediately restart the turn autorun was just asked to cancel.
+    if (settled.aborted || continuationInFlight || ctx.hasPendingMessages()) return;
     const event = process.env.PI_SUBAGENT_CHILD === "1" ? "SubagentStop" : "Stop";
     const response = await bridge.askDaemon(frame(ctx, event, pi));
     const reason = responseMessage(response);
