@@ -793,6 +793,11 @@ RELEASE_IDENTITY_FIELDS = (
     ("plugins/pdf-extractor/plugin.json", "version"),
     ("plugins/pdf-extractor/gemini-extension.json", "version"),
     ("plugins/pdf-extractor/.codex-plugin/plugin.json", "version"),
+    # The skills plugin is skills only: no code, no pyproject.
+    ("plugins/autorun-skills/.claude-plugin/plugin.json", "version"),
+    ("plugins/autorun-skills/.codex-plugin/plugin.json", "version"),
+    ("plugins/autorun-skills/plugin.json", "version"),
+    ("plugins/autorun-skills/gemini-extension.json", "version"),
 )
 
 

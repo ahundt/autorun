@@ -1,0 +1,37 @@
+{
+  "name": "autorun-skills",
+  "version": "1.0.0rc4",
+  "description": "General-purpose agent skills: writing, planning reports, skill authoring, diagrams, demos, tmux testing",
+  "author": {
+    "name": "Andrew Hundt",
+    "email": "ATHundt@gmail.com",
+    "url": "https://github.com/ahundt/autorun"
+  },
+  "homepage": "https://github.com/ahundt/autorun#readme",
+  "repository": "https://github.com/ahundt/autorun",
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex",
+    "skills",
+    "writing",
+    "agent-skills",
+    "mermaid",
+    "tmux",
+    "demos"
+  ],
+  "commands": [],
+  "skills": [
+    "./skills/"
+  ],
+  "interface": {
+    "displayName": "Autorun Skills",
+    "shortDescription": "General-purpose skills for writing, planning reports and tooling.",
+    "longDescription": "Eleven skills that work without autorun's hooks: shortening text without losing facts, decision-ready reports, durable goal prompts, project requirements from notes and sessions, long-task coordination, naming and parameter design, skill authoring, Mermaid rendering, CLI demo recording, tmux testing, and testing several fixes for one bug in parallel.",
+    "developerName": "Andrew Hundt",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills"
+    ],
+    "websiteURL": "https://github.com/ahundt/autorun"
+  }
+}

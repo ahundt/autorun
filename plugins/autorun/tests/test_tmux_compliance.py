@@ -3,7 +3,7 @@
 Comprehensive tmux/byobu compliance test
 
 Validates that the tmux implementation meets all requirements from
-plugins/autorun/skills/tmux-automation/SKILL.md
+plugins/autorun-skills/skills/tmux-automation/SKILL.md
 """
 
 import sys

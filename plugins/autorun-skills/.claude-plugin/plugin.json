@@ -1,0 +1,19 @@
+{
+  "name": "autorun-skills",
+  "version": "1.0.0rc4",
+  "description": "General-purpose agent skills: writing, planning reports, skill authoring, diagrams, demos, tmux testing",
+  "author": {
+    "name": "Andrew Hundt",
+    "email": "ATHundt@gmail.com"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "skills",
+    "writing",
+    "agent-skills",
+    "mermaid",
+    "tmux",
+    "demos"
+  ],
+  "skills": "./skills/"
+}

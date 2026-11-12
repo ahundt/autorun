@@ -9,9 +9,12 @@ from autorun.platforms import posix_shell
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = PLUGIN_ROOT / "skills"
-AUDIT_SCRIPT = SKILLS_ROOT / "ai-skill-builder" / "scripts" / "audit-skill.sh"
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# ar keeps the skills its own commands use; the general ones ship in the
+# autorun-skills plugin. Both are packaged the same way and held to the same rules.
+GENERAL_SKILLS_ROOT = REPO_ROOT / "plugins" / "autorun-skills" / "skills"
+PACKAGED_SKILL_ROOTS = (SKILLS_ROOT, GENERAL_SKILLS_ROOT)
+AUDIT_SCRIPT = GENERAL_SKILLS_ROOT / "ai-skill-builder" / "scripts" / "audit-skill.sh"
 AGENTS_SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
 CLAUDE_SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
 
@@ -38,7 +41,7 @@ POSIX_AUDIT_AVAILABLE = AUDIT_SHELL is not None
 
 def _skill_entrypoints() -> list[Path]:
     """Return installed skill entrypoint docs, excluding reference material."""
-    return sorted(SKILLS_ROOT.glob("*/SKILL.md"))
+    return sorted(path for root in PACKAGED_SKILL_ROOTS for path in root.glob("*/SKILL.md"))
 
 
 def _packaged_skill_dirs() -> list[Path]:
@@ -49,7 +52,8 @@ def _packaged_skill_dirs() -> list[Path]:
     """
     return sorted(
         path
-        for path in SKILLS_ROOT.iterdir()
+        for root in PACKAGED_SKILL_ROOTS
+        for path in root.iterdir()
         if path.is_dir() and any(path.iterdir())
     )
 
@@ -92,7 +96,7 @@ def test_packaged_skill_frontmatter_name_matches_its_directory(skill_dir):
 
 @pytest.mark.parametrize("name", NEW_PUBLIC_SKILLS)
 def test_new_public_skills_declare_license_and_exclude_private_corpus(name):
-    text = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
+    text = (GENERAL_SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
 
     assert "\nlicense: Apache-2.0\n" in text
     assert re.search(r"/Users/[^/\s]+/", text) is None
@@ -102,7 +106,7 @@ def test_new_public_skills_declare_license_and_exclude_private_corpus(name):
 
 def test_requirements_synthesis_has_an_explicit_no_history_fallback():
     text = (
-        SKILLS_ROOT / "synthesize-project-requirements" / "SKILL.md"
+        GENERAL_SKILLS_ROOT / "synthesize-project-requirements" / "SKILL.md"
     ).read_text(encoding="utf-8")
 
     assert "If AI Session Search is unavailable" in text
@@ -110,7 +114,7 @@ def test_requirements_synthesis_has_an_explicit_no_history_fallback():
 
 
 def test_public_durable_goal_has_no_fixed_host_limit_or_required_history_mining():
-    text = (SKILLS_ROOT / "write-durable-goal-prompts" / "SKILL.md").read_text(
+    text = (GENERAL_SKILLS_ROOT / "write-durable-goal-prompts" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -119,7 +123,7 @@ def test_public_durable_goal_has_no_fixed_host_limit_or_required_history_mining(
 
 
 def test_task_lifecycle_core_stays_below_the_release_word_gate():
-    text = (SKILLS_ROOT / "task-lifecycle-workflow" / "SKILL.md").read_text(
+    text = (GENERAL_SKILLS_ROOT / "task-lifecycle-workflow" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -140,7 +144,7 @@ def test_packaged_skill_passes_the_structural_audit(skill_dir):
 
 # ─── Semantic XML regions ───────────────────────────────────────────────────
 #
-# Methodology rule SKILL-REQ004 (plugins/autorun/skills/ai-skill-builder/SKILL.md):
+# Methodology rule SKILL-REQ004 (plugins/autorun-skills/skills/ai-skill-builder/SKILL.md):
 # every major operational region of a SKILL.md body sits inside a balanced,
 # descriptive XML tag on its own line, Markdown inside, code in fences. It is a
 # quality policy for separating instructions, context, and examples, not a
@@ -214,7 +218,7 @@ def _semantic_regions(text: str) -> tuple[list[str], list[str]]:
     return regions, defects
 
 
-# Every SKILL.md this repository ships or links, not only plugins/autorun/skills:
+# Every SKILL.md this repository ships or links, not only the two packaged roots:
 # the Codex `$ar` catalog skill, the pdf-extractor plugin skill, and the
 # repo-internal maintainer skill are loaded by the same harnesses.
 OTHER_SHIPPED_SKILLS = (
@@ -405,7 +409,7 @@ def test_audit_resolves_repository_owned_notes_from_git_root(tmp_path):
 def test_skill_entrypoints_do_not_embed_executable_markdown_commands():
     """Skills should guide tool use; they must not run Claude-only !` snippets."""
     offenders = [
-        str(path.relative_to(PLUGIN_ROOT))
+        str(path.relative_to(REPO_ROOT))
         for path in _skill_entrypoints()
         if "!`" in path.read_text(encoding="utf-8")
     ]
@@ -419,7 +423,7 @@ def test_user_invocable_skills_do_not_advertise_slash_as_skill_invocation():
     for path in _skill_entrypoints():
         text = path.read_text(encoding="utf-8")
         if "user-invocable: true" in text and "Invoke with:** `/ar:" in text:
-            offenders.append(str(path.relative_to(PLUGIN_ROOT)))
+            offenders.append(str(path.relative_to(REPO_ROOT)))
 
     assert offenders == []
 
@@ -434,7 +438,7 @@ def test_repo_internal_skill_is_not_packaged_for_users(name):
     Gemini-family extensions, and the capability snapshot at once. Location is
     the whole packaging decision; there is no per-skill exclude.
     """
-    assert not (SKILLS_ROOT / name).exists(), (
+    assert not any((root / name).exists() for root in PACKAGED_SKILL_ROOTS), (
         f"{name} is repo-internal but sits in the packaged skills directory. "
         f"Move it: git mv plugins/autorun/skills/{name} .agents/skills/{name}"
     )

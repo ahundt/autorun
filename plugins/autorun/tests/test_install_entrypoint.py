@@ -231,7 +231,12 @@ def test_isolated_daemon_paths_follow_the_fixtures_autorun_home(isolated):
 def test_selection_comes_from_the_manifest_and_accepts_the_retired_name():
     from autorun.installer.entrypoint import parse_selection
 
-    assert parse_selection(REPO, "all") == ("ar", "pdf-extractor")
+    listed = tuple(
+        entry["name"]
+        for entry in json.loads((REPO / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))["plugins"]
+    )
+    assert parse_selection(REPO, "all") == listed
+    assert "autorun-skills" in listed
     assert parse_selection(REPO, "autorun") == ("ar",)
     with pytest.raises(ValueError, match="unknown plugin"):
         parse_selection(REPO, "ar,not-a-plugin")

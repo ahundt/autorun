@@ -416,7 +416,7 @@ class TestTmuxCommandDocumentsPointAtOneSkill:
     """
 
     def test_the_skill_carries_the_procedures_the_documents_promise(self):
-        skill = Path(__file__).resolve().parents[1] / "skills" / "tmux-automation"
+        skill = Path(__file__).resolve().parents[2] / "autorun-skills" / "skills" / "tmux-automation"
 
         assert (skill / "SKILL.md").is_file()
         assert (skill / "references" / "session-management.md").is_file()
@@ -470,7 +470,7 @@ def _skill_texts(root):
 
 
 def test_tmux_automation_skill_needs_nothing_from_the_ar_plugin_and_sends_enter_alone():
-    skill = Path(__file__).resolve().parents[1] / "skills" / "tmux-automation"
+    skill = Path(__file__).resolve().parents[2] / "autorun-skills" / "skills" / "tmux-automation"
 
     assert tmux_automation_defects(_skill_texts(skill)) == []
 

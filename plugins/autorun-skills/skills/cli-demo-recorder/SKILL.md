@@ -15,7 +15,7 @@ metadata:
 Record polished demo videos for CLI tools — either as **direct subprocess recordings** (CLI tools, no AI session) or **real TUI recordings** (interactive AI sessions via tmux).
 
 **Use this skill when:** A demo GIF/video is needed for a CLI tool, plugin, or terminal application.
-**Invoke with:** `/ar:cli-demo-recorder` (autorun plugin) or `/cli-demo-recorder` (skills root), or "Help me record a demo for my CLI tool"
+**Invoke with:** "Help me record a demo for my CLI tool", or the skill name: `/autorun-skills:cli-demo-recorder` in Claude Code, `$cli-demo-recorder` in Codex, `/cli-demo-recorder` where the skill sits in a skills root
 
 ---
 

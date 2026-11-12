@@ -323,7 +323,7 @@ class TestCommandWorkflowIntegration:
         are the contract, so they are checked at the new location.
         """
         reference = os.path.join(
-            os.path.dirname(__file__), '..', 'skills', 'tmux-automation',
+            os.path.dirname(__file__), '..', '..', 'autorun-skills', 'skills', 'tmux-automation',
             'references', 'isolated-testing.md',
         )
         assert os.path.exists(reference)
@@ -338,7 +338,7 @@ class TestCommandWorkflowIntegration:
     def test_session_management_procedure_survived_the_move_to_the_skill(self):
         """Same for the session-management procedure, formerly `commands/tmux.md`."""
         reference = os.path.join(
-            os.path.dirname(__file__), '..', 'skills', 'tmux-automation',
+            os.path.dirname(__file__), '..', '..', 'autorun-skills', 'skills', 'tmux-automation',
             'references', 'session-management.md',
         )
         assert os.path.exists(reference)

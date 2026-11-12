@@ -38,7 +38,7 @@ __all__ = [
     "resolve_custom_harnesses",
 ]
 
-_FALLBACK_PLUGINS = ("ar", "pdf-extractor")
+_FALLBACK_PLUGINS = ("ar", "autorun-skills", "pdf-extractor")
 _ALIASES = {"autorun": "ar"}
 _run = runtime._spawn
 

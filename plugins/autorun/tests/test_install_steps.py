@@ -31,6 +31,12 @@ from autorun.installer.traversal import Context, Mode, run, targets  # noqa: E40
 from autorun.platforms import PLATFORMS  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
+#: Every plugin the repository marketplace lists, read from it, so a test about
+#: "all of them" keeps meaning that when a plugin is added.
+EVERY_PLUGIN = tuple(
+    entry["name"]
+    for entry in json.loads((REPO / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))["plugins"]
+)
 
 
 @pytest.fixture
@@ -1975,7 +1981,7 @@ def test_a_symlinked_settings_file_is_written_through_and_keeps_its_mode(tmp_pat
 
 @pytest.mark.parametrize(
     ("plugins", "removes_marketplace"),
-    [(("ar", "pdf-extractor"), True), (("ar",), False)],
+    [(EVERY_PLUGIN, True), (("ar",), False)],
 )
 def test_claude_uninstall_removes_the_marketplace_only_with_every_plugin(
     sandbox, plugins, removes_marketplace
@@ -2005,7 +2011,7 @@ def test_claude_uninstall_removes_the_marketplace_only_with_every_plugin(
         state_dir=sandbox / ".state",
     )
     (sandbox / ".claude").mkdir(exist_ok=True)
-    install(plugins=("ar", "pdf-extractor"), **common)
+    install(plugins=EVERY_PLUGIN, **common)
     calls.clear()
     uninstall(plugins=plugins, **common)
 
@@ -2122,7 +2128,7 @@ def test_a_retried_uninstall_still_removes_the_marketplace_autorun_added(
         encoding="utf-8",
     )
     uninstall(
-        plugins=("ar", "pdf-extractor"),
+        plugins=EVERY_PLUGIN,
         marketplace_root=REPO,
         settings={"skill_placement": {"": "auto"}, "conductor": False},
         home=sandbox,

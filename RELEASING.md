@@ -809,6 +809,18 @@ inside the `autorun-ai` distribution as `pdf_extraction` behind the `pdf` extra.
 | `plugins/pdf-extractor/gemini-extension.json` | `"version": "X.Y.Z"` | |
 | `plugins/pdf-extractor/.codex-plugin/plugin.json` | `"version": "X.Y.Z"` | Codex package manifest |
 
+### autorun-skills Plugin (4 files)
+
+It has no code and no `pyproject.toml`: it is skills only, published by
+`autorun --install` beside `ar`.
+
+| File | Field/Pattern | Notes |
+|------|---------------|-------|
+| `plugins/autorun-skills/.claude-plugin/plugin.json` | `"version": "X.Y.Z"` | |
+| `plugins/autorun-skills/.codex-plugin/plugin.json` | `"version": "X.Y.Z"` | Codex package manifest |
+| `plugins/autorun-skills/plugin.json` | `"version": "X.Y.Z"` | Portable Agent Plugins manifest |
+| `plugins/autorun-skills/gemini-extension.json` | `"version": "X.Y.Z"` | |
+
 ### Documentation (5 files)
 
 | File | Notes |
@@ -854,14 +866,14 @@ Listed only because the coverage test matches the version as a substring.
 | `docs/releases/1.0.0rc3.md` | Released notes; only inside `1.0.0rc3` |
 | `docs/codex-cli-hooks-api.md` | Names `1.0.0rc3`, the last release that always wrote `./plugins/<name>` |
 | `docs/hooks_api_reference.md` | Generic plugin path and manifest examples |
-| `plugins/autorun/skills/ai-skill-builder/references/ai-skill-builder-guide.md` | Example skill version in a frontmatter sample |
-| `plugins/autorun/skills/ai-skill-builder/references/best-practices.md` | Example skill version and changelog line |
-| `plugins/autorun/skills/ai-skill-builder/references/changelog.md` | The skill's own version history |
-| `plugins/autorun/skills/ai-skill-builder/references/discovery.md` | Example of a stable skill version |
-| `plugins/autorun/skills/ai-skill-builder/references/distribution.md` | Example of a stable skill version |
-| `plugins/autorun/skills/ai-skill-builder/references/refining-skills.md` | Example changelog line |
-| `plugins/autorun/skills/cli-demo-recorder/SKILL.md` | The skill's own version history |
-| `plugins/autorun/skills/function-signature-and-parameter-guidance/references/sources.md` | The skill's own version history |
+| `plugins/autorun-skills/skills/ai-skill-builder/references/ai-skill-builder-guide.md` | Example skill version in a frontmatter sample |
+| `plugins/autorun-skills/skills/ai-skill-builder/references/best-practices.md` | Example skill version and changelog line |
+| `plugins/autorun-skills/skills/ai-skill-builder/references/changelog.md` | The skill's own version history |
+| `plugins/autorun-skills/skills/ai-skill-builder/references/discovery.md` | Example of a stable skill version |
+| `plugins/autorun-skills/skills/ai-skill-builder/references/distribution.md` | Example of a stable skill version |
+| `plugins/autorun-skills/skills/ai-skill-builder/references/refining-skills.md` | Example changelog line |
+| `plugins/autorun-skills/skills/cli-demo-recorder/SKILL.md` | The skill's own version history |
+| `plugins/autorun-skills/skills/function-signature-and-parameter-guidance/references/sources.md` | The skill's own version history |
 | `plugins/autorun/src/autorun/installer/status.py` | Self-check fixture for build metadata |
 | `plugins/autorun/src/autorun/installer/steps.py` | Names `1.0.0rc3` in the comment on the old marketplace entry |
 | `plugins/autorun/tests/test_backend_e2e_contract.py` | A third-party tool's version in sample output |

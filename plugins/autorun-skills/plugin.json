@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "autorun-skills",
+  "version": "1.0.0rc4",
+  "description": "General-purpose agent skills: writing, planning reports, skill authoring, diagrams, demos, tmux testing",
+  "author": {
+    "name": "Andrew Hundt",
+    "email": "ATHundt@gmail.com"
+  },
+  "repository": "https://github.com/ahundt/autorun",
+  "license": "Apache-2.0"
+}
