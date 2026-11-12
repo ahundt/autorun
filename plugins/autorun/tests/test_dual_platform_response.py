@@ -427,7 +427,12 @@ class TestDualPlatformResponse:
             "start-matrix", "SessionStart", cli_type=cli_type
         ).respond("allow", "Reason")
         if cli_type == "antigravity":
-            assert response == {}
+            fixture = json.loads(
+                (Path(__file__).parent / "fixtures/hook_contracts/antigravity-1.1.12-hook-output.json").read_text()
+            )
+            assert fixture["version"] == "1.1.12"
+            assert fixture["session_start_output_fields"] == ["injectSteps"]
+            assert response == {"injectSteps": [{"ephemeralMessage": "Reason"}]}
             return
         assert response == {
             "continue": True,

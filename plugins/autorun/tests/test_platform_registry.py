@@ -271,16 +271,18 @@ def test_antigravity_platform_fields():
     assert p.harness_cli_to_autorun_events["PostInvocation"] == "AfterModel"
     assert p.tool_names["bash"] == "run_command"
     assert p.tool_names["write"] == "write_to_file"
+    assert p.autorun_to_harness_cli_events["SessionStart"] == "SessionStart"
     assert p.autorun_to_harness_cli_events["PreToolUse"] == "PreToolUse"
     assert p.autorun_to_harness_cli_events["Stop"] == "Stop"
     assert p.native_hook_events == {
+        "SessionStart",
         "PreToolUse",
         "PostToolUse",
         "PreInvocation",
         "PostInvocation",
         "Stop",
     }
-    assert p.installed_hook_events == {"PreToolUse", "PostToolUse", "Stop"}
+    assert p.installed_hook_events == {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
 
 
 def test_qwen_platform_fields():

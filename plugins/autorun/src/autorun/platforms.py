@@ -785,7 +785,7 @@ class AntigravityHookProtocol(HookProtocol):
             return native
         if event == "PostToolUse":
             return {}
-        if event in {"BeforeModel", "UserPromptSubmit", "AfterModel"}:
+        if event in {"SessionStart", "BeforeModel", "UserPromptSubmit", "AfterModel"}:
             # Already native when the client filters what the daemon filtered.
             steps = response.get("injectSteps")
             message = self._message(response)
@@ -1678,6 +1678,7 @@ ANTIGRAVITY = register(
         detect_event_names=frozenset(),
         detect_path_hints=(".antigravity", ".gemini/antigravity", ".gemini/antigravity-cli"),
         harness_cli_to_autorun_events={
+            "SessionStart": "SessionStart",
             # Agy's Invocation names are model lifecycle hooks, not tool hooks:
             # PostToolUse remains PostToolUse while PostInvocation is AfterModel.
             # https://www.antigravity.google/docs/hooks
@@ -1688,6 +1689,7 @@ ANTIGRAVITY = register(
             "Stop": "Stop",
         },
         autorun_to_harness_cli_events={
+            "SessionStart": "SessionStart",
             "PreToolUse": "PreToolUse",
             "PostToolUse": "PostToolUse",
             "BeforeModel": "PreInvocation",
@@ -1699,6 +1701,7 @@ ANTIGRAVITY = register(
         hook_protocol=ANTIGRAVITY_HOOKS,
         native_hook_events=frozenset(
             {
+                "SessionStart",
                 "PreToolUse",
                 "PostToolUse",
                 "PreInvocation",
@@ -1707,7 +1710,7 @@ ANTIGRAVITY = register(
             }
         ),
         installed_hook_events=frozenset(
-            {"PreToolUse", "PostToolUse", "Stop"}
+            {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
         ),
         has_exit2_workaround=False,
         drops_additional_context=False,
@@ -1730,7 +1733,9 @@ ANTIGRAVITY = register(
         uninstall_cmd=("agy", "plugin", "uninstall", "{name}"),
         tool_names=_ANTIGRAVITY_TOOLS,
         task_management_style="none",
-        supports_additional_context_events=frozenset({"BeforeModel", "AfterModel"}),
+        supports_additional_context_events=frozenset(
+            {"SessionStart", "BeforeModel", "AfterModel"}
+        ),
         app_bundle_ids=("com.google.antigravity",),
         app_paths=("/Applications/Antigravity.app",),
     )

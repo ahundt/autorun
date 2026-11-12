@@ -1,0 +1,20 @@
+{
+  "harness": "Google Antigravity",
+  "version": "1.1.12",
+  "read_date": "2026-11-12",
+  "official_docs": "https://antigravity.google/docs/hooks",
+  "installed_binary_sources": [
+    {
+      "path": "/opt/homebrew/bin/agy strings:30383,30457-30461",
+      "quote": "SessionStartHookArgs and SessionStartHookResult are present; SessionStartHookResult contains injectSteps."
+    },
+    {
+      "path": "/opt/homebrew/bin/agy strings:56721-56921",
+      "quote": "The embedded hooks reference lists SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, and Stop."
+    }
+  ],
+  "session_start_output_fields": ["injectSteps"],
+  "stop_output_fields": ["decision", "reason"],
+  "allowed_stop_notice_field": null,
+  "allowed_stop_notice_reason": "The official Stop contract applies reason only when decision is continue; it defines no output field for a notice on an allowed Stop."
+}
