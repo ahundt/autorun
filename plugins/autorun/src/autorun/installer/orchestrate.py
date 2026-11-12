@@ -785,14 +785,11 @@ def _registrations(
                                 ),)
                 cache_lifecycle_ok = (
                     flavor == "claude"
-                    and (
-                        (removing and (not outcomes or all(outcome.ok for outcome in outcomes)))
-                        or (not removing and outcomes and all(outcome.ok for outcome in outcomes))
-                    )
+                    and removing
+                    and (not outcomes or all(outcome.ok for outcome in outcomes))
                 )
                 if cache_lifecycle_ok:
-                    source = registration_plugins.get(plugin)
-                    keep = () if removing or source is None else (steps._version(source),)
+                    keep = ()
                     removed, unproven = claude.retire_cache_versions(
                         platform,
                         market=registration_market,

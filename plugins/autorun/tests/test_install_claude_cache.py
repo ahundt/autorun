@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -91,18 +92,112 @@ def test_same_version_cache_mismatch_names_stale_and_changed_files(source, home)
     assert "hooks/hook_entry.py" in mismatches
 
 
-def test_refresh_replaces_plugin_payload_and_preserves_managed_runtime(source, home):
+def test_refresh_replaces_plugin_payload_in_place_and_preserves_managed_runtime(source, home):
     written = install(source, home)
     runtime = written / ".venv" / "lib" / "python" / "site-packages"
     runtime.mkdir(parents=True)
     (runtime / "keep.txt").write_text("managed runtime\n", encoding="utf-8")
     (written / "stale.txt").write_text("old payload\n", encoding="utf-8")
+    root_inode = written.stat().st_ino
+    venv_inode = (written / ".venv").stat().st_ino
 
     assert claude.refresh_cache(source, written) == written
 
+    assert written.stat().st_ino == root_inode
+    assert (written / ".venv").stat().st_ino == venv_inode
     assert not (written / "stale.txt").exists()
     assert (runtime / "keep.txt").read_text(encoding="utf-8") == "managed runtime\n"
     assert claude.cache_mismatches(source, written) == ()
+
+
+def _write_round_trip_hook(root: Path, answer: str) -> None:
+    from autorun.installer.runtime import cache_venv_python
+
+    hooks = root / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    (hooks / "hook_entry.py").write_text(
+        "import json, sys\njson.load(sys.stdin)\nprint(json.dumps({'answer': "
+        + repr(answer)
+        + "}))\n",
+        encoding="utf-8",
+    )
+    (hooks / "hooks.json").write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"hooks": [{
+            "type": "command",
+            "command": (
+                f"{cache_venv_python(Path('${CLAUDE_PLUGIN_ROOT}'))} "
+                "${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py "
+                "--cli claude --event PreToolUse"
+            ),
+        }]}]}}),
+        encoding="utf-8",
+    )
+
+
+def _make_cache_python(root: Path) -> None:
+    import shutil
+
+    from autorun.installer.runtime import cache_venv_python
+
+    python = cache_venv_python(root)
+    python.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        shutil.copy2(sys.executable, python)
+    else:
+        python.symlink_to(sys.executable)
+
+
+def _round_trip(root: Path) -> str:
+    import shlex
+
+    document = json.loads((root / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    command = document["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    command = command.replace("${CLAUDE_PLUGIN_ROOT}", str(root))
+    result = subprocess.run(
+        shlex.split(command),
+        input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash"}),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return json.loads(result.stdout)["answer"]
+
+
+def test_refresh_crash_after_each_file_keeps_hook_entry_manifest_and_venv_usable(
+    source, home
+):
+    _write_round_trip_hook(source, "new")
+    written = install(source, home)
+    _write_round_trip_hook(written, "old")
+    _make_cache_python(written)
+    venv = written / ".venv"
+    steps = []
+
+    def record(step: str) -> None:
+        steps.append(step)
+
+    claude.refresh_cache(source, written, after_step=record)
+    assert steps
+
+    for crash_after in range(1, len(steps) + 1):
+        crashed = install(source, home, version=f"1.2.{crash_after + 3}")
+        _write_round_trip_hook(crashed, "old")
+        _make_cache_python(crashed)
+        seen = 0
+
+        def crash(_step: str) -> None:
+            nonlocal seen
+            seen += 1
+            if seen == crash_after:
+                raise RuntimeError("simulated refresh crash")
+
+        with pytest.raises(RuntimeError, match="simulated refresh crash"):
+            claude.refresh_cache(source, crashed, after_step=crash)
+
+        assert (crashed / "hooks" / "hook_entry.py").is_file()
+        assert (crashed / "hooks" / "hooks.json").is_file()
+        assert (crashed / ".venv").is_dir()
+        assert _round_trip(crashed) in {"old", "new"}
 
 
 def test_retirement_removes_only_proven_plugin_cache_versions(source, home):
@@ -163,7 +258,7 @@ def test_native_cache_creation_wins_a_fallback_publication_race(
     assert (runtime / "__init__.py").read_text(encoding="utf-8") == "native = True\n"
 
 
-def test_versions_are_reported_for_lifecycle_reconciliation(source, home):
+def test_versions_sit_beside_each_other_and_none_is_pruned(source, home):
     install(source, home, version="1.2.3")
     install(source, home, version="1.2.4")
 

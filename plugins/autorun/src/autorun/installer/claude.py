@@ -14,12 +14,11 @@ path. When it does, the files are simply absent and every hook autorun installs
 is silently inert. The fallback writes the cache entry directly, so the failure
 degrades to "installed but not registered" rather than "not installed".
 
-Ownership there is by the exact marketplace/plugin path plus the cached plugin
-manifest, not by an autorun marker. A marker would make the general retirement
-sweep treat Claude's registration cache as an ordinary published tree. Autorun
-refreshes only a cache whose manifest names the requested plugin, preserves
-Claude's managed ``.venv``, and retires superseded proven versions itself
-because same-version updates and uninstalls can leave stale payloads behind.
+Ownership there is checked separately from ordinary publication. Autorun
+refreshes only a proven cache, preserves Claude's managed ``.venv``, and removes
+cache versions only during an explicit uninstall. Upgrades retain every older
+version because a running Claude session keeps invoking the directory and
+private interpreter it captured at session start.
 
 THE PLACEHOLDER
 ===============
@@ -33,15 +32,17 @@ is tracked and the expansion is machine-specific.
 
 Complexity: fill and refresh copy O(payload bytes); mismatch detection hashes
 O(payload files + bytes) while excluding `.venv` and generated caches;
-substitution reads only the handful of candidate JSON documents. Version
-retirement lists one plugin directory and removes only proven generated trees.
+substitution reads only the handful of candidate JSON documents. Refresh uses
+one same-directory temporary file per changed payload file and retains no extra
+copy after each atomic rename. Uninstall lists one plugin directory and removes
+only proven generated trees.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Callable, Iterable, Iterator
 
 from . import discovery, harness
 from .fs import atomic_write, fill_tree, refresh_unmarked_tree, scan_tree, withdrawn
@@ -147,8 +148,13 @@ def cache_mismatches(source: Path, directory: Path) -> tuple[str, ...]:
     return tuple(mismatches)
 
 
-def refresh_cache(source: Path, directory: Path) -> Path | None:
-    """Replace a stale proven payload while retaining Claude's private venv."""
+def refresh_cache(
+    source: Path,
+    directory: Path,
+    *,
+    after_step: Callable[[str], None] | None = None,
+) -> Path | None:
+    """Refresh stale payload files in place while retaining Claude's private venv."""
     plugin = _manifest_name(source)
     if not plugin or not cache_mismatches(source, directory):
         return None
@@ -157,6 +163,7 @@ def refresh_cache(source: Path, directory: Path) -> Path | None:
         directory,
         ownership_proof=lambda installed: cache_owned(installed, plugin),
         preserve_names=(".venv",),
+        after_step=after_step,
     )
     if not refreshed:
         raise RuntimeError(f"{directory} differs from the shipped {plugin} plugin but ownership is unproven")
@@ -201,8 +208,8 @@ def installed_versions(
 ) -> tuple[str, ...]:
     """Every version of this plugin in the cache, oldest name first.
 
-    Lifecycle reconciliation uses this inventory to retain the active version
-    and retire superseded proven payloads.
+    Upgrades leave old versions in place because running Claude sessions keep
+    invoking the version directory and private interpreter captured at start.
     """
     base = discovery.config_dir(platform, home=home)
     if base is None:

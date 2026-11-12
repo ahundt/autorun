@@ -1588,9 +1588,10 @@ def test_plain_claude_registration_repairs_same_version_cache_payload(tmp_path, 
     assert runtime.read_text(encoding="utf-8") == "runtime\n"
 
 
-def test_claude_upgrade_retires_superseded_owned_cache_versions(tmp_path, monkeypatch):
+def test_claude_upgrade_keeps_superseded_cache_hook_runnable(tmp_path, monkeypatch):
     import shutil
     import subprocess
+    from autorun.installer import runtime
     from autorun.installer.orchestrate import _registrations
     from autorun.platforms import PLATFORMS
 
@@ -1604,6 +1605,17 @@ def test_claude_upgrade_retires_superseded_owned_cache_versions(tmp_path, monkey
     current = old.parent / "1.2.4"
     old.parent.mkdir(parents=True)
     shutil.copytree(plugin, old)
+    (old / "hooks").mkdir()
+    (old / "hooks" / "hook_entry.py").write_text(
+        "import json, sys\njson.load(sys.stdin)\nprint(json.dumps({'answer': 'old'}))\n",
+        encoding="utf-8",
+    )
+    old_python = runtime.cache_venv_python(old)
+    old_python.parent.mkdir(parents=True)
+    if os.name == "nt":
+        shutil.copy2(sys.executable, old_python)
+    else:
+        old_python.symlink_to(sys.executable)
 
     def native_update(argv):
         if tuple(argv[:3]) == ("claude", "plugin", "update"):
@@ -1617,7 +1629,15 @@ def test_claude_upgrade_retires_superseded_owned_cache_versions(tmp_path, monkey
 
     assert outcomes and all(outcome.ok for outcome in outcomes)
     assert current.is_dir()
-    assert not old.exists()
+    assert old.is_dir()
+    result = subprocess.run(
+        [str(old_python), str(old / "hooks" / "hook_entry.py")],
+        input=json.dumps({"hook_event_name": "PreToolUse"}),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == {"answer": "old"}
 
 
 def test_claude_uninstall_retires_owned_cache_and_keeps_unproven_tree(tmp_path, monkeypatch):

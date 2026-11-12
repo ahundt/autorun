@@ -1035,36 +1035,97 @@ def refresh_unmarked_tree(
     *,
     ownership_proof: Callable[[Path], bool],
     preserve_names: Iterable[str] = (),
+    after_step: Callable[[str], None] | None = None,
 ) -> bool:
-    """Atomically refresh a proven harness cache without claiming it.
+    """Refresh a proven harness cache without moving its public directory.
 
-    Harness caches cannot carry ``.autorun-owned`` because the harness manages
-    their registration metadata.  The caller supplies the exact ownership
-    proof, and named harness-managed children such as ``.venv`` survive the
-    payload refresh.  A failed publication restores the previous tree through
-    :func:`_swapped`.
+    Each shipped file is copied to a temporary sibling and atomically renamed
+    into place. The cache root and harness-managed children such as ``.venv``
+    keep their inode and public path for running hook processes. A crash can
+    leave a mixture of old and new files, but no replaced file is ever absent.
     """
     if not source.is_dir() or not target.is_dir() or target.is_symlink():
         return False
+    preserved = set(preserve_names)
+    notify = after_step or (lambda _step: None)
     try:
         if not ownership_proof(target):
             return False
     except (OSError, RuntimeError, ValueError):
         return False
-    try:
-        with _swapped(target) as staged:
+
+    def destination(relative: str) -> Path:
+        path = target / relative
+        if any(part in preserved for part in Path(relative).parts[:1]):
+            raise _PublicationRefused(Decision(Verdict.KEEP, target, f"refusing to replace {relative}"))
+        return path
+
+    def ensure_parents(path: Path) -> None:
+        missing = []
+        parent = path.parent
+        while parent != target and not parent.exists():
+            missing.append(parent)
+            parent = parent.parent
+        if parent.is_symlink() or not parent.is_dir():
+            raise _PublicationRefused(Decision(Verdict.KEEP, target, f"unsafe parent for {path}"))
+        for directory in reversed(missing):
+            directory.mkdir()
+            notify(f"mkdir {directory.relative_to(target).as_posix()}")
+
+    def replace_path(source_path: Path, target_path: Path, relative: str) -> None:
+        ensure_parents(target_path)
+        if target_path.is_dir() and not target_path.is_symlink():
+            raise _PublicationRefused(Decision(Verdict.KEEP, target, f"directory blocks file {relative}"))
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{target_path.name}.autorun-", dir=target_path.parent)
+        os.close(fd)
+        temporary = Path(temporary_name)
+        try:
+            temporary.unlink()
+            if source_path.is_symlink():
+                temporary.symlink_to(os.readlink(source_path), target_is_directory=source_path.is_dir())
+            else:
+                shutil.copy2(source_path, temporary)
+            os.replace(temporary, target_path)
+        finally:
+            if temporary.exists() or temporary.is_symlink():
+                temporary.unlink()
+        notify(f"replace {relative}")
+
+    expected = scan_tree(source)
+    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+        try:
+            if not ownership_proof(target):
+                raise _PublicationRefused(Decision(Verdict.KEEP, target, "ownership proof failed"))
+        except (OSError, RuntimeError, ValueError) as error:
+            raise _PublicationRefused(Decision(Verdict.KEEP, target, str(error))) from error
+
+        for relative in sorted(expected):
+            source_path = source / relative
+            target_path = destination(relative)
+            if target_path.exists() or target_path.is_symlink():
+                try:
+                    if _fingerprint(source_path) == _fingerprint(target_path):
+                        continue
+                except (FileNotFoundError, OSError):
+                    pass
+            replace_path(source_path, target_path, relative)
+
+        actual = scan_tree(target)
+        for relative in sorted(set(actual) - set(expected), reverse=True):
+            target_path = destination(relative)
+            if target_path.is_symlink() or target_path.is_file():
+                target_path.unlink()
+                notify(f"remove {relative}")
+
+        for directory, subdirs, _names in os.walk(target, topdown=False):
+            path = Path(directory)
+            if path == target or path.name in preserved or any(part in preserved for part in path.relative_to(target).parts):
+                continue
             try:
-                if not ownership_proof(target):
-                    raise _PublicationRefused(Decision(Verdict.KEEP, target, "ownership proof failed"))
-            except (OSError, RuntimeError, ValueError) as error:
-                raise _PublicationRefused(Decision(Verdict.KEEP, target, str(error))) from error
-            shutil.copytree(source, staged, symlinks=True, ignore=_IGNORED)
-            for name in preserve_names:
-                preserved = target / name
-                if preserved.exists() or preserved.is_symlink():
-                    _copy_path(preserved, staged / name)
-    except _PublicationRefused:
-        return False
+                path.rmdir()
+            except OSError:
+                continue
+            notify(f"rmdir {path.relative_to(target).as_posix()}")
     return True
 
 
