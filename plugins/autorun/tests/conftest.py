@@ -1153,29 +1153,6 @@ def sample_commands():
 
 
 @pytest.fixture
-def expected_responses():
-    """Expected responses for commands - generated from CONFIG."""
-    return {
-        "/afs": f"AutoFile policy: {CONFIG['policies']['SEARCH'][0]} - {CONFIG['policies']['SEARCH'][1]}",
-        "/afa": f"AutoFile policy: {CONFIG['policies']['ALLOW'][0]} - {CONFIG['policies']['ALLOW'][1]}",
-        "/afj": f"AutoFile policy: {CONFIG['policies']['JUSTIFY'][0]} - {CONFIG['policies']['JUSTIFY'][1]}",
-        "/afst": f"Current policy: {CONFIG['policies']['ALLOW'][0]}",
-        "/autostop": "Autorun stopped",
-        "/estop": "Emergency stop activated"
-    }
-
-
-@pytest.fixture
-def plugin_input_data():
-    """Sample input data for plugin testing"""
-    return {
-        "prompt": "/afs",
-        "session_id": "test_session",
-        "session_transcript": []
-    }
-
-
-@pytest.fixture
 def hook_input_data():
     """Sample input data for hook testing"""
     return {
