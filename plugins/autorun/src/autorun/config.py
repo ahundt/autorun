@@ -385,6 +385,23 @@ DEFAULT_INTEGRATIONS = {
         "when": "_awk_does_more_than_filter_stdin",
         "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:no --global awk",
     },
+    # Listing files with find is allowed, alone or in a pipe; its actions that
+    # delete (-delete) or truncate a named file (-fprint, -fprint0, -fprintf,
+    # -fls) are not. `find -exec rm` is the rm guard's.
+    "find": {
+        "action": "block",
+        "when": "_find_deletes_or_overwrites",
+        "suggestion": (
+            "Blocked: this find deletes files (-delete) or overwrites the file it names "
+            "(-fprint, -fprint0, -fprintf, -fls), and neither can be undone.\n\n"
+            "**Instead:** list what matches first with the same expression, then move it to the trash:\n"
+            "  find . -name '*.tmp'                       # check the list\n"
+            "  find . -name '*.tmp' -exec trash {} +      # recoverable delete\n"
+            "To save find's output, redirect to a new file: find . -name '*.tmp' > list.txt\n\n"
+            "To allow (default 1 use): /ar:ok find\n"
+            "Scope: [N|5m|permanent] (default 1 use)"
+        ),
+    },
     # Git history rewriting tools — permanently alter commit history (v0.10)
     # These require explicit /ar:ok permission since history rewriting is irreversible
     # and affects all collaborators when pushed.

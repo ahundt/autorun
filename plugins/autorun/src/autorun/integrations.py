@@ -1299,6 +1299,48 @@ def _sed_modifies_files(ctx: any) -> bool:
         return False
 
 
+#: find actions that truncate the file named right after them.
+_FIND_WRITING_ACTIONS: Final = frozenset({"-fprint", "-fprint0", "-fprintf", "-fls"})
+#: find actions whose arguments, up to `;` or `+`, belong to the command they run.
+_FIND_EXEC_ACTIONS: Final = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+
+
+def _find_tokens_destroy(tokens: tuple[str, ...] | list[str]) -> bool:
+    """Return whether one find invocation's argv deletes or overwrites a file.
+
+    `-delete` removes what matched; `-fprint`, `-fprint0`, `-fprintf` and
+    `-fls` truncate the file they name. Words handed to `-exec ... ;` are
+    that command's arguments, judged by its own guard (`-exec rm` by `rm`).
+    """
+    in_exec = False
+    for i, token in enumerate(tokens[1:], start=1):
+        if in_exec:
+            in_exec = token not in {";", "+"}
+        elif token in _FIND_EXEC_ACTIONS:
+            in_exec = True
+        elif token == "-delete" or (token in _FIND_WRITING_ACTIONS and i + 1 < len(tokens)):
+            return True
+    return False
+
+
+def _find_deletes_or_overwrites(ctx: any) -> bool:
+    """Return True only for find invocations that delete or overwrite files.
+
+    Every find on the line is read, through wrappers, `&&` chains, pipes and
+    `sh -c` bodies, the way `_sed_modifies_files` reads every sed.
+    """
+    try:
+        cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
+        if not cmd:
+            return False
+        _names, command_strings = extract_commands(cmd)
+        return any(_find_tokens_destroy(command_tokens_for(one, "find")) for one in command_strings)
+    except Exception as e:
+        # The pattern matched a find; a parse failure must not let -delete through.
+        logger.warning("_find_deletes_or_overwrites fail-safe block: %s", e)
+        return True
+
+
 _SHELL_COMMAND_SEPARATORS: Final = frozenset({";", "&&", "||", "|", "|&", "&", "(", ")", "\n"})
 #: Names awk runs under. gawk, mawk and nawk run the same programs.
 _AWK_NAMES: Final = frozenset({"awk", "gawk", "mawk", "nawk"})
@@ -1519,6 +1561,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_checkout_targets_file_with_changes": _checkout_targets_file_with_changes,
     "_not_in_pipe": _not_in_pipe,
     "_sed_modifies_files": _sed_modifies_files,
+    "_find_deletes_or_overwrites": _find_deletes_or_overwrites,
     "_awk_does_more_than_filter_stdin": _awk_does_more_than_filter_stdin,
     "_restore_is_destructive": _restore_is_destructive,
     "_tmutil_mutates_backup_safety": _tmutil_mutates_backup_safety,
