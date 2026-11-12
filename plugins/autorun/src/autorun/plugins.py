@@ -1955,6 +1955,30 @@ def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: 
     return _resolve_task_dependency(message, ctx.cli_type, 4) + agent_context
 
 
+def _task_staleness_waiting_notification(
+    ctx: EventContext,
+    threshold: int,
+    waiting_summary: str,
+) -> str:
+    """Advise, but never compel, when every unfinished task is parked."""
+    disable = format_command_for_cli("/ar:tasks off", ctx.cli_type)
+    agent_context = " Current subagent only." if ctx.agent_id else ""
+    if writes_whole_task_list(ctx.cli_type):
+        action = (
+            "Refresh {task_progress}: move resumed work to in_progress, or add "
+            "the work as a concrete step."
+        )
+    else:
+        action = (
+            'If this work belongs to one, use {task_update}({task_id_param}=N, '
+            'status="in_progress"); otherwise add it with {task_create}({task_title}="...").'
+        )
+    return (
+        f"\nTASK UPDATE REMINDER: {threshold} tool calls while tracked work is waiting: "
+        f"{waiting_summary}. {action} Disable: {disable}" + agent_context
+    )
+
+
 _TASK_STALENESS_AGENT_SCOPES = frozenset({"all", "user", "subagent"})
 _TASK_STALENESS_SCOPE_ALIASES = {
     "all": "all",
@@ -2012,7 +2036,7 @@ def _required_task_mutation_available(ctx: EventContext) -> bool:
         try:
             manager = task_lifecycle.TaskLifecycle(ctx=ctx)
             required_roles = _required_task_roles(
-                no_tasks=not manager.get_incomplete_tasks(exclude_blocking=True)
+                no_tasks=not manager.get_unfinished_tasks()
             )
         except Exception:  # noqa: BLE001 - unknown state preserves legacy behavior
             # Unknown task state preserves legacy progress-tool behavior.
@@ -2642,12 +2666,12 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         return None
 
     no_tasks = False
+    waiting_summary = ""
     if task_lifecycle.is_enabled():
         try:
             manager = task_lifecycle.TaskLifecycle(ctx=ctx)
-            tasks = manager.tasks
-            incomplete = [task for task in tasks.values() if task["status"] not in manager.NON_BLOCKING_STATUSES]
-            no_tasks = not tasks or not incomplete
+            unfinished, waiting_summary = manager.task_staleness_state()
+            no_tasks = not unfinished
         except Exception:
             pass  # Fail-open — skip lifecycle check on error
 
@@ -2658,6 +2682,22 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         required_roles,
     ):
         _clear_task_staleness_enforcement(ctx)
+        return None
+
+    if waiting_summary:
+        # Waiting work is tracked work. Remind the agent to claim or add the
+        # work it is doing, but do not force duplicate tasks or deny its next
+        # tool while every existing row is parked.
+        _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
+        _clear_task_staleness_enforcement(ctx)
+        ctx.add_chain_notification(
+            _task_staleness_waiting_notification(
+                ctx,
+                threshold,
+                waiting_summary,
+            ),
+            channel="both",
+        )
         return None
 
     reminder_count = _task_progress_state_update_durable(
@@ -2883,6 +2923,11 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
                     lines.append(f"Tasks: {len(tasks)} total ({', '.join(status_parts)})")
 
                     incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
+                    unfinished = [
+                        task
+                        for task in tasks.values()
+                        if task_lifecycle.task_status_is_unfinished(task["status"])
+                    ]
                     if incomplete:
                         for t in incomplete[:5]:
                             tid = t["id"]
@@ -2894,8 +2939,8 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
                             lines.append(f"  ... and {len(incomplete) - 5} more (/ar:task for full list)")
                     waiting = manager.waiting_summary()
                     lines.extend(f"  {line}" for line in waiting)
-                    if not incomplete and not waiting:
-                        lines.append("  All tasks completed!")
+                    if not unfinished:
+                        lines.append("  All tasks completed or dismissed!")
                 else:
                     lines.append("Tasks: none tracked")
             except Exception:

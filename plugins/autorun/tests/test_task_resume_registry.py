@@ -6,11 +6,13 @@ import uuid
 
 import pytest
 
-from autorun import session_manager as sm
+from autorun import plugins, session_manager as sm
 from autorun.platforms import PLATFORMS
 from stop_gate_support import (
+    DELEGATE,
     TASK_TOOL_PLATFORMS,
     Session,
+    awaiting,
     bash_tool,
     blocks,
     gate_env_fixture,  # noqa: F401  (registers gate_env)
@@ -109,3 +111,74 @@ def test_zero_row_reminder_does_not_claim_the_harness_has_no_tasks(gate_env, cli
     assert "NO TASKS EXIST" not in rendered and "NO CHECKLIST EXISTS" not in rendered, (
         f"{cli_type}: autorun claimed knowledge of native harness state it does not receive on resume"
     )
+
+
+WAITING_CASES = {
+    "delegated": ("delegated",),
+    "awaiting-user": ("awaiting-user",),
+    "paused": ("paused",),
+    "mixed": ("delegated", "awaiting-user", "paused"),
+}
+
+
+def _seed_waiting_only(session: Session, statuses: tuple[str, ...]) -> None:
+    for index, status in enumerate(statuses, 1):
+        task_id = str(index)
+        subject = f"Waiting task {index}"
+        if status == "delegated":
+            session.seed(task_id, subject, status="pending")
+            session.stop(DELEGATE.format(id=task_id))
+        elif status == "awaiting-user":
+            session.seed(task_id, subject, status="pending")
+            session.stop(awaiting(task_id, "choose the release target"))
+        else:
+            session.seed(task_id, subject, status=status)
+
+
+@pytest.mark.parametrize(
+    "cli_type",
+    [name for name in TASK_TOOL_PLATFORMS if not PLATFORMS[name].aggregates_conductor_tasks],
+)
+@pytest.mark.parametrize("case,statuses", WAITING_CASES.items())
+def test_waiting_only_tasks_get_update_cadence_without_next_tool_denial(
+    gate_env,
+    cli_type,
+    case,
+    statuses,
+):
+    """A waiting checklist exists even though none of it blocks Stop."""
+    session = Session(f"stale-waiting-{cli_type}-{case}-{uuid.uuid4().hex[:8]}", cli_type)
+    _seed_waiting_only(session, statuses)
+
+    tool = bash_tool(cli_type)
+    crossing = session.context(
+        "PostToolUse",
+        tool_name=tool,
+        tool_input={"command": "printf threshold"},
+        tool_result="ok",
+    )
+    crossing.task_staleness_initial_threshold = 1
+    crossing.task_staleness_reminder_count = 1
+    reminder = plugins.app.dispatch(crossing)
+    following = session.dispatch(
+        "PreToolUse",
+        tool_name=tool,
+        tool_input={"command": "printf continue"},
+    )
+    rendered = text(reminder)
+    permission = (following or {}).get("hookSpecificOutput", {}).get("permissionDecision")
+
+    expected_states = {
+        "delegated": "Delegated",
+        "awaiting-user": "Waiting on you",
+        "paused": "Paused",
+    }
+    assert "AUTORUN HAS NO ACTIVE TASKS RECORDED" not in rendered and permission != "deny", (
+        f"{cli_type}/{case}: waiting work was treated as absent; reminder={rendered}; "
+        f"following PreToolUse={text(following)}"
+    )
+    assert "TASK UPDATE REMINDER" in rendered, f"{cli_type}/{case}: no ordinary cadence reminder: {rendered}"
+    for status in statuses:
+        assert expected_states[status] in rendered, (
+            f"{cli_type}/{case}: reminder did not name {status} state: {rendered}"
+        )

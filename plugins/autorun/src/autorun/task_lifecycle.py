@@ -97,11 +97,13 @@ from .task_status import (
     AWAITING_USER_STATUS,
     BLOCKING_TASK_STATUSES,
     COMPLETED_TASK_STATUSES,
+    FINISHED_TASK_STATUSES,
     NON_BLOCKING_TASK_STATUSES,
     PRUNABLE_TASK_STATUSES,
     SETTLED_TASK_STATUSES,
     STATUS_POLICY,
     WAITING_TASK_STATUSES,
+    task_status_is_unfinished,
     task_status_policy,
 )
 
@@ -1837,6 +1839,28 @@ class TaskLifecycle:
 
     # === Task Operations (DRY - reusable methods) ===
 
+    def get_unfinished_tasks(self) -> List[Dict]:
+        """Return tracked work that was not completed, deleted, or ignored.
+
+        This is independent of whether a row blocks Stop. On SQLite the
+        repository narrows through ``tasks_retention(session, prunable)`` before
+        decoding payloads, so completed history does not make this hot read grow.
+        """
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            if repository is not None:
+                return repository.list_excluding_statuses(
+                    self.global_key,
+                    FINISHED_TASK_STATUSES,
+                    self._state_lock_timeout,
+                )
+            tasks = dict(state.get("tasks", {}))
+        return [
+            task
+            for task in tasks.values()
+            if task_status_is_unfinished(task["status"])
+        ]
+
     def get_incomplete_tasks(self, exclude_blocking: bool = True) -> List[Dict]:
         """Get incomplete tasks.
 
@@ -1859,6 +1883,31 @@ class TaskLifecycle:
             return [t for t in tasks.values() if t["status"] not in self.NON_BLOCKING_STATUSES]
         else:
             return [t for t in tasks.values() if t["status"] not in self.COMPLETED_STATUSES]
+
+    def task_staleness_state(self, *, summary_limit: int = 5) -> tuple[List[Dict], str]:
+        """Return unfinished rows and a summary when none is actionable now.
+
+        The one indexed snapshot excludes finished history. ``_stop_view`` then
+        applies the Stop gate's existing dependency/waiting policy in memory,
+        while paused rows are added explicitly because they are parked rather
+        than waiting on another actor.
+        """
+        tasks, _metadata, unknown = self._open_task_snapshot()
+        unfinished = list(tasks.values())
+        actionable, waiting = self._stop_view(tasks, unknown)
+        if actionable or not unfinished:
+            return unfinished, ""
+        paused = [
+            f"⏸ Paused: #{task['id']} {task.get('subject', '')}"
+            for task in sorted(unfinished, key=self._creation_order_key)
+            if task.get("status") == "paused"
+        ]
+        all_lines = [*waiting, *paused]
+        shown = all_lines[:summary_limit]
+        overflow = len(all_lines) - len(shown)
+        if overflow > 0:
+            shown.append(f"and {overflow} more")
+        return unfinished, "; ".join(shown)
 
     @staticmethod
     def _creation_order_key(task: Dict) -> tuple:
@@ -2686,22 +2735,25 @@ class TaskLifecycle:
         except Exception as exc:  # noqa: BLE001 - liveness must not break resume
             logger.warning("Could not check delegation liveness at SessionStart: %s", exc)
 
-        # Find blocking tasks. Parked and delegated work is retained and shown
-        # separately below without making Stop block on it.
+        # Read only unfinished rows. Whether a row blocks Stop is a separate
+        # policy: parked and delegated work is retained and shown below without
+        # being mistaken for an empty session.
         # REMOVED: self.prune_old_tasks() - manual pruning only
-        incomplete = self.get_incomplete_tasks(exclude_blocking=True)
-
-        # Also find delegated tasks — non-blocking but need follow-up if child failed
-        all_tasks = self.tasks
-        delegated_all = [t for t in all_tasks.values() if t.get("status") == "delegated"]
-        paused_all = [t for t in all_tasks.values() if t.get("status") == "paused"]
-        awaiting_all = [t for t in all_tasks.values() if t.get("status") == AWAITING_USER_STATUS]
-
-        if not incomplete and not delegated_all and not paused_all and not awaiting_all:
+        unfinished = self.get_unfinished_tasks()
+        if not unfinished:
             return None
+        unfinished_by_id = {str(task["id"]): task for task in unfinished}
+        incomplete = [
+            task
+            for task in unfinished
+            if task.get("status") not in self.NON_BLOCKING_STATUSES
+        ]
+        delegated_all = [t for t in unfinished if t.get("status") == "delegated"]
+        paused_all = [t for t in unfinished if t.get("status") == "paused"]
+        awaiting_all = [t for t in unfinished if t.get("status") == AWAITING_USER_STATUS]
 
-        # Get prioritized tasks for better AI guidance
-        prioritized = self.get_prioritized_tasks()
+        # Get prioritized tasks from the same unfinished snapshot.
+        prioritized = self._prioritize_task_snapshot(unfinished_by_id)
 
         # Separate by status for better visibility
         now = time.time()

@@ -25,7 +25,7 @@ import uuid
 
 import pytest
 
-from autorun import session_manager as sm
+from autorun import plugins, session_manager as sm
 from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_env)
     DELEGATE,
     Session,
@@ -117,6 +117,57 @@ def test_prompt_with_nothing_awaiting_the_user_reads_and_writes_nothing(calls):
         f"a prompt with nothing to restore opened {calls['transactions']} transactions; the task "
         f"handler must read its counter without the writer slot (baseline {BASELINE_PROMPT_TRANSACTIONS})"
     )
+
+
+def test_staleness_threshold_visits_only_unfinished_tasks(calls, monkeypatch):
+    session = _session("staleness-history")
+    session.seed("waiting", "Resume after a decision", status="paused")
+    store = sm.get_session_manager().task_repository()._store
+    with store.operation_scope() as owner:
+        with store.write_transaction(owner) as conn:
+            conn.executemany(
+                "INSERT INTO tasks(session, task_id, status, updated_at, payload_json) VALUES (?, ?, 'completed', 1, ?)",
+                [
+                    (session.manager.global_key, str(i), json.dumps({"id": str(i)}))
+                    for i in range(30000)
+                ],
+            )
+
+    statements = []
+    steps = [0]
+    real_connect = store._connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+
+        def progress():
+            steps[0] += 100
+            return 0
+
+        conn.set_progress_handler(progress, 100)
+        return conn
+
+    monkeypatch.setattr(store, "_connect", connect)
+    crossing = session.context(
+        "PostToolUse",
+        tool_name="Bash",
+        tool_input={"command": "printf threshold"},
+        tool_result="ok",
+    )
+    crossing.task_staleness_initial_threshold = 1
+    response = plugins.app.dispatch(crossing)
+
+    snapshot = next(
+        sql
+        for sql in statements
+        if sql.startswith("SELECT task_id, status, updated_at, payload_json FROM tasks")
+    )
+    with store.operation_scope() as owner:
+        plan = [row[3] for row in owner.connection.execute("EXPLAIN QUERY PLAN " + snapshot)]
+    assert "AUTORUN HAS NO ACTIVE TASKS RECORDED" not in json.dumps(response or {}), response
+    assert any("tasks_retention (session=? AND prunable=?)" in row for row in plan), plan
+    assert steps[0] < 5000, f"staleness threshold visited completed history: {steps[0]} VM steps; {plan}"
 
 
 def test_liveness_runs_at_stop_only_once_per_distinct_harness_pid(gate_env, monkeypatch):

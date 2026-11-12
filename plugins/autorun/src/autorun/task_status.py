@@ -63,8 +63,19 @@ WAITING_TASK_STATUSES = frozenset(
 )
 # Statuses after which a task no longer holds anything: finished, removed, or
 # dismissed. The Stop gate never reads these rows, and a task blocked only by
-# them is free to start.
+# them is free to start. ``ignored`` is finished for tracking purposes: the
+# agent explicitly dismissed it, so treating it as unfinished would resurrect
+# work the user chose not to pursue. This does not make it "completed" for
+# reporting; COMPLETED_TASK_STATUSES remains only completed/deleted.
 SETTLED_TASK_STATUSES = PRUNABLE_TASK_STATUSES
+FINISHED_TASK_STATUSES = SETTLED_TASK_STATUSES
+UNFINISHED_TASK_STATUSES = frozenset(STATUS_POLICY) - FINISHED_TASK_STATUSES
+
+
+def task_status_is_unfinished(status: str) -> bool:
+    """Whether a tracked row still represents work, independent of Stop policy."""
+    task_status_policy(status)
+    return status in UNFINISHED_TASK_STATUSES
 
 
 def task_status_policy(status: str) -> TaskStatusPolicy:

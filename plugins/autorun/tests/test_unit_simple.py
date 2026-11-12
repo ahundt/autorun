@@ -906,7 +906,7 @@ def test_staleness_below_first_decision_boundary_does_not_read_tasks(monkeypatch
 
 
 def test_staleness_decision_boundary_uses_one_task_snapshot(monkeypatch):
-    """The no-tasks decision reads tasks once and derives incompletes in memory."""
+    """The no-tasks decision reads the unfinished snapshot exactly once."""
     ctx = _make_post_tool_ctx(
         "Bash",
         "test-stale-one-snapshot-at-boundary",
@@ -923,12 +923,12 @@ def test_staleness_decision_boundary_uses_one_task_snapshot(monkeypatch):
 
         @property
         def tasks(self):
+            pytest.fail("Decision logic must not load completed task history")
+
+        def task_staleness_state(self):
             nonlocal accesses
             accesses += 1
-            return {"1": {"id": "1", "status": "pending", "subject": "active"}}
-
-        def get_incomplete_tasks(self, *args, **kwargs):
-            pytest.fail("Decision logic must derive incompletes from the existing snapshot")
+            return ([{"id": "1", "status": "pending", "subject": "active"}], "")
 
     monkeypatch.setattr(plugins.task_lifecycle, "is_enabled", lambda: True)
     monkeypatch.setattr(plugins.task_lifecycle, "TaskLifecycle", FakeLifecycle)

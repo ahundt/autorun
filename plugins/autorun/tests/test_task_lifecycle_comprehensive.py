@@ -29,6 +29,7 @@ sys.path.insert(0, str(plugin_root / "src"))
 
 from autorun.core import EventContext, ThreadSafeDB
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from autorun.task_status import FINISHED_TASK_STATUSES, UNFINISHED_TASK_STATUSES
 from autorun.session_manager import SessionStateManager, session_state
 from autorun import session_manager as _sm_module
 from autorun.session_manager import _reset_for_testing
@@ -372,6 +373,12 @@ class TestStatusTransitionMatrix:
 
     def test_delegated_not_in_prunable(self):
         assert "delegated" not in TaskLifecycle.PRUNABLE_STATUSES
+
+    def test_unfinished_policy_is_independent_of_stop_blocking(self):
+        assert FINISHED_TASK_STATUSES == frozenset({"completed", "deleted", "ignored"})
+        assert UNFINISHED_TASK_STATUSES == frozenset(
+            {"pending", "in_progress", "paused", "delegated", "delegation-returned", "awaiting-user"}
+        )
 
     def test_prunable_statuses_are_subset_of_non_blocking(self):
         assert TaskLifecycle.PRUNABLE_STATUSES <= TaskLifecycle.NON_BLOCKING_STATUSES
