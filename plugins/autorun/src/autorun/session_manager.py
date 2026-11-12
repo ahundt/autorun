@@ -24,9 +24,9 @@ from filelock import FileLock, Timeout as FileLockTimeout
 
 from .config import CONFIG as _CONFIG
 from .durable_io import atomic_write_json, reserve_unique_path, sync_directory
+from . import task_status
 from .task_status import (
-    STATUS_POLICY, BLOCKING_TASK_STATUSES, PRUNABLE_TASK_STATUSES,
-    task_status_policy,
+    NON_BLOCKING_TASK_STATUSES, PRUNABLE_TASK_STATUSES, task_status_policy,
 )
 
 logger = logging.getLogger(__name__)
@@ -944,19 +944,44 @@ JOURNAL_SIZE_LIMIT_BYTES = int(
 # SQLite's variable limit. Larger requests are split, never refused.
 QUERY_PARAMETER_CHUNK = int(_CONFIG.get("state_query_parameter_chunk", 500))
 
-# Status policy is not configurable: generated columns and the partial Stop
-# index embed it in the schema. Runtime policy and DDL both derive from the
-# immutable mapping in task_status.py so they cannot drift silently.
+# Status policy lives in task_status.py and nowhere else. The tasks table
+# stores any status; put_task refuses one task_status.py does not name. The
+# generated blocks_stop and prunable columns are written from task_status.py
+# when the table is created or rewritten, and block on every status not known
+# to be non-blocking, so a status added later fails closed for any reader of
+# those columns, including builds released before this one after a rollback.
 _CANONICAL_PRUNABLE_TASK_STATUSES = tuple(sorted(PRUNABLE_TASK_STATUSES))
-_VALID_TASK_STATUS_SQL = "(" + ", ".join(
-    f"'{status}'" for status in sorted(STATUS_POLICY)
-) + ")"
-_BLOCKING_TASK_STATUS_SQL = "(" + ", ".join(
-    f"'{status}'" for status in sorted(BLOCKING_TASK_STATUSES)
-) + ")"
-_PRUNABLE_TASK_STATUS_SQL = "(" + ", ".join(
-    f"'{status}'" for status in sorted(PRUNABLE_TASK_STATUSES)
-) + ")"
+
+
+def _sql_status_list(statuses) -> str:
+    return "(" + ", ".join(f"'{status}'" for status in sorted(statuses)) + ")"
+
+
+# Column definitions keyed by name, so a definition rewrite can keep the
+# column order an existing table has (a version-1 table gained the generated
+# columns last).
+_TASK_COLUMNS = {
+    "session": "session      TEXT NOT NULL REFERENCES sessions(session) ON DELETE CASCADE",
+    "task_id": "task_id      TEXT NOT NULL",
+    "status": "status       TEXT NOT NULL",
+    "blocks_stop": (
+        "blocks_stop  INTEGER GENERATED ALWAYS AS (CASE WHEN status IN "
+        f"{_sql_status_list(NON_BLOCKING_TASK_STATUSES)} THEN 0 ELSE 1 END) VIRTUAL"
+    ),
+    "prunable": (
+        "prunable     INTEGER GENERATED ALWAYS AS (CASE WHEN status IN "
+        f"{_sql_status_list(PRUNABLE_TASK_STATUSES)} THEN 1 ELSE 0 END) VIRTUAL"
+    ),
+    "updated_at": "updated_at   REAL NOT NULL",
+    "payload_json": "payload_json TEXT NOT NULL",
+}
+
+
+def _tasks_table_sql(columns=tuple(_TASK_COLUMNS), name: str = "tasks") -> str:
+    """The tasks definition, columns in the given order."""
+    body = ",\n    ".join(_TASK_COLUMNS[column] for column in columns)
+    return f"CREATE TABLE {name} (\n    {body},\n    PRIMARY KEY (session, task_id)\n)"
+
 
 _SCHEMA_STATEMENTS = (
     """
@@ -985,20 +1010,7 @@ _SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS sessions_retention
         ON sessions(namespace, last_modified)
     """,
-    f"""
-    CREATE TABLE IF NOT EXISTS tasks (
-        session      TEXT NOT NULL REFERENCES sessions(session) ON DELETE CASCADE,
-        task_id      TEXT NOT NULL,
-        status       TEXT NOT NULL CHECK (status IN {_VALID_TASK_STATUS_SQL}),
-        blocks_stop  INTEGER GENERATED ALWAYS AS
-            (CASE WHEN status IN {_BLOCKING_TASK_STATUS_SQL} THEN 1 ELSE 0 END) VIRTUAL,
-        prunable     INTEGER GENERATED ALWAYS AS
-            (CASE WHEN status IN {_PRUNABLE_TASK_STATUS_SQL} THEN 1 ELSE 0 END) VIRTUAL,
-        updated_at   REAL NOT NULL,
-        payload_json TEXT NOT NULL,
-        PRIMARY KEY (session, task_id)
-    )
-    """,
+    _tasks_table_sql().replace("CREATE TABLE tasks", "CREATE TABLE IF NOT EXISTS tasks", 1),
     """
     CREATE INDEX IF NOT EXISTS tasks_retention
         ON tasks(session, prunable, updated_at)
@@ -1116,23 +1128,9 @@ def _managed_connection(conn):
 
 
 def _migrate_schema_v1_to_v2(conn) -> None:
-    """Add explicit task policy columns and rebuild their partial indexes."""
-    unknown = conn.execute(
-        "SELECT DISTINCT status FROM tasks "
-        f"WHERE status NOT IN {_VALID_TASK_STATUS_SQL}"
-    ).fetchall()
-    if unknown:
-        raise SessionBackendError(
-            f"Cannot migrate tasks with unknown statuses: {[row[0] for row in unknown]}"
-        )
-    conn.execute(
-        "ALTER TABLE tasks ADD COLUMN blocks_stop INTEGER GENERATED ALWAYS AS "
-        f"(CASE WHEN status IN {_BLOCKING_TASK_STATUS_SQL} THEN 1 ELSE 0 END) VIRTUAL"
-    )
-    conn.execute(
-        "ALTER TABLE tasks ADD COLUMN prunable INTEGER GENERATED ALWAYS AS "
-        f"(CASE WHEN status IN {_PRUNABLE_TASK_STATUS_SQL} THEN 1 ELSE 0 END) VIRTUAL"
-    )
+    """Add the generated columns older builds read and rebuild their partial indexes."""
+    for column in ("blocks_stop", "prunable"):
+        conn.execute(f"ALTER TABLE tasks ADD COLUMN {_TASK_COLUMNS[column]}")
     conn.execute("DROP INDEX IF EXISTS tasks_incomplete")
     conn.execute("DROP INDEX IF EXISTS tasks_retention")
     conn.execute(
