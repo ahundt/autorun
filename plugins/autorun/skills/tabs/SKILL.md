@@ -37,7 +37,7 @@ If no arguments provided, discover all Claude sessions and present them to the u
 ## Discovery
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec"
+"${CLAUDE_PLUGIN_ROOT}/commands/tmux-exec" list
 ```
 
 ## User Selection Syntax
@@ -55,10 +55,10 @@ If no arguments provided, discover all Claude sessions and present them to the u
 After user confirms, execute via:
 
 ```bash
-# Using tabs-exec
+# Using tmux-exec
 # NOTE: --execute requires the full session JSON from discovery phase, not a minimal stub.
 # Claude should pass the full session data obtained from the discovery run above.
-echo '{"selections": "B,C", "command": "continue", "sessions": [...session_data_from_discovery...]}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
+echo '{"selections": "B,C", "command": "continue", "sessions": [...session_data_from_discovery...]}' | "${CLAUDE_PLUGIN_ROOT}/commands/tmux-exec" --execute
 
 # Direct tmux (for simple commands)
 tmux send-keys -t "session:window" "command"
@@ -96,6 +96,6 @@ Present discovered sessions as:
 
 Then ask: "Which sessions would you like to interact with?"
 
-**Implementation**: See `tabs-exec` script for discovery and execution logic.
+**Implementation**: See `tmux-exec` script for discovery and execution logic.
 
 </output_contract>

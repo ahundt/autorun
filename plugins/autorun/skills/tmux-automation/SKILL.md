@@ -105,7 +105,7 @@ one: `references/session-management.md` and `references/isolated-testing.md`
 in this skill. autorun ships no slash command for them.
 
 ### Related Documentation
-- `skills/tabs/SKILL.md` + `commands/tabs-exec` - Session discovery (`/ar:tabs`)
+- `skills/tabs/SKILL.md` + `commands/tmux-exec` - Session discovery (`/ar:tabs`)
 
 ### Quick Reference: Commands vs Manual tmux
 

@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Run `autorun tmux list|send` where `autorun` is not on PATH.
+
+A Claude Code install made through the marketplace alone puts no `autorun`
+command on PATH; this script runs the same subcommand from the plugin's own
+source: `tmux-exec list`, `tmux-exec send --to A -- <text>`.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from autorun.tmux_tab_ai_session_status import main
+
+sys.exit(main())

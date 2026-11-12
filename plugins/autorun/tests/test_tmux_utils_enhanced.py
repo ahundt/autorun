@@ -948,6 +948,7 @@ class TestWindowListingSurvivesAPipeInAField:
             "session_name": "main", "window_index": "3", "pane_title": "build | test",
             "pane_current_command": "node", "pane_current_path": "/srv/a|b",
             "pane_pid": "42", "window_active": "0", "window_activity": "1700000000",
+            "pane_index": "0",
             "window_flags": "",  # a background window: the line ends in the separator
         }
 

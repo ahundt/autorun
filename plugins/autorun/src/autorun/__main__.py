@@ -237,6 +237,56 @@ def _run_state_command(args) -> int:
     raise AssertionError("state maintenance dispatch reached no operation")
 
 
+def add_tmux_arguments(tmux_parser: argparse.ArgumentParser) -> None:
+    """The `list` and `send` arguments of `autorun tmux`.
+
+    One definition for both callers: the `tmux` subparser here and
+    commands/tmux-exec, which runs without autorun's dependencies installed
+    and so cannot build the whole parser.
+    """
+    tmux_parser.description = (
+        "List the AI coding sessions running in your tmux windows (list only reads), "
+        "and type text into the ones you name, followed by Enter (send)."
+    )
+    tmux_subparsers = tmux_parser.add_subparsers(dest="tmux_command", help="tmux operations")
+    tmux_list_parser = tmux_subparsers.add_parser(
+        "list",
+        help="Show each AI session with its letter, target, directory, harness and state; types nothing",
+        description="Show the AI coding sessions running in your tmux windows, lettered A, B, C. "
+        "Reads only: nothing is typed into any pane.",
+    )
+    tmux_list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the discovery data as JSON instead of a table",
+    )
+    tmux_send_parser = tmux_subparsers.add_parser(
+        "send",
+        help="Type TEXT into the panes --to names, then press Enter",
+        description="Type TEXT into the panes --to names, then press Enter in a separate call. "
+        "Prints each target's session, window, pane, directory and harness before typing, "
+        "then reads each pane back and reports text left on its input line as "
+        "'typed, not submitted'. Exits 1 if any send failed or nothing was sent.",
+    )
+    tmux_send_parser.add_argument(
+        "--to",
+        metavar="TARGETS",
+        help="Letters from `autorun tmux list` (A, or A,C), all, or awaiting-input "
+        "(Claude Code panes waiting at a prompt; awaiting is accepted)",
+    )
+    tmux_send_parser.add_argument(
+        "text",
+        nargs="*",
+        metavar="TEXT",
+        help="The text to type; put -- before it",
+    )
+    tmux_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help=argparse.SUPPRESS,  # reads {"selections", "command", "sessions"} JSON from stdin
+    )
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser with all CLI options."""
     from autorun.platforms import standalone_session_help
@@ -839,6 +889,15 @@ Aliases: file status, file st, file s (all equivalent)""",
         help="Skip archiving (DANGEROUS - permanent data loss)",
     )
 
+    # tmux subcommand: AI sessions running in tmux panes. Its code is imported
+    # only when it runs, so building this parser costs a hook nothing.
+    add_tmux_arguments(
+        subparsers.add_parser(
+            "tmux",
+            help="List the AI sessions in your tmux windows; type text into the ones you name",
+        )
+    )
+
     return parser
 
 
@@ -1278,6 +1337,13 @@ def _main(argv: Sequence[str] | None = None) -> int:
                 confirm=not args.no_confirm,
                 current_session_id=session_id,
             )
+
+    # tmux subcommand: list reads, send types
+    if args.command == "tmux":
+        from autorun.tmux_tab_ai_session_status import run_tmux_command
+
+        commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+        return run_tmux_command(args, commands.choices["tmux"])
 
     # Default: run as hook handler. Hooks arrive as JSON on a pipe; a person
     # at a terminal typed a bare `autorun`, and the useful answer there is

@@ -976,9 +976,10 @@ TMUX_WINDOW_FORMAT = TMUX_FORMAT_SEPARATOR.join([
     '#{pane_pid}',
     '#{window_active}',
     '#{window_activity}',
+    '#{pane_index}',  # the window's active pane: where a send to session:window lands
     '#{window_flags}'
 ])
-TMUX_FORMAT_FIELDS = ('session', 'w', 'raw_title', 'cmd', 'path', 'pid', 'active', 'activity', 'flags')
+TMUX_FORMAT_FIELDS = ('session', 'w', 'raw_title', 'cmd', 'path', 'pid', 'active', 'activity', 'pane', 'flags')
 
 
 class WindowList(list):
@@ -1186,6 +1187,7 @@ def tmux_list_windows(
         - active: bool - True if this window is currently selected/visible in its session
         - activity: int - Unix timestamp of last activity in this window
         - flags: str - tmux window flags (* = current, - = last, Z = zoomed, ! = bell)
+        - pane: str - index of the window's active pane, the one a send to session:window reaches
         - content: str - (only if content_lines > 0) captured terminal output, last N lines
         - prompt_type: str|None - (only if content_lines > 0) detected Claude Code prompt type:
           'input', 'plan_approval', 'tool_permission_yn', 'tool_permission_numbered',
@@ -1262,7 +1264,8 @@ def tmux_list_windows(
                 'pid': int(data['pid']) if data['pid'].isdigit() else 0,
                 'active': data['active'] == '1',  # Is this the current window?
                 'activity': int(data['activity']) if data['activity'].isdigit() else 0,  # Unix timestamp
-                'flags': data['flags']  # * = current, - = last, etc.
+                'flags': data['flags'],  # * = current, - = last, etc.
+                'pane': data['pane'],
             }
 
             # Optional: capture pane content and detect state
@@ -2413,6 +2416,7 @@ def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
                 'active': win.get('active', False),
                 'activity': win.get('activity', 0),
                 'flags': win.get('flags', ''),
+                'pane': win.get('pane', ''),
                 'branch': win.get('branch'),
                 'prompt_type': win.get('prompt_type'),
                 'is_active': win.get('is_active', False),
@@ -2472,7 +2476,8 @@ def _run_default_action(tmux: 'TmuxUtilities', session: dict, letter: str) -> di
 
 def execute_session_selections(selection_str: str, sessions: list,
                                tmux: 'TmuxUtilities | None' = None,
-                               command: Optional[str] = None) -> 'list[dict]':
+                               command: Optional[str] = None,
+                               announce: Optional[Callable[[list], None]] = None) -> 'list[dict]':
     """Execute commands on selected Claude sessions using the /ar:tabs selection syntax.
 
     Selection syntax (same as /ar:tabs command interface):
@@ -2495,6 +2500,9 @@ def execute_session_selections(selection_str: str, sessions: list,
         tmux:          TmuxUtilities instance; creates one if None
         command:       Sent instead of the default action for letter groups
                        ('B,C'); a bare 'all' or 'awaiting' becomes 'all:<command>'
+        announce:      Called once with the session dicts about to be typed
+                       into, after the selection is validated and before the
+                       first key is sent
 
     Returns:
         List of result dicts: [{'target', 'command', 'success', 'error'}, ...]
@@ -2520,9 +2528,11 @@ def execute_session_selections(selection_str: str, sessions: list,
                 return [{'target': selection_str, 'command': '', 'success': False,
                          'error': f"'{selection_str}'{empty}"}]
             # An unknown prompt state may be mid-turn; awaiting never types there.
-            return [send_to_session(tmux, s, cmd) for s in sessions
-                    if group == 'all'
-                    or (s.get('awaiting') and s.get('prompt_type') != PROMPT_TYPE_UNKNOWN)]
+            targets = [s for s in sessions if group == 'all'
+                       or (s.get('awaiting') and s.get('prompt_type') != PROMPT_TYPE_UNKNOWN)]
+            if announce:
+                announce(targets)
+            return [send_to_session(tmux, s, cmd) for s in targets]
 
     plan = []  # (letter, session, command or None for the default action)
     errors = []
@@ -2554,6 +2564,8 @@ def execute_session_selections(selection_str: str, sessions: list,
 
     if errors:
         return errors
+    if announce:
+        announce([s for _, s, _ in plan])
     return [
         send_to_session(tmux, s, cmd) if cmd is not None else _run_default_action(tmux, s, c)
         for c, s, cmd in plan

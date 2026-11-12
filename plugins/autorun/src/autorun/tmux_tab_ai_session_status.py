@@ -1,14 +1,14 @@
-"""AI session status analysis and dashboard for Claude/Gemini tmux tabs.
+"""`autorun tmux list` and `autorun tmux send`: AI sessions in tmux panes.
 
-Provides heuristic and SDK-based analysis of captured terminal content to
-determine what each Claude/Gemini session is doing, its current status, and
-whether it is waiting for user input. Also provides the human-readable table
-formatter and the /ar:tabs command entrypoint.
+Analyzes captured pane content to report what each AI session is doing and
+whether it is waiting for input, formats the table `list` prints, and runs
+`send`, which types text into the panes the user names.
 
 Architecture (three layers):
   tmux_utils.py                  — low-level: list windows, send keys, discover sessions
-  tmux_tab_ai_session_status.py  — this file: status analysis, formatting, entrypoint
-  commands/tabs-exec             — thin wrapper: `from autorun.tmux_tab_ai_session_status import main; main()`
+  tmux_tab_ai_session_status.py  — this file: status analysis, formatting, list and send
+  __main__.py `tmux` subparser   — `autorun tmux list|send`; commands/tmux-exec runs
+                                   the same thing where `autorun` is not on PATH
 
 The Anthropic SDK is an OPTIONAL dependency (graceful fallback to heuristics when
 unavailable or when ANTHROPIC_API_KEY is not set).
@@ -213,19 +213,19 @@ def format_output(sessions: List[Dict]) -> str:
     Truncation uses '~' suffix to signal cut content.
     """
     term_width = shutil.get_terminal_size((120, 24)).columns
-    # Fixed: ID(3) + Target(14) + Status(10) + Awaiting(8) + Actions(18) + separators(6) = 59
-    fixed_width = 59
+    # Fixed: ID(3) + Target(14) + Harness(11) + Status(10) + Awaiting(8) + Actions(18) + separators(7) = 71
+    fixed_width = 71
     remaining = max(term_width - fixed_width, 45)
     dir_width = max(remaining * 2 // 5, 15)
     purpose_width = max(remaining - dir_width, 20)
 
     lines = [
         f"\n{'=' * term_width}",
-        f' Claude Sessions ({len(sessions)} found)',
+        f' AI sessions in tmux ({len(sessions)} found)',
         f"{'=' * term_width}\n",
-        f"{'ID':<3} {'Target':<14} {'Directory':<{dir_width}} "
+        f"{'ID':<3} {'Target':<14} {'Harness':<11} {'Directory':<{dir_width}} "
         f"{'Purpose':<{purpose_width}} {'Status':<10} {'Awaiting':<8} Actions",
-        f"{'-' * 3} {'-' * 14} {'-' * dir_width} {'-' * purpose_width} "
+        f"{'-' * 3} {'-' * 14} {'-' * 11} {'-' * dir_width} {'-' * purpose_width} "
         f"{'-' * 10} {'-' * 8} {'-' * 18}",
     ]
     for i, s in enumerate(sessions):
@@ -239,18 +239,19 @@ def format_output(sessions: List[Dict]) -> str:
         if len(purpose) > purpose_width:
             purpose = purpose[:purpose_width - 1] + '~'
         status = s.get('status', 'unknown')[:9]
+        harness = (s.get('harness') or 'unknown')[:11]
         lines.append(
-            f"{letter:<3} {s['tmux_target']:<14} {directory:<{dir_width}} "
+            f"{letter:<3} {s['tmux_target']:<14} {harness:<11} {directory:<{dir_width}} "
             f"{purpose:<{purpose_width}} {status:<10} {awaiting:<8} {actions}"
         )
 
     lines += [
         f"\n{'-' * term_width}",
-        'Selection syntax:',
-        "  'A,C' or 'AC'              Execute default action for selected",
-        "  'A:git status, B:pwd'      Execute custom commands",
-        "  'all:continue'             Execute on all sessions",
-        "  'awaiting-input:continue'  Execute on sessions awaiting input",
+        'Selection syntax (types the text, then Enter):',
+        "  autorun tmux send --to A -- <text>               into session A",
+        "  autorun tmux send --to A,C -- <text>             into A and C",
+        "  autorun tmux send --to all -- <text>             into every session listed",
+        "  autorun tmux send --to awaiting-input -- <text>  into Claude Code sessions waiting at a prompt",
         f"{'-' * term_width}",
     ]
     return '\n'.join(lines)
@@ -282,25 +283,45 @@ def execute_selections(selection_str: str, sessions: List[Dict], command: str = 
 
 
 # ---------------------------------------------------------------------------
-# Command entrypoint
+# Command entrypoints: autorun tmux list | send
 # ---------------------------------------------------------------------------
 
-def handle_execute_mode() -> None:
-    """Handle --execute mode: read JSON action from stdin, run it, print results.
+SEND_TARGETS = ("letters from `autorun tmux list` (--to A, --to A,C), --to all, "
+                "or --to awaiting-input (awaiting is accepted)")
 
-    Expected stdin JSON:
+
+def describe_target(session: Dict) -> str:
+    """One line naming where a send to this session lands."""
+    return (f"  {session['tmux_target']}: session {session.get('session_name', '?')}, "
+            f"window {session.get('window_id', '?')}, pane {session.get('pane') or '?'}, "
+            f"directory {session.get('path') or session.get('directory') or 'unknown'}, "
+            f"harness {session.get('harness') or 'unknown'}")
+
+
+def announce_targets(targets: List[Dict]) -> None:
+    """Print each target before anything is typed into it."""
+    print(f'Typing into {len(targets)} pane(s):')
+    for session in targets:
+        print(describe_target(session))
+
+
+def handle_execute_mode(data: Dict = None) -> int:
+    """Send the text a selection names; the one sender behind `autorun tmux send`.
+
+    data (read from stdin as JSON when None):
     {
-        "action": "execute",
-        "selections": "A,B" | "all:cmd" | "awaiting:cmd",
-        "command": "optional override command",
+        "selections": "A,B" | "all" | "awaiting-input" | "A:cmd",
+        "command": "text to type",
         "sessions": [{"tmux_target": "...", "actions": [...], "awaiting": bool}, ...]
     }
+    Returns 0 when every target received the text and Enter, 1 otherwise.
     """
-    try:
-        data = json.load(sys.stdin)
-    except json.JSONDecodeError as e:
-        print(json.dumps({'error': f'Invalid JSON: {e}', 'success': False}))
-        return
+    if data is None:
+        try:
+            data = json.load(sys.stdin)
+        except json.JSONDecodeError as e:
+            print(json.dumps({'error': f'Invalid JSON: {e}', 'success': False}))
+            return 1
 
     sessions = data.get('sessions', [])
     selections = data.get('selections', '')
@@ -308,42 +329,73 @@ def handle_execute_mode() -> None:
 
     if not sessions:
         print(json.dumps({'error': 'No sessions provided', 'success': False}))
-        return
+        return 1
 
     # The command replaces the default action of the letter selections; the
     # parser validates the letters and turns a bare 'all'/'awaiting' into 'all:<command>'.
-    print(execute_selections(selections, sessions, command))
+    results = execute_session_selections(selections, sessions, command=command or None,
+                                         announce=announce_targets)
+    print(format_execution_results(results))
+    return 0 if results and all(r['success'] for r in results) else 1
 
 
-def main() -> None:
-    """Entry point for /ar:tabs — discover, analyze, and display Claude tmux sessions."""
-    import argparse
-
-    from autorun.logging_utils import use_utf8_stdio
-
-    use_utf8_stdio()
-
-    parser = argparse.ArgumentParser(description='Claude tmux session manager')
-    parser.add_argument('--execute', action='store_true',
-                        help='Execute mode: read JSON from stdin with action details')
-    parser.add_argument('--json', action='store_true',
-                        help='Output session data as JSON instead of table')
-    args = parser.parse_args()
-
-    if args.execute:
-        handle_execute_mode()
-        return
-
-    tmux = get_tmux_utilities()
-    sessions = discover_claude_sessions(tmux)
-
+def list_sessions(as_json: bool = False) -> int:
+    """`autorun tmux list`: print the AI sessions in tmux. Types nothing."""
+    sessions = discover_claude_sessions(get_tmux_utilities())
     if not sessions:
-        print('No Claude sessions found in tmux.')
-        return
-
+        print('No AI coding sessions found in tmux.')
+        return 0
     analyzed = analyze_sessions(sessions)
-
-    if args.json:
+    if as_json:
         print(json.dumps({'sessions': analyzed, 'count': len(analyzed)}, indent=2))
     else:
         print(format_output(analyzed))
+    return 0
+
+
+def send_text(to: str, text: str) -> int:
+    """`autorun tmux send --to <targets> -- <text>`: type text, then Enter, into the targets.
+
+    Letters refer to the order `autorun tmux list` prints, discovered again
+    here. With no --to or no text, nothing is typed and the result is 1.
+    """
+    if not to:
+        print(f'Nothing sent: name the panes with {SEND_TARGETS}. '
+              'Run `autorun tmux list` to see the letters.')
+        return 1
+    if not text.strip():
+        print('Nothing sent: give the text to type after --, e.g. '
+              f'autorun tmux send --to {to} -- continue')
+        return 1
+    sessions = discover_claude_sessions(get_tmux_utilities())
+    if not sessions:
+        print('Nothing sent: no AI coding sessions found in tmux.')
+        return 1
+    return handle_execute_mode({'selections': to, 'command': text,
+                                'sessions': analyze_sessions(sessions)})
+
+
+def run_tmux_command(args, tmux_parser) -> int:
+    """Run parsed `autorun tmux` arguments (see __main__.add_tmux_arguments)."""
+    if args.execute:
+        return handle_execute_mode()
+    if args.tmux_command == 'list':
+        return list_sessions(as_json=args.json)
+    if args.tmux_command == 'send':
+        return send_text(args.to, ' '.join(args.text))
+    tmux_parser.print_help()
+    return 1
+
+
+def main(argv: List[str] = None) -> int:
+    """`autorun tmux <argv>` for commands/tmux-exec, which runs where `autorun`
+    is not on PATH and its dependencies may not be installed."""
+    import argparse
+
+    from autorun.__main__ import add_tmux_arguments
+    from autorun.logging_utils import use_utf8_stdio
+
+    use_utf8_stdio()
+    parser = argparse.ArgumentParser(prog='tmux-exec')
+    add_tmux_arguments(parser)
+    return run_tmux_command(parser.parse_args(argv), parser)
