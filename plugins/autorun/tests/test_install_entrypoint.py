@@ -194,9 +194,38 @@ def isolated(monkeypatch, tmp_path):
     # explicit XDG_CONFIG_HOME, which CI may export globally; relocation itself
     # is covered by the discovery tests.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar"))
+    runtime = tmp_path / "ar"
+    monkeypatch.setenv("AUTORUN_HOME", str(runtime))
     monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "state"))
+    # ipc and restart_daemon fix the daemon's paths at first import, so the
+    # variable above does not move them once any earlier test imported autorun,
+    # and an uninstall's teardown would find and stop this worker's daemon.
+    # Production keeps import-time paths: client.py reads them on every hook,
+    # and installer/AGENTS.md documents setting AUTORUN_HOME before import.
+    from autorun import ipc, restart_daemon
+
+    previous = ipc.AUTORUN_CONFIG_DIR
+    for module in (ipc, restart_daemon):
+        for name, value in list(vars(module).items()):
+            if isinstance(value, Path) and (value == previous or value.parent == previous):
+                monkeypatch.setattr(module, name, runtime / value.relative_to(previous))
     return home
+
+
+def test_isolated_daemon_paths_follow_the_fixtures_autorun_home(isolated):
+    """An uninstall's teardown (installer/teardown.stop_daemon) finds the
+    daemon through restart_daemon.LOCK_PATH and ipc's socket paths, which are
+    fixed when autorun is first imported. Setting AUTORUN_HOME afterwards left
+    them on the test worker's runtime, so these tests' uninstalls stopped the
+    worker's own daemon instead of finding none."""
+    from autorun import ipc, restart_daemon
+
+    home = Path(os.environ["AUTORUN_HOME"])
+    assert ipc.AUTORUN_CONFIG_DIR == home
+    assert restart_daemon.LOCK_PATH == home / "daemon.lock"
+    assert ipc.SOCKET_PATH == home / "daemon.sock"
+    assert ipc.PORT_FILE == home / "daemon.port"
+    assert ipc.TOKEN_FILE == home / "daemon.token"
 
 
 def test_selection_comes_from_the_manifest_and_accepts_the_retired_name():
