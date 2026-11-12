@@ -222,7 +222,10 @@ def test_existing_database_opens_through_store_selection(tmp_path, monkeypatch):
     conn = sqlite3.connect(db_path)
     try:
         carried = {
-            "schema_meta": conn.execute("SELECT key, value FROM schema_meta").fetchall(),
+            # The live database's schema_meta holds exactly these two rows.
+            "schema_meta": conn.execute(
+                "SELECT key, value FROM schema_meta WHERE key IN ('migration_generation', 'source_digest')"
+            ).fetchall(),
             "sessions": conn.execute("SELECT session, namespace, last_modified FROM sessions").fetchall(),
             "state": conn.execute("SELECT session, field, value_json, updated_at FROM state").fetchall(),
         }

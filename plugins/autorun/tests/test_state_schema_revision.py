@@ -224,6 +224,42 @@ def test_a_version_1_database_reaches_revision_3_with_fail_closed_columns(tmp_pa
     assert flags["zz"] == (1, 0), "a status this build does not know must block for older builds too"
 
 
+def test_a_table_an_older_build_upgraded_from_version_1_is_reindexed(tmp_path):
+    """No CHECK guarded this table, so a status its old blocks_stop did not list may be stored.
+
+    Builds before this one gave a version-1 table its generated columns with
+    ``IN (<blocking statuses>)``, so a delegation-returned row was stored with
+    blocks_stop 0 and left out of the partial index. The rewrite changes the
+    expression, so the index must be rebuilt or it disagrees with the table.
+    """
+    db_path = tmp_path / "state" / "daemon_state.sqlite3"
+    _create_v1_database(db_path)
+    raw = sqlite3.connect(db_path)
+    raw.execute(
+        "ALTER TABLE tasks ADD COLUMN blocks_stop INTEGER GENERATED ALWAYS AS "
+        "(CASE WHEN status IN ('in_progress', 'pending') THEN 1 ELSE 0 END) VIRTUAL"
+    )
+    raw.execute(
+        "ALTER TABLE tasks ADD COLUMN prunable INTEGER GENERATED ALWAYS AS "
+        "(CASE WHEN status IN ('completed', 'deleted', 'ignored') THEN 1 ELSE 0 END) VIRTUAL"
+    )
+    raw.execute("DROP INDEX tasks_incomplete")
+    raw.execute("DROP INDEX tasks_retention")
+    raw.execute("CREATE INDEX tasks_incomplete ON tasks(session, task_id) WHERE blocks_stop = 1")
+    raw.execute("CREATE INDEX tasks_retention ON tasks(session, prunable, updated_at)")
+    raw.execute("UPDATE tasks SET status = 'delegation-returned' WHERE task_id = '478'")
+    raw.execute("PRAGMA user_version = 2")
+    raw.commit()
+    raw.close()
+
+    store = SQLiteStore(db_path)
+    store.initialize()
+
+    assert _revision(db_path) == "3"
+    assert _read(db_path, "PRAGMA integrity_check") == [("ok",)]
+    assert {task["id"] for task in TaskRepository(store).list_incomplete(SESSION)} == {"478", "479"}
+
+
 def test_a_higher_schema_revision_opens_and_is_left_alone(tmp_path):
     db_path = tmp_path / "state" / "daemon_state.sqlite3"
     SQLiteStore(db_path).initialize()
@@ -274,11 +310,11 @@ def test_existing_status_policy_never_changes():
             )
 
 
-def test_a_failed_quick_check_rolls_the_rewrite_back_and_the_store_still_opens(tmp_path, monkeypatch):
+def test_a_rewrite_that_does_not_read_back_is_rolled_back_and_the_store_still_opens(tmp_path, monkeypatch):
     db_path = tmp_path / "state" / "daemon_state.sqlite3"
     _create_pre_3472b3ee_database(db_path)
     old_ddl, digest = _tasks_ddl(db_path), _content_digest(db_path)
-    monkeypatch.setattr(sm, "_tasks_quick_check", lambda conn: ["row 3 missing from index tasks_incomplete"])
+    monkeypatch.setattr(sm, "_verify_tasks_definition", lambda conn, sql, columns: ["columns read back as []"])
 
     store = SQLiteStore(db_path)
     store.initialize()

@@ -930,7 +930,14 @@ def all_session_state(timeout: float = DEFAULT_SESSION_TIMEOUT,
 # "AURN" as a big-endian integer. SQLite stores this in the file header, so a
 # database created by something else is recognizable before any statement runs.
 SCHEMA_APPLICATION_ID = 0x4155524E
+# The compatibility major. Every build released before schema revision 3
+# refuses any other value at daemon start, so only an incompatible change
+# raises it, and that release also ships the reverse step (AGENTS.md).
 SCHEMA_USER_VERSION = 2
+# Additive changes inside SCHEMA_USER_VERSION, recorded in
+# schema_meta('schema_revision'). Any revision opens; a lower one is
+# migrated up, never down. 3: the tasks definition has no status CHECK.
+SCHEMA_REVISION = 3
 
 # Maintenance settings, from CONFIG so they can be tuned without editing code.
 # Both bound the write-ahead log rather than throughput, and neither discards
@@ -1141,6 +1148,139 @@ def _migrate_schema_v1_to_v2(conn) -> None:
         "CREATE INDEX tasks_retention ON tasks(session, prunable, updated_at)"
     )
     conn.execute(f"PRAGMA user_version = {SCHEMA_USER_VERSION}")
+
+
+def _schema_meta_value(conn, key: str):
+    """One schema_meta value, or None when the row or the table is absent."""
+    try:
+        row = conn.execute("SELECT value FROM schema_meta WHERE key = ?", (key,)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return row[0] if row else None
+
+
+def _record_schema_revision(conn) -> None:
+    """Record, in the caller's transaction, what the tasks definition now says.
+
+    ``blocks_stop_non_blocking`` is the list the generated blocks_stop column
+    was written with, so a reader can tell whether it knows every status the
+    column treats as non-blocking.
+    """
+    from . import __version__
+
+    conn.executemany(
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+        (
+            ("schema_revision", str(SCHEMA_REVISION)),
+            ("schema_written_by", __version__),
+            ("blocks_stop_non_blocking", json.dumps(sorted(NON_BLOCKING_TASK_STATUSES))),
+        ),
+    )
+
+
+def _allow_schema_rewrite(conn) -> None:
+    """Turn SQLite's defensive mode off for this connection where Python can.
+
+    Defensive builds (Apple's system Python) refuse writes to sqlite_master;
+    Python 3.12+ can lift that per connection. Elsewhere the rewrite meets the
+    refusal and the caller falls back to rebuilding the table.
+    """
+    if hasattr(sqlite3, "SQLITE_DBCONFIG_DEFENSIVE"):
+        conn.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, False)
+
+
+def _rewrite_tasks_definition(conn, sql: str) -> None:
+    """SQLite's documented procedure for removing a CHECK (lang_altertable.html, section 8)."""
+    version = conn.execute("PRAGMA schema_version").fetchone()[0]
+    conn.execute("PRAGMA writable_schema = ON")
+    try:
+        conn.execute(
+            "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'tasks'",
+            (sql,),
+        )
+        conn.execute(f"PRAGMA schema_version = {version + 1}")
+    finally:
+        conn.execute("PRAGMA writable_schema = OFF")
+
+
+def _task_columns(conn) -> list:
+    return conn.execute(
+        'SELECT name, type, "notnull", pk, hidden FROM pragma_table_xinfo(\'tasks\')'
+    ).fetchall()
+
+
+def _verify_tasks_definition(conn, sql: str, columns: list) -> list:
+    """Problems with the rewritten definition as this connection now parses it.
+
+    SQLite warns that a malformed definition written through writable_schema
+    corrupts the schema. Reading the table back after the schema_version bump
+    makes this connection reparse it, so a definition SQLite cannot use is
+    caught here, before COMMIT. Constant cost: no row or index page is read.
+    """
+    problems = []
+    stored = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
+    ).fetchone()
+    if stored is None or stored[0] != sql:
+        problems.append(f"stored definition is {stored!r}")
+    if _task_columns(conn) != columns:
+        problems.append(f"columns read back as {_task_columns(conn)}")
+    return problems
+
+
+def _migrate_tasks_revision_3(conn) -> bool:
+    """Rewrite the stored tasks definition in place; True when SQLite refused it.
+
+    Runs inside the caller's BEGIN IMMEDIATE, after the caller read the
+    revision under that lock, so concurrent starts migrate once. Only the
+    table's CREATE text changes, so the lock is held for milliseconds at any
+    table size: VIRTUAL generated columns store nothing, and the partial
+    indexes need no REINDEX because a table created at version 2 has a CHECK
+    that admitted only statuses whose blocks_stop and prunable have never
+    changed (test_existing_status_policy_never_changes). A table that reached
+    version 2 through the version-1 step had no CHECK, so its indexes are
+    rebuilt; only 1.0.0 development builds wrote version 1. A definition that
+    does not read back as written rolls the rewrite back and the store keeps
+    its old definition.
+    """
+    live = _task_columns(conn)
+    order = [column[0] for column in live]
+    sql = _tasks_table_sql(order)
+    probe = sqlite3.connect(":memory:")
+    try:
+        probe.execute(sql)
+        proposed = _task_columns(probe)
+    finally:
+        probe.close()
+    if proposed != live:
+        logger.error(
+            "Not upgrading the tasks table: its columns %s differ from %s.", live, proposed
+        )
+        return False
+
+    conn.execute("SAVEPOINT tasks_revision_3")
+    try:
+        _allow_schema_rewrite(conn)
+        _rewrite_tasks_definition(conn, sql)
+    except sqlite3.OperationalError as exc:
+        if "may not be modified" not in str(exc):
+            raise
+        conn.execute("ROLLBACK TO tasks_revision_3")
+        conn.execute("RELEASE tasks_revision_3")
+        return True
+    problems = _verify_tasks_definition(conn, sql, proposed)
+    if problems:
+        conn.execute("ROLLBACK TO tasks_revision_3")
+        conn.execute("RELEASE tasks_revision_3")
+        logger.error("Not upgrading the tasks table: after the rewrite, %s.", "; ".join(problems))
+        return False
+    if order != list(_TASK_COLUMNS):
+        conn.execute("REINDEX tasks_incomplete")
+        conn.execute("REINDEX tasks_retention")
+    _record_schema_revision(conn)
+    conn.execute("RELEASE tasks_revision_3")
+    logger.info("Rewrote the tasks table definition to schema revision %d.", SCHEMA_REVISION)
+    return False
 
 
 class _Missing:
@@ -1537,8 +1677,12 @@ class SQLiteStore:
                             f"PRAGMA application_id = {SCHEMA_APPLICATION_ID}"
                         )
                         conn.execute(f"PRAGMA user_version = {SCHEMA_USER_VERSION}")
+                        _record_schema_revision(conn)
                     elif version == 1:
                         _migrate_schema_v1_to_v2(conn)
+                        _record_schema_revision(conn)
+                    elif int(_schema_meta_value(conn, "schema_revision") or 2) < SCHEMA_REVISION:
+                        _migrate_tasks_revision_3(conn)
                     conn.execute("COMMIT")
                 except BaseException:
                     _rollback_without_masking_original(conn)
