@@ -201,7 +201,7 @@ lines = [
     row("  This demo shows:"),
     row(),
     row("    1.  Safety guards    rm, sed, git clean  →  safe alternatives"),
-    row("    2.  File policy      /ar:f  —  edit existing files only"),
+    row("    2.  File policy      /ar:file existing-only  →  no new files"),
     row("    3.  Custom blocks    /ar:no  block  ·  /ar:ok  unblock"),
     row("    4.  Plan commands    /ar:plannew  —  auto-saved on acceptance"),
     row("    5.  /ar:go           3-stage: implement  →  review  →  verify"),
@@ -942,7 +942,7 @@ def act4_live(session: DemoSession) -> None:
     """Act 4: AutoFile policy cycle — set strict, show Write blocked, restore."""
     pause(2.0)
     # Set strict mode via autorun slash command
-    session.send_prompt("/ar:f")
+    session.send_prompt("/ar:file existing-only")
     session.wait_for_response(timeout=60)
     # Extra wait: the hook state update must complete before we send the next prompt,
     # otherwise Claude may start the create task before strict mode takes effect.
@@ -956,7 +956,7 @@ def act4_live(session: DemoSession) -> None:
     pause(7.0)  # Let viewers read the file-blocked message
 
     # Restore full access
-    session.send_prompt("/ar:allow")
+    session.send_prompt("/ar:file allow")
     session.wait_for_response(timeout=60)
     pause(4.0)  # Wait for restore to take effect before next act
 
@@ -1223,13 +1223,13 @@ def act4_scripted(plugin_root: Path) -> None:
     ])
     session_id = f"demo-policy-{os.getpid()}"
 
-    type_cmd("/ar:st          # check current policy")
-    run_hook("UserPromptSubmit", make_userpromptsubmit(session_id, "/ar:st"), plugin_root)
+    type_cmd("/ar:status      # check current policy")
+    run_hook("UserPromptSubmit", make_userpromptsubmit(session_id, "/ar:status"), plugin_root)
     show_policy("allow-all", "New files: ✓ Allowed    Existing files: ✓ Allowed")
     pause(1.0)
 
-    type_cmd("/ar:f           # strict mode: modify existing files only")
-    run_hook("UserPromptSubmit", make_userpromptsubmit(session_id, "/ar:f"), plugin_root)
+    type_cmd("/ar:file existing-only   # strict mode: modify existing files only")
+    run_hook("UserPromptSubmit", make_userpromptsubmit(session_id, "/ar:file existing-only"), plugin_root)
     show_policy("strict-search", "Existing files: ✓ Allowed", new_files="🚫 Blocked")
     pause(1.0)
 
@@ -1247,19 +1247,19 @@ def act4_scripted(plugin_root: Path) -> None:
             "Write → new_feature.py",
             "AutoFile policy is strict-search. New file creation is not allowed.",
             "Search for an existing file to modify: Glob (**/*.py)",
-            "/ar:allow  to restore full file access"
+            "/ar:file allow  to restore full file access"
         )
     pause(1.0)
 
     print()
     print(c("  # autorun gives you three levels of control:", "gray"))
-    print(c("  /ar:allow   allow-all       Claude can create or edit any file (default)", "gray"))
-    print(c("  /ar:j       justify-create  Claude must explain why before creating new files", "gray"))
-    print(c("  /ar:f       strict-search   Claude can only edit files that already exist", "gray"))
+    print(c("  /ar:file allow           allow-all       Claude can create or edit any file (default)", "gray"))
+    print(c("  /ar:file justify         justify-create  Claude must explain why before creating new files", "gray"))
+    print(c("  /ar:file existing-only   strict-search   Claude can only edit files that already exist", "gray"))
     pause(1.0)
 
-    type_cmd("/ar:allow       # restore full access")
-    run_hook("UserPromptSubmit", make_userpromptsubmit(session_id, "/ar:allow"), plugin_root)
+    type_cmd("/ar:file allow  # restore full access")
+    run_hook("UserPromptSubmit", make_userpromptsubmit(session_id, "/ar:file allow"), plugin_root)
     show_policy("allow-all", "New files: ✓ Allowed (restored)")
     pause(2.0)
 
@@ -1301,9 +1301,9 @@ def act5_scripted(plugin_root: Path) -> None:
     print(c("  ✅ Allowed: 'git push' (to block again: /ar:no 'git push')", "green"))
     pause(0.8)
 
-    type_cmd("/ar:blocks                 # see all active custom blocks")
+    type_cmd("/ar:status                 # see all active custom blocks")
     run_hook("UserPromptSubmit",
-             make_userpromptsubmit(session_id, "/ar:blocks"), plugin_root)
+             make_userpromptsubmit(session_id, "/ar:status"), plugin_root)
     print(c("  🚫 Session blocks (0):  none active", "gray"))
     print(c("     (28 built-in safety patterns always apply)", "gray"))
     pause(2.0)
@@ -1428,7 +1428,7 @@ def outro() -> None:
     print(c("  🧭  Tool Redirects ", "white", "bold") +
           c("guides Claude toward built-in tools (Grep, Glob, Read)", "gray"))
     print(c("  📁  File Policy    ", "white", "bold") +
-          c("/ar:f = only edit existing files · /ar:allow = full access", "gray"))
+          c("/ar:file existing-only = only edit existing files · /ar:file allow = full access", "gray"))
     print(c("  🚫  Custom Blocks  ", "white", "bold") +
           c("/ar:no 'cmd' block · /ar:ok 'cmd' unblock — your rules", "gray"))
     print(c("  📋  /ar:plannew    ", "white", "bold") +
@@ -1880,8 +1880,8 @@ class TestDemoFree:
     These verify that the same hook calls the scripted demo makes actually work:
     - rm is blocked (exit 2, mentions trash)
     - grep in pipe is allowed (bashlex pipeline detection)
-    - /ar:st responds with JSON
-    - /ar:f strict mode blocks Write to new files
+    - /ar:status responds with JSON
+    - /ar:file existing-only strict mode blocks Write to new files
     - run_demo_scripted() completes all 7 acts without crashing
     """
 
@@ -1910,19 +1910,19 @@ class TestDemoFree:
         assert rc == 0, f"grep in pipe must be allowed, got rc={rc}"
 
     def test_status_command_responds(self):
-        """/ar:st UserPromptSubmit returns a JSON response."""
+        """/ar:status UserPromptSubmit returns a JSON response."""
         root = find_plugin_root()
         payload = {
             "hook_event_name": "UserPromptSubmit", "session_id": "demo-test-status",
-            "prompt": "/ar:st", "session_transcript": [],
+            "prompt": "/ar:status", "session_transcript": [],
             "_cwd": "/tmp", "_pid": os.getpid(),
         }
         rc, resp, _ = run_hook("UserPromptSubmit", payload, root)
-        assert rc == 0, f"/ar:st must exit 0, got {rc}"
-        assert resp is not None, "/ar:st must return a JSON response"
+        assert rc == 0, f"/ar:status must exit 0, got {rc}"
+        assert resp is not None, "/ar:status must return a JSON response"
 
     def test_strict_policy_blocks_write_to_new_file(self):
-        """/ar:f strict mode blocks Write to a new (non-existent) file."""
+        """/ar:file existing-only strict mode blocks Write to a new (non-existent) file."""
         root = find_plugin_root()
         session_id = f"demo-test-strict-{os.getpid()}"
         hook = str(root / "hooks" / "hook_entry.py")
@@ -1932,7 +1932,7 @@ class TestDemoFree:
         # Enable strict mode
         set_payload = {
             "hook_event_name": "UserPromptSubmit", "session_id": session_id,
-            "prompt": "/ar:f", "session_transcript": [],
+            "prompt": "/ar:file existing-only", "session_transcript": [],
             "_cwd": "/tmp", "_pid": os.getpid(),
         }
         subprocess.run(base, input=json.dumps(set_payload),
