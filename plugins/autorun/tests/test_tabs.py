@@ -189,6 +189,19 @@ class TestDiscoveryFindsEveryRegisteredHarness:
         assert self._harness((f'/usr/local/bin/{binary}', f'{binary} --resume x')) == (
             name, True, name == 'claude')
 
+    @pytest.mark.parametrize('name', sorted(PLATFORMS))
+    def test_every_process_name_comes_from_the_registry(self, name):
+        """Extra executable names live on the Platform entry (process_names),
+        not in a separate table: only Claude Code has any."""
+        from autorun.client import harness_process_names
+
+        platform = PLATFORMS[name]
+        expected = ('claude-code', 'happy', 'happy-dev') if name == 'claude' else ()
+        assert platform.process_names == expected
+        names = harness_process_names()
+        assert all(names[n] == name for n in (platform.name, platform.binary, *platform.process_names))
+        assert set(names) == {n for p in PLATFORMS.values() for n in (p.name, p.binary, *p.process_names)}
+
     @pytest.mark.parametrize('shape', ['pane process', 'child of a shell'])
     @pytest.mark.parametrize('name', sorted(PLATFORMS))
     def test_found_as_the_pane_process_or_as_its_child(self, name, shape):

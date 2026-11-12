@@ -28,6 +28,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "name": platform.name,
         "display_name": platform.display_name,
         "binary": platform.binary,
+        "process_names": list(platform.process_names),
         "install_flavor": platform.install_flavor,
         "has_hooks": platform.has_hooks,
         "tmux_prompt_state_readable": platform.tmux_prompt_state_readable,

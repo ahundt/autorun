@@ -969,6 +969,10 @@ class Platform:
     name: str
     display_name: str
     binary: str  # for shutil.which() probes
+    #: Other executable names this harness runs under, besides ``name`` and
+    #: ``binary`` (an installed process name, a wrapper). client.harness_process_names
+    #: maps every one to this platform for tmux discovery and the hook's parent scan.
+    process_names: tuple[str, ...] = ()
     install_flavor: str = ""
 
     # === Detection (used by config.detect_cli_type) ===
@@ -1382,6 +1386,9 @@ CLAUDE = register(
         name="claude",
         display_name="Claude Code",
         binary="claude",
+        # Claude Code's installed process name, and the happy wrapper and its
+        # development build, which run Claude Code inside them.
+        process_names=("claude-code", "happy", "happy-dev"),
         command_invocation_hint="Type /ar to autocomplete, or /ar:<command> directly.",
         standalone_session_env_vars=("CLAUDE_SESSION_ID",),
         # Checked after every other platform's payload signals and before the

@@ -83,11 +83,6 @@ DAEMON_START_RETRY_SECONDS = 0.1
 DAEMON_START_ATTEMPTS = 64
 
 
-#: Process names that run a registered harness but are not its ``name`` or
-#: ``binary``: Claude Code's installed process name and the ``happy`` wrapper.
-_HARNESS_PROCESS_ALIASES = {"claude-code": "claude", "happy": "claude", "happy-dev": "claude"}
-
-
 def harness_process_names() -> dict[str, str]:
     """Map each executable name of a registered harness to its platform name.
 
@@ -98,12 +93,12 @@ def harness_process_names() -> dict[str, str]:
     try:
         from .platforms import PLATFORMS
 
-        names = {marker.lower(): platform.name for platform in PLATFORMS.values()
-                 for marker in (platform.name, platform.binary) if marker}
+        return {marker.lower(): platform.name for platform in PLATFORMS.values()
+                for marker in (platform.name, platform.binary, *platform.process_names) if marker}
     except Exception:
         names = {name: name for name in ("claude", "gemini", "qwen", "codex")}
-        names.update(forgecode="forgecode", forge="forgecode")
-    return {**_HARNESS_PROCESS_ALIASES, **names}
+        names.update({"claude-code": "claude", "forgecode": "forgecode", "forge": "forgecode"})
+        return names
 
 
 def is_tool_gate_event(event: str) -> bool:
