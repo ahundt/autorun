@@ -139,6 +139,11 @@ def test_maintained_docs_reference_only_installed_autorun_commands():
     } | {path.parent.name for path in (PLUGIN_ROOT / "skills").glob("*/SKILL.md")}
     invalid: list[str] = []
     for path in _maintained_docs():
+        # Release notes record what each release shipped, under the names it
+        # shipped them with (the rc4 notes list the renamed commands on
+        # purpose); like CHANGELOG.md they are history, not current docs.
+        if path.relative_to(REPO_ROOT).parts[:2] == ("docs", "releases"):
+            continue
         for line_number, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
