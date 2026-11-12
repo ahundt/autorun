@@ -14,8 +14,12 @@ store through the daemon, so a change here can corrupt state for all of them.
 converts to the SQLite store (`session_manager.SQLiteStore`) while this
 install's daemon is stopped, `--state-rollback` exports back to
 `daemon_state.json`, and `--state-status` / `--state-maintenance` report on
-either. Moving the default directory needs the daemon quiesced and the
-migrator's receipts; see the comment above `_DEFAULT_STATE_DIR_PARTS`.
+either. `autorun --state-rebuild-tasks` is only for the case where startup
+reports that SQLite refused the in-place task-definition rewrite. Stop every
+daemon using that store before running it; the command checks that the store's
+directory has enough free space before copying the tasks table. Moving the
+default directory needs the daemon quiesced and the migrator's receipts; see
+the comment above `_DEFAULT_STATE_DIR_PARTS`.
 
 ## How it is locked
 

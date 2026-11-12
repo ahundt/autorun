@@ -719,6 +719,8 @@ autorun --state-status               # state backend in use, and any conversion
 autorun --state-migrate              # convert JSON state to SQLite (needed before switching to SQLite) while this install's daemon is stopped
 autorun --state-rollback             # export SQLite state back to daemon_state.json so state_backend can be json again
 autorun --state-maintenance          # SQLite database, WAL and reclaimable bytes; deletes nothing
+autorun --state-rebuild-tasks        # offline rebuild only after startup reports SQLite refused the in-place task-definition rewrite
+                                      # stop every daemon using the store first; the command checks free space before copying the tasks table
 autorun --update                     # check for and install an update
 autorun --update-method uv           # force the update method
 autorun --no-bootstrap               # hooks stop installing missing dependencies in the background
