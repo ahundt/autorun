@@ -408,9 +408,66 @@ def test_a_cached_wheel_hook_runs_without_the_tool_directory_on_path(tmp_path):
     absolute = "/opt/tool/bin/python /opt/tool/autorun/hooks/hook_entry.py --cli claude"
     assert claude.pin_hook_command(tmp_path, absolute)
     written = json.loads(hooks.read_text())["hooks"]
-    assert written["Stop"][0]["hooks"][0]["command"] == absolute
+    assert written["Stop"][0]["hooks"][0]["command"] == f"{absolute} --event Stop"
     assert written["PreToolUse"][0]["hooks"][0] == mine, "other commands stay"
     assert not claude.pin_hook_command(tmp_path, absolute), "already pinned"
+
+
+def test_pinned_commands_keep_each_manifest_event_for_bootstrap_failure(tmp_path):
+    import shlex
+    import shutil
+
+    cache = tmp_path / "cache"
+    hooks = cache / "hooks"
+    hooks.mkdir(parents=True)
+    shutil.copy2(Path(__file__).resolve().parents[1] / "hooks" / "hook_entry.py", hooks)
+    manifest = hooks / "hooks.json"
+    manifest.write_text(json.dumps({"hooks": {
+        "PreToolUse": [{"hooks": [{"type": "command", "command": claude.CONSOLE_HOOK_COMMAND}]}],
+        "SessionStart": [{"hooks": [{"type": "command", "command": claude.CONSOLE_HOOK_COMMAND}]}],
+    }}), encoding="utf-8")
+    interpreter = getattr(sys, "_base_executable", None) or sys.executable
+    base = f"{interpreter} -I {hooks / 'hook_entry.py'} --cli claude"
+
+    assert claude.pin_hook_command(cache, base)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    commands = {
+        event: matchers[0]["hooks"][0]["command"]
+        for event, matchers in document["hooks"].items()
+    }
+    assert commands["PreToolUse"].endswith("--event PreToolUse")
+    assert commands["SessionStart"].endswith("--event SessionStart")
+
+    broken = tmp_path / "broken-plugin"
+    package = broken / "src" / "autorun"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "__main__.py").write_text(
+        "raise ImportError('injected bootstrap failure')\n", encoding="utf-8"
+    )
+    environment = {
+        **os.environ,
+        "PATH": os.pathsep.join(("/usr/bin", "/bin")) if os.name != "nt" else "",
+        "AUTORUN_PLUGIN_ROOT": str(broken),
+        "AUTORUN_NO_BOOTSTRAP": "1",
+        "AUTORUN_HOME": str(tmp_path / "autorun-home"),
+    }
+    payload = json.dumps({"hook_event_name": "FutureUnknownEvent", "tool_name": "Bash"})
+
+    tool = subprocess.run(
+        shlex.split(commands["PreToolUse"]), input=payload, text=True,
+        capture_output=True, env=environment, check=False,
+    )
+    lifecycle = subprocess.run(
+        shlex.split(commands["SessionStart"]), input=payload, text=True,
+        capture_output=True, env=environment, check=True,
+    )
+
+    tool_response = json.loads(tool.stdout)
+    assert tool.returncode == 2
+    assert tool_response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert json.loads(lifecycle.stdout)["continue"] is True
+    assert lifecycle.stderr == ""
 
 
 def test_the_pinned_command_is_the_one_the_wheel_build_writes():

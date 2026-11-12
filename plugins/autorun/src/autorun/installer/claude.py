@@ -43,6 +43,7 @@ only proven generated trees.
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
@@ -358,7 +359,10 @@ def pin_hook_command(directory: Path, command: str) -> bool:
 
     owned_bundle = bundle_hooks_are_ours(directory)
     changed = False
-    for matchers in (document.get("hooks") or {}).values():
+    for event, matchers in (document.get("hooks") or {}).items():
+        if not isinstance(event, str) or not event:
+            continue
+        pinned = f"{command} --event {shlex.quote(event)}"
         for matcher in matchers if isinstance(matchers, list) else ():
             for hook in (matcher.get("hooks") or ()) if isinstance(matcher, dict) else ():
                 if (
@@ -368,9 +372,9 @@ def pin_hook_command(directory: Path, command: str) -> bool:
                         hook["command"] == CONSOLE_HOOK_COMMAND
                         or (owned_bundle and COMMAND_MARK in hook["command"])
                     )
-                    and hook["command"] != command
+                    and hook["command"] != pinned
                 ):
-                    hook["command"] = command
+                    hook["command"] = pinned
                     changed = True
     if changed:
         atomic_write(path, json.dumps(document, indent=2) + "\n")

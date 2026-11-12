@@ -305,7 +305,7 @@ def test_owned_source_hook_pin_is_idempotent(tmp_path):
     assert path.stat().st_mtime_ns == before.st_mtime_ns
     document = json.loads(first)
     commands = [item["command"] for item in document["hooks"]["Stop"][0]["hooks"]]
-    assert commands == [target]
+    assert commands == [f"{target} --event Stop"]
 
 
 def test_cache_install_builds_outside_the_source_project(tmp_path):
