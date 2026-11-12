@@ -518,3 +518,37 @@ def test_daemon_discovery_runs_on_windows(monkeypatch):
     monkeypatch.setattr(conftest.psutil, "process_iter", lambda *a, **k: iter(processes))
 
     assert conftest.DaemonManager._get_all_daemon_pids() == ["7"]
+
+
+def test_the_suite_cannot_signal_an_autorun_daemon_it_did_not_start(tmp_path):
+    """The live daemon was SIGTERMed mid-suite (2026-11-11 19:28:09) with no
+    record of the sender. conftest wraps os.kill and psutil's signal methods
+    so a test that resolves a foreign daemon's PID raises instead of
+    interrupting every session on the machine; this daemon-shaped process is
+    not our descendant and its AUTORUN_HOME is outside the runtime root."""
+    import signal
+    import subprocess
+
+    import conftest
+    import psutil
+
+    spawn = (
+        "import subprocess, sys; "
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)', 'autorun.daemon'], "
+        "start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); print(p.pid)"
+    )
+    env = dict(os.environ, AUTORUN_HOME=str(tmp_path))
+    pid = int(subprocess.run([sys.executable, "-c", spawn], env=env, capture_output=True, text=True,
+                             check=True).stdout)
+    try:
+        with pytest.raises(RuntimeError, match=f"PID {pid}"):
+            os.kill(pid, signal.SIGTERM)
+        with pytest.raises(RuntimeError, match=f"PID {pid}"):
+            psutil.Process(pid).terminate()
+        assert psutil.Process(pid).is_running()
+
+        own = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "autorun.daemon"], env=env)
+        own.terminate()  # a daemon-shaped child of this process stays ours to stop
+        assert own.wait(timeout=10) != 0
+    finally:
+        conftest._UNGUARDED["os.kill"](pid, signal.SIGKILL)

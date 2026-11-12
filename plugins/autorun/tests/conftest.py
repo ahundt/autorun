@@ -582,6 +582,56 @@ class DaemonManager:
         return test_pids, prod_pids
 
 
+_RealProcess = psutil.Process
+_UNGUARDED = {
+    "os.kill": os.kill,
+    "terminate": psutil.Process.terminate,
+    "kill": psutil.Process.kill,
+    "send_signal": psutil.Process.send_signal,
+}
+
+
+def _refuse_foreign_daemon_signal(pid: int) -> None:
+    """Raise instead of signalling an autorun daemon this test run does not own.
+
+    The live daemon was SIGTERMed at 2026-11-11 19:28:09 while three full
+    suites ran on the machine and was respawned 10s later by a hook; nothing
+    recorded who sent it. Path isolation keeps tests away from the live
+    socket and PID file, but a PID can still reach os.kill or psutil from
+    anywhere, so refuse at the signal itself: a daemon is ours only when it
+    lives under this worker's runtime root or descends from this process.
+    """
+    if str(pid) in DaemonManager._production_pids:
+        raise RuntimeError(f"test tried to signal production autorun daemon PID {pid}")
+    try:
+        proc = _RealProcess(pid)
+        if "autorun.daemon" not in " ".join(proc.cmdline()):
+            return
+        if DaemonManager._is_ours(str(pid)) or os.getpid() in {p.pid for p in proc.parents()}:
+            return
+    except (psutil.Error, OSError):
+        return  # gone or unreadable: the real call reports it
+    raise RuntimeError(f"test tried to signal autorun daemon PID {pid}, which this test run did not start")
+
+
+def _install_daemon_signal_guard() -> None:
+    # ponytail: covers os.kill and psutil in this process; a child shell's
+    # `kill` or os.killpg is not intercepted.
+    def guarded_os_kill(pid, sig):
+        _refuse_foreign_daemon_signal(pid)
+        return _UNGUARDED["os.kill"](pid, sig)
+
+    def guard(name):
+        def method(self, *args, **kwargs):
+            _refuse_foreign_daemon_signal(self.pid)
+            return _UNGUARDED[name](self, *args, **kwargs)
+        return method
+
+    os.kill = guarded_os_kill
+    for name in ("terminate", "kill", "send_signal"):
+        setattr(psutil.Process, name, guard(name))
+
+
 @pytest.fixture(scope="session")
 def test_timeout():
     """Default timeout for test operations."""
@@ -880,6 +930,7 @@ def pytest_sessionstart(session):
         # it on purpose, its absence is a broken runner, not a reason to skip.
         raise pytest.UsageError("AUTORUN_REQUIRE_JS_RUNTIME=1 but `bun` is not on PATH")
     DaemonManager.snapshot_production_pids()
+    _install_daemon_signal_guard()
     if _live_install_canary_enabled(session.config):
         session.config._autorun_live_install = _live_install_fingerprint()
         session.config._autorun_real_home_existed = os.path.exists(_REAL_AUTORUN_HOME)
