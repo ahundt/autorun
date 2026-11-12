@@ -66,7 +66,7 @@ flowchart TD
     %% ========================================
     subgraph CONTROL_OPTIONS[" "]
         direction LR
-        C1["<b>tmux/byobu</b><br/>──────────<br/><b>List all sessions</b><br/>/ar:tabs<br/>──────────<br/><b>Manage sessions</b><br/>/ar:tmux [list|create|cleanup]"]:::choiceBox
+        C1["<b>tmux/byobu</b><br/>──────────<br/><b>List AI sessions and send them text</b><br/>/ar:tmux<br/>──────────<br/><b>List AI sessions in tmux windows</b><br/>autorun tmux list<br/>──────────<br/><b>Send text to chosen sessions</b><br/>autorun tmux send"]:::choiceBox
     end
 
     %% ========================================
