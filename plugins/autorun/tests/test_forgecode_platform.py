@@ -87,7 +87,7 @@ def test_forgecode_template_directory_exists():
 
 
 @pytest.mark.parametrize("cmd_name", [
-    "ar-go", "ar-st", "ar-allow", "ar-find", "ar-commit", "ar-ph",
+    "ar-go", "ar-status", "ar-file", "ar-commit", "ar-philosophy",
 ])
 def test_forgecode_command_files_exist(cmd_name):
     root = _template_root()
@@ -96,7 +96,7 @@ def test_forgecode_command_files_exist(cmd_name):
 
 
 @pytest.mark.parametrize("cmd_name", [
-    "ar-go", "ar-st", "ar-allow", "ar-find", "ar-commit", "ar-ph",
+    "ar-go", "ar-status", "ar-file", "ar-commit", "ar-philosophy",
 ])
 def test_forgecode_command_has_required_frontmatter(cmd_name):
     """Per forge's crates/forge_domain/src/command.rs:11-21 the YAML

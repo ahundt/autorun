@@ -10,11 +10,10 @@ or irreversible actions rather than waiting to be blocked.
 
 - `/ar-go <task>` — start an autonomous run with the three-stage
   verification cycle (initial → critical review → final verification).
-- `/ar-st` — show the current AutoFile policy (allow / justify / find).
-- `/ar-allow` — allow all file creation.
-- `/ar-find` — restrict edits to existing files only.
+- `/ar-status` — show the file policy and the session and global command rules.
+- `/ar-file allow|justify|existing-only` — set the new-file policy for this session.
 - `/ar-commit` — refresh git commit guidelines before staging.
-- `/ar-ph` — refresh the universal system design philosophy.
+- `/ar-philosophy` — refresh the universal system design philosophy.
 
 Every other autorun control command reaches the daemon through the
 registered `autorun` tool — invoke it with the command's name and arguments

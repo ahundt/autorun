@@ -1,5 +1,5 @@
 ---
-name: ar-ph
+name: ar-philosophy
 description: Refresh the universal system design philosophy before designing or reviewing code
 ---
 
