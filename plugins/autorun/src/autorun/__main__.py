@@ -237,6 +237,16 @@ def _run_state_command(args) -> int:
     raise AssertionError("state maintenance dispatch reached no operation")
 
 
+def _subcommand_parser(parser: argparse.ArgumentParser, name: str) -> argparse.ArgumentParser:
+    """The parser of subcommand `name`, for printing its help.
+
+    Read from the parser's existing subparser group: calling add_subparsers()
+    again raises "cannot have multiple subparser arguments".
+    """
+    commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    return commands.choices[name]
+
+
 def add_tmux_arguments(tmux_parser: argparse.ArgumentParser) -> None:
     """The `list` and `send` arguments of `autorun tmux`.
 
@@ -1237,8 +1247,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
 
         if not hasattr(args, "file_command") or args.file_command is None:
             # No subcommand specified - show help
-            file_parser = create_parser().add_subparsers().choices["file"]
-            file_parser.print_help()
+            _subcommand_parser(parser, "file").print_help()
             return 1
 
         file_cmd = {
@@ -1298,8 +1307,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
 
         if not hasattr(args, "task_command") or args.task_command is None:
             # No subcommand specified - show help
-            task_parser = create_parser().add_subparsers().choices["task"]
-            task_parser.print_help()
+            _subcommand_parser(parser, "task").print_help()
             return 1
 
         session_id = None
@@ -1342,8 +1350,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command == "tmux":
         from autorun.tmux_tab_ai_session_status import run_tmux_command
 
-        commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
-        return run_tmux_command(args, commands.choices["tmux"])
+        return run_tmux_command(args, _subcommand_parser(parser, "tmux"))
 
     # Default: run as hook handler. Hooks arrive as JSON on a pipe; a person
     # at a terminal typed a bare `autorun`, and the useful answer there is
