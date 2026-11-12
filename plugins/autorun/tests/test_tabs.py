@@ -189,6 +189,24 @@ class TestDiscoveryFindsEveryRegisteredHarness:
         assert self._harness((f'/usr/local/bin/{binary}', f'{binary} --resume x')) == (
             name, True, name == 'claude')
 
+    @pytest.mark.parametrize('shape', ['pane process', 'child of a shell'])
+    @pytest.mark.parametrize('name', sorted(PLATFORMS))
+    def test_found_as_the_pane_process_or_as_its_child(self, name, shape):
+        """`tmux new-window codex` makes the harness the pane's own process,
+        with no shell above it; discovery looked only at the pane's children."""
+        binary = PLATFORMS[name].binary
+        proc = (f'/usr/local/bin/{binary}', f'{binary} --resume x')
+        if shape == 'pane process':
+            children, procs = {}, {'111': proc}
+        else:
+            children, procs = {'111': ['333']}, {'111': ('-zsh', '-zsh'), '333': proc}
+        tmux = TmuxUtilities(session_name="test-session")
+        with patch.object(tmux, 'execute_tmux_command',
+                          return_value={'returncode': 0, 'stdout': '111\n'}), \
+                patch('autorun.tmux_utils.subprocess.run',
+                      side_effect=_fake_process_table(children, procs)):
+            assert tmux.pane_harness('test-session', '0') == name
+
     @pytest.mark.parametrize('harness', [None, *sorted(PLATFORMS)])
     def test_window_fields_keep_claude_apart_from_other_harnesses(self, harness):
         from autorun.tmux_utils import _harness_fields

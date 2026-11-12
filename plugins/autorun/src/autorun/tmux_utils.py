@@ -773,9 +773,11 @@ class TmuxUtilities:
 
         Implementation:
             1. Query tmux for the PID of every pane in the window
-            2. Use pgrep -P to find child processes of those shells
-            3. Match each child's executable name against
-               client.harness_process_names() (see _process_harness)
+            2. Use pgrep -P to find the direct children of those processes
+            3. Match each child's executable name, then each pane process's
+               own (a pane started as `tmux new-window codex` has no shell
+               above the harness), against client.harness_process_names()
+               (see _process_harness)
 
         Best Practices:
             - Leverages existing execute_tmux_command for consistency
@@ -806,10 +808,10 @@ class TmuxUtilities:
                 timeout=2
             )
 
-            if child_result.returncode != 0:
-                return None
-
-            return next(filter(None, map(_process_harness, child_result.stdout.split())), None)
+            # pgrep exits 1 when no pane has a child; the panes still count.
+            children = child_result.stdout.split() if child_result.returncode == 0 else []
+            candidates = children + result['stdout'].split()
+            return next(filter(None, map(_process_harness, candidates)), None)
 
         except (subprocess.TimeoutExpired, Exception):
             # Fail safely - don't report a harness if detection fails
