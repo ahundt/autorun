@@ -58,11 +58,13 @@ autorun's installer (`installer.discovery.config_dir`) follows the same order
 after its own override: `CONFIG["harness_config_dirs"]["forgecode"]`, then
 `FORGE_CONFIG`, then `~/forge/` when it exists
 (`Platform.config_dirs_preferred_when_present`), then `~/.forge/`. When
-`~/forge/` is the base, command files autorun wrote earlier to
-`~/.forge/commands/` are retired (`Platform.retired_config_dirs`); files it
-did not write are left alone. Skills, commands and the `AGENTS.md` block all
-go under the base, so an install on a machine with only `~/.forge/` never
-creates `~/forge/` (which would make ForgeCode stop reading `~/.forge/`).
+`~/forge/` is the base, command files and skills autorun wrote earlier under
+`~/.forge/` are retired (`Platform.retired_config_dirs`), and its block in
+`~/.forge/AGENTS.md` is removed; files and text it did not write are left
+alone. An uninstall removes the block from both files. Skills, commands and
+the `AGENTS.md` block all go under the base, so an install on a machine with
+only `~/.forge/` never creates `~/forge/` (which would make ForgeCode stop
+reading `~/.forge/`).
 
 ## What autorun cannot do for ForgeCode
 

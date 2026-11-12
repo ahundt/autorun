@@ -1610,6 +1610,41 @@ def test_forgecode_install_writes_under_forgecodes_base_and_creates_no_new_base(
         assert (isolated / name / "AGENTS.md").read_text(encoding="utf-8").startswith(f"my rules in {name}\n")
 
 
+def test_forgecode_memory_block_retires_from_the_directory_that_stopped_being_the_base(
+    monkeypatch, isolated
+):
+    """An earlier install wrote autorun's block into ~/.forge/AGENTS.md. Once
+    ~/forge exists ForgeCode reads ~/forge/AGENTS.md instead, so the old block
+    is stale: the install moves it, keeping the user's text in ~/.forge, and an
+    uninstall removes the block wherever it is."""
+    from autorun.installer import entrypoint, memory
+    from autorun.platforms import PLATFORMS
+
+    monkeypatch.setattr(entrypoint, "_run", _cache_aware_runner)
+    monkeypatch.setattr(
+        entrypoint.shutil, "which", lambda name: f"/bin/{name}" if name in ("forge", "uv") else None
+    )
+    monkeypatch.delenv("FORGE_CONFIG", raising=False)
+    monkeypatch.setenv("AUTORUN_USE_DAEMON", "0")
+    block = memory.Block(PLATFORMS["forgecode"].memory_sentinel_slug)
+    old = isolated / ".forge" / "AGENTS.md"
+    old.parent.mkdir()
+    old.write_text("my rules in .forge\n", encoding="utf-8")
+    assert memory.splice(old, "guidance from an earlier release", block)
+    (isolated / "forge").mkdir()
+    new = isolated / "forge" / "AGENTS.md"
+    new.write_text("my rules in forge\n", encoding="utf-8")
+
+    assert entrypoint.install_plugins("ar", conductor=False, tool=False) == 0
+    assert memory.bounds(new.read_text(encoding="utf-8"), block) is not None
+    assert old.read_text(encoding="utf-8") == "my rules in .forge\n", "stale block left in ~/.forge"
+
+    assert memory.splice(old, "guidance from an earlier release", block)
+    assert entrypoint.uninstall_plugins("ar") == 0
+    assert old.read_text(encoding="utf-8") == "my rules in .forge\n"
+    assert new.read_text(encoding="utf-8") == "my rules in forge\n"
+
+
 def test_codex_upgrade_retires_the_command_files_and_keeps_the_users_own(
     monkeypatch, isolated
 ):

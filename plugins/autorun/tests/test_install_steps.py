@@ -2481,9 +2481,13 @@ def test_forgecode_commands_follow_forgecodes_own_base_directory(sandbox, monkey
     forge.mkdir(parents=True)
     (forge / "mine.md").write_text("theirs in forge\n", encoding="utf-8")
 
+    assert (sandbox / ".forge" / "skills" / "commit" / "SKILL.md").is_file()
+
     assert _forgecode_install(sandbox).ok is True
     assert sorted(p.name for p in forge.glob("ar-*.md")) == shipped
     assert not list(dot_forge.glob("ar-*.md")), "owned copies under ~/.forge are retired"
+    assert (sandbox / "forge" / "skills" / "commit" / "SKILL.md").is_file()
+    assert not (sandbox / ".forge" / "skills" / "commit").exists(), "owned skills under ~/.forge are retired"
     assert (dot_forge / "mine.md").read_text(encoding="utf-8") == "theirs in .forge\n"
     assert (forge / "mine.md").read_text(encoding="utf-8") == "theirs in forge\n"
     assert sorted(p.name for p in codex_commands.iterdir()) == ["mine.md"]

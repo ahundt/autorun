@@ -747,7 +747,20 @@ def regions_for(
         # strips it, where returning nothing left it in place for good.
         guidance = ""
     slug = str(getattr(platform, "memory_sentinel_slug", "") or "")
-    return (Region(base / filename, memory.Block(slug), guidance),) if slug else ()
+    if not slug:
+        return ()
+    # A retired root that is not the base (ForgeCode's ~/.forge once ~/forge
+    # exists) is no longer read, so a block an earlier install left there is
+    # stale: an empty body strips it and keeps the user's text around it.
+    retired = (
+        Region(root / filename, memory.Block(slug), "")
+        for root in dict.fromkeys(
+            discovery.expand_home(entry, home=ctx.home)
+            for entry in getattr(platform, "retired_config_dirs", ()) or ()
+        )
+        if root != base
+    )
+    return (Region(base / filename, memory.Block(slug), guidance), *retired)
 
 
 def hooks_for(
