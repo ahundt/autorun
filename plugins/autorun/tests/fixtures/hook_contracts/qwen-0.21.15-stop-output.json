@@ -1,0 +1,29 @@
+{
+  "harness": "Qwen Code",
+  "version": "0.21.15",
+  "upstream_tag": "v0.21.15",
+  "upstream_commit": "5dce251",
+  "read_date": "2026-11-12",
+  "schema_source": {
+    "path": "bundled/qc-helper/docs/features/hooks.md",
+    "quote": "Common Fields: continue, stopReason, suppressOutput, systemMessage. Since StopOutput extends HookOutput, all standard fields are available."
+  },
+  "parser_source": {
+    "path": "chunks/chunk-L7RG5PVT.js:128845-128869",
+    "quote": "normalizeOutput copies string systemMessage and object hookSpecificOutput from hook stdout."
+  },
+  "renderer_source": {
+    "path": "chunks/chunk-L7RG5PVT.js:150125-150134",
+    "quote": "If stopOutput.systemMessage is present, Qwen yields a hook_system_message with that value before evaluating a blocking decision."
+  },
+  "stop_output_fields": [
+    "continue",
+    "decision",
+    "reason",
+    "stopReason",
+    "suppressOutput",
+    "systemMessage",
+    "hookSpecificOutput.additionalContext"
+  ],
+  "allowed_stop_notice_field": "systemMessage"
+}

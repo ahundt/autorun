@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """TDD for platform-correct response logic in core.py."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from autorun.core import EventContext, normalize_hook_payload, validate_hook_response
@@ -390,9 +393,7 @@ class TestDualPlatformResponse:
     @pytest.mark.parametrize("cli_type", HARNESSES)
     def test_stop_allow_never_blocks_or_stops_agent(self, cli_type):
         response = EventContext("stop-allow", "Stop", cli_type=cli_type).respond("allow", "Reason")
-        if cli_type == "qwen":
-            assert response == {}
-        elif cli_type == "antigravity":
+        if cli_type == "antigravity":
             assert response == {"decision": "", "reason": "Reason"}
         else:
             assert response == {
@@ -401,6 +402,24 @@ class TestDualPlatformResponse:
                 "suppressOutput": False,
                 "systemMessage": "Reason",
             }
+
+    def test_qwen_allowed_stop_notice_uses_pinned_system_message_contract(self):
+        fixture = json.loads(
+            (Path(__file__).parent / "fixtures/hook_contracts/qwen-0.21.15-stop-output.json").read_text()
+        )
+        assert fixture["version"] == "0.21.15"
+        assert fixture["allowed_stop_notice_field"] == "systemMessage"
+        assert "systemMessage" in fixture["stop_output_fields"]
+
+        response = EventContext("qwen-stop-notice", "Stop", cli_type="qwen").respond(
+            "allow", "Waiting on you: approve publishing the release."
+        )
+        assert response == {
+            "continue": True,
+            "stopReason": "",
+            "suppressOutput": False,
+            "systemMessage": "Waiting on you: approve publishing the release.",
+        }
 
     @pytest.mark.parametrize("cli_type", HARNESSES)
     def test_session_start_matrix_exact(self, cli_type):

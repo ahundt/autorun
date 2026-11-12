@@ -604,9 +604,10 @@ class GeminiHookProtocol(HookProtocol):
 class QwenHookProtocol(HookProtocol):
     """Qwen response filter used by ``validate_hook_response``.
 
-    Qwen consumes hookSpecificOutput-only PreToolUse decisions and compact
-    decision/reason Stop responses, so portable Claude/Gemini fields must not
-    reach its CLI.
+    Qwen consumes hookSpecificOutput-only PreToolUse decisions. Blocking Stop
+    responses stay compact to avoid rendering the same guidance twice, while
+    allowed Stops retain Qwen's common ``systemMessage`` notice channel and
+    optional ``additionalContext``.
     """
 
     @staticmethod
@@ -650,7 +651,21 @@ class QwenHookProtocol(HookProtocol):
                 decision = "deny"
             return self.pretool_response(decision, reason, "PreToolUse")
         if event in {"Stop", "SubagentStop"}:
-            return {key: response[key] for key in ("decision", "reason") if key in response}
+            compact = {key: response[key] for key in ("decision", "reason") if key in response}
+            if response.get("decision") in {"block", "deny"}:
+                return compact
+            supported = {
+                key: response[key]
+                for key in (
+                    "continue",
+                    "stopReason",
+                    "suppressOutput",
+                    "systemMessage",
+                    "hookSpecificOutput",
+                )
+                if key in response
+            }
+            return {**compact, **supported}
         return None
 
 

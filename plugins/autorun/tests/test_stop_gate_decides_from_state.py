@@ -35,7 +35,6 @@ from stop_gate_support import (  # noqa: F401  (gate_env_fixture registers gate_
     blocks,
     gate_env_fixture,
     running_agents_fixture,
-    shows_allowed_stop_message,
     text,
 )
 from test_command_surface_one_name import _retired_mentions
@@ -296,11 +295,10 @@ def test_gate_messages_name_no_retired_command_spelling(gate_env, cli_type):
     rendered = {name: text(response) for name, response in messages.items()}
     assert "waits on #3" in rendered["block with waiting line"], f"no waiting line: {rendered}"
     assert AWAITING_PREFIX in rendered["rejected bare marker"], f"the bare marker's rejection is not named: {rendered}"
-    if shows_allowed_stop_message(cli_type):
-        assert "Waiting on you" in rendered["awaiting-user entry"], f"no awaiting-user line: {rendered}"
-        assert format_command_for_cli("/ar:task status", cli_type) in rendered["loop-guard release"], (
-            f"the loop-guard release does not point at {format_command_for_cli('/ar:task status', cli_type)}: {rendered}"
-        )
+    assert "Waiting on you" in rendered["awaiting-user entry"], f"no awaiting-user line: {rendered}"
+    assert format_command_for_cli("/ar:task status", cli_type) in rendered["loop-guard release"], (
+        f"the loop-guard release does not point at {format_command_for_cli('/ar:task status', cli_type)}: {rendered}"
+    )
     offenders = {name: _retired_mentions(message) for name, message in rendered.items() if _retired_mentions(message)}
     assert not offenders, f"{cli_type}: gate messages name retired command spellings: {offenders}"
 
