@@ -204,76 +204,6 @@ def test_a_fresh_database_is_created_at_revision_3(tmp_path):
     assert _read(db_path, "PRAGMA user_version") == [(2,)]
 
 
-def _create_earlier_revision_3(path):
-    # The first revision-3 definition exempted awaiting-user for older readers.
-    columns = dict(sm._TASK_COLUMNS)
-    columns["blocks_stop"] = (
-        "blocks_stop INTEGER GENERATED ALWAYS AS (CASE WHEN status IN "
-        f"{sm._sql_status_list(task_status.NON_BLOCKING_TASK_STATUSES)} THEN 0 ELSE 1 END) VIRTUAL"
-    )
-    sql = "CREATE TABLE tasks (" + ",".join(columns.values()) + ",PRIMARY KEY(session, task_id))"
-    with sqlite3.connect(path) as conn:
-        for statement in sm._SCHEMA_STATEMENTS:
-            conn.execute(sql if "CREATE TABLE IF NOT EXISTS tasks (" in statement else statement)
-        conn.execute(f"PRAGMA application_id = {sm.SCHEMA_APPLICATION_ID}")
-        conn.execute("PRAGMA user_version = 2")
-        conn.executemany("INSERT INTO schema_meta VALUES (?, ?)", [
-            ("schema_revision", "3"),
-            ("blocks_stop_non_blocking", json.dumps(sorted(task_status.NON_BLOCKING_TASK_STATUSES))),
-        ])
-        conn.execute("INSERT INTO sessions VALUES ('old-r3', 'task_lifecycle', 1)")
-        conn.execute("INSERT INTO tasks(session,task_id,status,updated_at,payload_json) VALUES ('old-r3','wait','awaiting-user',1,'{\"id\":\"wait\"}')")
-
-
-def test_earlier_revision_3_awaiting_user_fails_closed_without_reindex(tmp_path, monkeypatch):
-    path = tmp_path / "earlier.sqlite3"
-    _create_earlier_revision_3(path)
-    statements = []
-    store = SQLiteStore(path)
-    real = store._connect
-    def connect(*args, **kwargs):
-        conn = real(*args, **kwargs)
-        conn.set_trace_callback(statements.append)
-        return conn
-    monkeypatch.setattr(store, "_connect", connect)
-    store.initialize()
-    assert _read(path, "SELECT blocks_stop FROM tasks") == [(1,)], "older builds still exempt awaiting-user"
-    assert _read(path, "PRAGMA integrity_check") == [("ok",)]
-    assert TaskRepository(store).list_incomplete("old-r3") == [], "current Python policy must keep awaiting-user waiting"
-    assert not any(sql.startswith(("REINDEX", "UPDATE tasks ", "INSERT INTO tasks ", "DROP ")) for sql in statements), statements
-
-
-def test_refused_earlier_revision_3_repair_encodes_existing_waiting_rows(tmp_path, monkeypatch):
-    path = tmp_path / "earlier-defensive.sqlite3"
-    _create_earlier_revision_3(path)
-    with sqlite3.connect(path) as conn:
-        conn.executemany(
-            "INSERT INTO tasks(session,task_id,status,updated_at,payload_json) VALUES ('old-r3',?,'completed',1,'{}')",
-            [(str(i),) for i in range(30000)],
-        )
-    _force_defensive_sqlite(monkeypatch)
-    monkeypatch.setattr(sm, "_rebuild_tasks_table", lambda conn: pytest.fail("startup rebuilt tasks"))
-    store = SQLiteStore(path)
-    steps = [0]
-    statements = []
-    real = store._connect
-    def connect(*args, **kwargs):
-        conn = real(*args, **kwargs)
-        def progress():
-            steps[0] += 100
-            return 0
-        conn.set_progress_handler(progress, 100)
-        conn.set_trace_callback(statements.append)
-        return conn
-    monkeypatch.setattr(store, "_connect", connect)
-    store.initialize()
-    assert steps[0] < 5000, f"repair visited completed history: {steps[0]} VM steps"
-    assert sum(sql.startswith("INSERT INTO tasks ") for sql in statements) == 1
-    assert _read(path, "SELECT status, blocks_stop FROM tasks WHERE task_id = 'wait'") == [("pending", 1)], "an existing awaiting-user row stayed exempt for older readers"
-    assert TaskRepository(store).get_task("old-r3", "wait")["status"] == "awaiting-user"
-    assert _read(path, "PRAGMA integrity_check") == [("ok",)]
-
-
 def test_a_version_1_database_reaches_revision_3_with_fail_closed_columns(tmp_path):
     db_path = tmp_path / "state" / "daemon_state.sqlite3"
     _create_v1_database(db_path)
@@ -615,6 +545,179 @@ def test_defensive_startup_never_rebuilds_and_stores_new_statuses(tmp_path, monk
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE tasks SET updated_at = updated_at + 1 WHERE task_id = '478'")
     assert repository.get_task(SESSION, "478")["status"] == "pending"
+
+
+def test_later_successful_rewrite_decodes_fallback_status_rows(tmp_path, monkeypatch):
+    path = tmp_path / "later-success.sqlite3"
+    _create_pre_3472b3ee_database(path)
+    with monkeypatch.context() as defensive:
+        _force_defensive_sqlite(defensive)
+        fallback = SQLiteStore(path)
+        fallback.initialize()
+        repository = TaskRepository(fallback)
+        repository.put_task(
+            SESSION,
+            "478",
+            dict(repository.get_task(SESSION, "478"), status="delegation-returned"),
+        )
+
+    encoded = json.loads(_read(path, "SELECT payload_json FROM tasks WHERE task_id = '478'")[0][0])
+    assert _read(path, "SELECT status FROM tasks WHERE task_id = '478'") == [("pending",)]
+    assert encoded["_autorun_status"]["status"] == "delegation-returned"
+
+    repaired = SQLiteStore(path)
+    repaired.initialize()
+
+    status, payload = _read(path, "SELECT status, payload_json FROM tasks WHERE task_id = '478'")[0]
+    assert status == "delegation-returned"
+    assert "_autorun_status" not in json.loads(payload)
+    assert _read(
+        path,
+        "SELECT value FROM schema_meta WHERE key = ?",
+        (sm._ENCODED_STATUS_DECODE_STATE,),
+    ) == [(sm._ENCODED_STATUS_DECODE_DONE,)]
+    assert _read(
+        path,
+        "SELECT value FROM schema_meta WHERE key = ?",
+        (sm._ENCODED_STATUS_DECODE_CURSOR,),
+    ) == []
+    assert TaskRepository(repaired).get_task(SESSION, "478")["status"] == "delegation-returned"
+
+
+def test_fallback_writer_after_decode_restarts_canonicalization(tmp_path, monkeypatch):
+    path = tmp_path / "late-fallback-writer.sqlite3"
+    _create_pre_3472b3ee_database(path)
+    with monkeypatch.context() as defensive:
+        _force_defensive_sqlite(defensive)
+        fallback = SQLiteStore(path)
+        fallback.initialize()
+
+    SQLiteStore(path).initialize()
+    assert _read(
+        path,
+        "SELECT value FROM schema_meta WHERE key = ?",
+        (sm._ENCODED_STATUS_DECODE_STATE,),
+    ) == [(sm._ENCODED_STATUS_DECODE_DONE,)]
+
+    repository = TaskRepository(fallback)
+    repository.put_task(
+        SESSION,
+        "478",
+        dict(repository.get_task(SESSION, "478"), status="delegation-returned"),
+    )
+    assert _read(path, "SELECT status FROM tasks WHERE task_id = '478'") == [("pending",)]
+    assert _read(
+        path,
+        "SELECT value FROM schema_meta WHERE key = ?",
+        (sm._ENCODED_STATUS_DECODE_STATE,),
+    ) == [(sm._ENCODED_STATUS_DECODE_PENDING,)]
+    assert _read(
+        path,
+        "SELECT value FROM schema_meta WHERE key = ?",
+        (sm._ENCODED_STATUS_DECODE_CURSOR,),
+    ) == []
+
+    SQLiteStore(path).initialize()
+    status, payload = _read(path, "SELECT status, payload_json FROM tasks WHERE task_id = '478'")[0]
+    assert status == "delegation-returned"
+    assert "_autorun_status" not in json.loads(payload)
+
+
+def test_status_decode_write_transactions_are_bounded_by_batch_size(tmp_path, monkeypatch):
+    path = tmp_path / "decode-batches.sqlite3"
+    _create_pre_3472b3ee_database(path)
+    total = sm._ENCODED_STATUS_DECODE_BATCH_ROWS + 1
+    with sqlite3.connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO tasks(session, task_id, status, updated_at, payload_json) "
+            "VALUES (?, ?, 'pending', ?, ?)",
+            (
+                (
+                    SESSION,
+                    f"encoded-{index:04d}",
+                    float(index + 10),
+                    json.dumps(
+                        {
+                            "id": f"encoded-{index:04d}",
+                            "_autorun_status": {
+                                "status": "delegation-returned",
+                                "updated_at": float(index + 10),
+                            },
+                        }
+                    ),
+                )
+                for index in range(total)
+            ),
+        )
+        sm._mark_encoded_status_decode_pending(conn)
+
+    statements = []
+    store = SQLiteStore(path)
+    real_connect = store._connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(store, "_connect", connect)
+    store.initialize()
+
+    updates_per_transaction = []
+    current = None
+    for statement in statements:
+        if statement == "BEGIN IMMEDIATE":
+            current = 0
+        elif current is not None and statement.startswith("UPDATE tasks SET status ="):
+            current += 1
+        elif statement == "COMMIT" and current is not None:
+            updates_per_transaction.append(current)
+            current = None
+    decoding_batches = [count for count in updates_per_transaction if count]
+    assert len(decoding_batches) == 2, decoding_batches
+    assert max(decoding_batches) <= sm._ENCODED_STATUS_DECODE_BATCH_ROWS
+    assert _read(
+        path,
+        "SELECT count(*) FROM tasks WHERE task_id LIKE 'encoded-%' AND status = 'delegation-returned'",
+    ) == [(total,)]
+
+
+def test_offline_rebuild_decodes_fallback_status_rows(tmp_path, monkeypatch, capsys):
+    from autorun.__main__ import main
+    from autorun import ipc
+
+    db_path = tmp_path / "state" / "daemon_state.sqlite3"
+    _create_pre_3472b3ee_database(db_path)
+    with monkeypatch.context() as defensive:
+        _force_defensive_sqlite(defensive)
+        fallback = SQLiteStore(db_path)
+        fallback.initialize()
+        repository = TaskRepository(fallback)
+        repository.put_task(
+            SESSION,
+            "478",
+            dict(repository.get_task(SESSION, "478"), status="awaiting-user"),
+        )
+
+    assert _read(db_path, "SELECT status FROM tasks WHERE task_id = '478'") == [("pending",)]
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(db_path.parent))
+    monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", tmp_path / "daemon.lock")
+    assert main(["--state-rebuild-tasks"]) == 0, capsys.readouterr().out
+
+    status, payload = _read(db_path, "SELECT status, payload_json FROM tasks WHERE task_id = '478'")[0]
+    assert status == "awaiting-user"
+    assert "_autorun_status" not in json.loads(payload)
+    assert _read(
+        db_path,
+        "SELECT value FROM schema_meta WHERE key = ?",
+        (sm._ENCODED_STATUS_DECODE_STATE,),
+    ) == [(sm._ENCODED_STATUS_DECODE_DONE,)]
+    assert _read(
+        db_path,
+        "SELECT value FROM schema_meta WHERE key = ?",
+        (sm._ENCODED_STATUS_DECODE_CURSOR,),
+    ) == []
+    assert TaskRepository(SQLiteStore(db_path)).get_task(SESSION, "478")["status"] == "awaiting-user"
 
 
 def test_offline_rebuild_refuses_an_active_daemon(tmp_path, monkeypatch, capsys):

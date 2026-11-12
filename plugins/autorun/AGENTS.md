@@ -133,12 +133,8 @@ and fail closed for statuses written after them. Code here never takes
 policy from them: `list_incomplete` passes `task_status.py`'s lists as
 parameters and narrows candidates with `prunable = 0` through
 `tasks_retention`. Older lifecycle code cannot restore `awaiting-user`, so
-the compatibility `blocks_stop` column blocks it. An earlier revision-3
-definition is repaired without changing rows or rebuilding an index: its
-partial index additionally excludes `awaiting-user`, preserving the index's
-existing membership. Older readers use another index for that query after
-rollback; they may read finished history but cannot silently exempt the task.
-Adding a status changes `task_status.py` only. Changing what an existing
+the compatibility `blocks_stop` column blocks it. Adding a status changes
+`task_status.py` only. Changing what an existing
 status means (`blocks_stop`, `prunable`) is an incompatible change:
 `test_existing_status_policy_never_changes` freezes them, because skipping
 REINDEX in the revision-3 rewrite depends on it.
@@ -149,10 +145,11 @@ statuses use a CHECK-accepted `pending` column and an internal payload marker,
 decoded at the repository boundary. An older writer advancing `updated_at`
 invalidates that marker; older builds see blocking `pending`. The same fallback
 applies to a historical CHECK-free layout whose indexes would need rebuilding.
-When an earlier revision-3 definition also refuses its compatibility repair,
-startup reads its open candidates without the writer slot and encodes each
-existing awaiting-user row in its own short transaction. Completed history
-is not visited, and older readers see blocking pending rows.
+After a later in-place rewrite succeeds, or after the offline rebuild, encoded
+rows are canonicalized once in primary-key batches of
+`_ENCODED_STATUS_DECODE_BATCH_ROWS`; each batch rechecks and advances a durable
+cursor in the same bounded write transaction, and completion is recorded in
+`schema_meta`. A fallback writer resets that cursor in its marker transaction.
 `autorun --state-rebuild-tasks` is optional offline maintenance: stop **all**
 daemons using the store first. It refuses an active scoped daemon and checks
 free space before rebuilding; it can hold the write lock for the table's full

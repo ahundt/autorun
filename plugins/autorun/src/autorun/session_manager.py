@@ -972,6 +972,16 @@ SCHEMA_USER_VERSION = 2
 # migrated up, never down. 3: the tasks definition has no status CHECK.
 SCHEMA_REVISION = 3
 
+# A refused revision-3 rewrite stores new statuses as pending plus a payload
+# marker. Once the definition can accept every status, one durable cursor walks
+# the primary key in bounded transactions, canonicalizes those rows, and records
+# completion. Writers reset the cursor in the same transaction as any new marker.
+_ENCODED_STATUS_DECODE_STATE = "encoded_task_status_decode"
+_ENCODED_STATUS_DECODE_CURSOR = "encoded_task_status_decode_cursor"
+_ENCODED_STATUS_DECODE_PENDING = "pending"
+_ENCODED_STATUS_DECODE_DONE = "done"
+_ENCODED_STATUS_DECODE_BATCH_ROWS = 256
+
 # Maintenance settings, from CONFIG so they can be tuned without editing code.
 # Both bound the write-ahead log rather than throughput, and neither discards
 # stored data. Provisional: chosen to keep the log reclaimed, not by comparison.
@@ -1194,6 +1204,18 @@ def _schema_meta_value(conn, key: str):
     return row[0] if row else None
 
 
+def _mark_encoded_status_decode_pending(conn) -> None:
+    """Make a marker write restart canonical decoding from the first task key."""
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+        (_ENCODED_STATUS_DECODE_STATE, _ENCODED_STATUS_DECODE_PENDING),
+    )
+    conn.execute(
+        "DELETE FROM schema_meta WHERE key = ?",
+        (_ENCODED_STATUS_DECODE_CURSOR,),
+    )
+
+
 def _newer_schema_message(path, user_version: int, writer) -> str:
     if writer and not re.fullmatch(r"[0-9A-Za-z.+!-]{1,40}", str(writer)):
         writer = None  # name only what pip would accept as a version
@@ -1243,12 +1265,7 @@ def _check_schema_compatibility(conn, path) -> tuple:
 
 
 def _record_schema_revision(conn) -> None:
-    """Record, in the caller's transaction, what the tasks definition now says.
-
-    ``blocks_stop_non_blocking`` is the list the generated blocks_stop column
-    was written with, so a reader can tell whether it knows every status the
-    column treats as non-blocking.
-    """
+    """Record, in the caller's transaction, the current additive revision."""
     from . import __version__
 
     conn.executemany(
@@ -1256,7 +1273,6 @@ def _record_schema_revision(conn) -> None:
         (
             ("schema_revision", str(SCHEMA_REVISION)),
             ("schema_written_by", __version__),
-            ("blocks_stop_non_blocking", json.dumps(sorted(_COMPAT_NON_BLOCKING_TASK_STATUSES))),
         ),
     )
 
@@ -1277,16 +1293,6 @@ def _rewrite_tasks_definition(conn, sql: str) -> None:
     version = conn.execute("PRAGMA schema_version").fetchone()[0]
     conn.execute("PRAGMA writable_schema = ON")
     try:
-        if _schema_meta_value(conn, "schema_revision") == "3" and task_status.AWAITING_USER_STATUS in json.loads(
-            _schema_meta_value(conn, "blocks_stop_non_blocking") or "[]"
-        ):
-            # These rows were absent from the old partial index. Keep its
-            # membership unchanged; older readers use another index to see them.
-            conn.execute(
-                "UPDATE sqlite_master SET sql = ? WHERE type = 'index' AND name = 'tasks_incomplete'",
-                ("CREATE INDEX tasks_incomplete ON tasks(session, task_id) "
-                 "WHERE blocks_stop = 1 AND status != 'awaiting-user'",),
-            )
         conn.execute(
             "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'tasks'",
             (sql,),
@@ -1409,7 +1415,7 @@ def _migrate_tasks_revision_3(conn) -> bool:
         )
         return True
 
-    if order != list(_TASK_COLUMNS) and _schema_meta_value(conn, "schema_revision") != "3":
+    if order != list(_TASK_COLUMNS):
         # This older, CHECK-free layout may contain statuses its indexes omit.
         # Repairing those indexes requires an offline rebuild, never startup.
         return True
@@ -1839,12 +1845,10 @@ class SQLiteStore:
                     elif version == 1:
                         _migrate_schema_v1_to_v2(conn)
                         _record_schema_revision(conn)
-                    elif revision < SCHEMA_REVISION or (
-                        revision == 3 and task_status.AWAITING_USER_STATUS in json.loads(
-                            _schema_meta_value(conn, "blocks_stop_non_blocking") or "[]"
-                        )
-                    ):
+                    elif revision < SCHEMA_REVISION:
                         needs_rebuild = _migrate_tasks_revision_3(conn)
+                        if needs_rebuild:
+                            _mark_encoded_status_decode_pending(conn)
                     conn.execute("COMMIT")
                 except BaseException:
                     _rollback_without_masking_original(conn)
@@ -1861,8 +1865,8 @@ class SQLiteStore:
                 # journal_mode cannot change inside a transaction. Every
                 # initializer reaches this only after a validated commit.
                 self._enable_wal(conn, DEFAULT_SESSION_TIMEOUT)
-                if needs_rebuild and revision == 3:
-                    self._encode_legacy_waiting_rows(conn)
+                if not needs_rebuild:
+                    self._decode_encoded_task_statuses(conn)
         except sqlite3.Error as exc:
             raise SessionBackendError(
                 f"Could not initialize state database {self._db_path}: {exc}"
@@ -1870,28 +1874,111 @@ class SQLiteStore:
 
         self._initialized = True
 
-    def _encode_legacy_waiting_rows(self, conn) -> None:
-        """An earlier revision-3 definition exempted these rows for older readers.
+    @staticmethod
+    def _encoded_status_decode_cursor(conn) -> tuple[str, str]:
+        raw = _schema_meta_value(conn, _ENCODED_STATUS_DECODE_CURSOR)
+        if raw is None:
+            return "", ""
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            value = None
+        if (
+            not isinstance(value, list)
+            or len(value) != 2
+            or not all(isinstance(part, str) for part in value)
+        ):
+            raise SessionBackendError(
+                f"Task status decode cursor {raw!r} is invalid; refusing to skip task rows."
+            )
+        return value[0], value[1]
 
-        Read open candidates without the writer slot, then encode one fresh
-        row per transaction. A refused DDL repair must not leave old rows exempt
-        or replace a metadata-only upgrade with a table-sized write lock.
+    def _decode_encoded_task_statuses(self, conn) -> None:
+        """Canonicalize fallback rows in bounded, resumable primary-key batches.
+
+        The initial SELECT holds no writer slot. Each transaction rechecks the
+        durable mode and cursor, updates at most
+        ``_ENCODED_STATUS_DECODE_BATCH_ROWS`` rows, then advances the cursor in
+        the same commit. A fallback writer resets that cursor with its marker,
+        so a concurrent or later marker cannot be skipped permanently.
         """
-        keys = conn.execute(
-            "SELECT session, task_id FROM tasks INDEXED BY tasks_retention "
-            "WHERE session IN (SELECT session FROM sessions) AND prunable = 0 AND status = ?",
-            (task_status.AWAITING_USER_STATUS,),
-        ).fetchall()
-        repository = TaskRepository(self)
-        for session_id, task_id in keys:
+        if _schema_meta_value(conn, _ENCODED_STATUS_DECODE_STATE) != _ENCODED_STATUS_DECODE_PENDING:
+            return
+        cursor = self._encoded_status_decode_cursor(conn)
+        while True:
+            rows = conn.execute(
+                "SELECT session, task_id FROM tasks "
+                "WHERE session > ? OR (session = ? AND task_id > ?) "
+                "ORDER BY session, task_id LIMIT ?",
+                (cursor[0], cursor[0], cursor[1], _ENCODED_STATUS_DECODE_BATCH_ROWS),
+            ).fetchall()
             conn.execute("BEGIN IMMEDIATE")
             try:
-                row = conn.execute(
-                    "SELECT status, updated_at, payload_json FROM tasks WHERE session = ? AND task_id = ?",
-                    (session_id, task_id),
-                ).fetchone()
-                if row is not None and row[0] == task_status.AWAITING_USER_STATUS:
-                    repository._write_task(conn, session_id, task_id, repository._record_from_row(session_id, task_id, row))
+                if _schema_meta_value(conn, _ENCODED_STATUS_DECODE_STATE) != _ENCODED_STATUS_DECODE_PENDING:
+                    conn.execute("COMMIT")
+                    return
+                if self._encoded_status_decode_cursor(conn) != cursor:
+                    conn.execute("COMMIT")
+                    cursor = self._encoded_status_decode_cursor(conn)
+                    continue
+                if not rows:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+                        (_ENCODED_STATUS_DECODE_STATE, _ENCODED_STATUS_DECODE_DONE),
+                    )
+                    conn.execute(
+                        "DELETE FROM schema_meta WHERE key = ?",
+                        (_ENCODED_STATUS_DECODE_CURSOR,),
+                    )
+                    conn.execute("COMMIT")
+                    return
+
+                for session_id, task_id in rows:
+                    current = conn.execute(
+                        "SELECT status, updated_at, payload_json FROM tasks "
+                        "WHERE session = ? AND task_id = ?",
+                        (session_id, task_id),
+                    ).fetchone()
+                    if current is None:
+                        continue
+                    status, updated_at, payload_json = current
+                    payload = _decode_state_value(
+                        session_id,
+                        f"task {task_id}",
+                        payload_json,
+                    )
+                    if not isinstance(payload, dict):
+                        raise SessionBackendError(
+                            f"Stored task {task_id!r} in session {session_id!r} is a "
+                            f"{type(payload).__name__}, not a task record."
+                        )
+                    marker = payload.pop("_autorun_status", None)
+                    if marker is None:
+                        continue
+                    decoded_status = status
+                    if (
+                        status == "pending"
+                        and isinstance(marker, dict)
+                        and marker.get("updated_at") == updated_at
+                        and marker.get("status") in task_status.STATUS_POLICY
+                    ):
+                        decoded_status = marker["status"]
+                    conn.execute(
+                        "UPDATE tasks SET status = ?, payload_json = ? "
+                        "WHERE session = ? AND task_id = ?",
+                        (
+                            decoded_status,
+                            _encode_state_value(f"task {task_id}", payload),
+                            session_id,
+                            task_id,
+                        ),
+                    )
+
+                cursor = rows[-1]
+                conn.execute(
+                    "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+                    (_ENCODED_STATUS_DECODE_CURSOR, json.dumps(list(cursor))),
+                )
                 conn.execute("COMMIT")
             except BaseException:
                 _rollback_without_masking_original(conn)
@@ -1908,6 +1995,7 @@ class SQLiteStore:
                     "Nothing was rebuilt; task enforcement uses compatible status storage."
                 )
             _rebuild_tasks_table(conn)
+            self._decode_encoded_task_statuses(conn)
         self.upgrade_pending = None
 
     def _enable_wal(self, conn, timeout: float) -> None:
@@ -2727,6 +2815,7 @@ class TaskRepository:
             payload["_autorun_status"] = {"status": status, "updated_at": updated_at}
             encoded = _encode_state_value(f"task {task_id}", payload)
             status = "pending"
+            _mark_encoded_status_decode_pending(conn)
 
         self._ensure_session_row(conn, session_id, updated_at)
         try:
