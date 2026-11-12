@@ -183,6 +183,14 @@ def test_prompt_time_blocks_exactly_the_expired_large_contexts(clock, tmp_path):
     assert outcomes == expected
 
 
+def test_cache_ok_lets_the_next_prompt_through_once(clock):
+    session = armed(EXPIRED_1H)
+    assert blocked(session.prompt("Continue with the refactor."))
+    session.command("ar:cache ok")
+    assert not blocked(session.prompt("Now update the changelog.")), "/ar:cache ok did not pass the next prompt"
+    assert blocked(session.prompt("Then run the tests.")), "one /ar:cache ok passed more than one prompt"
+
+
 def test_resending_the_blocked_text_passes_and_other_text_still_blocks(clock):
     session = armed(EXPIRED_1H)
     first = session.prompt("Continue with the refactor.")

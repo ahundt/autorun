@@ -29,7 +29,7 @@ from .config import CONFIG, detect_cli_type
 from .platforms import platform_for
 from .scoped_allow import (
     ScopedAllow, _PERMANENT_KEYWORDS,
-    call_fingerprint, parse_scope_args, parse_duration,
+    call_fingerprint, fingerprint_call, parse_scope_args, parse_duration,
 )
 from .session_manager import session_state
 
@@ -597,7 +597,10 @@ class CacheGuard:
         digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         if digest in (ctx.state_get(_RESENT_PROMPTS_KEY, []) or []):  # type: ignore[union-attr]
             return None  # sent again after a block: the user chose to pay
-        if self._consume_override(ctx):
+        # Keyed on the prompt text: a prompt has no tool input, so the tool
+        # fingerprint is the same for every prompt, and ScopedAllow's
+        # parallel-hook grace would let one `ok` pass the next prompt too.
+        if self._consume_override(ctx, fingerprint_call(self.session_id, "UserPromptSubmit", digest)):
             return None
         ctx.state_update(  # type: ignore[union-attr]
             _RESENT_PROMPTS_KEY,
@@ -657,9 +660,9 @@ class CacheGuard:
 
     # ── overrides ────────────────────────────────────────────────
 
-    def _consume_override(self, ctx: object) -> bool:
+    def _consume_override(self, ctx: object, call_id: str | None = None) -> bool:
         """Spend a session override, else a `/ar:cache global ok` one."""
-        call_id = call_fingerprint(ctx)
+        call_id = call_id or call_fingerprint(ctx)
         return _consume_by_call_id(self.session_id, call_id) or _consume_by_call_id(_GLOBAL_SESSION_ID, call_id)
 
     # ── UX ──────────────────────────────────────────────────────
