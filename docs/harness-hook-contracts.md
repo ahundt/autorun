@@ -167,6 +167,8 @@ Each event cell states whether the harness emits the event and what its output c
 | Prime Agent | Enforced only on Pi-compatible releases below 0.10.0; current 0.10.x is refused. [R1][AR2] | Visible on supported Pi-compatible releases. [R1][AR2] | Pi tool gate below 0.10.0; no claimed route on 0.10.x. [R1][AR2] | Pi lifecycle routes below 0.10.0. [R1][AR2] | Prompt warning below 0.10.0; no claimed route on 0.10.x. [R1][AR2] |
 | ForgeCode | Unsupported. [F1] | Unsupported. [F1] | Advisory memory/commands only. [F1][AR1] | Advisory memory only. [F1][AR1] | Unsupported. [F1] |
 
+For the four command-hook prompt surfaces, removing the stale `/ar:` field did not newly expose ordinary prompts: Claude and Codex do not support a matcher on UserPromptSubmit; Gemini 0.51 calls BeforeAgent without matcher context, which matches every definition; and Qwen UserPromptSubmit has no matcher target. Ordinary prompts therefore already reached autorun under the prior manifests. The cache check still reads at most the bounded transcript tail, but its two-second usage memo is daemon-volatile; an ordinary prompt with no pending lifecycle work executes zero SQLite write statements. [C1][X1][G1][Q1][AR1]
+
 ## What changed upstream that autorun should adopt
 
 1. Claude Code 2.1.322 documents more lifecycle events, including `SubagentStart`, task events, model-switch events, and structured `background_tasks`/`session_crons` on Stop and SubagentStop. Autorun parses the arrays but does not treat them as liveness proof because current reports show stale `running` teammates and ambient tasks; the negative contract is pinned in `tests/fixtures/hook_contracts/claude-2.1.322-background-work.json`. [C1][C2]

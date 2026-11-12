@@ -3198,7 +3198,9 @@ def _cache_guard_invalidate(ctx: EventContext, event_name: str) -> None:
     try:
         from .cache_guard import CacheGuard
 
-        CacheGuard.from_session(session_id=ctx.session_id).on_compaction_event(event_name)
+        CacheGuard.from_session(session_id=ctx.session_id).on_compaction_event(
+            event_name, ctx
+        )
     except Exception:
         pass
 

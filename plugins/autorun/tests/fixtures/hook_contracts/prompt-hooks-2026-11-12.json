@@ -33,9 +33,10 @@
     }
   },
   "ordinary_prompt_cost_invariants": {
-    "test": "plugins/autorun/tests/test_stop_gate_hot_path.py::test_prompt_with_nothing_awaiting_the_user_reads_and_writes_nothing",
-    "task_row_reads": 0,
-    "task_row_writes": 0,
-    "sqlite_transactions": "less than 2; currently one cache-toggle state read and no writer-slot task transaction"
+    "test": "plugins/autorun/tests/test_cache_expiry_at_prompt.py::test_ordinary_prompt_cache_check_executes_zero_sql_writes",
+    "prompt_hook_harnesses": ["claude", "codex", "gemini", "qwen"],
+    "transcript_read": "bounded tail only",
+    "usage_memo": "daemon-volatile",
+    "sqlite_write_statements": 0
   }
 }

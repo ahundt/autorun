@@ -321,6 +321,34 @@ def test_the_prompt_check_runs_after_every_state_writing_prompt_handler(clock, m
 # ─── modes and the message ────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("cli_type", ["claude", "codex", "gemini", "qwen"])
+def test_ordinary_prompt_cache_check_executes_zero_sql_writes(
+    clock, monkeypatch, cli_type
+):
+    from autorun import session_manager as sm
+
+    monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+    sm._reset_for_testing()
+    store = sm.get_session_manager()._store
+    statements = []
+    real_connect = store._connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(store, "_connect", connect)
+    response = Session(cli_type, EXPIRED_1H).prompt("Continue with the refactor.")
+    assert EXPIRED_NOTICE in text_of(response)
+    writes = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
+    ]
+    assert writes == []
+
+
 def test_warn_mode_tells_and_never_blocks(clock):
     response = armed(EXPIRED_1H, mode="warn").prompt("Continue with the refactor.")
     assert not blocked(response), f"warn mode blocked: {response}"

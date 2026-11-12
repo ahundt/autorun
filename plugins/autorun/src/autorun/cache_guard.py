@@ -615,29 +615,37 @@ class CacheGuard:
         "PreCompress",                    # Gemini CLI: advisory pre-compression
     })
 
-    def on_compaction_event(self, event: str) -> None:
+    def on_compaction_event(self, event: str, ctx: object | None = None) -> None:
         """Invalidate usage memo on compaction/session events.
 
         Fires on PreCompact/PostCompact/SessionStart (Claude Code) and
-        PreCompress/SessionStart (Gemini). Cost is one del inside the existing
-        filelock; erring toward extra invalidation is safe — the next PreToolUse
-        simply re-reads the JSONL tail.
+        PreCompress/SessionStart (Gemini). Daemon-backed hooks clear the
+        advisory memo in volatile state; direct callers retain the durable
+        fallback used when no process survives to hold a memo.
         """
-        if (event or "") in self._INVALIDATING_EVENTS:
-            with session_state(self.session_id) as st:
-                if _LAST_USAGE_KEY in st:
-                    del st[_LAST_USAGE_KEY]
+        if (event or "") not in self._INVALIDATING_EVENTS:
+            return
+        if ctx is not None and hasattr(ctx, "state_set_volatile"):
+            ctx.state_set_volatile(_LAST_USAGE_KEY, None)  # type: ignore[union-attr]
+            return
+        with session_state(self.session_id) as st:
+            if _LAST_USAGE_KEY in st:
+                del st[_LAST_USAGE_KEY]
 
     # ── usage resolution ─────────────────────────────────────────
 
     def _read_usage(self, ctx: object) -> Optional[UsageReading]:
-        """Resolve current usage via memo → JSONL scan.
+        """Resolve current usage via volatile memo → bounded JSONL scan.
 
-        Lock budget: one filelock on a memo hit; two when falling back to
-        JSONL (read + memoise write).
+        Daemon-backed hooks read and write the memo only in ThreadSafeDB's
+        volatile cache. Direct mode falls back to durable session state because
+        no process survives to reuse an in-memory value.
         """
-        with session_state(self.session_id) as st:
-            memo = st.get(_LAST_USAGE_KEY)
+        if hasattr(ctx, "state_get"):
+            memo = ctx.state_get(_LAST_USAGE_KEY)  # type: ignore[union-attr]
+        else:
+            with session_state(self.session_id) as st:
+                memo = st.get(_LAST_USAGE_KEY)
 
         if memo and (time.time() - memo.get("observed_at", 0)) < _MEMO_TTL_SECONDS:
             return _usage_from_memo(memo)
@@ -650,7 +658,12 @@ class CacheGuard:
         cli = getattr(ctx, "cli_type", None) or detect_cli_type() or "claude"
         usage = _read_jsonl_tail(path, max_bytes=_DEFAULT_JSONL_MAX_BYTES, cli=cli)
         if usage is not None:
-            _memoise(self.session_id, usage)
+            if hasattr(ctx, "state_set_volatile"):
+                ctx.state_set_volatile(  # type: ignore[union-attr]
+                    _LAST_USAGE_KEY, dataclasses.asdict(usage)
+                )
+            else:
+                _memoise(self.session_id, usage)
         return usage
 
     # ── decision axes ────────────────────────────────────────────
