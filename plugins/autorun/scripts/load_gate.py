@@ -270,13 +270,19 @@ def failures(result):
 
 def run_load(tree, *, sessions=DEFAULT_SESSIONS, rounds=DEFAULT_ROUNDS, cli_type="claude",
              output=None, call_timeout_seconds=CALL_TIMEOUT_SECONDS,
-             sample_interval_seconds=SAMPLE_INTERVAL_SECONDS):
+             sample_interval_seconds=SAMPLE_INTERVAL_SECONDS, sandbox_parent=None):
+    """``sandbox_parent``: directory the run's sandbox is created in; default /tmp.
+
+    A caller that restricts which daemons it may signal (the test suite) passes
+    its own runtime root, so the daemon this run starts is provably its own.
+    """
     if sessions < 1 or rounds < 1 or call_timeout_seconds <= 0 or sample_interval_seconds <= 0:
         raise ValueError("Session/round counts and time intervals must be positive")
     tree = Path(tree).resolve()
     python = target_python(tree)
     live_pid = record_pid(Path.home() / ".autorun/daemon.lock")
-    sandbox = Path(tempfile.mkdtemp(prefix="arlg.", dir="/tmp" if os.name != "nt" else None))
+    sandbox = Path(tempfile.mkdtemp(
+        prefix="arlg.", dir=sandbox_parent or ("/tmp" if os.name != "nt" else None)))
     env = {"PATH": os.defpath, "HOME": str(sandbox / "home"),
            "USERPROFILE": str(sandbox / "home"), "AUTORUN_HOME": str(sandbox / "ar"),
            "AUTORUN_TEST_STATE_DIR": str(sandbox / "state"),

@@ -16,7 +16,10 @@ SPEC.loader.exec_module(gate)
 
 
 def test_small_hook_process_load():
-    result = gate.run_load(ROOT, sessions=20, rounds=1, cli_type="claude")
+    # Inside the worker's runtime root: conftest refuses to signal a daemon
+    # whose AUTORUN_HOME is anywhere else, and run_load stops its own daemon.
+    result = gate.run_load(ROOT, sessions=20, rounds=1, cli_type="claude",
+                           sandbox_parent=os.environ["AUTORUN_TEST_RUNTIME_DIR"])
     assert result["calls"]
     assert not gate.failures(result), result["outcomes"]
     assert result["outcomes"]["intended_denial"] > 0
