@@ -77,6 +77,9 @@ def test_344_denials_scenario(tmp_path, cli):
     user's own prompt restores the task and the next Stop blocks again."""
     session_id = f"e2e-344-{cli}-{uuid.uuid4().hex[:8]}"
     _lifecycle(session_id, cli, tmp_path, "seed")
+    transcript = tmp_path / "rollout.jsonl"
+    fixture = Path(__file__).parent / "fixtures/cache_expiry/codex_rollout_no_usable_record.jsonl"
+    transcript.write_text("\n".join(fixture.read_text().splitlines()[:2]) + "\n")
 
     def hook(event: str, **fields) -> dict:
         payload = {
@@ -87,6 +90,8 @@ def test_344_denials_scenario(tmp_path, cli):
             "active_tools": sorted(registered_task_tools(cli)),
             **fields,
         }
+        if PLATFORMS[cli].policy_commands_arrive_in_transcript:
+            payload["transcript_path"] = str(transcript)
         done = run_isolated_hook(plugin_root=PLUGIN_ROOT, hook_script=HOOK_SCRIPT, cli=cli, payload=payload, cwd=tmp_path, timeout=60)
         assert done.returncode == 0, done.stderr
         return json.loads(done.stdout) if done.stdout.strip() else {}
