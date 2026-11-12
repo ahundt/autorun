@@ -43,7 +43,7 @@ from typing import Iterable, Mapping, Sequence
 
 from . import claude, codex, discovery, extension, memory, registration, skills, status, steps, teardown
 from ..platforms import PLATFORMS, is_packaged_skill_route
-from .fs import Verdict, edit_target, owns, preserved_paths, read_marker, record_tree
+from .fs import Verdict, edit_target, handed_over, owns, preserved_paths, read_marker, record_tree
 from . import runtime
 from .runtime import Outcome, Runner, _spawn
 from .traversal import Context, Mode, retirements, run, targets
@@ -153,7 +153,26 @@ def _preflight_user_files(
     return tuple(failures)
 
 
-def perform(
+def perform(mode: Mode, *, marketplace_root: Path, **options) -> Result:
+    """One run, in one mode, with skill ownership following moved skills.
+
+    A skill that moved between this marketplace's plugins keeps the old
+    owner's marker on every copy an earlier release wrote. ``fs.handed_over``
+    makes every ownership read in the run see the plugin that ships the skill
+    today (``skills.heirs``), so the plan, the walk, the sweep and an uninstall
+    agree on who may replace or remove each copy.
+    """
+    listed = sorted(_listed_plugins(marketplace_root))
+    every = {
+        name: directory
+        for name in listed
+        if (directory := discovery.plugin_dir(marketplace_root, name)) is not None
+    }
+    with handed_over(skills.heirs(every)):
+        return _perform(mode, marketplace_root=marketplace_root, **options)
+
+
+def _perform(
     mode: Mode,
     *,
     marketplace_root: Path,

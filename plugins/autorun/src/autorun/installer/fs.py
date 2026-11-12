@@ -74,7 +74,8 @@ import shutil
 import stat
 import tempfile
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, MutableMapping
@@ -94,6 +95,7 @@ __all__ = [
     "read_marker",
     "owns",
     "PLUGIN_ALIASES",
+    "handed_over",
     "published",
     "publish_tree",
     "publish_files",
@@ -189,6 +191,41 @@ _MARKER_NOTE = (
 PLUGIN_ALIASES: Mapping[str, tuple[str, ...]] = {
     "ar": ("autorun",),
 }
+
+
+#: Skill trees that one plugin recorded and another plugin of the same
+#: marketplace now ships, as ``(recorded plugin, directory name) -> heir``.
+#:
+#: A skill that moves between plugins leaves every copy the old owner wrote
+#: still marked with the old owner's name. Read as-is, that copy blocks the new
+#: owner's route as "belongs to ar" while ar's own sweep retires it as no
+#: longer shipped, so an upgrade dropped the skill on the first install and
+#: restored it on the second; where a harness also reads ~/.agents/skills, an
+#: old shared copy suppressed the new owner's native one and then vanished.
+#: Ownership follows the skill instead, for one run, through
+#: :func:`handed_over`: every reader below sees the heir, so the heir
+#: republishes or retires the copy, a recorded edit in it is kept exactly as
+#: any edit is, and ``--uninstall`` of the old owner leaves it alone. Empty
+#: outside a run, so a caller that sets nothing gets the marker as written.
+_HEIRS: ContextVar[Mapping[tuple[str, str], str]] = ContextVar("autorun_installer_heirs", default={})
+
+
+@contextmanager
+def handed_over(heirs: Mapping[tuple[str, str], str]) -> Iterator[None]:
+    """Read markers with ``heirs`` applied for the duration of the block."""
+    token = _HEIRS.set(dict(heirs))
+    try:
+        yield
+    finally:
+        _HEIRS.reset(token)
+
+
+def _inherited(manifest: "TreeManifest | None", name: str) -> "TreeManifest | None":
+    """``manifest`` with its plugin replaced by the heir of ``name``, if any."""
+    if manifest is None or not manifest.plugin:
+        return manifest
+    heir = _HEIRS.get().get((manifest.plugin, name))
+    return manifest if heir is None else replace(manifest, plugin=heir, inherited_from=manifest.plugin)
 
 
 def owns(marker: "TreeManifest | None", plugin: str) -> bool:
@@ -327,11 +364,16 @@ class TreeManifest:
 
     ``settings`` carries the bridge mode and anything else uninstall must know
     to reverse an install it did not perform.
+
+    ``inherited_from`` is never written: it names the plugin the marker on disk
+    records when :func:`handed_over` gave the tree to ``plugin``, so a current
+    copy is still republished once to record its new owner.
     """
 
     plugin: str = ""
     files: Mapping[str, str] = field(default_factory=dict)
     settings: Mapping[str, str] = field(default_factory=dict)
+    inherited_from: str = ""
 
     @classmethod
     def of(cls, root: Path, plugin: str = "", **settings: str) -> "TreeManifest":
@@ -371,12 +413,16 @@ class TreeManifest:
         return FileState.UNCHANGED if current == recorded else FileState.EDITED
 
 
-def read_marker(directory: Path) -> TreeManifest | None:
+def read_marker(directory: Path, *, name: str = "") -> TreeManifest | None:
     """Return what autorun recorded for ``directory``, or None if it is not ours.
 
     Pre-JSON markers were prose with ``key=value`` lines. They still mean "we
     made this", so they decode rather than reading as user-authored — an upgrade
     must not strand directories an older install claimed.
+
+    ``name`` is the tree's public name when ``directory`` is a staged copy of it
+    (``withdrawn`` reads the marker after renaming the tree aside); it selects
+    the heir from :func:`handed_over` and defaults to the directory's own name.
     """
     try:
         text = (directory / OWNED_MARKER_NAME).read_text(encoding="utf-8")
@@ -387,7 +433,8 @@ def read_marker(directory: Path) -> TreeManifest | None:
     except json.JSONDecodeError:
         legacy = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
         return TreeManifest(settings={k.strip(): v.strip() for k, v in legacy.items()})
-    return TreeManifest.from_marker(payload) if isinstance(payload, dict) else TreeManifest()
+    manifest = TreeManifest.from_marker(payload) if isinstance(payload, dict) else TreeManifest()
+    return _inherited(manifest, name or directory.name)
 
 
 def record_tree(
@@ -626,6 +673,8 @@ def decide(
         return Decision(Verdict.KEEP, target, "you edited files we installed", changed)
     if source is None:
         return Decision(Verdict.RETIRE, target, "no longer shipped")
+    if manifest.inherited_from:
+        return Decision(Verdict.PUBLISH, target, f"taking over from {manifest.inherited_from}")
     if scan_tree(source) == dict(manifest.files):
         return Decision(Verdict.SKIP, target, "already current")
     return Decision(Verdict.PUBLISH, target, "updating")
@@ -1142,7 +1191,7 @@ def withdrawn(
                     and frozen_snapshot is not None
                     and proof_snapshot == frozen_snapshot
                 )
-                manifest = read_marker(quarantined)
+                manifest = read_marker(quarantined, name=target.name)
                 park = False
                 allowed = True
                 if manifest is None:

@@ -238,7 +238,10 @@ def test_an_edited_ar_owned_copy_of_a_moved_skill_is_kept_and_reported(
     assert edited.read_text(encoding="utf-8") == kept_text
     kept = [
         decision for decision in result.decisions
-        if decision.verdict.value == "keep" and edited.is_relative_to(decision.target)
+        # Gemini, Qwen and Antigravity reach the tree through a link to its
+        # staged source, which is where the decision is made.
+        if decision.verdict.value == "keep"
+        and edited.resolve().is_relative_to(decision.target.resolve())
     ]
     assert kept and "edited" in kept[0].reason, [d.describe() for d in result.decisions]
 

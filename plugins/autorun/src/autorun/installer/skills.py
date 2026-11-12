@@ -54,6 +54,7 @@ __all__ = [
     "unsatisfiable",
     "duplicate_names",
     "retired_names",
+    "heirs",
 ]
 
 #: Re-exported so the routing code reads one name, while ``discovery`` stays the
@@ -296,6 +297,50 @@ def retired_names(shipped: Iterable[str]) -> tuple[str, ...]:
         old for old, new in migrations.items()
         if isinstance(old, str) and isinstance(new, str) and new in current
     ))
+
+
+def heirs(plugins: Mapping[str, Path]) -> dict[tuple[str, str], str]:
+    """Which plugin now owns a skill tree another plugin of the marketplace wrote.
+
+    ``plugins`` is every plugin the marketplace lists, not only the selected
+    ones: ``--install ar`` must know that ar's old copy of ``streamline-text``
+    now belongs to ``autorun-skills`` so that ar's sweep leaves it alone.
+
+    A name goes to the one plugin that ships it, or ships its replacement under
+    ``skill_name_migrations``, and is taken from every other plugin that no
+    longer ships it, under each spelling its markers have used
+    (``PLUGIN_ALIASES``). A name two plugins ship has no single heir and stays
+    with whoever recorded it; ``perform`` reports that clash before any write.
+    Derived from what each plugin ships today, so no list of moved skills has
+    to be kept: moving a skill directory between plugins is the whole change.
+    """
+    from ..config import CONFIG
+    from .fs import PLUGIN_ALIASES
+
+    shipped = {plugin: set(shippable_skills(directory)) for plugin, directory in plugins.items()}
+    shippers: dict[str, list[str]] = {}
+    for plugin, names in shipped.items():
+        for name in names:
+            shippers.setdefault(name, []).append(plugin)
+    migrations = CONFIG.get("skill_name_migrations", {})
+    renamed = {
+        new: tuple(old for old, target in migrations.items() if target == new)
+        for new in shippers
+    } if isinstance(migrations, Mapping) else {}
+    found: dict[tuple[str, str], str] = {}
+    for name, who in shippers.items():
+        if len(who) != 1:
+            continue
+        [heir] = who
+        for spelling in (name, *renamed.get(name, ())):
+            if spelling != name and spelling in shippers:
+                continue  # the old name is still shipped by someone
+            for previous, names in shipped.items():
+                if previous == heir or spelling in names:
+                    continue
+                for recorded in (previous, *PLUGIN_ALIASES.get(previous, ())):
+                    found[(recorded, spelling)] = heir
+    return found
 
 
 def skill_plan(

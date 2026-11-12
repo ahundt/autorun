@@ -37,6 +37,11 @@ Remove it if you keep your own copies of these skills, for example under
 alone you can also use the marketplace:
 `claude plugin install autorun-skills@autorun`.
 
+An install that finds a copy of one of these skills that `ar` installed under
+an earlier release takes it over: the copy is replaced by this plugin's, so
+each skill stays listed once. A copy you edited is kept, and the install
+report names it.
+
 ## How each harness names these skills
 
 | Harness | Where the skills go | What you type |
