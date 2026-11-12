@@ -69,7 +69,7 @@ dependencies = [
 # reports a missing one as unavailable, and extract_single_pdf names the extra
 # to install when none is present. So `autorun` installs and imports with no
 # extraction library at all, and each user pays only for the backends they
-# pick. `uv tool install 'autorun[pdf]'` is the ordinary choice.
+# pick. `uv tool install 'autorun-ai[pdf]'` is the ordinary choice.
 # Pure-Python and small-wheel backends. No GPU, no model downloads.
 pdf = [
     # markitdown's magika/onnxruntime chain has no cp314 artifact yet.

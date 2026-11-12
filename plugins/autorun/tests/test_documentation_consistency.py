@@ -38,6 +38,10 @@ def test_marketplace_only_install_includes_the_skills_plugin():
         assert "claude plugin install autorun-skills@autorun" in (REPO_ROOT / name).read_text(), name
 
 
+def test_pdf_extra_comment_names_the_published_distribution():
+    assert "autorun[pdf]" not in (PLUGIN_ROOT / "pyproject.toml").read_text()
+
+
 EXCLUDED_DOC_PARTS = {".git", ".venv", "notes", "rejected_plans", "worktrees"}
 # Release-inventory scope. Kept apart from EXCLUDED_DOC_PARTS on purpose: that
 # one answers "is this maintained documentation", this one answers "must this
