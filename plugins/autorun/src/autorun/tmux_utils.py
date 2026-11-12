@@ -908,7 +908,12 @@ def _tmux_current_location() -> Optional[Tuple[str, str, str]]:
     No -t: display-message then describes the client's own pane, which tmux
     resolves from $TMUX_PANE. The one place detect_tmux_environment,
     detect_current_tmux_session and _tmux_get_current_window ask this.
+
+    None outside tmux: there display-message describes the server's most
+    recently used session, which is not the caller's.
     """
+    if not os.environ.get('TMUX'):
+        return None
     try:
         result = subprocess.run(
             [resolve_tmux_binary(), '-u', 'display-message', '-p',

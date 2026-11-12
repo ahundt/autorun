@@ -927,6 +927,20 @@ class TestEnvironmentDetectionAsksTmuxForNames:
         assert env["socket_path"] == "/tmp/tmux-501/default"
         assert "-t" not in run.call_args.args[0], "must ask about the caller's pane, not a target"
 
+    def test_outside_tmux_there_is_no_current_window(self, monkeypatch):
+        """Asked from outside tmux, display-message without -t describes the
+        server's most recently used session, so tmux_list_windows dropped that
+        session's current window as "the caller's own" and `autorun tmux list`
+        run from a plain terminal hid an AI session (found by the end-to-end
+        test in test_tmux_command_line.py)."""
+        monkeypatch.delenv("TMUX", raising=False)
+        with patch.object(tmux_module.subprocess, "run",
+                          return_value=Mock(returncode=0, stdout="main:3:1\n")) as run:
+            location = tmux_module._tmux_current_location()
+
+        assert location is None
+        run.assert_not_called()
+
     def test_outside_tmux_there_is_no_environment(self, monkeypatch):
         monkeypatch.delenv("TMUX", raising=False)
         assert TmuxUtilities("autorun").detect_tmux_environment() is None
