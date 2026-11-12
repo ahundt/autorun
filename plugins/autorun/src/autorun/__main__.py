@@ -152,7 +152,12 @@ def _print_schema_status(database: str) -> None:
     """Schema lines for --state-status, read without opening the store for writing."""
     import sqlite3
 
-    from .session_manager import SCHEMA_USER_VERSION, _schema_meta_value
+    from .session_manager import (
+        SCHEMA_REVISION,
+        SCHEMA_USER_VERSION,
+        _schema_meta_value,
+        _tasks_rebuild_space,
+    )
 
     if not os.path.exists(database):
         return
@@ -162,6 +167,11 @@ def _print_schema_status(database: str) -> None:
             user_version = conn.execute("PRAGMA user_version").fetchone()[0]
             revision = _schema_meta_value(conn, "schema_revision") or user_version
             writer = _schema_meta_value(conn, "schema_written_by")
+            space = (
+                _tasks_rebuild_space(conn, database)
+                if user_version == SCHEMA_USER_VERSION and int(revision) < SCHEMA_REVISION
+                else None
+            )
         finally:
             conn.close()
     except sqlite3.Error as exc:
@@ -173,6 +183,9 @@ def _print_schema_status(database: str) -> None:
         print(f"schema             : {user_version} (revision {revision})")
     if writer:
         print(f"schema written by  : autorun {writer}")
+    if space and space[1] < space[0]:
+        needed, free, directory = space
+        print(f"upgrade pending    : needs {needed} MB free in {directory} ({free} MB free now)")
 
 
 def _run_state_command(args) -> int:

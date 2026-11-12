@@ -12,8 +12,10 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import threading
@@ -1257,6 +1259,64 @@ def _task_columns(conn) -> list:
     ).fetchall()
 
 
+def _tasks_rebuild_space(conn, db_path) -> tuple:
+    """``(needed_mb, free_mb, directory)`` for rebuilding the tasks table.
+
+    The rebuild writes a second copy of tasks and its indexes and logs the
+    pages it changes, so it needs 2.2 times their size free (measured: 160 MB
+    of WAL plus 155 MB of growth for 157.5 MB of tasks). Without dbstat the
+    whole file is the upper bound.
+    """
+    try:
+        used = conn.execute(
+            "SELECT coalesce(sum(pgsize), 0) FROM dbstat WHERE name IN "
+            "(SELECT name FROM sqlite_master WHERE tbl_name = 'tasks')"
+        ).fetchone()[0]
+    except sqlite3.OperationalError:
+        used = (conn.execute("PRAGMA page_count").fetchone()[0]
+                * conn.execute("PRAGMA page_size").fetchone()[0])
+    directory = os.path.dirname(os.path.abspath(db_path))
+    free = shutil.disk_usage(directory).free
+    return math.ceil(2.2 * used / 2**20), free // 2**20, directory
+
+
+def _rebuild_tasks_table(conn) -> None:
+    """Rebuild tasks with the current definition, for an SQLite that refuses writable_schema.
+
+    SQLite's table-rebuild procedure. Foreign keys go off outside the
+    transaction, because dropping tasks would otherwise cascade-delete every
+    task_events row; foreign_key_check proves nothing dangles before COMMIT.
+    The revision is re-read under the lock, so concurrent starts rebuild once.
+    """
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            recorded = _schema_meta_value(conn, "schema_revision")
+            if int(recorded or 2) < SCHEMA_REVISION:
+                conn.execute(_tasks_table_sql(name="tasks_rebuilt"))
+                conn.execute(
+                    "INSERT INTO tasks_rebuilt (session, task_id, status, updated_at, payload_json) "
+                    "SELECT session, task_id, status, updated_at, payload_json FROM tasks"
+                )
+                conn.execute("DROP TABLE tasks")
+                conn.execute("ALTER TABLE tasks_rebuilt RENAME TO tasks")
+                for statement in _SCHEMA_STATEMENTS:  # recreates the dropped indexes
+                    conn.execute(statement)
+                if conn.execute("PRAGMA foreign_key_check(task_events)").fetchone():
+                    raise SessionBackendError(
+                        "Rebuilding the tasks table would leave task_events rows "
+                        "without their task; nothing was changed."
+                    )
+                _record_schema_revision(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            _rollback_without_masking_original(conn)
+            raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 def _verify_tasks_definition(conn, sql: str, columns: list) -> list:
     """Problems with the rewritten definition as this connection now parses it.
 
@@ -1599,6 +1659,9 @@ class SQLiteStore:
         self._open_connections = 0
         self._counter_lock = threading.Lock()
         self._initialized = False
+        # Why this store is still below SCHEMA_REVISION, when it is: the text
+        # a refused status write and --state-status add. None otherwise.
+        self.upgrade_pending = None
 
     # --- introspection -----------------------------------------------------
 
@@ -1699,6 +1762,7 @@ class SQLiteStore:
                 # concurrent initializer can expose schema objects before its
                 # application_id commit and look like an unrelated database.
                 conn.execute("BEGIN IMMEDIATE")
+                needs_rebuild = False
                 try:
                     version, revision = self._validate_existing_database(conn)
                     if version == 0:
@@ -1726,11 +1790,13 @@ class SQLiteStore:
                         _migrate_schema_v1_to_v2(conn)
                         _record_schema_revision(conn)
                     elif revision < SCHEMA_REVISION:
-                        _migrate_tasks_revision_3(conn)
+                        needs_rebuild = _migrate_tasks_revision_3(conn)
                     conn.execute("COMMIT")
                 except BaseException:
                     _rollback_without_masking_original(conn)
                     raise
+                if needs_rebuild:
+                    self._rebuild_refused_definition(conn)
 
                 # journal_mode cannot change inside a transaction. Every
                 # initializer reaches this only after a validated commit.
@@ -1741,6 +1807,28 @@ class SQLiteStore:
             ) from exc
 
         self._initialized = True
+
+    def _rebuild_refused_definition(self, conn) -> None:
+        """The fallback when SQLite refused the in-place rewrite: rebuild, if there is room.
+
+        Without room the store stays at revision 2 and keeps working; only a
+        status its old CHECK does not list is refused, with what is needed.
+        """
+        needed, free, directory = _tasks_rebuild_space(conn, self._db_path)
+        if free < needed:
+            self.upgrade_pending = (
+                f"The task table of {self._db_path} predates this status, and "
+                f"replacing it needs {needed} MB free in {directory} ({free} MB "
+                "free now). Free that space; the next autorun start replaces "
+                "the table."
+            )
+            logger.warning("%s", self.upgrade_pending)
+            return
+        logger.warning(
+            "Upgrading autorun state (%d MB of tasks); other sessions wait for it.",
+            math.ceil(needed / 2.2),
+        )
+        _rebuild_tasks_table(conn)
 
     def _enable_wal(self, conn, timeout: float) -> None:
         """Switch the database to WAL, tolerating a concurrent initializer.
@@ -2555,6 +2643,12 @@ class TaskRepository:
                 (session_id, task_id, status, updated_at, encoded),
             )
         except (sqlite3.Error, UnicodeError, ValueError) as exc:
+            pending = self._store.upgrade_pending
+            if pending and "CHECK constraint failed" in str(exc):
+                raise SessionBackendError(
+                    f"Could not store task {task_id!r} in session {session_id!r}: "
+                    f"{exc}. {pending}"
+                ) from exc
             raise SessionBackendError(
                 f"Could not store task {task_id!r} in session {session_id!r}: {exc}"
             ) from exc

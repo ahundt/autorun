@@ -522,14 +522,19 @@ def test_a_version_1_database_with_a_receipt_reaches_its_upgrade_step(tmp_path, 
 # ── When SQLite refuses the in-place rewrite ───────────────────────────────
 
 
-def test_defensive_sqlite_takes_the_rebuild_path(tmp_path, monkeypatch):
+def test_defensive_sqlite_takes_the_rebuild_path(tmp_path, monkeypatch, caplog):
     db_path = tmp_path / "state" / "daemon_state.sqlite3"
     _create_pre_3472b3ee_database(db_path)
     columns, digest = _columns(db_path), _content_digest(db_path)
     _force_defensive_sqlite(monkeypatch)
 
     store = SQLiteStore(db_path)
-    store.initialize()
+    with caplog.at_level("INFO", logger=sm.__name__):
+        store.initialize()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith("Upgrading autorun state (") for message in messages), messages
+    assert not any(message.startswith("Rewrote the tasks table definition") for message in messages)
 
     assert "CHECK" not in _tasks_ddl(db_path)
     assert _revision(db_path) == "3"
@@ -552,7 +557,7 @@ def test_no_room_for_the_rebuild_keeps_revision_2_and_says_what_it_needs(tmp_pat
     old_ddl = _tasks_ddl(db_path)
     _force_defensive_sqlite(monkeypatch)
     real = shutil.disk_usage
-    monkeypatch.setattr(sm.shutil, "disk_usage", lambda path: real(path)._replace(free=1024 * 1024))
+    monkeypatch.setattr(sm.shutil, "disk_usage", lambda path: real(path)._replace(free=512 * 1024))
     tasks_bytes = sum(
         size for (size,) in _read(
             db_path,
@@ -572,7 +577,7 @@ def test_no_room_for_the_rebuild_keeps_revision_2_and_says_what_it_needs(tmp_pat
         repository.put_task(SESSION, "478", dict(repository.get_task(SESSION, "478"), status="delegation-returned"))
     assert str(refused.value).endswith(
         f"The task table of {db_path} predates this status, and replacing it needs "
-        f"{needed_mb} MB free in {state_dir} (1 MB free now). Free that space; the next "
+        f"{needed_mb} MB free in {state_dir} (0 MB free now). Free that space; the next "
         "autorun start replaces the table."
     ), str(refused.value)
     repository.put_task(SESSION, "479", dict(repository.get_task(SESSION, "479"), status="completed"))
@@ -581,7 +586,7 @@ def test_no_room_for_the_rebuild_keeps_revision_2_and_says_what_it_needs(tmp_pat
     assert main(["--state-status"]) == 0
     status = capsys.readouterr().out
     assert "schema             : 2 (revision 2)" in status
-    assert f"upgrade pending    : needs {needed_mb} MB free in {state_dir} (1 MB free now)" in status
+    assert f"upgrade pending    : needs {needed_mb} MB free in {state_dir} (0 MB free now)" in status
 
 
 # ── Rollback to JSON ───────────────────────────────────────────────────────
