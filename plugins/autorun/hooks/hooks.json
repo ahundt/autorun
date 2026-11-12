@@ -2,7 +2,7 @@
   "hooks": {
     "UserPromptSubmit": [
       {
-        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
+        "matcher": "/ar:",
         "hooks": [
           {
             "type": "command",

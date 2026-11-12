@@ -46,7 +46,7 @@ def sample_hooks_json():
         "hooks": {
             "UserPromptSubmit": [
                 {
-                    "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
+                    "matcher": "/ar:",
                     "hooks": [
                         {
                             "type": "command",
@@ -90,7 +90,7 @@ def sample_hooks_json_disabled():
         "hooks": {
             "UserPromptSubmit": [
                 {
-                    "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
+                    "matcher": "/ar:",
                     "hooks": [
                         {
                             "type": "command",

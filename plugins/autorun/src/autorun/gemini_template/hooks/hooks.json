@@ -13,7 +13,7 @@
     ],
     "BeforeAgent": [
       {
-        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
+        "matcher": "/ar:",
         "hooks": [{
           "name": "autorun-command",
           "type": "command",
