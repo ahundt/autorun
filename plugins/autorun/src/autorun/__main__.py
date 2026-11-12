@@ -148,6 +148,33 @@ def _scoped_daemon_lease():
         yield
 
 
+def _print_schema_status(database: str) -> None:
+    """Schema lines for --state-status, read without opening the store for writing."""
+    import sqlite3
+
+    from .session_manager import SCHEMA_USER_VERSION, _schema_meta_value
+
+    if not os.path.exists(database):
+        return
+    try:
+        conn = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        try:
+            user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            revision = _schema_meta_value(conn, "schema_revision") or user_version
+            writer = _schema_meta_value(conn, "schema_written_by")
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        print(f"schema             : unreadable ({exc})")
+        return
+    if user_version > SCHEMA_USER_VERSION:
+        print(f"schema             : {user_version} (newer than this autorun reads)")
+    else:
+        print(f"schema             : {user_version} (revision {revision})")
+    if writer:
+        print(f"schema written by  : autorun {writer}")
+
+
 def _run_state_command(args) -> int:
     """Migrate, report on, or undo the row-based state-store conversion.
 
@@ -230,6 +257,7 @@ def _run_state_command(args) -> int:
             print(f"converted          : {status['fields']} fields in {status['sessions']} sessions")
         if status["backup"]:
             print(f"pre-conversion copy: {status['backup']}")
+        _print_schema_status(os.path.join(directory, "daemon_state.sqlite3"))
         if status["phase"] == "COMPLETE" and status["source_present"]:
             print("\nAn unexpected legacy JSON file is also present. It is not authoritative and will not be merged or served.")
         return 0

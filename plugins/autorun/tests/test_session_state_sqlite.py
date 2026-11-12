@@ -705,8 +705,10 @@ class TestSchemaGuards:
         conn.close()
 
         newer = SQLiteStore(db_path)
-        with pytest.raises(SessionBackendError, match="version"):
+        with pytest.raises(SessionBackendError) as refused:
             newer.initialize()
+        assert f"(schema {SCHEMA_USER_VERSION + 5}); this autorun reads schema {SCHEMA_USER_VERSION} and older" in str(refused.value)
+        assert "uv tool install --force autorun-ai==" in str(refused.value)
 
     def test_a_newer_schema_is_left_byte_identical(self, db_path):
         store = SQLiteStore(db_path)

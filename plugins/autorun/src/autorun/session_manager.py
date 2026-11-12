@@ -1159,6 +1159,54 @@ def _schema_meta_value(conn, key: str):
     return row[0] if row else None
 
 
+def _newer_schema_message(path, user_version: int, writer) -> str:
+    if writer and not re.fullmatch(r"[0-9A-Za-z.+!-]{1,40}", str(writer)):
+        writer = None  # name only what pip would accept as a version
+    who = f"autorun {writer}" if writer else "a newer autorun"
+    install = (
+        f"Install that release again: uv tool install --force autorun-ai=={writer}"
+        if writer else
+        "Install the newest release again: uv tool install --force autorun-ai"
+    )
+    return (
+        f"{path} was written by {who} (schema {user_version}); this autorun reads "
+        f"schema {SCHEMA_USER_VERSION} and older, so it opened nothing and changed "
+        f"nothing. {install}, then autorun --install. autorun --state-status shows "
+        "this again."
+    )
+
+
+def _check_schema_compatibility(conn, path) -> tuple:
+    """The one version rule: ``(user_version, schema_revision)`` or a refusal.
+
+    ``user_version`` 1 or 2 opens, with any revision; a greater one was
+    written by a build this one cannot read and is refused, naming that build
+    and how to get it back. Used by SQLiteStore._validate_existing_database
+    and StateMigrator._validate_generation, which runs first on a COMPLETE
+    receipt, so the two cannot disagree.
+    """
+    user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if user_version > SCHEMA_USER_VERSION:
+        raise SessionBackendError(_newer_schema_message(
+            path, user_version, _schema_meta_value(conn, "schema_written_by")
+        ))
+    if user_version < 1:
+        raise SessionBackendError(
+            f"{path} carries autorun's application id but schema version "
+            f"{user_version}, which no autorun build writes. Refusing to guess "
+            "at its contents; nothing was changed."
+        )
+    recorded = _schema_meta_value(conn, "schema_revision")
+    try:
+        revision = int(recorded) if recorded is not None else user_version
+    except ValueError:
+        raise SessionBackendError(
+            f"{path} records schema revision {recorded!r}, which is not a number. "
+            "Refusing to guess at its contents; nothing was changed."
+        ) from None
+    return user_version, revision
+
+
 def _record_schema_revision(conn) -> None:
     """Record, in the caller's transaction, what the tasks definition now says.
 
@@ -1652,8 +1700,7 @@ class SQLiteStore:
                 # application_id commit and look like an unrelated database.
                 conn.execute("BEGIN IMMEDIATE")
                 try:
-                    self._validate_existing_database(conn)
-                    version = conn.execute("PRAGMA user_version").fetchone()[0]
+                    version, revision = self._validate_existing_database(conn)
                     if version == 0:
                         # auto_vacuum must be selected outside a transaction
                         # and before the first table. Release the empty-file
@@ -1666,10 +1713,7 @@ class SQLiteStore:
                         # schema creation; it contains no user rows to rewrite.
                         conn.execute("VACUUM")
                         conn.execute("BEGIN IMMEDIATE")
-                        self._validate_existing_database(conn)
-                        version = conn.execute(
-                            "PRAGMA user_version"
-                        ).fetchone()[0]
+                        version, revision = self._validate_existing_database(conn)
                     if version == 0:
                         for statement in _SCHEMA_STATEMENTS:
                             conn.execute(statement)
@@ -1681,7 +1725,7 @@ class SQLiteStore:
                     elif version == 1:
                         _migrate_schema_v1_to_v2(conn)
                         _record_schema_revision(conn)
-                    elif int(_schema_meta_value(conn, "schema_revision") or 2) < SCHEMA_REVISION:
+                    elif revision < SCHEMA_REVISION:
                         _migrate_tasks_revision_3(conn)
                     conn.execute("COMMIT")
                 except BaseException:
@@ -1724,8 +1768,10 @@ class SQLiteStore:
                 time.sleep(delay)
                 delay = min(delay * 2, 0.05)
 
-    def _validate_existing_database(self, conn) -> None:
+    def _validate_existing_database(self, conn) -> tuple:
         """Refuse an unrecognized database inside the initialization lock.
+
+        Returns ``(user_version, schema_revision)``, both 0 for an empty file.
 
         The caller owns ``BEGIN IMMEDIATE``. A refusal rolls that transaction
         back without writing application data, while concurrent initializers
@@ -1750,21 +1796,18 @@ class SQLiteStore:
                 f"{SCHEMA_APPLICATION_ID}. It belongs to another program; move "
                 "it aside rather than letting autorun write to it."
             )
-        if application_id == SCHEMA_APPLICATION_ID and user_version not in (1, SCHEMA_USER_VERSION):
+        if is_empty_uninitialized:
+            return 0, 0
+        version, revision = _check_schema_compatibility(conn, self._db_path)
+        present = {row[0] for row in objects}
+        missing = _REQUIRED_SCHEMA_OBJECTS - present
+        if missing:
             raise SessionBackendError(
-                f"{self._db_path} uses schema version {user_version} but this "
-                f"build requires exactly version {SCHEMA_USER_VERSION}. Run "
-                "an explicit schema migration or use a compatible autorun build."
+                f"{self._db_path} has the autorun header but its schema is "
+                f"missing required objects: {sorted(missing)}. Refusing "
+                "to repair a versioned database implicitly."
             )
-        if application_id == SCHEMA_APPLICATION_ID:
-            present = {row[0] for row in objects}
-            missing = _REQUIRED_SCHEMA_OBJECTS - present
-            if missing:
-                raise SessionBackendError(
-                    f"{self._db_path} has the autorun header but its schema is "
-                    f"missing required objects: {sorted(missing)}. Refusing "
-                    "to repair a versioned database implicitly."
-                )
+        return version, revision
 
     # --- connections -------------------------------------------------------
 
@@ -3305,7 +3348,11 @@ class StateMigrator:
                 sqlite3.connect(f"file:{path}?mode=ro", uri=True)
             ) as conn:
                 application_id = conn.execute("PRAGMA application_id").fetchone()[0]
-                user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+                if application_id != SCHEMA_APPLICATION_ID:
+                    raise SessionBackendError(
+                        f"Database {path} is not an autorun schema generation."
+                    )
+                _check_schema_compatibility(conn, path)
                 rows = dict(conn.execute(
                     "SELECT key, value FROM schema_meta WHERE key IN (?, ?)",
                     ("migration_generation", "source_digest"),
@@ -3314,11 +3361,6 @@ class StateMigrator:
             raise SessionBackendError(
                 f"Could not validate migration generation in {path}: {exc}"
             ) from exc
-        if application_id != SCHEMA_APPLICATION_ID \
-                or user_version != SCHEMA_USER_VERSION:
-            raise SessionBackendError(
-                f"Database {path} is not an autorun schema generation."
-            )
         if rows.get("migration_generation") != generation \
                 or rows.get("source_digest") != source_digest:
             raise SessionBackendError(
