@@ -1634,6 +1634,72 @@ def test_plain_claude_registration_recovers_an_interrupted_same_version_refresh(
     assert (cached / "config.py").read_text(encoding="utf-8") == "config = 'new'\n"
 
 
+def test_markerless_claude_cache_keeps_unproven_files_then_force_backs_them_up(
+    tmp_path, monkeypatch
+):
+    import subprocess
+    from autorun.installer.orchestrate import _registrations
+    from autorun.platforms import PLATFORMS
+
+    base = _home_context(tmp_path, monkeypatch, tmp_path)
+    backups = tmp_path / "backups"
+    plain = Context(
+        marketplace_root=base.marketplace_root,
+        home=base.home,
+        settings={"_backup_root": str(backups)},
+    )
+    plugin = tmp_path / "plugins" / "ar"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+    )
+    (plugin / "config.py").write_text("current = True\n", encoding="utf-8")
+    cached = plain.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.2.3"
+    cached.parent.mkdir(parents=True)
+    shutil.copytree(plugin, cached)
+    (cached / "config.py").write_text("earlier_prerelease = True\n", encoding="utf-8")
+    stale = cached / "skills" / "old" / "SKILL.md"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale skill\n", encoding="utf-8")
+
+    run = lambda argv: subprocess.CompletedProcess(argv, 0, "", "")
+    outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", plain,
+        removing=False, run=run, available=("claude",),
+    )
+
+    expected = (
+        f"KEEP {cached}: config.py, skills/old/SKILL.md. "
+        "Run `autorun --install --force`; it backs up these files to "
+        f"{backups} and then refreshes the cache."
+    )
+    assert outcomes and all(outcome.ok for outcome in outcomes)
+    assert any(outcome.detail == expected for outcome in outcomes)
+    assert (cached / "config.py").read_text(encoding="utf-8") == "earlier_prerelease = True\n"
+    assert stale.read_text(encoding="utf-8") == "stale skill\n"
+    marker = read_marker(cached)
+    assert marker is not None
+    assert ".claude-plugin/plugin.json" in marker.files
+    assert "config.py" not in marker.files
+
+    forced = Context(
+        marketplace_root=plain.marketplace_root,
+        home=plain.home,
+        settings={"_backup_root": str(backups)},
+        force=True,
+    )
+    forced_outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", forced,
+        removing=False, run=run, available=("claude",),
+    )
+
+    assert forced_outcomes and all(outcome.ok for outcome in forced_outcomes)
+    assert (cached / "config.py").read_text(encoding="utf-8") == "current = True\n"
+    assert not stale.exists()
+    backed_up_bytes = sorted(path.read_text(encoding="utf-8") for path in backups.iterdir())
+    assert backed_up_bytes == ["earlier_prerelease = True\n", "stale skill\n"]
+
+
 def test_forced_same_version_claude_refresh_preserves_runtime_and_backs_up_edit(
     tmp_path, monkeypatch
 ):
@@ -1702,6 +1768,26 @@ def test_forced_same_version_claude_refresh_preserves_runtime_and_backs_up_edit(
                 shutil.copytree(plugin, cached)
             run_hook()
         return subprocess.CompletedProcess(argv, 0, "", "")
+
+    plain = Context(
+        marketplace_root=base.marketplace_root,
+        home=base.home,
+        settings={"_backup_root": str(backups)},
+    )
+    plain_outcomes = _registrations(
+        (PLATFORMS["claude"],), {"ar": plugin}, tmp_path, "autorun", plain,
+        removing=False, run=native, available=("claude",),
+    )
+    assert plain_outcomes and all(outcome.ok for outcome in plain_outcomes)
+    assert any(
+        outcome.detail == (
+            f"KEEP {cached}: config.py. Run `autorun --install --force`; "
+            f"it backs up these files to {backups} and then refreshes the cache."
+        )
+        for outcome in plain_outcomes
+    )
+    assert edited.read_text(encoding="utf-8") == "user_edit = True\n"
+    calls.clear()
 
     run_hook()
     outcomes = _registrations(

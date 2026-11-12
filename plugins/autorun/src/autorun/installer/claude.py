@@ -54,6 +54,7 @@ from .fs import (
     fill_tree,
     owns,
     read_marker,
+    record_matching_tree_files,
     record_tree,
     record_tree_intent,
     refresh_unmarked_tree,
@@ -63,7 +64,7 @@ from .fs import (
 
 __all__ = [
     "CACHE_SUBDIR", "SUBSTITUTED_NAMES",
-    "cache_dir", "cache_fallback", "cache_mismatches", "record_cache", "refresh_cache",
+    "cache_dir", "cache_fallback", "cache_mismatches", "cache_refresh_fix", "record_cache", "refresh_cache",
     "retire_cache_versions", "substitute_root", "installed_versions",
     "CONSOLE_HOOK_COMMAND", "pin_hook_command",
     "cache_hook_argv", "cache_hook_command",
@@ -142,27 +143,18 @@ def cache_owned(directory: Path, plugin: str) -> bool:
     )
 
 
-def _matches_shipped_payload(source: Path, directory: Path) -> bool:
-    """Whether an unmarked cache is an exact copy of this bundled payload."""
-    if not source.is_dir() or not directory.is_dir() or directory.is_symlink():
-        return False
-    expected = scan_tree(source)
-    actual = scan_tree(directory)
-    actual.pop(".orphaned_at", None)
-    return actual == expected
-
-
 def record_cache(source: Path, directory: Path, *, plugin: str = "") -> bool:
-    """Adopt an exact legacy payload or refresh this installer's hash receipt."""
+    """Adopt matching legacy files or refresh this installer's hash receipt."""
     plugin = plugin or _manifest_name(source)
     if not plugin:
         return False
-    marker = read_marker(directory)
-    if marker is None:
-        proof = lambda installed: _matches_shipped_payload(source, installed)
-    else:
-        proof = lambda installed: cache_owned(installed, plugin)
-    return record_tree(directory, plugin=plugin, ownership_proof=proof)
+    if read_marker(directory) is None:
+        return record_matching_tree_files(source, directory, plugin=plugin)
+    return record_tree(
+        directory,
+        plugin=plugin,
+        ownership_proof=lambda installed: cache_owned(installed, plugin),
+    )
 
 
 def _cache_keep_paths(directory: Path, plugin: str) -> tuple[str, ...]:
@@ -171,6 +163,17 @@ def _cache_keep_paths(directory: Path, plugin: str) -> tuple[str, ...]:
         return ("unproven cache payload",)
     edited, _missing, extra = compare(directory, marker)
     return tuple(sorted((*edited, *extra)))
+
+
+def cache_refresh_fix(source: Path, directory: Path, backup_root: Path) -> str:
+    """The next command that can repair the cache's observed ownership state."""
+    marker = read_marker(directory)
+    if marker is None or _cache_keep_paths(directory, _manifest_name(source)):
+        return (
+            "run `autorun --install --force`; it backs up unproven or edited files to "
+            f"{backup_root} and then refreshes the cache"
+        )
+    return "run `autorun --install`; it refreshes recorded stale cache files automatically"
 
 
 def cache_mismatches(source: Path, directory: Path) -> tuple[str, ...]:
@@ -207,6 +210,7 @@ def refresh_cache(
     force: bool = False,
     backup_root: Path | None = None,
     backed_up: list[Path] | None = None,
+    kept: list[str] | None = None,
     after_step: Callable[[str], None] | None = None,
 ) -> Path | None:
     """Refresh stale payload files in place while retaining Claude's private venv.
@@ -219,11 +223,13 @@ def refresh_cache(
     if not plugin:
         return None
     if read_marker(directory) is None and not record_cache(source, directory, plugin=plugin):
-        raise RuntimeError(f"KEEP {directory}: unproven cache payload")
-    kept = _cache_keep_paths(directory, plugin)
-    if kept and not force:
-        raise RuntimeError(f"KEEP {directory}: " + ", ".join(kept))
-    if kept and backup_root is None:
+        raise RuntimeError(f"KEEP {directory}: could not record matching cache files")
+    kept_paths = _cache_keep_paths(directory, plugin)
+    if kept_paths and not force:
+        if kept is not None:
+            kept.extend(kept_paths)
+        return None
+    if kept_paths and backup_root is None:
         raise RuntimeError(f"KEEP {directory}: backup root required before forced refresh")
     mismatches = cache_mismatches(source, directory)
     marker = read_marker(directory)
@@ -248,7 +254,7 @@ def refresh_cache(
             and (force or not _cache_keep_paths(installed, plugin))
         ),
         preserve_names=(".venv",),
-        backup_relatives=kept,
+        backup_relatives=kept_paths,
         backup_root=backup_root,
         backed_up=backed_up,
         after_step=after_step,

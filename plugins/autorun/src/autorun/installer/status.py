@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, Mapping, Sequence
 
 from . import claude, codex, discovery, memory
-from .fs import Verdict, atomic_write
+from .fs import Verdict, atomic_write, autorun_state_dir
 from .runtime import Runner, _spawn
 
 __all__ = [
@@ -177,7 +177,11 @@ def _claude_caches(entries: Mapping[str, tuple[Path, Path]]) -> Iterator[Finding
             f"Claude cache {label}",
             Level.BROKEN,
             shown,
-            "run a plain install; it refreshes stale cache payloads automatically",
+            claude.cache_refresh_fix(
+                source,
+                cached,
+                autorun_state_dir() / "installer" / "backups",
+            ),
         )
 
 

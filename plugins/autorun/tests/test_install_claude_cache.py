@@ -237,8 +237,9 @@ def test_interrupted_refresh_still_keeps_a_later_user_edit(source, home):
     hook = crashed / "hooks" / "hook_entry.py"
     hook.write_text("user edit after interrupted refresh\n", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match=r"KEEP.*hooks/hook_entry\.py"):
-        claude.refresh_cache(source, crashed)
+    kept = []
+    assert claude.refresh_cache(source, crashed, kept=kept) is None
+    assert kept == ["hooks/hook_entry.py"]
     assert hook.read_text(encoding="utf-8") == "user edit after interrupted refresh\n"
 
 
@@ -272,8 +273,9 @@ def test_refresh_keeps_an_edited_recorded_file_and_an_unrecorded_file(source, ho
     extra.write_text("user notes\n", encoding="utf-8")
     (source / "hooks" / "hooks.json").write_text("new shipped hook\n", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="KEEP.*hooks/hooks.json.*notes.txt"):
-        claude.refresh_cache(source, written)
+    kept = []
+    assert claude.refresh_cache(source, written, kept=kept) is None
+    assert kept == ["hooks/hooks.json", "notes.txt"]
 
     assert hook.read_text(encoding="utf-8") == "user hook edit\n"
     assert extra.read_text(encoding="utf-8") == "user notes\n"
@@ -288,9 +290,13 @@ def test_unmarked_matching_cache_is_adopted_but_same_named_fork_is_kept(source, 
     fork = install(source, home, version="1.2.5")
     (fork / OWNED_MARKER_NAME).unlink()
     (fork / "fork.txt").write_text("same manifest name, different payload\n", encoding="utf-8")
-    with pytest.raises(RuntimeError, match="KEEP.*unproven"):
-        claude.refresh_cache(source, fork)
-    assert not (fork / OWNED_MARKER_NAME).exists()
+    kept = []
+    assert claude.refresh_cache(source, fork, kept=kept) is None
+    marker = read_marker(fork)
+    assert marker is not None
+    assert "hooks/hooks.json" in marker.files
+    assert "fork.txt" not in marker.files
+    assert kept == ["fork.txt"]
     assert (fork / "fork.txt").is_file()
 
 

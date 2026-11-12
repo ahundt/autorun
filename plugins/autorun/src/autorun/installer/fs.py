@@ -111,6 +111,7 @@ __all__ = [
     "dereference_links",
     "fill_tree",
     "refresh_unmarked_tree",
+    "record_matching_tree_files",
     "record_tree_intent",
     "json_document",
     "render_json_like",
@@ -486,6 +487,36 @@ def record_tree(
             directory / OWNED_MARKER_NAME,
             json.dumps(TreeManifest.of(directory, plugin).as_payload(), indent=2)
             + "\n",
+        )
+    return True
+
+
+def record_matching_tree_files(source: Path, directory: Path, *, plugin: str) -> bool:
+    """Record only unmarked cache files whose bytes match the shipped source.
+
+    A native harness may have populated the directory without autorun's receipt.
+    Matching paths are individually proven; non-matching and extra paths remain
+    outside the manifest so a plain install cannot overwrite or retire them.
+    """
+    if (
+        not source.is_dir()
+        or not directory.is_dir()
+        or directory.is_symlink()
+    ):
+        return False
+    with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+        if not directory.is_dir() or directory.is_symlink() or read_marker(directory) is not None:
+            return False
+        expected = scan_tree(source)
+        actual = scan_tree(directory)
+        matched = {
+            relative: fingerprint
+            for relative, fingerprint in actual.items()
+            if expected.get(relative) == fingerprint
+        }
+        atomic_write(
+            directory / OWNED_MARKER_NAME,
+            json.dumps(TreeManifest(plugin=plugin, files=matched).as_payload(), indent=2) + "\n",
         )
     return True
 

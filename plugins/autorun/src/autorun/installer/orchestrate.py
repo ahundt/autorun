@@ -728,6 +728,7 @@ def _registrations(
                         cached = None
                         filled = None
                         cache_backups: list[Path] = []
+                        cache_kept: list[str] = []
                         try:
                             cached = claude.cache_dir(
                                 platform,
@@ -755,6 +756,7 @@ def _registrations(
                                     force=ctx.force,
                                     backup_root=backup_root(ctx),
                                     backed_up=cache_backups,
+                                    kept=cache_kept,
                                 )
                                 if claude.substitute_root(cached):
                                     if not claude.record_cache(source, cached, plugin=plugin):
@@ -794,6 +796,14 @@ def _registrations(
                             )
                             outcomes = (cache_failure,) if failed else (*outcomes, cache_failure)
                         else:
+                            if cache_kept and cached is not None:
+                                outcomes = (*outcomes, Outcome(
+                                    f"{name}: cache refresh",
+                                    True,
+                                    f"KEEP {cached}: {', '.join(cache_kept)}. "
+                                    "Run `autorun --install --force`; it backs up these files to "
+                                    f"{backup_root(ctx)} and then refreshes the cache.",
+                                ))
                             if cache_backups:
                                 outcomes = (*outcomes, *(
                                     Outcome(f"{name}: cache backup", True, str(path))

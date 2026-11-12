@@ -22,7 +22,7 @@ os.environ.setdefault("AUTORUN_HOME", "/tmp/autorun-test-home")
 os.environ.setdefault("AUTORUN_TEST_STATE_DIR", "/tmp/autorun-test-state")
 
 from autorun.installer import memory, status  # noqa: E402
-from autorun.installer.fs import Verdict  # noqa: E402
+from autorun.installer.fs import Verdict, record_tree  # noqa: E402
 from autorun.installer.status import Level  # noqa: E402
 
 
@@ -123,7 +123,12 @@ def test_stale_claude_cache_payload_is_reported_as_broken(tmp_path):
         )
     (source / "current.txt").write_text("current\n", encoding="utf-8")
     (cached / "current.txt").write_text("current\n", encoding="utf-8")
+    (source / "stale.txt").write_text("stale\n", encoding="utf-8")
     (cached / "stale.txt").write_text("stale\n", encoding="utf-8")
+    assert record_tree(
+        cached, plugin="ar", ownership_proof=lambda installed: installed == cached
+    )
+    (source / "stale.txt").unlink()
 
     found = status.health(
         hook_command=("x",),
@@ -134,7 +139,66 @@ def test_stale_claude_cache_payload_is_reported_as_broken(tmp_path):
     mismatch = next(finding for finding in found if finding.check.startswith("Claude cache"))
     assert mismatch.level is Level.BROKEN
     assert "stale.txt" in mismatch.detail
-    assert "plain install" in mismatch.fix
+    assert mismatch.fix == (
+        "run `autorun --install`; it refreshes recorded stale cache files automatically"
+    )
+
+
+def test_unproven_claude_cache_names_force_and_backup_location(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    cached = tmp_path / "cache"
+    backup_root = tmp_path / "autorun-home" / "installer" / "backups"
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "autorun-home"))
+    for root in (source, cached):
+        (root / ".claude-plugin").mkdir(parents=True)
+        (root / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+        )
+    (source / "current.txt").write_text("current\n", encoding="utf-8")
+    (cached / "current.txt").write_text("older prerelease\n", encoding="utf-8")
+
+    found = status.health(
+        hook_command=("x",),
+        claude_cache_entries={"ar@autorun 1.2.3": (source, cached)},
+        run=runner(0),
+    )
+
+    mismatch = next(finding for finding in found if finding.check.startswith("Claude cache"))
+    assert mismatch.level is Level.BROKEN
+    assert "current.txt" in mismatch.detail
+    assert mismatch.fix == (
+        "run `autorun --install --force`; it backs up unproven or edited files to "
+        f"{backup_root} and then refreshes the cache"
+    )
+
+
+def test_edited_claude_cache_names_force_and_backup_location(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    cached = tmp_path / "cache"
+    backup_root = tmp_path / "autorun-home" / "installer" / "backups"
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "autorun-home"))
+    for root in (source, cached):
+        (root / ".claude-plugin").mkdir(parents=True)
+        (root / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+        )
+        (root / "current.txt").write_text("current\n", encoding="utf-8")
+    assert record_tree(
+        cached, plugin="ar", ownership_proof=lambda installed: installed == cached
+    )
+    (cached / "current.txt").write_text("user edit\n", encoding="utf-8")
+
+    found = status.health(
+        hook_command=("x",),
+        claude_cache_entries={"ar@autorun 1.2.3": (source, cached)},
+        run=runner(0),
+    )
+
+    mismatch = next(finding for finding in found if finding.check.startswith("Claude cache"))
+    assert mismatch.fix == (
+        "run `autorun --install --force`; it backs up unproven or edited files to "
+        f"{backup_root} and then refreshes the cache"
+    )
 
 
 def test_two_real_copies_of_a_skill_are_reported(tmp_path):
