@@ -545,6 +545,9 @@ def test_the_suite_cannot_signal_an_autorun_daemon_it_did_not_start(tmp_path):
             os.kill(pid, signal.SIGTERM)
         with pytest.raises(RuntimeError, match=f"PID {pid}"):
             psutil.Process(pid).terminate()
+        if hasattr(os, "killpg"):  # the sleeper leads its own group, as a setsid daemon does
+            with pytest.raises(RuntimeError, match=f"PID {pid}"):
+                os.killpg(pid, signal.SIGTERM)
         assert psutil.Process(pid).is_running()
 
         own = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "autorun.daemon"], env=env)

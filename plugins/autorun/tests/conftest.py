@@ -585,6 +585,7 @@ class DaemonManager:
 _RealProcess = psutil.Process
 _UNGUARDED = {
     "os.kill": os.kill,
+    "os.killpg": getattr(os, "killpg", None),
     "terminate": psutil.Process.terminate,
     "kill": psutil.Process.kill,
     "send_signal": psutil.Process.send_signal,
@@ -615,11 +616,17 @@ def _refuse_foreign_daemon_signal(pid: int) -> None:
 
 
 def _install_daemon_signal_guard() -> None:
-    # ponytail: covers os.kill and psutil in this process; a child shell's
-    # `kill` or os.killpg is not intercepted.
+    # ponytail: covers os.kill, os.killpg and psutil in this process; a child
+    # shell's `kill` is not intercepted. A child running autorun's own stop
+    # code is covered by restart_daemon._signal_owned_daemon instead.
     def guarded_os_kill(pid, sig):
         _refuse_foreign_daemon_signal(pid)
         return _UNGUARDED["os.kill"](pid, sig)
+
+    def guarded_os_killpg(pgid, sig):
+        # A daemon is started with setsid, so it leads a group whose id is its PID.
+        _refuse_foreign_daemon_signal(pgid)
+        return _UNGUARDED["os.killpg"](pgid, sig)
 
     def guard(name):
         def method(self, *args, **kwargs):
@@ -628,6 +635,8 @@ def _install_daemon_signal_guard() -> None:
         return method
 
     os.kill = guarded_os_kill
+    if _UNGUARDED["os.killpg"] is not None:
+        os.killpg = guarded_os_killpg
     for name in ("terminate", "kill", "send_signal"):
         setattr(psutil.Process, name, guard(name))
 
