@@ -284,6 +284,161 @@ def test_autorun_wheel_install_status_bootstrap_and_uninstall(release_bundle):
     assert not any(empty_home.rglob("*"))
 
 
+def _marketplace_plugin_names(checkout: Path) -> tuple[str, ...]:
+    document = json.loads(
+        (checkout / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+    )
+    return tuple(entry["name"] for entry in document["plugins"])
+
+
+def _published_by_plugin(
+    env: dict[str, str], log: Path, names: tuple[str, ...]
+) -> dict[str, set[str]]:
+    """What one install published, per marketplace plugin, independent of where
+    it ran from: each owned tree, by the plugin its marker records, and each
+    harness command naming the plugin, with this install's own roots replaced
+    by placeholders."""
+    roots = {"$HOME": Path(env["HOME"]), "$AUTORUN_HOME": Path(env["AUTORUN_HOME"])}
+    published: dict[str, set[str]] = {name: set() for name in names}
+    for label, root in roots.items():
+        for marker in root.rglob(".autorun-owned"):
+            plugin = json.loads(marker.read_text(encoding="utf-8")).get("plugin")
+            if plugin in published:
+                published[plugin].add(f"{label}/{marker.parent.relative_to(root).as_posix()}")
+    for line in log.read_text(encoding="utf-8").splitlines():
+        for label, root in roots.items():
+            line = line.replace(str(root), label)
+        words = line.replace("\\", "/").split()
+        for name in names:
+            if any(
+                word == name or word.startswith(f"{name}@") or word.endswith(f"/{name}")
+                for word in words
+            ):
+                published[name].add(f"run: {' '.join(words)}")
+    return published
+
+
+def _install_every_harness(
+    autorun: Path, scripts: Path, env: dict[str, str], names: tuple[str, ...]
+) -> dict[str, set[str]]:
+    """`autorun --install` against a stand-in for every registered harness.
+
+    Each stand-in records its arguments and answers a `list` with every
+    marketplace plugin, which is what a harness that accepted the install
+    prints. That keeps the run offline and the real home untouched while every
+    harness step still runs. `uv tool` and `uv sync` are stood in for too: a
+    clone install syncs its project and installs itself as a uv tool, and the
+    environment here already holds both. Every other `uv` call is real, since
+    Claude's cache fallback builds a working environment with it.
+    """
+    from autorun.platforms import PLATFORMS
+
+    fakes = scripts.parent / "harness-stand-ins"
+    fakes.mkdir(exist_ok=True)
+    log = fakes / "invocations.log"
+    real_uv = shutil.which("uv")
+    assert real_uv, "the release tests build with uv"
+    for binary in {platform.binary for platform in PLATFORMS.values()}:
+        if os.name == "nt":
+            (fakes / f"{binary}.cmd").write_text(
+                f'@echo {binary} %*>>"%AUTORUN_FAKE_LOG%"\n@echo %AUTORUN_FAKE_LIST%\n',
+                encoding="utf-8",
+            )
+        else:
+            stand_in = fakes / binary
+            stand_in.write_text(
+                f'#!/bin/sh\necho "{binary} $*" >> "$AUTORUN_FAKE_LOG"\n'
+                'echo "$AUTORUN_FAKE_LIST"\n',
+                encoding="utf-8",
+            )
+            stand_in.chmod(0o755)
+    if os.name == "nt":
+        (fakes / "uv.cmd").write_text(
+            '@if "%1"=="tool" exit /b 0\n@if "%1"=="sync" exit /b 0\n'
+            f'@"{real_uv}" %*\n',
+            encoding="utf-8",
+        )
+    else:
+        stand_in = fakes / "uv"
+        stand_in.write_text(
+            f'#!/bin/sh\ncase "$1" in tool|sync) exit 0;; esac\nexec "{real_uv}" "$@"\n',
+            encoding="utf-8",
+        )
+        stand_in.chmod(0o755)
+    home = Path(env["HOME"])
+    # A harness variable inherited from the test process would send that
+    # harness's files to another home, where the comparison below cannot see
+    # them; every harness here has to resolve from HOME.
+    env = {
+        key: value
+        for key, value in env.items()
+        if key not in {
+            var
+            for platform in PLATFORMS.values()
+            for var in (getattr(platform, "config_dir_env_vars", ()) or ())
+        }
+    } | {
+        "PI_CODING_AGENT_DIR": str(home / ".pi" / "agent"),
+        "PATH": os.pathsep.join((str(fakes), env["PATH"])),
+        "AUTORUN_FAKE_LOG": str(log),
+        "AUTORUN_FAKE_LIST": " ".join(names),
+    }
+    # Gemini CLI is opt-in (`install_by_default` is false), so it gets its own run.
+    for selection in ((), ("--gemini",)):
+        _run([autorun, "--install", "--force", *selection], cwd=scripts, env=env)
+    return _published_by_plugin(env, log, names)
+
+
+def test_wheel_install_publishes_every_marketplace_plugin_a_clone_install_does(
+    release_bundle,
+):
+    """`uv tool install autorun-ai && autorun --install` must reach every plugin
+    the marketplace lists, on every harness a clone install reaches it on.
+
+    The wheel once carried only `ar`: its marketplace listed nothing else and
+    no sibling plugin's manifests, commands or skills were packaged, so a PyPI
+    or git-subdirectory install published pdf-extractor nowhere while a clone
+    published it to all nine harnesses. A clone install is the reference here,
+    so a plugin added to the marketplace is checked without editing this test.
+    """
+    root, checkout, _commit, env, builds = release_bundle
+    names = _marketplace_plugin_names(checkout)
+    wheel = next(builds[0].glob(f"{WHEEL_STEM}-*.whl"))
+    scripts, isolated = _venv(root, wheel, env, label="harnesses")
+    (scripts / ("claude.cmd" if os.name == "nt" else "claude")).unlink()
+    from_wheel = _install_every_harness(
+        scripts / ("autorun.exe" if os.name == "nt" else "autorun"),
+        scripts, isolated, names,
+    )
+
+    clone = root / "clone-harnesses"
+    _run(["uv", "venv", "--python", sys.executable, clone], cwd=root, env=env)
+    clone_python = clone / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    _run(
+        ["uv", "pip", "install", "--python", clone_python, "-e", checkout / "plugins" / "autorun"],
+        cwd=root, env=env,
+    )
+    clone_env = isolated | {
+        "HOME": str(root / "home-clone-harnesses"),
+        "USERPROFILE": str(root / "home-clone-harnesses"),
+        "AUTORUN_HOME": str(root / "autorun-home-clone-harnesses"),
+        "AUTORUN_TEST_STATE_DIR": str(root / "state-clone-harnesses"),
+        "AUTORUN_TEST_RUNTIME_DIR": str(root / "runtime-clone-harnesses"),
+        "PATH": os.pathsep.join((str(clone_python.parent), os.defpath)),
+    }
+    from_clone = _install_every_harness(
+        clone_python.parent / ("autorun.exe" if os.name == "nt" else "autorun"),
+        clone_python.parent, clone_env, names,
+    )
+
+    for name in names:
+        assert from_clone[name], f"the clone install published nothing for {name}"
+        assert from_wheel[name] == from_clone[name], (
+            f"{name}: clone-only {sorted(from_clone[name] - from_wheel[name])}, "
+            f"wheel-only {sorted(from_wheel[name] - from_clone[name])}"
+        )
+
+
 def test_documented_vcs_subdirectory_installs_autorun_entrypoint(release_bundle):
     root, checkout, _commit, env, _builds = release_bundle
     target = root / "vcs-venv"
@@ -305,6 +460,24 @@ def test_documented_vcs_subdirectory_installs_autorun_entrypoint(release_bundle)
     )
     autorun = python.parent / ("autorun.exe" if os.name == "nt" else "autorun")
     assert "1.0.0rc4" in _run([autorun, "--version"], cwd=root, env=env).stdout.split()
+    # This route builds the wheel straight from the checkout, never through the
+    # sdist, so it needs its own proof that every marketplace plugin came along.
+    resolved = _run(
+        [
+            python,
+            "-c",
+            "from autorun.installer import discovery, entrypoint\n"
+            "root = entrypoint._marketplace_root()\n"
+            "for name in entrypoint.parse_selection(root):\n"
+            "    print(name, discovery.plugin_dir(root, name))\n",
+        ],
+        cwd=root,
+        env=env,
+    ).stdout.split("\n")
+    for name in _marketplace_plugin_names(checkout):
+        assert any(
+            line.startswith(f"{name} ") and not line.endswith(" None") for line in resolved
+        ), f"{name} does not resolve in a git-subdirectory install: {resolved}"
 
 
 def test_wheel_built_directly_from_a_text_link_checkout_carries_pdf_extraction(

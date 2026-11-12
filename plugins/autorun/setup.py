@@ -47,6 +47,9 @@ class TrackedSdist(_sdist):
         # The sdist would otherwise carry a dangling `src/pdf_extraction` link,
         # and `uv build` builds the wheel from the sdist.
         _BUILD_SUPPORT.materialize_sibling_packages(PLUGIN_ROOT, Path(base_dir))
+        # The repository marketplace that names the other plugins sits above
+        # this directory, so the sdist carries them and their listing itself.
+        _BUILD_SUPPORT.bundle_marketplace_plugins(PLUGIN_ROOT, Path(base_dir))
         _BUILD_SUPPORT.write_build_metadata(
             PLUGIN_ROOT,
             Path(base_dir) / "src" / "autorun" / "metadata.json",

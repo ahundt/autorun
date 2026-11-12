@@ -102,6 +102,133 @@ class TestSiblingPackageBuild:
         assert (package / "cli.py").read_text() == "source\n"
 
 
+class TestMarketplacePluginBundle:
+    """Every other plugin the marketplace lists rides in the autorun wheel.
+
+    A wheel's marketplace is the installed ``autorun`` package, so a plugin the
+    wheel neither lists nor carries is one ``autorun --install`` cannot find on
+    any harness, while a clone install publishes it everywhere.
+    """
+
+    @staticmethod
+    def _checkout(tmp_path):
+        import json
+
+        import build_support
+
+        def write(path, text):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+
+        repo = tmp_path / "repo"
+        write(repo / ".claude-plugin" / "marketplace.json", json.dumps({
+            "name": "market",
+            "plugins": [
+                {"name": "ar", "source": "./plugins/autorun", "version": "1"},
+                {"name": "pdf", "source": "./plugins/pdf", "version": "2"},
+                {"name": "hosted", "source": {"source": "github", "repo": "o/r"}},
+            ],
+        }))
+        plugin = repo / "plugins" / "autorun"
+        for tree, _destination in build_support.PLUGIN_ASSET_TREES:
+            (plugin / tree).mkdir(parents=True, exist_ok=True)
+        write(plugin / ".claude-plugin" / "marketplace.json", json.dumps({
+            "name": "market",
+            "plugins": [{"name": "ar", "source": {"source": "github", "repo": "o/r"}}],
+        }))
+        write(plugin / "hooks" / "hooks.json", json.dumps({"hooks": {}}))
+        sibling = repo / "plugins" / "pdf"
+        for relative in (
+            ".claude-plugin/plugin.json", ".codex-plugin/plugin.json",
+            "gemini-extension.json", "commands/extract.md",
+            "skills/pdf/SKILL.md", "src/pdf_pkg/cli.py", "tests/test_cli.py",
+        ):
+            write(sibling / relative, f"{relative}\n")
+        return repo, plugin
+
+    @staticmethod
+    def _assert_wheel_lists_and_carries_pdf(wheel):
+        import json
+
+        from autorun.installer import discovery, entrypoint
+
+        listing = json.loads((wheel / ".claude-plugin" / "marketplace.json").read_text())
+        assert [entry["name"] for entry in listing["plugins"]] == ["ar", "pdf"]
+        assert listing["plugins"][0]["source"] == "."
+        assert listing["plugins"][1]["version"] == "2", "the entry is the marketplace's own"
+        assert entrypoint.parse_selection(wheel) == ("ar", "pdf")
+        found = discovery.plugin_dir(wheel, "pdf")
+        assert found is not None and found.is_relative_to(wheel.resolve())
+        for relative in (
+            ".claude-plugin/plugin.json", ".codex-plugin/plugin.json",
+            "gemini-extension.json", "commands/extract.md", "skills/pdf/SKILL.md",
+        ):
+            assert (found / relative).is_file(), relative
+        # The code ships as a Python package and tests are not the plugin.
+        assert not (found / "src").exists()
+        assert not (found / "tests").exists()
+
+    def test_wheel_built_from_the_sdist_lists_and_carries_every_marketplace_plugin(
+        self, tmp_path
+    ):
+        import os
+        import shutil
+
+        import build_support
+
+        _repo, plugin = self._checkout(tmp_path)
+        sdist = tmp_path / "sdist"
+        shutil.copytree(plugin, sdist)
+        own = plugin / ".claude-plugin" / "marketplace.json"
+        before = own.read_bytes()
+        staged = sdist / ".claude-plugin" / "marketplace.json"
+        staged.unlink()
+        os.link(own, staged)  # setuptools hard-links the sdist's files to the checkout's
+
+        written = build_support.bundle_marketplace_plugins(plugin, sdist)
+
+        assert [path.name for path in written] == ["pdf"]
+        assert own.read_bytes() == before, "the sdist rewrite edited the checkout"
+        # `uv build` makes the wheel from the unpacked sdist, which has no
+        # marketplace above it: what it needs must be inside it.
+        wheel = tmp_path / "wheel" / "autorun"
+        build_support.copy_plugin_assets(sdist, wheel)
+        self._assert_wheel_lists_and_carries_pdf(wheel)
+
+    def test_wheel_built_straight_from_a_checkout_lists_and_carries_every_marketplace_plugin(
+        self, tmp_path
+    ):
+        import build_support
+
+        _repo, plugin = self._checkout(tmp_path)
+        wheel = tmp_path / "wheel" / "autorun"
+        build_support.copy_plugin_assets(plugin, wheel)
+        self._assert_wheel_lists_and_carries_pdf(wheel)
+
+    def test_a_listed_plugin_missing_from_the_checkout_fails_the_build(self, tmp_path):
+        import shutil
+
+        import build_support
+
+        repo, plugin = self._checkout(tmp_path)
+        shutil.rmtree(repo / "plugins" / "pdf")
+        with pytest.raises(FileNotFoundError, match="pdf"):
+            build_support.copy_plugin_assets(plugin, tmp_path / "wheel" / "autorun")
+
+    def test_this_repository_bundles_every_plugin_its_marketplace_lists_but_autorun(self):
+        import json
+
+        import build_support
+
+        plugin = Path(build_support.__file__).resolve().parent
+        listed = json.loads(
+            (plugin.parents[1] / ".claude-plugin" / "marketplace.json").read_text()
+        )["plugins"]
+        assert [entry["name"] for entry, _ in build_support.marketplace_plugins(plugin)] == [
+            entry["name"] for entry in listed if entry["source"] != "./plugins/autorun"
+        ]
+
+
 class TestGetPluginRoot:
     """Test get_plugin_root() locates plugin directory."""
 

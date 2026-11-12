@@ -92,25 +92,130 @@ def materialize_sibling_packages(
     return written
 
 
-def _tracked_paths(plugin_root: Path) -> set[Path] | None:
-    """Return Git-tracked asset paths, or None for an already-clean sdist."""
+#: Where the wheel and sdist carry every *other* plugin the repository's
+#: marketplace lists. A wheel's marketplace root is the installed ``autorun``
+#: package itself, so a plugin outside it is one ``autorun --install`` cannot
+#: find on any harness. Which plugins come along is read from the marketplace
+#: file, never listed here: a new plugin needs only its marketplace entry.
+#: Not ``plugins``: that would sit beside the ``autorun.plugins`` module.
+BUNDLED_PLUGINS_DIR = Path("marketplace_plugins")
+
+#: Top-level directories of a bundled plugin that are not its harness assets.
+#: ``src`` already ships as a package (``SIBLING_PACKAGE_LINKS``).
+BUNDLED_PLUGIN_EXCLUDES = ("src", "tests")
+
+_MARKETPLACE = Path(".claude-plugin") / "marketplace.json"
+
+
+def marketplace_plugins(plugin_root: Path) -> list[tuple[dict, Path]]:
+    """Every other local plugin the marketplace lists, with its directory.
+
+    The marketplace is the nearest one at or above ``plugin_root`` that lists
+    such a plugin: the repository root's in a checkout, the sdist's own once
+    ``bundle_marketplace_plugins`` has written it. A GitHub-hosted entry is
+    left to the harness that fetches it. A listed local plugin that is absent
+    raises, because skipping it is how a wheel came to carry ``ar`` alone.
+    """
+    own = plugin_root.resolve()
+    for root in (own, *own.parents):
+        try:
+            document = json.loads((root / _MARKETPLACE).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        found = [
+            (entry, (root / entry["source"]).resolve())
+            for entry in document.get("plugins", ())
+            if isinstance(entry, dict)
+            and isinstance(entry.get("source"), str)
+            and (root / entry["source"]).resolve() != own
+        ]
+        for entry, directory in found:
+            if not directory.is_dir():
+                raise FileNotFoundError(
+                    f"{root / _MARKETPLACE} lists {entry.get('name')!r} at "
+                    f"{entry['source']!r}, which is not a directory"
+                )
+        if found:
+            return found
+    return []
+
+
+def bundle_marketplace_plugins(plugin_root: Path, target: Path) -> list[Path]:
+    """Copy every other marketplace plugin under ``target`` and list it there.
+
+    ``target`` is an sdist tree or the wheel's ``autorun`` package. Its
+    ``.claude-plugin/marketplace.json`` gains each plugin's own marketplace
+    entry with ``source`` pointing at the copy. Returns the copies written.
+    """
+    if target.resolve() == plugin_root.resolve():
+        raise ValueError("Cannot bundle plugins into the source tree")
+    generated = shutil.ignore_patterns("__pycache__", "*.py[cod]", "*.tmp", ".DS_Store")
+    entries: list[dict] = []
+    written: list[Path] = []
+    for entry, directory in marketplace_plugins(plugin_root):
+        tracked = _tracked_paths(directory, ())
+        allowed = None if tracked is None else {
+            parent for path in tracked for parent in (path, *path.parents)
+        }
+
+        def ignore(current: str, names: list[str], directory=directory, allowed=allowed):
+            relative = Path(current).resolve().relative_to(directory)
+            ignored = set(generated(current, names))
+            if relative == Path("."):
+                ignored.update(BUNDLED_PLUGIN_EXCLUDES)
+            if allowed is not None:
+                ignored.update(name for name in names if relative / name not in allowed)
+            return ignored
+
+        destination = target / BUNDLED_PLUGINS_DIR / entry["name"]
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(directory, destination, ignore=ignore)
+        entries.append(
+            {**entry, "source": f"./{(BUNDLED_PLUGINS_DIR / entry['name']).as_posix()}"}
+        )
+        written.append(destination)
+    if not entries:
+        return written
+    listing = target / _MARKETPLACE
+    try:
+        document = json.loads(listing.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        document = {}
+    names = {entry["name"] for entry in entries}
+    document["plugins"] = [
+        plugin
+        for plugin in document.get("plugins", ())
+        if not (isinstance(plugin, dict) and plugin.get("name") in names)
+    ] + entries
+    listing.parent.mkdir(parents=True, exist_ok=True)
+    # The sdist's copy is a hard link to the checkout's file; break it first.
+    listing.unlink(missing_ok=True)
+    listing.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    return written
+
+
+def _tracked_paths(
+    plugin_root: Path,
+    pathspecs: tuple[str, ...] | None = None,
+) -> set[Path] | None:
+    """Return Git-tracked asset paths, or None for an already-clean sdist.
+
+    ``pathspecs`` defaults to the asset trees; ``()`` asks for everything under
+    ``plugin_root``. An empty answer for that is a directory Git does not track
+    (an unpacked sdist inside some unrelated work tree), so it is None too.
+    """
+    if pathspecs is None:
+        pathspecs = tuple(str(source) for source, _destination in PLUGIN_ASSET_TREES)
     try:
         result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(plugin_root),
-                "ls-files",
-                "-z",
-                "--",
-                *(str(source) for source, _destination in PLUGIN_ASSET_TREES),
-            ],
+            ["git", "-C", str(plugin_root), "ls-files", "-z", "--", *pathspecs],
             capture_output=True,
             check=False,
         )
     except OSError:
         return None
-    if result.returncode != 0:
+    if result.returncode != 0 or (not pathspecs and not result.stdout):
         return None
     return {
         Path(raw.decode("utf-8", errors="strict"))
@@ -197,6 +302,7 @@ def copy_plugin_assets(plugin_root: Path, package_root: Path) -> None:
         package_root / "gemini_template" / "hooks" / "hook_entry.py"
     )
     source_only_hook.unlink(missing_ok=True)
+    bundle_marketplace_plugins(plugin_root, package_root)
     _make_installed_claude_plugin_local(package_root)
 
 
@@ -292,14 +398,22 @@ def _make_installed_claude_plugin_local(package_root: Path) -> None:
     if not marketplace_path.is_file() or not hooks_path.is_file():
         return
     marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
+    # `ar` is this package; every other entry kept is one the wheel carries.
     plugins = [
         plugin
         for plugin in marketplace.get("plugins", ())
-        if isinstance(plugin, dict) and plugin.get("name") == "ar"
+        if isinstance(plugin, dict)
+        and (
+            plugin.get("name") == "ar"
+            or (
+                isinstance(plugin.get("source"), str)
+                and (package_root / plugin["source"]).is_dir()
+            )
+        )
     ]
     marketplace["plugins"] = plugins
     for plugin in plugins:
-        if isinstance(plugin, dict) and plugin.get("name") == "ar":
+        if plugin.get("name") == "ar":
             plugin["source"] = "."
     marketplace_path.write_text(
         json.dumps(marketplace, indent=2) + "\n",
