@@ -215,6 +215,17 @@ class TestMarketplacePluginBundle:
         with pytest.raises(FileNotFoundError, match="pdf"):
             build_support.copy_plugin_assets(plugin, tmp_path / "wheel" / "autorun")
 
+    def test_the_build_and_the_installer_name_one_bundle_directory(self):
+        """The installer leaves this directory out of ar's own trees, so the
+        name the build writes and the name the installer skips must be one."""
+        import build_support
+
+        from autorun.resources import BUNDLED_PLUGINS_DIR
+
+        assert build_support.BUNDLED_PLUGINS_DIR == Path(BUNDLED_PLUGINS_DIR)
+        source = Path(build_support.__file__).read_text(encoding="utf-8")
+        assert f'"{BUNDLED_PLUGINS_DIR}"' not in source, "a second literal"
+
     def test_this_repository_bundles_every_plugin_its_marketplace_lists_but_autorun(self):
         import json
 

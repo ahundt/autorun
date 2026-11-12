@@ -62,6 +62,32 @@ def test_the_staged_codex_plugin_leaves_out_the_checkout_test_suite(tmp_path):
     assert (staged / "skills" / "demo" / "tests" / "case.md").is_file(), "only the top level"
 
 
+def test_the_staged_codex_plugin_leaves_out_the_other_bundled_marketplace_plugins(tmp_path):
+    """A wheel's `autorun` package is both ar's plugin directory and the
+    marketplace root, so it carries every other marketplace plugin under
+    BUNDLED_PLUGINS_DIR. Those are published as themselves; a copy inside
+    ~/plugins/ar put a second pdf-extractor SKILL.md in Codex's ar cache."""
+    from autorun.installer.codex import stage_plugin
+    from autorun.resources import BUNDLED_PLUGINS_DIR
+
+    plugin = tmp_path / "plugin"
+    (plugin / ".codex-plugin").mkdir(parents=True)
+    (plugin / ".codex-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+    (plugin / "skills" / "demo").mkdir(parents=True)
+    (plugin / "skills" / "demo" / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    bundled = plugin / BUNDLED_PLUGINS_DIR / "pdf" / "skills" / "pdf"
+    bundled.mkdir(parents=True)
+    (bundled / "SKILL.md").write_text("# pdf\n", encoding="utf-8")
+    # The same name below the top level is someone's content, not the bundle.
+    (plugin / "skills" / "demo" / BUNDLED_PLUGINS_DIR).mkdir()
+
+    staged = stage_plugin(plugin, tmp_path / "staged")
+
+    assert not (staged / BUNDLED_PLUGINS_DIR).exists()
+    assert (staged / "skills" / "demo" / "SKILL.md").is_file()
+    assert (staged / "skills" / "demo" / BUNDLED_PLUGINS_DIR).is_dir(), "only the top level"
+
+
 # ─── Rule 1: an unknown top-level key drops every hook in the file ───────────
 
 

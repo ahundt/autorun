@@ -30,6 +30,7 @@ import shutil
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from ..resources import BUNDLED_PLUGINS_DIR
 from .fs import (
     dereference_links as fs_dereference_links,
     json_document,
@@ -399,6 +400,9 @@ def stage_plugin(
         skipped = set(ignored(directory, names))
         if source == plugin_dir:
             skipped.add("tests")  # a checkout's test suite is not the plugin
+            # A wheel's plugin directory carries the other marketplace plugins;
+            # each is published as itself, never inside this one's tree.
+            skipped.add(BUNDLED_PLUGINS_DIR)
             if not include_skills:
                 skipped.add("skills")
         if source == plugin_dir / "skills":

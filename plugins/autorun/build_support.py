@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -92,13 +93,29 @@ def materialize_sibling_packages(
     return written
 
 
+def _load_resources():
+    """``autorun.resources``, read from this tree without importing autorun,
+    whose dependencies a build environment does not have."""
+    spec = importlib.util.spec_from_file_location(
+        "autorun_build_resources",
+        Path(__file__).resolve().parent / "src" / "autorun" / "resources.py",
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load autorun resources for the build")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 #: Where the wheel and sdist carry every *other* plugin the repository's
 #: marketplace lists. A wheel's marketplace root is the installed ``autorun``
 #: package itself, so a plugin outside it is one ``autorun --install`` cannot
 #: find on any harness. Which plugins come along is read from the marketplace
 #: file, never listed here: a new plugin needs only its marketplace entry.
-#: Not ``plugins``: that would sit beside the ``autorun.plugins`` module.
-BUNDLED_PLUGINS_DIR = Path("marketplace_plugins")
+#: Not ``plugins``: that would sit beside the ``autorun.plugins`` module. The
+#: name is ``autorun.resources``'s, because the installer leaves it out of ar's
+#: own harness trees.
+BUNDLED_PLUGINS_DIR = Path(_load_resources().BUNDLED_PLUGINS_DIR)
 
 #: Top-level directories of a bundled plugin that are not its harness assets.
 #: ``src`` already ships as a package (``SIBLING_PACKAGE_LINKS``).

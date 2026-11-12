@@ -12,6 +12,13 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+#: Where a wheel or sdist carries every *other* plugin the repository
+#: marketplace lists (``build_support.bundle_marketplace_plugins``). In a wheel
+#: this sits inside ar's own plugin directory, which is also the marketplace
+#: root; each bundled plugin is published as itself, never as part of ``ar``.
+#: Stdlib-only module, so the build loads this name from here as well.
+BUNDLED_PLUGINS_DIR = "marketplace_plugins"
+
 
 @lru_cache(maxsize=1)
 def get_plugin_root() -> Path:
