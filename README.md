@@ -458,9 +458,13 @@ type it." Other commands, such as `/ar:status`, `/ar:task status` and
 | Codex CLI | typing `ar:ok` or `ar ok` | a prompt, or a command read back from the transcript, in a subagent's session |
 | Qwen Code, Gemini CLI | typing the command | none found |
 | Pi, supported Prime Agent releases | `/ar ok`, or typing `ar:ok` or `ar ok` | `ar:ok` and `ar ok` sent over RPC or by another extension |
-| OpenCode | typing `ar:ok` or `ar ok` | the model's `autorun` tool |
+| OpenCode 1.18.31 | no verified-user route: `chat.message` exposes no origin field | every prompt frame and the model's `autorun` tool |
 | Antigravity | typing the command before the first model invocation | later model-authored invocations |
 | ForgeCode | no way: it sends autorun no events, and its guards are advice | nothing reaches autorun |
+
+OpenCode 1.18.31's native `chat.message` metadata cannot distinguish a TUI
+prompt from a plugin or API prompt. Autorun treats all of those frames as
+automation rather than letting an ambiguous prompt change permissions.
 
 Two routes stay open:
 

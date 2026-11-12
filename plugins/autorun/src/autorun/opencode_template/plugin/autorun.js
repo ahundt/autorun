@@ -24,12 +24,6 @@ function promptText(parts) {
     .join("\n")
 }
 
-function isAutorunContinuation(parts) {
-  return (Array.isArray(parts) ? parts : []).some(
-    (part) => part?.synthetic === true && part?.metadata?.source === "autorun-stop-gate",
-  )
-}
-
 function noticePart(message) {
   return {
     type: "text",
@@ -90,7 +84,10 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
         hook_event_name: "UserPromptSubmit",
         session_id: input.sessionID,
         prompt,
-        prompt_author: isAutorunContinuation(output?.parts) ? "automation" : "user",
+        // OpenCode 1.18.31 exposes no prompt-origin field. A TUI prompt and
+        // an API/plugin prompt can have the same chat.message shape, so none
+        // is positive evidence of a person; ambiguous input is automation.
+        prompt_author: "automation",
         cwd: String(directory ?? ""),
       })
       const blocked = denialReason(response)
@@ -181,7 +178,7 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
       autorun: tool({
         description:
           "Run an autorun command: status, help, or task (for example task status). " +
-          "Commands that change permissions run only when the user types them.",
+          "This model-callable tool cannot run commands reserved for a verified user prompt.",
         args: {
           command: tool.schema
             .string()

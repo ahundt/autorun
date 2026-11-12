@@ -383,7 +383,23 @@ class TestDaemonSocketFrames:
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
-    def test_typed_prompt_reaches_user_prompt_submit(self, tmp_path, short_socket_dir):
+    @pytest.mark.parametrize(
+        "mode",
+        [
+            "prompt-human-shaped",
+            "prompt-child",
+            "prompt-plugin",
+            "prompt-api",
+            "prompt-compaction",
+            "prompt-automation",
+        ],
+    )
+    def test_prompt_without_positive_human_origin_is_automation(self, tmp_path, short_socket_dir, mode):
+        """OpenCode 1.18.31 gives chat.message no origin discriminator.
+
+        Even the TUI-shaped case is indistinguishable from an API call, so it
+        must not receive user-only command or awaiting-user authority.
+        """
         socket_path = short_socket_dir / "daemon.sock"
         frames, thread = self._serve(
             socket_path,
@@ -392,15 +408,14 @@ class TestDaemonSocketFrames:
                 "UserPromptSubmit": {"systemMessage": "Cache expired; review cost before continuing."},
             },
         )
-        result = _run_shim(tmp_path, socket_path, "prompt")
+        result = _run_shim(tmp_path, socket_path, mode)
         thread.join(timeout=25)
 
         assert "Cache expired; review cost before continuing." in result.stdout
         prompt = frames[1]
         assert prompt["hook_event_name"] == "UserPromptSubmit"
         assert prompt["session_id"] == "prompt-session"
-        assert prompt["prompt"] == "ordinary user prompt"
-        assert prompt["prompt_author"] == "user"
+        assert prompt["prompt_author"] == "automation"
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
@@ -616,13 +631,22 @@ const client = {
   },
 }
 
-if (process.argv[2] === "prompt") {
+if (process.argv[2].startsWith("prompt-")) {
   const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
+  const mode = process.argv[2]
+  const input = { sessionID: "prompt-session" }
   const output = {
     message: { role: "user" },
-    parts: [{ type: "text", text: "ordinary user prompt" }],
+    parts: [{ type: "text", text: `ordinary ${mode} prompt` }],
   }
-  await hooks["chat.message"]({ sessionID: "prompt-session" }, output)
+  if (mode === "prompt-child") input.messageID = "msg_child_generated"
+  if (mode === "prompt-plugin") output.message.system = "plugin supplied"
+  if (mode === "prompt-compaction") output.parts[0].synthetic = true
+  if (mode === "prompt-automation") {
+    output.parts[0].synthetic = true
+    output.parts[0].metadata = { source: "autorun-stop-gate" }
+  }
+  await hooks["chat.message"](input, output)
   console.log(JSON.stringify(output.parts))
   process.exit(0)
 }
