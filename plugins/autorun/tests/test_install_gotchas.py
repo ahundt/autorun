@@ -1933,6 +1933,9 @@ def test_forced_same_version_claude_refresh_preserves_runtime_and_backs_up_edit(
     cached_python.parent.mkdir(parents=True)
     if os.name == "nt":
         shutil.copy2(sys.executable, cached_python)
+        (cached / ".venv" / "pyvenv.cfg").write_text(
+            f"home = {Path(sys.executable).parent}\n", encoding="utf-8"
+        )
     else:
         cached_python.symlink_to(sys.executable)
     root_inode = cached.stat().st_ino

@@ -162,6 +162,9 @@ def _make_cache_python(root: Path) -> None:
     python.parent.mkdir(parents=True, exist_ok=True)
     if os.name == "nt":
         shutil.copy2(sys.executable, python)
+        (root / ".venv" / "pyvenv.cfg").write_text(
+            f"home = {Path(sys.executable).parent}\n", encoding="utf-8"
+        )
     else:
         python.symlink_to(sys.executable)
 
