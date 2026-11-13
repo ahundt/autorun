@@ -329,8 +329,8 @@ discarding the scratch directory.
 
 Push the candidate to a `ci/` branch first. `ci.yml` runs all twelve jobs on
 any `ci/**` push, and `main` stays where it is, so a Linux or Windows failure
-never reaches a marketplace install. Run the gated block below against that
-push; move `main` only after it prints `CI green`.
+never reaches a marketplace install. The gated block below reads that run;
+the command that moves `main` comes after it.
 
 ```bash
 git push origin "$release_sha":refs/heads/ci/candidate
@@ -340,16 +340,6 @@ A local macOS run cannot stand in for this: on 2026-11-13, 255 commits that
 passed locally went straight to `main` and failed 8 of 12 jobs there. Use the
 same `ci/<topic>` push for any ordinary change that touches paths, processes,
 encodings, sockets, file modes or SQLite features.
-
-```bash
-git push origin "$release_sha":main
-git fetch origin main
-test "$(git rev-parse origin/main)" = "$release_sha"
-```
-
-The GitHub-backed Claude marketplace follows the repository's default branch,
-not a release asset. Requiring `origin/main`, the CI run, and the later tag to
-name the same SHA keeps a fresh marketplace install identical to the RC.
 
 All twelve expanded jobs must be green, not just the matrix. The seven-entry
 matrix covers Python 3.10-3.14 on Ubuntu plus macOS 3.13 and Windows 3.13; five
@@ -398,6 +388,18 @@ gh run view "$run_id" --log | { grep -Ei 'warn|deprecat' || true; } | sort -u
 echo "CI green for $release_sha: run $run_id"
 EOF
 ```
+
+Only after that block prints `CI green`, move `main` to the same commit:
+
+```bash
+git push origin "$release_sha":main
+git fetch origin main
+test "$(git rev-parse origin/main)" = "$release_sha"
+```
+
+The GitHub-backed Claude marketplace follows the repository's default branch,
+not a release asset. Requiring `origin/main`, the CI run, and the later tag to
+name the same SHA keeps a fresh marketplace install identical to the RC.
 
 If it stops, read the failure with `gh run view <run id> --log-failed`. A
 Windows job that failed on a hook timeout or a lock timeout can be retried once

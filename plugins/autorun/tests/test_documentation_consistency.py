@@ -1693,8 +1693,10 @@ def test_a_candidate_runs_every_ci_job_before_main_moves():
 
     releasing = (REPO_ROOT / "RELEASING.md").read_text(encoding="utf-8")
     proof = releasing.find('git push origin "$release_sha":refs/heads/ci/')
+    green = releasing.find('echo "CI green for $release_sha')
     to_main = releasing.find('git push origin "$release_sha":main')
-    assert 0 <= proof < to_main, (
-        "RELEASING.md must push the candidate to a ci/ branch, and read that "
-        "run, before the command that moves main"
+    assert 0 <= proof < green < to_main, (
+        "RELEASING.md must push the candidate to a ci/ branch, then run the "
+        "block that requires twelve green jobs, and only then move main; a "
+        "main push placed before that block publishes an unverified tree"
     )
