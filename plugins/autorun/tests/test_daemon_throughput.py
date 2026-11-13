@@ -394,6 +394,7 @@ def _restart_with_daemon_aged(
     src_dir=None,
     answers=True,
     daemon_birth_units=None,
+    daemon_records=None,
     **kwargs,
 ):
     """Run restart_daemon() against a daemon of the given age.
@@ -417,7 +418,16 @@ def _restart_with_daemon_aged(
     start = mock.Mock(side_effect=AssertionError("must not start a daemon"))
     monkeypatch.setattr(restart_mod, "restart_lock", acquired)
     monkeypatch.setattr(restart_mod, "_resolve_src_dir", lambda: src_dir)
-    monkeypatch.setattr(restart_mod, "get_daemon_pid", lambda **_: 4242)
+    if daemon_records is None:
+        daemon_records = ((4242, daemon_birth_units), (4242, daemon_birth_units))
+    records = iter(daemon_records)
+    monkeypatch.setattr(
+        restart_mod.ipc, "daemon_record", lambda _path: next(records), raising=False
+    )
+    after_record = daemon_records[-1]
+    monkeypatch.setattr(
+        restart_mod, "get_daemon_pid", lambda **_: after_record[0] if after_record else None
+    )
     monkeypatch.setattr(restart_mod, "is_daemon_responding", lambda: True)
     monkeypatch.setattr(restart_mod.ipc, "answers_round_trip", lambda *a, **k: answers)
     monkeypatch.setattr(restart_mod, "_daemon_age_seconds", lambda pid: age_seconds)
@@ -485,13 +495,38 @@ def test_an_install_handoff_always_replaces_the_daemon(monkeypatch):
     stop.assert_called_once()
 
 
-def test_an_install_handoff_accepts_a_concurrent_restart(monkeypatch):
-    """A daemon born after this install requested restart satisfies the handoff."""
+def test_an_install_handoff_restarts_after_a_backward_clock_step(monkeypatch):
+    """An old daemon must not look concurrent when the wall clock moves backward."""
     units = ipc.PROCESS_BIRTH_UNITS_PER_SECOND
+    same = (4242, round(101.0 * units))
     code, stop = _restart_with_daemon_aged(
         monkeypatch,
         0,
-        daemon_birth_units=round(101.0 * units),
+        daemon_birth_units=same[1],
+        daemon_records=(same, same),
+        replace_runtime_daemon=True,
+    )
+    stop.assert_called_once()
+
+
+def test_an_install_handoff_accepts_a_changed_daemon_record(monkeypatch):
+    """A different validated record proves a concurrent installer replaced it."""
+    code, stop = _restart_with_daemon_aged(
+        monkeypatch,
+        0,
+        daemon_records=((4242, 90_000_000), (4343, 91_000_000)),
+        replace_runtime_daemon=True,
+    )
+    assert code == 0
+    stop.assert_not_called()
+
+
+def test_an_install_handoff_accepts_a_new_record_after_none(monkeypatch):
+    """A daemon created while this install waited also satisfies the handoff."""
+    code, stop = _restart_with_daemon_aged(
+        monkeypatch,
+        0,
+        daemon_records=(None, (4242, 91_000_000)),
         replace_runtime_daemon=True,
     )
     assert code == 0

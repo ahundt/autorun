@@ -636,11 +636,9 @@ def restart_daemon(
         return 1
 
     # Step 0: Acquire restart lock (prevent concurrent restarts). An install
-    # handoff may coalesce only with a daemon born after this request, proving
-    # that another installer restarted it while this process waited here.
-    restart_requested_units = round(
-        time.time() * ipc.PROCESS_BIRTH_UNITS_PER_SECOND
-    )
+    # handoff snapshots the validated daemon identity before waiting; only a
+    # different record afterward proves another installer replaced it.
+    daemon_before_wait = ipc.daemon_record(LOCK_PATH) if replace_runtime_daemon else None
     # ExitStack enters the lock so a failure to create it can be reported on
     # its own, while the `with` below still owns releasing it.
     held = ExitStack()
@@ -681,10 +679,12 @@ def restart_daemon(
         # accepts connections, and a wedged daemon is what a restart is for.
         if pid and not all_daemons and ipc.answers_round_trip():
             if replace_runtime_daemon:
-                daemon_birth = ipc.daemon_record_birth_units(
-                    LOCK_PATH, expected_pid=pid
-                )
-                if daemon_birth is not None and daemon_birth > restart_requested_units:
+                daemon_after_wait = ipc.daemon_record(LOCK_PATH)
+                if (
+                    daemon_after_wait is not None
+                    and daemon_after_wait[0] == pid
+                    and daemon_after_wait != daemon_before_wait
+                ):
                     print(
                         f"  ✓ Concurrent install started healthy daemon PID {pid};"
                         " not restarting it again."
