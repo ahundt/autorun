@@ -178,6 +178,14 @@ enforce those policies.
 13. The suite includes synthetic tests with 200 clients sending requests at the
     same time. No quiet-machine capacity, latency, or stability measurement is
     published for this release.
+14. Restarting the daemon while 100 sessions send hook calls is slower than in
+    an earlier 1.0.0rc4 development build. On one loaded machine, over six
+    alternating runs per build, `autorun --restart-daemon` took a median 7.0
+    seconds against 5.7 seconds. During each restart a median of 12 of about
+    330 hook calls got no daemon decision: tool calls were refused with the
+    daemon-unavailable message and lifecycle hooks continued. No guarded
+    command was allowed in any run. Retry a refused tool call after the restart
+    finishes.
 
 ### Removed
 
