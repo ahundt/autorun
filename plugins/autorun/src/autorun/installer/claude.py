@@ -50,8 +50,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
-from filelock import FileLock
-
 from . import discovery, harness
 from .fs import (
     IGNORED_GLOBS,
@@ -267,6 +265,8 @@ def refresh_cache(
     after_step: Callable[[str], None] | None = None,
     hook_command: str = "",
     before_hooks: Callable[[], None] | None = None,
+    lock_timeout_seconds: float = 600.0,
+    wait_notice: Callable[[str], None] | None = None,
 ) -> Path | None:
     """Refresh stale payload files in place while retaining Claude's private venv.
 
@@ -279,8 +279,13 @@ def refresh_cache(
     plugin = plugin or _manifest_name(source)
     if not plugin:
         return None
-    lock = FileLock(str(directory.parent / INSTALL_LOCK_NAME))
-    with lock:
+    from .runtime import cache_install_lock
+
+    with cache_install_lock(
+        directory,
+        timeout_seconds=lock_timeout_seconds,
+        wait_notice=wait_notice,
+    ):
         if read_marker(directory) is None and not record_matching_tree_files(
             source,
             directory,

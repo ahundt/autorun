@@ -420,6 +420,15 @@ def resolve_all(
 # duplication instead of maintaining a workaround for it.
 
 
+def positive_seconds(raw: str) -> float | None:
+    """A positive finite seconds value for bounded installer waits."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 and value < float("inf") else None
+
+
 def harness_names() -> tuple[str, ...]:
     """Legal harness names, read from the registry at parse time.
 
@@ -507,6 +516,14 @@ WRITE_SOURCE_METADATA = Setting(
     parse=truthy,
     default=False,
     help="Regenerate tracked source metadata during install",
+)
+
+CACHE_INSTALL_LOCK_TIMEOUT_SECONDS = Setting(
+    name="cache_install_lock_timeout_seconds",
+    parse=positive_seconds,
+    default=600.0,
+    # The lock spans a pip reinstall, so the default permits a slow build but never waits forever.
+    help="Maximum seconds to wait for another installer refreshing the same Claude cache",
 )
 
 # --- custom harnesses -------------------------------------------------------
@@ -685,6 +702,7 @@ INSTALL_SETTINGS: tuple[Setting, ...] = (
     HOOK_NO_SYNC,
     HOOK_PYTHON,
     WRITE_SOURCE_METADATA,
+    CACHE_INSTALL_LOCK_TIMEOUT_SECONDS,
     INSTALL_UV_TOOL,
     CONDUCTOR,
     UPDATE_METHOD,

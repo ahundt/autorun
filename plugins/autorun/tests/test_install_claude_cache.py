@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("AUTORUN_HOME", "/tmp/autorun-test-home")
 os.environ.setdefault("AUTORUN_TEST_STATE_DIR", "/tmp/autorun-test-state")
 
-from autorun.installer import claude, fs  # noqa: E402
+from autorun.installer import claude, fs, runtime  # noqa: E402
 from autorun.installer.fs import OWNED_MARKER_NAME, read_marker  # noqa: E402
 
 
@@ -458,12 +458,38 @@ def test_exhausted_replace_retry_keeps_intent_and_the_next_run_finishes(
     assert final is not None and not final.intended_files
 
 
+def test_cache_lock_wait_is_bounded_and_names_the_rerun_action(
+    source, home, tmp_path
+):
+    """Violation excluded: a second cache refresh waits forever without a notice."""
+    from filelock import FileLock
+
+    written = install(source, home)
+    lock_path = written.parent / fs.INSTALL_LOCK_NAME
+    notices = []
+    with FileLock(str(lock_path)):
+        with pytest.raises(RuntimeError) as raised:
+            claude.refresh_cache(
+                source,
+                written,
+                lock_timeout_seconds=0.01,
+                wait_notice=notices.append,
+            )
+
+    message = str(raised.value)
+    assert notices == [f"waiting for another autorun install refreshing {written}"]
+    assert str(lock_path) in message
+    assert str(written) in message
+    assert "0.01" in message
+    assert "wait and rerun" in message
+
+
 def test_cache_intent_replacement_runtime_and_receipt_share_one_lock(
     source, home, monkeypatch
 ):
     written = install(source, home)
     (source / "payload.py").write_text("current = True\n", encoding="utf-8")
-    real_lock = claude.FileLock
+    real_lock = runtime.FileLock
     acquisitions = 0
     active = 0
 
@@ -471,19 +497,19 @@ def test_cache_intent_replacement_runtime_and_receipt_share_one_lock(
         def __init__(self, path):
             self.inner = real_lock(path)
 
-        def __enter__(self):
+        def acquire(self, *args, **kwargs):
             nonlocal acquisitions, active
             acquisitions += 1
-            self.inner.__enter__()
+            result = self.inner.acquire(*args, **kwargs)
             active += 1
-            return self
+            return result
 
-        def __exit__(self, *args):
+        def release(self):
             nonlocal active
             active -= 1
-            return self.inner.__exit__(*args)
+            return self.inner.release()
 
-    monkeypatch.setattr(claude, "FileLock", CountingLock)
+    monkeypatch.setattr(runtime, "FileLock", CountingLock)
     monkeypatch.setattr(
         fs,
         "FileLock",
@@ -528,8 +554,6 @@ def test_runtime_finishes_before_hooks_json_is_replaced(source, home):
 def test_matching_runtime_receipt_skips_a_second_venv_reinstall(
     source, tmp_path, monkeypatch
 ):
-    from autorun.installer import runtime
-
     cache = tmp_path / "cache"
     cache.mkdir()
     venv = cache / ".venv"

@@ -102,6 +102,19 @@ def _skill_placement_token():
     return SKILL_PLACEMENT.checked
 
 
+def _cache_install_lock_timeout_token():
+    """Return the shared validator for the bounded Claude cache lock wait."""
+    from .installer.settings import CACHE_INSTALL_LOCK_TIMEOUT_SECONDS
+
+    return CACHE_INSTALL_LOCK_TIMEOUT_SECONDS.checked
+
+
+def _cache_install_lock_timeout_help() -> str:
+    from .installer.settings import CACHE_INSTALL_LOCK_TIMEOUT_SECONDS
+
+    return CACHE_INSTALL_LOCK_TIMEOUT_SECONDS.rendered_help()
+
+
 def _update_method_choices() -> tuple[str, ...]:
     """Return self-update methods from the installer setting declaration."""
     from .installer.settings import UPDATE_METHOD
@@ -557,6 +570,12 @@ For more information: https://github.com/ahundt/autorun
         default=None,
         metavar="MODE|HARNESS=MODE",
         help=_skill_placement_help(),
+    )
+    install_group.add_argument(
+        "--cache-install-lock-timeout-seconds",
+        type=_cache_install_lock_timeout_token(),
+        default=None,
+        help=_cache_install_lock_timeout_help(),
     )
     install_group.add_argument(
         "--codex-hook-source",
@@ -1256,6 +1275,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             "codex_plugin_marketplace": args.codex_plugin_marketplace,
             "claude_agents_skills": args.claude_agents_skills,
             "skill_placement": args.skill_placement,
+            "cache_install_lock_timeout_seconds": args.cache_install_lock_timeout_seconds,
         }
         if args.install_dry_run:
             install_kwargs["dry_run"] = True

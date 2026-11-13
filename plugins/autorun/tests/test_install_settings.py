@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from autorun.installer.traversal import Context  # noqa: E402
 from autorun.installer.settings import (  # noqa: E402
     CODEX_HOOK_SOURCE,
+    CACHE_INSTALL_LOCK_TIMEOUT_SECONDS,
     CODEX_PLUGIN_MARKETPLACE,
     CONDUCTOR,
     HOOK_NO_SYNC,
@@ -72,6 +73,15 @@ def test_config_is_consulted_after_env_and_before_the_default():
         None, env={"AUTORUN_SHARED_SKILLS_BRIDGE": "link"},
         config={"shared_skills_bridge": "copy"},
     ).value == "link"
+
+
+def test_cache_lock_timeout_uses_cli_env_config_default_precedence():
+    """Violation excluded: cache lock waits bypass the installer setting ladder."""
+    setting = CACHE_INSTALL_LOCK_TIMEOUT_SECONDS
+    assert setting.resolve("12", env={setting.env: "13"}, config={setting.name: 14}).value == 12
+    assert setting.resolve(None, env={setting.env: "13"}, config={setting.name: 14}).value == 13
+    assert setting.resolve(None, env={}, config={setting.name: 14}).value == 14
+    assert setting.resolve(None, env={}, config={}).value == 600
 
 
 def test_the_resolved_source_says_where_a_value_came_from():

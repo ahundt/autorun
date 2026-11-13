@@ -201,6 +201,7 @@ def _resolved_settings(
     codex_plugin_marketplace: str | None = None,
     claude_agents_skills: str | None = None,
     skill_placement: object = None,
+    cache_install_lock_timeout_seconds: object = None,
     custom_harnesses: Sequence[str] = (),
 ) -> tuple[dict[str, object], tuple[settings.CustomHarness, ...]]:
     cli = SimpleNamespace(
@@ -210,6 +211,7 @@ def _resolved_settings(
         codex_plugin_marketplace=codex_plugin_marketplace,
         shared_skills_bridge=claude_agents_skills,
         skill_placement=skill_placement,
+        cache_install_lock_timeout_seconds=cache_install_lock_timeout_seconds,
         custom_harness=None,
     )
     resolved = {
@@ -606,6 +608,7 @@ def install_plugins(
     codex_plugin_marketplace: str | None = None,
     claude_agents_skills: str | None = None,
     skill_placement: object = None,
+    cache_install_lock_timeout_seconds: object = None,
     custom_harnesses: Sequence[str] = (),
     dry_run: bool = False,
 ) -> int:
@@ -623,6 +626,7 @@ def install_plugins(
             codex_plugin_marketplace=codex_plugin_marketplace,
             claude_agents_skills=claude_agents_skills,
             skill_placement=skill_placement,
+            cache_install_lock_timeout_seconds=cache_install_lock_timeout_seconds,
             custom_harnesses=custom_harnesses,
         )
         harnesses, table, available, missing = _harnesses(
@@ -654,6 +658,7 @@ def install_plugins(
     except ValueError as error:
         print(f"Error: {error}")
         return 1
+    resolved["_user_output"] = print
     resolved["_registrations"] = {
         spec.name: registration.with_binary(registration.REGISTRATIONS[spec.flavor], spec.binary)
         for spec in custom

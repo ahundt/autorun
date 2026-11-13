@@ -783,6 +783,10 @@ def _registrations(
                                     kept=cache_kept,
                                     hook_command=hook_command,
                                     before_hooks=before_hooks,
+                                    lock_timeout_seconds=float(
+                                        ctx.settings.get("cache_install_lock_timeout_seconds", 600.0)
+                                    ),
+                                    wait_notice=ctx.settings.get("_user_output"),
                                 )
                         except Exception as error:
                             cache_failure = Outcome(

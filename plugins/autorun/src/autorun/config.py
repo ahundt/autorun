@@ -862,6 +862,8 @@ CONFIG = {
     # How many suffixed names an export tries before giving up. Reaching this
     # means something is wrong, not that the directory is busy.
     "plan_export_max_destination_attempts": 1000,
+    # The cache lock spans a pip reinstall, so allow a slow build but never wait forever.
+    "cache_install_lock_timeout_seconds": 600.0,
     # Daemon dispatch budgets must be below client/wrapper timeouts so the
     # daemon can return a platform-correct fail-open/fail-closed response.
     "daemon_dispatch_timeouts_seconds": {

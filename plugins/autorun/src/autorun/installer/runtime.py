@@ -36,13 +36,16 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from ..durable_io import atomic_write_json
+from filelock import Timeout
+
 from .fs import FileLock, IGNORED_GLOBS, INSTALL_LOCK_NAME, scan_tree
 
 __all__ = [
@@ -477,6 +480,36 @@ def _cache_runtime_fingerprint(source: Path) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+@contextmanager
+def cache_install_lock(
+    cache: Path,
+    *,
+    timeout_seconds: float = 600.0,
+    wait_notice: Callable[[str], None] | None = None,
+):
+    """Acquire the cache-parent lock with one visible, bounded wait."""
+    lock_path = cache.parent / INSTALL_LOCK_NAME
+    lock = FileLock(str(lock_path))
+    try:
+        lock.acquire(timeout=0)
+    except Timeout:
+        if wait_notice is not None:
+            wait_notice(f"waiting for another autorun install refreshing {cache}")
+        started = time.monotonic()
+        try:
+            lock.acquire(timeout=timeout_seconds)
+        except Timeout as error:
+            elapsed = time.monotonic() - started
+            raise RuntimeError(
+                f"timed out waiting for cache install lock {lock_path} while refreshing "
+                f"{cache} after {elapsed:.2f}s (limit {timeout_seconds:g}s); wait and rerun"
+            ) from error
+    try:
+        yield lock
+    finally:
+        lock.release()
+
+
 def install_cache_runtime(
     cache: Path,
     source: Path,
@@ -484,6 +517,8 @@ def install_cache_runtime(
     python: str = "",
     run: Runner = _spawn,
     lock_held: bool = False,
+    lock_timeout_seconds: float = 600.0,
+    wait_notice: Callable[[str], None] | None = None,
 ) -> Outcome:
     """Install a source checkout non-editably into Claude's cache venv.
 
@@ -493,7 +528,11 @@ def install_cache_runtime(
     pip when the source fingerprint already matches. A wheel-installed CLI does
     not come here: its tool venv is already a non-editable install.
     """
-    lock = nullcontext() if lock_held else FileLock(str(cache.parent / INSTALL_LOCK_NAME))
+    lock = nullcontext() if lock_held else cache_install_lock(
+        cache,
+        timeout_seconds=lock_timeout_seconds,
+        wait_notice=wait_notice,
+    )
     try:
         with lock:
             cache_python, venv_repaired = _ensure_cache_venv(cache, python=python, run=run)
