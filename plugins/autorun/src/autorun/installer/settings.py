@@ -94,17 +94,12 @@ class _AutorunConfigView(MutableMapping[str, object]):
 def autorun_config() -> MutableMapping[str, object]:
     """autorun's ``CONFIG`` and user config file as one live view.
 
-    ``CONFIG`` alone never held an install setting: ``apply_user_config``
-    overlays only runtime keys, so every install key in
-    ``autorun.config.json`` was dropped and its config tier read nothing. That
-    mattered most where nobody types flags: ``--update`` and the hook bootstrap
-    both reinstall with no arguments, and reverted each flag-made choice.
-
-    ``CONFIG`` comes first so a programmatic entry still wins; it holds no
-    install key otherwise. Writes go to ``CONFIG``. The file is read per call,
-    and an absent file -- the state before a first install -- adds nothing.
-    Imported inside the call because ``config.py`` pulls in the rest of the
-    package; the installer must stay importable on its own.
+    Most install keys live only in the user file; programmatic entries in
+    ``CONFIG`` still win and writes through this view go back to ``CONFIG``.
+    The cache lock timeout is different: ``CONFIG`` owns its built-in default,
+    while the view lets a user-file value outrank that default and reports the
+    built-in value as the setting's default source. The file is read per call,
+    and an absent file, the state before a first install, adds nothing.
     """
     from ..config import CONFIG, read_user_config
 
