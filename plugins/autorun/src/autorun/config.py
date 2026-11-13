@@ -1132,7 +1132,7 @@ After every step and substep you must say "Wait," and execute this sequential th
         "/ar:status": "STATUS",  # File policy, session and global rules
         "/ar:go": "activate",  # Start autorun
         "/ar:goprocess": "activate",  # Start autorun with the plan and wait process
-        "/ar:stop": "stop",  # Graceful stop
+        "/ar:stop": "stop",
         "/ar:estop": "emergency_stop",  # Emergency stop
         "/ar:plannew": "NEW_PLAN",
         "/ar:planrefine": "REFINE_PLAN",

@@ -97,7 +97,7 @@ built from the same extension template.
 | Path | What |
 |------|------|
 | `plugins/autorun/src/autorun/` | Package: `config.py` (all CONFIG), `__main__.py` (CLI + hook routing), `plugins.py` (command handlers), `core.py`/`session_manager.py` (daemon state), `installer/` (install walk), `task_lifecycle.py`, `plan_export.py`, `cache_guard.py`, `integrations.py` |
-| `plugins/autorun/{commands,skills,agents,hooks}/` | Slash commands, skills, tmux agents, `hooks/hook_entry.py` + `hooks.json` |
+| `plugins/autorun/{commands,skills,hooks}/` | Slash commands, skills, `hooks/hook_entry.py` + `hooks.json` |
 | `plugins/autorun/AGENTS.md` | Plugin development guidance: hook error prevention, feature lessons, bug-workaround policy, harness families |
 | `plugins/autorun-skills/` | Manifests for every harness family, `README.md`, and `skills/`: the general-purpose skills. An install hands any copy `ar` wrote under an earlier release to this plugin (`installer/skills.heirs`) |
 | `plugins/pdf-extractor/` | Manifests, command, skill, `CLAUDE.md` (full docs), and `src/pdf_extraction` (symlinked into `plugins/autorun/src/` so it ships in the `autorun-ai` distribution; backends beyond `pdftotext` need the `pdf` extra) |

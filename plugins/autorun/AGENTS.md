@@ -114,8 +114,10 @@ So two numbers, with different jobs:
 
 - **`user_version` is the compatibility major** (`SCHEMA_USER_VERSION`).
   Raise it only for a change older builds cannot read or would damage. The
-  release that raises it also ships the reverse step (`autorun
-  --state-downgrade`) and names it in its release notes, and deletes
+  release that raises it also ships the reverse step as a CLI option (none
+  exists yet; `--state-rollback` returns to JSON state, not to an older
+  SQLite layout) and names it
+  in its release notes, and deletes
   `tests/test_schema_rollback_older_builds.py::test_older_builds_refuse_a_bumped_user_version`
   knowingly. A build refuses only a greater `user_version`, naming the build
   that wrote it and a command that works (`_check_schema_compatibility`, the

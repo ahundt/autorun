@@ -42,8 +42,8 @@ command.
   verification.
 - `ar:goprocess <task>` — the same with the plan, critique and wait process
   at every step.
-- `ar:stop` — graceful stop after the current task.
-- `ar:estop` — emergency stop, cancels the current autorun.
+- `ar:stop` — stop autorun now.
+- `ar:estop` — stop autorun now with the emergency-stop notice.
 
 ## Task tracking
 
@@ -54,14 +54,13 @@ command.
 - `ar:task resume` — resume task enforcement.
 - `ar:task ignore <id> [reason]` — mark one task ignored.
 - `ar:task prompts on|off|<N>` — configure task-staleness prompting.
-- `ar:task recovery on|off|min <N>` — configure repeated-Stop stale-task
-  recovery.
+- `ar:task recovery status|on|off` — show or switch stale-task recovery.
 
 ## Cache-miss / compaction gate (off by default)
 
 - `ar:cache` — show status. `ar:cache on|off [5m|1h|perm]` — toggle,
   optionally for a window.
-- `ar:cache set ratio|read|age|full <value>` — configure threshold axes.
+- `ar:cache set ratio|read|age|expired-min-tokens <value>` — configure threshold axes.
   Tokens `50k` or `.5M`, percents `85%`, durations `5m`, `2h30m`, or `2d`.
 - `ar:cache ok [N|5m|perm]` — override the gate; `ar:cache no` — cancel
   outstanding overrides.

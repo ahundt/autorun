@@ -39,9 +39,9 @@ the `pdf` extra.
 | Codex | native hooks | yes | Codex plugin and skills |
 | Qwen Code | native hooks | yes | native extension |
 | Antigravity | native hooks | the events Antigravity offers | native extension |
-| OpenCode | in-process tool veto | no Stop event; its todo list is mirrored into task status | command files and skills |
+| OpenCode | in-process tool veto | yes on 0.6.0+, through `session.idle`; older clients only show the reason. Its todo list is mirrored into task status | command files and skills |
 | Pi | in-process tool veto | `agent_settled` continuation and task tools | one local package containing the extension and skills |
-| Prime Agent | the Pi extension | as Pi | one local package containing the extension and skills |
+| Prime Agent | the Pi extension below 0.10.0; none on 0.10+ | as Pi below 0.10.0; no on 0.10+ | below 0.10.0, one local package containing the extension and skills; on 0.10+, guidance and skills |
 | ForgeCode | advice only | no | command files and skills |
 | Legacy Gemini CLI | native hooks | yes | native extension |
 

@@ -75,7 +75,8 @@ model or a subagent, it changes nothing.
 | Codex | no; usage is in `event_msg` records autorun does not read | silent |
 | Pi, Prime Agent | yes, with no lifetime | warns only when you have set `/ar:cache set age <duration>`, which stands in for the lifetime; silent otherwise. These harnesses cannot stop a prompt from a hook, so `on` also warns |
 | Gemini CLI, Qwen Code | not confirmed | warns only when `age` is set and data is found; never blocks |
-| Antigravity, OpenCode, ForgeCode | no prompt hook | not applicable |
+| Antigravity, OpenCode | not confirmed | untested; the check runs on their prompt event and stays silent when it finds no cache data |
+| ForgeCode | sends autorun no events | not applicable |
 
 A response that arrives after the lifetime while a turn is already running
 (a slow tool result) is not caught: the turn has started.

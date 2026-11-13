@@ -263,22 +263,22 @@ directory holds the manifest, command, and this skill; the code ships inside the
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `BackendExtractor` | backends.py:35-123 | Base class with Template Method pattern |
-| `DoclingExtractor` | backends.py:130-142 | IBM Docling backend (MIT, GPU) |
-| `MarkerExtractor` | backends.py:145-158 | Vision-based marker backend (GPL-3.0, GPU) |
-| `MarkItDownExtractor` | backends.py:161-173 | Microsoft MarkItDown (MIT, CPU) |
-| `PdfplumberExtractor` | backends.py:244-253 | Table-focused extraction (MIT) |
-| `PdfminerExtractor` | backends.py:219-226 | Pure Python fallback (MIT) |
-| `Pypdf2Extractor` | backends.py:229-241 | Basic extraction through optional `pypdf` (BSD-3) |
-| `BACKEND_REGISTRY` | backends.py:279-292 | Dict mapping backend names to factories |
-| `detect_gpu_availability()` | utils.py:9-40 | Auto-detect GPU and recommend backends |
-| `extract_single_pdf()` | extractors.py:13-80 | Extract one PDF with backend fallback |
-| `pdf_to_txt()` | extractors.py:83-170 | Batch extract directory with resume |
+| `BackendExtractor` | backends.py | Base class with Template Method pattern |
+| `DoclingExtractor` | backends.py | IBM Docling backend (MIT, GPU) |
+| `MarkerExtractor` | backends.py | Vision-based marker backend (GPL-3.0, GPU) |
+| `MarkItDownExtractor` | backends.py | Microsoft MarkItDown (MIT, CPU) |
+| `PdfplumberExtractor` | backends.py | Table-focused extraction (MIT) |
+| `PdfminerExtractor` | backends.py | Pure Python fallback (MIT) |
+| `Pypdf2Extractor` | backends.py | Basic extraction through optional `pypdf` (BSD-3) |
+| `BACKEND_REGISTRY` | backends.py | Dict mapping backend names to factories |
+| `detect_gpu_availability()` | utils.py | Auto-detect GPU and recommend backends |
+| `extract_single_pdf()` | extractors.py | Extract one PDF with backend fallback |
+| `pdf_to_txt()` | extractors.py | Batch extract directory with resume |
 
 **Key implementation details:**
-- Backend fallback loop: `extractors.py:55-78` - Tries each backend in order, stops on first success
-- Lazy initialization: `backends.py:77-79` - Converters created only when first used
-- Quality metrics: `utils.py:43-76` - Calculates char/word/table counts
+- Backend fallback loop: `extractors.py` - Tries each backend in order, stops on first success
+- Lazy initialization: `backends.py` - Converters created only when first used
+- Quality metrics: `utils.py` - Calculates char/word/table counts
 
 ## Additional Resources
 

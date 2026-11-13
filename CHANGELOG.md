@@ -415,9 +415,8 @@ enforce those policies.
     "format".
 57. Commands inside `bash -c`, `sh -c`, `eval`, a heredoc fed to a shell, or
     `find -exec` skipped the conditions some guards check:
-    `bash -c 'git restore notes.txt'` ran on a file with unsaved changes, and
-    `bash -c 'cat notes.txt'` ran although `cat notes.txt` is blocked. They are
-    now judged like the bare command.
+    `bash -c 'git restore notes.txt'` ran on a file with unsaved changes. They
+    are now judged like the bare command.
 58. On `rm a && rm -rf b`, the "Use instead" suggestion named `a`; it now
     comes from the command the rule matched, inside wrappers too.
 59. A prompt starting with `ar` and then text that is not a command, such as

@@ -630,7 +630,7 @@ gh api --method POST \
 Every pushed `v*` tag gets a release page, release candidates included.
 `installer/entrypoint.py:_latest_version` enumerates
 `https://api.github.com/repos/ahundt/autorun/releases`, not tags, so a tag with
-no release page is invisible to `autorun --self-update` no matter how it is
+no release page is invisible to `autorun --update` no matter how it is
 flagged, and it offers the reader no reviewed notes. This stage is idempotent
 and independent of the calendar: if a tag was pushed and the release page was
 never made, run it for that tag now rather than folding the tag into the next
@@ -643,7 +643,7 @@ drops every release whose `prerelease` field is true unless that is set. So the
 flag must be on exactly when the release's version contains a letter, in both
 directions: an RC published without it is offered to stable installs as an
 ordinary upgrade, and a stable release published with it is invisible to every
-stable install, including the one it creates, so `--self-update` from it never
+stable install, including the one it creates, so `--update` from it never
 finds a later stable release. The command below derives the flag from the
 version with that same rule rather than asking anyone to choose it. The flag
 governs **self-update only**.

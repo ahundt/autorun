@@ -2,7 +2,7 @@
 description: Start autorun - autonomous task execution
 ---
 
-# Resume Claude automatically when it stops - Autorun Workflow (short: /ar:go)
+# Resume the agent automatically when it stops - Autorun Workflow (short: /ar:go)
 
 $ARGUMENTS
 

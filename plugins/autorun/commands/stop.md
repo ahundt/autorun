@@ -1,11 +1,11 @@
 ---
-description: Graceful stop - finish current task then stop autorun
+description: Stop autorun - end autonomous execution now
 ---
 
-# Graceful Stop
+# Stop
 
-Stops autorun after completing the current task.
-
-The session will finish its current work before stopping. Use `/ar:estop` for an immediate emergency stop.
+Stops autorun now: autonomous execution ends and the agent is told to halt.
+Tracked tasks are kept. `/ar:estop` does the same and adds the emergency-stop
+notice.
 
 UserPromptSubmit hook has processed the stop command.

@@ -15,17 +15,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Autorun v0.7 Plugins - Magic State + DRY Factories
+Command and hook handlers registered on the autorun app.
 
-ZERO boilerplate per state field thanks to magic __getattr__/__setattr__.
-Just write ctx.file_policy = "SEARCH" and it persists automatically!
+State fields persist through EventContext attribute access
+(``ctx.file_policy = "SEARCH"``).
 
-Plugins:
-- File Policy: ALLOW/JUSTIFY/SEARCH with PreToolUse enforcement
-- Command Blocking: Session/global block/allow/clear/status with ReDoS protection
-- Autorun: Three-stage workflow with sophisticated state machine
-- Plan Management: New/refine/update/process plan commands
-- AI Monitor Integration: External tmux observer (optional)
+Handlers:
+- File policy: ALLOW/JUSTIFY/SEARCH with PreToolUse enforcement
+- Command blocking: session/global block, allow, clear and status
+- Autorun: the three-stage workflow
+- Task commands and the Stop loop guard
 """
 
 import json
@@ -1625,7 +1624,7 @@ def _deactivate(ctx: EventContext, msg: str) -> str:
 
 @app.command("/ar:stop")
 def handle_stop(ctx: EventContext) -> str:
-    """Graceful stop."""
+    """Stop autorun now."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, "✅ Stopped")
 

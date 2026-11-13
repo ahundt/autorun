@@ -9,6 +9,6 @@ disable-model-invocation: true
 
 **⚠️ WARNING**: This will immediately halt all autonomous operations.
 
-Use this when you need to stop all activity immediately. For graceful stop that allows current task to complete, use `/ar:stop`.
+Use this when you need to stop all activity immediately. `/ar:stop` also stops at once, without the emergency notice.
 
 UserPromptSubmit hook has processed the emergency stop command.

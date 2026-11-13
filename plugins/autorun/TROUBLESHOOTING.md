@@ -26,17 +26,20 @@ This does not clear on its own, and the agent cannot fix it, because the repair
 command is blocked too. `/ar:estop` cannot help either; the failure happens before
 autorun reads any session state.
 
-**Fix it in a terminal, outside the agent.** Run the `uv pip install --python
-...` command the denial names. For Claude's plugin cache it looks like:
+**Fix it in a terminal, outside the agent.** Run `autorun --install --force`.
+It reinstalls autorun's hook environment, including the `.venv` in Claude's
+plugin cache when you install from a source checkout. If the `autorun` command
+itself fails, or the install reports that the Claude cache runtime step failed,
+run the `uv pip install --python ...` command the denial names. For Claude's
+plugin cache it looks like:
 
 ```bash
 uv pip install --python ~/.claude/plugins/cache/autorun/ar/<version>/.venv/bin/python \
   --reinstall ~/.claude/plugins/cache/autorun/ar/<version>
 ```
 
-`autorun --install --force` republishes hooks, commands and skills but does not
-fill Claude's cached environment, so run it afterwards only if `autorun --status`
-still reports stale files.
+Then run `autorun --status`; it reports any file that still differs from this
+version and makes one test run of the hook.
 
 **To keep working before you repair it**, turn autorun off and start the agent
 from the same shell, since hooks inherit the agent's environment:

@@ -730,6 +730,7 @@ autorun --install-dry-run --codex    # preview every write
 autorun --install --force            # same-version repair; backs up files detected as edited or unproven when selected
 autorun --install --tool             # also run uv tool install for the CLI
 autorun --uninstall                  # everything incl. the autorun-ai tool, or a comma-separated plugin list; keeps ~/.autorun
+                                     # shared config files stay, emptied of autorun's entries (e.g. ~/.codex/hooks.json as {"hooks": {}})
 ```
 
 **Inspect:**
