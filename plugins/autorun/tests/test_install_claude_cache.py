@@ -296,6 +296,40 @@ def test_retirement_removes_only_hash_proven_unmodified_cache_versions(source, h
     assert (unproven / "mine.txt").is_file()
 
 
+def test_retirement_keeps_a_symlinked_version_without_reading_its_target(
+    source, home, tmp_path
+):
+    """Violation excluded: uninstall follows a version link outside the cache."""
+    external = install(source, tmp_path / "external-home", version="9.9.9")
+    before = {
+        path.relative_to(external).as_posix(): path.read_bytes()
+        for path in external.rglob("*")
+        if path.is_file()
+    }
+    root = claude.cache_dir(
+        Harness(), market="autorun", plugin="ar", version="linked", home=home
+    )
+    assert root is not None
+    root.parent.mkdir(parents=True, exist_ok=True)
+    root.symlink_to(external, target_is_directory=True)
+
+    removed, kept = claude.retire_cache_versions(
+        Harness(), market="autorun", plugin="ar", home=home
+    )
+
+    after = {
+        path.relative_to(external).as_posix(): path.read_bytes()
+        for path in external.rglob("*")
+        if path.is_file()
+    }
+    assert removed == ()
+    assert tuple(item.path for item in kept) == (root,)
+    assert kept[0].files == ("symlinked or reparse-point version directory",)
+    assert root.is_symlink()
+    assert after == before
+    assert (external / OWNED_MARKER_NAME).read_bytes() == before[OWNED_MARKER_NAME]
+
+
 def test_retirement_removes_proven_files_but_keeps_mixed_cache_user_files(
     source, home
 ):

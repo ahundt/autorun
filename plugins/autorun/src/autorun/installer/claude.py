@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import shlex
 import shutil
+import stat
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -384,6 +385,14 @@ def _retained_cache_files(directory: Path) -> tuple[str, ...]:
     return (*runtime, *payload)
 
 
+def _is_link_or_reparse(info: object) -> bool:
+    """Whether an lstat result names a link-like path that must not be followed."""
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
 def retire_cache_versions(
     platform: object,
     *,
@@ -402,8 +411,16 @@ def retire_cache_versions(
     retained: list[RetainedCache] = []
     if not root.is_dir():
         return (), ()
-    for directory in sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name):
+    for directory in sorted(root.iterdir(), key=lambda path: path.name):
         if directory.name in wanted:
+            continue
+        info = directory.lstat()
+        if _is_link_or_reparse(info):
+            retained.append(RetainedCache(
+                directory, ("symlinked or reparse-point version directory",)
+            ))
+            continue
+        if not stat.S_ISDIR(info.st_mode):
             continue
         marker = read_marker(directory)
         if marker is None or not owns(marker, plugin) or not marker.files:
