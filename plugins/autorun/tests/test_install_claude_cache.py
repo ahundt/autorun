@@ -270,6 +270,27 @@ def test_interrupted_refresh_still_keeps_a_later_user_edit(source, home):
     assert hook.read_text(encoding="utf-8") == "user edit after interrupted refresh\n"
 
 
+def test_cache_lock_path_survives_install_refresh_and_uninstall(source, home):
+    """Violation excluded: a later install unlinks the persistent cache lock."""
+    written = install(source, home)
+    lock = written.parent / fs.INSTALL_LOCK_NAME
+
+    assert claude.refresh_cache(source, written, plugin="ar") == written
+    assert lock.is_file()
+
+    (source / "hooks" / "hooks.json").write_text(
+        json.dumps({"hooks": {"PreToolUse": ["changed"]}}), encoding="utf-8"
+    )
+    assert claude.refresh_cache(source, written, plugin="ar") == written
+    assert lock.is_file()
+
+    removed, _kept = claude.retire_cache_versions(
+        Harness(), market="autorun", plugin="ar", home=home
+    )
+    assert removed == (written,)
+    assert lock.is_file()
+
+
 def test_retirement_removes_only_hash_proven_unmodified_cache_versions(source, home):
     current = install(source, home, version="1.2.4")
     old = install(source, home, version="1.2.3")
@@ -579,7 +600,7 @@ def test_cache_intent_replacement_runtime_and_receipt_share_one_lock(
 ):
     written = install(source, home)
     (source / "payload.py").write_text("current = True\n", encoding="utf-8")
-    real_lock = runtime.FileLock
+    real_lock = runtime.PersistentFileLock
     acquisitions = 0
     active = 0
 
@@ -599,7 +620,7 @@ def test_cache_intent_replacement_runtime_and_receipt_share_one_lock(
             active -= 1
             return self.inner.release()
 
-    monkeypatch.setattr(runtime, "FileLock", CountingLock)
+    monkeypatch.setattr(runtime, "PersistentFileLock", CountingLock)
     monkeypatch.setattr(
         fs,
         "FileLock",

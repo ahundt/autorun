@@ -46,7 +46,7 @@ from typing import Callable, Mapping, Sequence
 from ..durable_io import atomic_write_json
 from filelock import Timeout
 
-from .fs import FileLock, IGNORED_GLOBS, INSTALL_LOCK_NAME, scan_tree
+from .fs import IGNORED_GLOBS, INSTALL_LOCK_NAME, PersistentFileLock, scan_tree
 
 __all__ = [
     "DirectCommand", "UvCommand", "hook_command", "hook_command_fields", "has_uv", "python_runner", "Probe", "probe_runtime", "probe_hook_runtime",
@@ -489,7 +489,7 @@ def cache_install_lock(
 ):
     """Acquire the cache-parent lock with one visible, bounded wait."""
     lock_path = cache.parent / INSTALL_LOCK_NAME
-    lock = FileLock(str(lock_path))
+    lock = PersistentFileLock(str(lock_path))
     try:
         lock.acquire(timeout=0)
     except Timeout:
