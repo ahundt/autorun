@@ -529,13 +529,27 @@ class TestDaemonSocketFrames:
         result = _run_shim(tmp_path, socket_path, "idle")
         thread.join(timeout=25)
 
-        assert "Finish task #7 before stopping." in result.stdout
+        calls = json.loads(result.stdout)
+        assert calls == {
+            "promptAsyncCalls": [{
+                "path": {"id": "idle-session"},
+                "query": {"directory": str(tmp_path)},
+                "body": {"parts": [{
+                    "type": "text",
+                    "text": "Finish task #7 before stopping.",
+                    "synthetic": True,
+                    "metadata": {"source": "autorun-stop-gate"},
+                }]},
+            }],
+            "promptCalls": [],
+            "logCalls": [],
+        }
         assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
         assert frames[1]["session_id"] == "idle-session"
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
-    def test_idle_on_older_client_surfaces_denial_without_claiming_enforcement(self, tmp_path, short_socket_dir):
+    def test_idle_stop_block_falls_back_to_prompt(self, tmp_path, short_socket_dir):
         socket_path = short_socket_dir / "daemon.sock"
         frames, thread = self._serve(
             socket_path,
@@ -544,16 +558,130 @@ class TestDaemonSocketFrames:
                 "Stop": {"decision": "block", "reason": "Finish task #7 before stopping."},
             },
         )
-        result = _run_shim(tmp_path, socket_path, "idle-old")
+        result = _run_shim(tmp_path, socket_path, "idle-prompt")
         thread.join(timeout=25)
 
-        assert "Finish task #7 before stopping." in result.stdout
-        assert "cannot enforce the continuation" in result.stdout
+        calls = json.loads(result.stdout)
+        assert calls["promptCalls"] == [{
+            "path": {"id": "idle-session"},
+            "query": {"directory": str(tmp_path)},
+            "body": {"parts": [{
+                "type": "text",
+                "text": "Finish task #7 before stopping.",
+                "synthetic": True,
+                "metadata": {"source": "autorun-stop-gate"},
+            }]},
+        }]
+        assert calls["toastCalls"] == []
+        assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_idle_stop_block_logs_prompt_async_rejection_before_prompt_fallback(
+        self, tmp_path, short_socket_dir
+    ):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "Stop": {"decision": "block", "reason": "Finish task #7 before stopping."},
+            },
+        )
+        result = _run_shim(tmp_path, socket_path, "idle-reject")
+        thread.join(timeout=25)
+
+        calls = json.loads(result.stdout)
+        assert len(calls["promptCalls"]) == 1
+        assert calls["logCalls"] == [{
+            "query": {"directory": str(tmp_path)},
+            "body": {
+                "service": "autorun",
+                "level": "warn",
+                "message": "OpenCode promptAsync continuation failed: rejected promptAsync",
+            },
+        }]
+        assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_idle_stop_block_surfaces_warning_toast(self, tmp_path, short_socket_dir):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "Stop": {"decision": "block", "reason": "Finish task #7 before stopping."},
+            },
+        )
+        result = _run_shim(tmp_path, socket_path, "idle-toast")
+        thread.join(timeout=25)
+
+        calls = json.loads(result.stdout)
+        assert calls == [{
+            "query": {"directory": str(tmp_path)},
+            "body": {
+                "title": "Autorun could not continue this session",
+                "message": (
+                    "Finish task #7 before stopping.\n\n"
+                    "This OpenCode client cannot enforce the continuation; continue manually."
+                ),
+                "variant": "warning",
+                "duration": 12000,
+            },
+        }]
+        assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_idle_stop_block_uses_structured_log_without_toast(self, tmp_path, short_socket_dir):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "Stop": {"decision": "block", "reason": "Finish task #7 before stopping."},
+            },
+        )
+        result = _run_shim(tmp_path, socket_path, "idle-log")
+        thread.join(timeout=25)
+
+        assert json.loads(result.stdout) == [{
+            "query": {"directory": str(tmp_path)},
+            "body": {
+                "service": "autorun",
+                "level": "warn",
+                "message": (
+                    "Stop blocked but this OpenCode client cannot continue the session: "
+                    "Finish task #7 before stopping."
+                ),
+            },
+        }]
+        assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
+    def test_idle_stop_block_without_client_apis_is_silent_and_does_not_throw(
+        self, tmp_path, short_socket_dir
+    ):
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "Stop": {"decision": "block", "reason": "Finish task #7 before stopping."},
+            },
+        )
+        result = _run_shim(tmp_path, socket_path, "idle-no-api")
+        thread.join(timeout=25)
+
+        assert result.stdout == ""
+        assert result.stderr == ""
         assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "Stop"]
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     def test_idle_with_unreachable_daemon_stays_fail_open_and_silent(self, tmp_path):
-        result = _run_shim(tmp_path, tmp_path / "nothing.sock", "idle-old")
+        result = _run_shim(tmp_path, tmp_path / "nothing.sock", "idle-no-api")
 
         assert result.stdout == ""
         assert result.stderr == ""
@@ -724,7 +852,13 @@ if (process.argv[2] === "command") {
 }
 
 let sessionGetCount = 0
+const promptAsyncCalls = []
+const promptCalls = []
+const logCalls = []
 const client = {
+  app: {
+    log: async (options) => logCalls.push(options),
+  },
   session: {
     get: async ({ path }) => {
       sessionGetCount += 1
@@ -732,7 +866,8 @@ const client = {
       const child = process.argv[2].includes("child")
       return { data: { id: path.id, ...(child ? { parentID: "parent-session" } : {}) } }
     },
-    promptAsync: async (options) => console.log("continued", JSON.stringify(options)),
+    prompt: async (options) => promptCalls.push(options),
+    promptAsync: async (options) => promptAsyncCalls.push(options),
   },
 }
 
@@ -791,16 +926,57 @@ if (process.argv[2].startsWith("prompt-")) {
 if (process.argv[2] === "idle") {
   const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client })
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
+  console.log(JSON.stringify({ promptAsyncCalls, promptCalls, logCalls }))
   process.exit(0)
 }
 
-if (process.argv[2] === "idle-old") {
+if (process.argv[2] === "idle-prompt") {
+  const toastCalls = []
   const oldClient = {
-    tui: {
-      showToast: async (options) => console.log("toast", JSON.stringify(options)),
-    },
+    session: { prompt: async (options) => promptCalls.push(options) },
+    tui: { showToast: async (options) => toastCalls.push(options) },
   }
   const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: oldClient })
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
+  console.log(JSON.stringify({ promptCalls, toastCalls }))
+  process.exit(0)
+}
+
+if (process.argv[2] === "idle-reject") {
+  const rejectingClient = {
+    app: { log: async (options) => logCalls.push(options) },
+    session: {
+      promptAsync: async () => { throw new Error("rejected promptAsync") },
+      prompt: async (options) => promptCalls.push(options),
+    },
+  }
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: rejectingClient })
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
+  console.log(JSON.stringify({ promptCalls, logCalls }))
+  process.exit(0)
+}
+
+if (process.argv[2] === "idle-toast") {
+  const toastCalls = []
+  const oldClient = {
+    tui: { showToast: async (options) => toastCalls.push(options) },
+  }
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: oldClient })
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
+  console.log(JSON.stringify(toastCalls))
+  process.exit(0)
+}
+
+if (process.argv[2] === "idle-log") {
+  const logClient = { app: { log: async (options) => logCalls.push(options) } }
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: logClient })
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
+  console.log(JSON.stringify(logCalls))
+  process.exit(0)
+}
+
+if (process.argv[2] === "idle-no-api") {
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: {} })
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
   process.exit(0)
 }

@@ -41,40 +41,83 @@ function noticePart(message) {
   }
 }
 
+async function logClient(client, directory, level, message) {
+  if (typeof client?.app?.log !== "function") return
+  try {
+    await client.app.log({
+      query: { directory },
+      body: { service: "autorun", level, message },
+    })
+  } catch {
+    // Logging is best-effort and must never write to the plugin process streams.
+  }
+}
+
 async function surfaceStopDenial(client, sessionID, directory, reason) {
+  const continuation = {
+    path: { id: sessionID },
+    query: { directory },
+    body: {
+      parts: [{
+        type: "text",
+        text: reason,
+        synthetic: true,
+        metadata: { source: "autorun-stop-gate" },
+      }],
+    },
+  }
   if (typeof client?.session?.promptAsync === "function") {
     try {
-      await client.session.promptAsync({
-        path: { id: sessionID },
-        query: { directory },
-        body: {
-          parts: [{
-            type: "text",
-            text: reason,
-            synthetic: true,
-            metadata: { source: "autorun-stop-gate" },
-          }],
-        },
-      })
+      await client.session.promptAsync(continuation)
       return
-    } catch {
-      // Older/mismatched clients may expose the method but reject its shape.
+    } catch (error) {
+      await logClient(
+        client,
+        directory,
+        "warn",
+        `OpenCode promptAsync continuation failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  if (typeof client?.session?.prompt === "function") {
+    try {
+      await client.session.prompt(continuation)
+      return
+    } catch (error) {
+      await logClient(
+        client,
+        directory,
+        "warn",
+        `OpenCode prompt continuation failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
   }
   if (typeof client?.tui?.showToast === "function") {
-    await client.tui.showToast({
-      query: { directory },
-      body: {
-        title: "Autorun could not continue this session",
-        message: `${reason}\n\nThis OpenCode client cannot enforce the continuation; continue manually.`,
-        variant: "warning",
-        duration: 12000,
-      },
-    })
-    return
+    try {
+      await client.tui.showToast({
+        query: { directory },
+        body: {
+          title: "Autorun could not continue this session",
+          message: `${reason}\n\nThis OpenCode client cannot enforce the continuation; continue manually.`,
+          variant: "warning",
+          duration: 12000,
+        },
+      })
+      return
+    } catch (error) {
+      await logClient(
+        client,
+        directory,
+        "warn",
+        `OpenCode Stop warning toast failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
   }
-  console.error(
-    `[autorun] Stop blocked but this OpenCode client cannot continue the session: ${reason}`,
+  await logClient(
+    client,
+    directory,
+    "warn",
+    `Stop blocked but this OpenCode client cannot continue the session: ${reason}`,
   )
 }
 
