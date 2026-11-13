@@ -600,20 +600,35 @@ class TestSplitWindowsOnAPrivateServer:
         assert 'got: right' in after['sp:1.0'] and 'wrong' not in after['sp:1.0'], after['sp:1.0']
         assert {t: after[t] for t in self.PANES[3:]} == {t: before[t] for t in self.PANES[3:]}
 
-    def test_a_harness_a_shell_runs_in_the_background_is_not_listed(self, private_tmux):
+    def test_a_harness_a_shell_runs_in_the_background_is_not_listed(self, private_tmux, tmp_path):
         """The pane's foreground is `cat`; a harness started with `&` there
         does not receive typed keys, so the pane is not an AI session."""
         tmux, env, _ = private_tmux
-        launch = 'set -m; exec -a codex sleep 60 & exec cat'
-        assert tmux('new-session', '-d', '-s', 'bg', 'bash', '-c', launch).returncode == 0
-        _wait_for_screens(tmux, ['bg:0'])
+        import os
+        import shlex
+        import signal
         import time
-        time.sleep(0.5)  # let the background job exec
 
-        result = _autorun_tmux(env, 'list', '--json')
+        pid_file = tmp_path / 'background.pid'
+        launch = f'set -m; exec -a codex sleep 60 & echo $! > {shlex.quote(str(pid_file))}; exec cat'
+        assert tmux('new-session', '-d', '-s', 'bg', 'bash', '-c', launch).returncode == 0
+        try:
+            _wait_for_screens(tmux, ['bg:0'])
+            time.sleep(0.5)  # let the background job exec
 
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert 'bg:0.0' not in result.stdout, result.stdout
+            result = _autorun_tmux(env, 'list', '--json')
+
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert 'bg:0.0' not in result.stdout, result.stdout
+        finally:
+            # The job is in its own process group, so killing the server
+            # leaves it running with the pane's terminal open; the next
+            # tests' tmux servers then stalled for 10 seconds at a time.
+            for _ in range(50):
+                if pid_file.exists() and pid_file.read_text().strip():
+                    os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    break
+                time.sleep(0.1)
 
     def test_an_unsplit_window_is_unchanged(self, server):
         tmux, env = server
