@@ -109,30 +109,39 @@ that need it. No disk access: stage generated content to a temp dir and point th
   with only the hashes autorun wrote or proved, and remains outside the general
   publication sweep. A plain install compares every proven file with the exact
   installed form for this build, including placeholder substitution and hook
-  command pinning in `hooks.json`, `plugin.json` and `settings.json`; edited and
-  unproven files stay byte-identical and outside the receipt. One cache-parent
-  lock covers intent recording, selection, backup, replacement, runtime work,
-  `hooks.json` publication and the final receipt. Before the first replacement,
-  the marker gains `intent.files`; recovery accepts either the prior or intended
-  hash, and the completed receipt drops `intent`. A markerless cache adopts each
-  raw bundled file whose hash matches; non-matching files remain unproven.
-  Forced refresh copies every edited or unproven file that it will replace to
-  `~/.autorun/installer/backups/` first and reports each path; if bytes change
-  after backup, the run stops with its intent intact rather than overwrite an
-  unbacked sequence. The version root and `.venv` of every version are never
-  moved, renamed or deleted during install; Claude registration refresh uses
-  `plugin update`/`enable`, never an uninstall/reinstall cycle. During
+  command pinning in `hooks.json`, `plugin.json` and `settings.json`. Edited
+  files keep their last recorded hash in the receipt and are never re-recorded;
+  unproven files are never added. One cache-parent lock covers intent recording,
+  selection, backup, replacement, runtime work, `hooks.json` publication and the
+  final receipt. Its timeout is the resolved
+  `cache_install_lock_timeout_seconds` setting (CLI, environment, config file,
+  then 600 seconds); waiting is printed by the installer, never by hook code.
+  Before the first replacement, the marker gains `intent.files`; recovery
+  accepts either the prior or intended hash, and the completed receipt drops
+  `intent`. A markerless cache adopts each raw bundled file whose hash matches;
+  non-matching files remain unproven. Forced refresh copies files detected as
+  edited or unproven when selection runs to `~/.autorun/installer/backups/` and
+  reports each path. A file changed after backup verification but before
+  replacement can still be replaced without a backup of that last change.
+  Under an active interrupted-refresh intent, bytes equal to the previous
+  autorun version are treated as untouched. The version root and `.venv` are
+  never moved, renamed or deleted during install; Claude registration refresh
+  uses `plugin update`/`enable`, never an uninstall/reinstall cycle. During a
   changed-build venv reinstall, a hook that hits the incomplete runtime denies
   tool-gate events (exit 2 for Claude PreToolUse) and allows lifecycle/context
-  events with an `[autorun]` import error; this residual window remains because
-  running sessions retain
-  the same `.venv` path. Matching runtime fingerprints skip reinstall, and
-  changed installs replace `hooks.json` last after the runtime succeeds,
-  shrinking exposure without adding a hook-path lock. Upgrades retain every old
-  version because a running session may still invoke its captured hook command.
-  Only explicit uninstall may retire a hash-proven, unmodified selected-plugin
-  version. Cache proof, refresh and retirement share one metadata exclusion set
-  for `.orphaned_at`, `.venv`, bytecode and file-manager files. Foreign same-name
+  events with an `[autorun]` import error. Running sessions retain the same
+  `.venv` path, so rc4 has no versioned-runtime switch. A matching runtime
+  receipt skips reinstall only when its schema and non-editable mode match, the
+  venv was not created or repaired in this run, and that venv's interpreter
+  imports autorun from inside the venv. Changed installs replace `hooks.json`
+  last after the runtime succeeds. Upgrades retain every old version because a
+  running session may still invoke its captured hook command. Only explicit
+  uninstall retires cache versions: it removes hash-proven unchanged payload
+  and autorun metadata, keeps edited and unproven files, and keeps `.venv` when
+  those files leave the version tree in place. It reports each kept relative
+  path and removes idle lock files plus empty plugin and market parents. Cache
+  proof, refresh and retirement share one metadata exclusion set for
+  `.orphaned_at`, `.venv`, bytecode and file-manager files. Foreign same-name
   trees are left and reported; caches under another market or plugin are never
   visited.
 - **Never `uv tool uninstall` a name whose console script is also ours.** uv

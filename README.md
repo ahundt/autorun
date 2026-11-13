@@ -717,7 +717,7 @@ autorun --install ar --codex         # one plugin (ar; autorun is an alias), one
 autorun --install --claude           # also --gemini, --antigravity, --qwen, --pi, --prime, --codex
 autorun --install --custom-harness 'lab=qwen:qwen-lab:/path/to/config::Qwen Lab'   # repeatable
 autorun --install-dry-run --codex    # preview every write
-autorun --install --force            # same-version repair; reports backups made before in-place replacement
+autorun --install --force            # same-version repair; backs up files detected as edited or unproven when selected
 autorun --install --tool             # also run uv tool install for the CLI
 autorun --uninstall                  # everything incl. the autorun-ai tool, or a comma-separated plugin list; keeps ~/.autorun
 ```
@@ -831,6 +831,7 @@ Accepted values: `--codex-hook-source: user|plugin|both|none`;
 `--codex-plugin-marketplace: personal|github`;
 `--claude-agents-skills: link|copy|none`;
 `--skill-placement: auto|native|both` or `HARNESS=auto|native|both`, repeatable;
+`--cache-install-lock-timeout-seconds: positive seconds` (default `600`);
 `--exit2-mode: auto|always|never`;
 `--cli: claude|gemini|antigravity|qwen|codex|pi|prime|opencode`;
 `--update-method: auto|claude|gemini|plugin|uv|pip`;
@@ -851,8 +852,19 @@ invalid value is ignored in favor of the default.
 | Commands do nothing | `autorun --status` checks every detected agent and runs the hook command once (`ok hook command`). Hook calls are logged to `~/.autorun/hook_entry_debug.log`, the daemon to `~/.autorun/daemon.log`. Restart the agent session after any install. |
 | Claude's task tools are missing or vanish | Claude Code 2.1.268 and later offer them to newer models only with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`. `autorun --install` sets it in `~/.claude/settings.json` unless you already did; start a new session. Without the tools autorun does not enforce tasks, and says so at session start. [Details and other agents](plugins/autorun/TROUBLESHOOTING.md#claude-task-tools-are-missing-or-vanished). |
 | Claude Code plugin will not load | `claude --debug` shows plugin loading. Reinstall: `claude plugin uninstall ar@autorun`, then the marketplace commands in [Other ways to install](#other-ways-to-install). The installed copy is under `~/.claude/plugins/cache/autorun/ar/`. |
-| Claude cache differs from this build | Run `autorun --status`. A plain `autorun --install` changes only hash-proven files and leaves unproven or edited files byte-identical and outside the receipt. `autorun --install --force` backs up every unproven or edited byte sequence under `~/.autorun/installer/backups/` before replacement, prints each backup path, and refreshes the same version directory in place; it never removes that directory or its `.venv`. Start a new Claude session for hook-manifest changes. |
-| Anything else | `autorun --install --force` republishes hooks, commands and skills; edited Claude cache files are backed up first. Full guide: [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md). |
+| Claude cache differs from this build | Run `autorun --status`. A plain `autorun --install` changes only hash-proven files. Edited files keep their last recorded hash in `.autorun-owned` and are never re-recorded; unproven files are never added. `autorun --install --force` backs up files detected as edited or unproven when the refresh selects them, prints each backup path, and refreshes the same version directory in place. It never moves or deletes that directory or its `.venv`. Explicit uninstall removes proven payload and metadata, keeps edited or unproven files, and names each kept path; delete a kept version folder by hand only when no running session needs it. Start a new Claude session for hook-manifest changes. |
+| Anything else | `autorun --install --force` republishes hooks, commands and skills. If another install holds the Claude cache lock, autorun prints the cache path and waits up to `cache_install_lock_timeout_seconds` (default 600); on timeout, wait for the other install to finish and rerun. Full guide: [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md). |
+
+Three same-version repair limits remain in rc4. A file changed after backup
+verification but before replacement can be replaced without a backup of that
+last change; stop programs that write the cache, restore the file if needed,
+and rerun the install. While a changed build reinstalls the cache `.venv`, a
+hook can briefly fail to import autorun: tool gates deny the tool call, while
+lifecycle events continue and show an `[autorun]` import notice. Wait for the
+install to finish, then retry the tool or start a new session. After an
+interrupted refresh, a file whose bytes equal the previous autorun version is
+treated as untouched; copy it elsewhere before rerunning if those bytes are a
+user customization.
 
 ## Related tools
 
