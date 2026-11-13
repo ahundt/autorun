@@ -164,12 +164,18 @@ enforce those policies.
     non-synthetic root prompt as user input by checking `parentID` and synthetic
     parts; another plugin or API client can submit the same shape, so this
     classification is not an authentication boundary.
-11. Blocking on an expired prompt cache has not been checked against recorded
+11. OpenCode 0.6.0 and newer can start a new assistant turn after a blocked Stop
+    through `client.session.prompt`; 1.0.111 and newer use
+    `client.session.promptAsync` first. A client with neither method can only
+    show the denial through its warning toast or structured log API. Upgrade
+    OpenCode; until then the Stop block is a warning only and the user must
+    continue manually.
+12. Blocking on an expired prompt cache has not been checked against recorded
     cache lifetimes from real sessions. Prompt-time cache expiry therefore
     remains `warn` by default; missing lifetime, usage, or transcript data
     passes without a block. Run `/ar:cache status` to see the current policy;
     run `/ar:cache on` to request blocking where the harness supports it.
-12. The suite includes synthetic tests with 200 clients sending requests at the
+13. The suite includes synthetic tests with 200 clients sending requests at the
     same time. No quiet-machine capacity, latency, or stability measurement is
     published for this release.
 

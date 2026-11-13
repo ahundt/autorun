@@ -95,9 +95,19 @@ Preview the writes with `autorun --install-dry-run` and check them with `autorun
 | Codex CLI | native hooks | `--codex` | `ar:status` |
 | Pi | in-process extension that vetoes tool calls | `--pi` | `/ar status` |
 | Prime Agent | Pi extension below 0.10.0; 0.10+ gets guidance and skills without enforcement hooks | `--prime` | below 0.10: `/ar status`; 0.10+: skills only |
-| OpenCode | in-process prompt, tool, Stop and compaction plugin | when found | `/ar-status` |
+| OpenCode | in-process prompt, tool, Stop and compaction plugin; blocked Stop starts a new turn on 0.6.0+ | when found | `/ar-status` |
 | ForgeCode | installed guidance only; ForgeCode sends autorun no events | when found | `/ar-status` |
 | Gemini CLI (legacy) | native hooks; never installed unless you pass the flag | `--gemini` | `/ar:status` |
+
+#### OpenCode Stop enforcement
+
+OpenCode 0.6.0 and newer expose `client.session.prompt`, so a blocked Stop can
+start a new assistant turn. OpenCode 1.0.111 added the non-blocking
+`client.session.promptAsync`; autorun uses it first and falls back to `prompt`.
+A client with neither method cannot enforce the continuation. It shows the
+reason in a warning toast when that API exists; otherwise it only records the
+reason through OpenCode's structured log API when available. Upgrade OpenCode;
+until then the Stop block is a warning only and you must continue manually.
 
 ### Other ways to install
 

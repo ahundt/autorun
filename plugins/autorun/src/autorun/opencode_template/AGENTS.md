@@ -39,7 +39,8 @@ API client; that residual exposure is part of the harness contract.
 ## Stop semantics
 
 OpenCode's `session.idle` event reaches autorun's Stop gate. When the gate
-blocks and the client exposes `session.promptAsync`, the plugin submits one
-synthetic continuation; older clients show a warning toast and cannot enforce
-the continuation. The emergency stop also refuses further tool calls, so honor
-it immediately.
+blocks, the plugin submits one synthetic continuation through
+`session.promptAsync`, or through `session.prompt` on clients without the async
+method. A client with neither method can only show a warning when its toast API
+exists; upgrade OpenCode, and continue manually until then. The emergency stop
+also refuses further tool calls, so honor it immediately.
