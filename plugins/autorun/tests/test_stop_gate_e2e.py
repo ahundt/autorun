@@ -128,8 +128,8 @@ def test_344_denials_scenario(tmp_path, cli):
     assert status() == AWAITING_STATUS, f"{cli}: a prompt the user did not type cleared the awaiting-user state"
     assert not blocks(stop("Still waiting."), cli)
 
-    hook("UserPromptSubmit", prompt="yes, push")
-    assert status() == "in_progress", f"{cli}: the user's reply did not restore #7 (it is {status()!r})"
+    reply = hook("UserPromptSubmit", prompt="yes, push")
+    assert status() == "in_progress", f"{cli}: the user's reply did not restore #7 (it is {status()!r}); the hook answered {reply}"
     assert blocks(stop("Pushed? Not yet."), cli), f"{cli}: enforcement did not return after the user's reply"
 
 
