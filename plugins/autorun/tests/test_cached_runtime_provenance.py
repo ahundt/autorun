@@ -195,6 +195,55 @@ def test_cache_runtime_keeps_the_installer_lock_until_package_install_finishes(t
         pass
 
 
+@pytest.mark.parametrize(
+    ("runtime_state", "probe_stdout"),
+    (
+        ("missing-interpreter", ""),
+        ("missing-package", ""),
+        ("editable-package", "/checkout/src/autorun/__init__.py\n"),
+    ),
+)
+def test_matching_receipt_never_skips_without_a_cache_local_autorun_import(
+    tmp_path, monkeypatch, runtime_state, probe_stdout
+):
+    """Violation excluded: a receipt alone reports a broken runtime current."""
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    source = _claude_plugin(tmp_path)
+    fingerprint = runtime._cache_runtime_fingerprint(source)
+    venv = cache / ".venv"
+    python = runtime.cache_venv_python(cache)
+    if runtime_state != "missing-interpreter":
+        python.parent.mkdir(parents=True)
+        python.write_text("interpreter placeholder\n", encoding="utf-8")
+        (venv / "pyvenv.cfg").write_text("home = isolated\n", encoding="utf-8")
+    venv.mkdir(exist_ok=True)
+    (venv / ".autorun-runtime.json").write_text(
+        json.dumps({"source_fingerprint": fingerprint}), encoding="utf-8"
+    )
+    installs = []
+
+    def run(argv, **_kwargs):
+        call = tuple(str(part) for part in argv)
+        if call[:2] == ("uv", "venv"):
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.write_text("interpreter placeholder\n", encoding="utf-8")
+            (venv / "pyvenv.cfg").write_text("home = isolated\n", encoding="utf-8")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if len(call) >= 4 and call[1:3] == ("-I", "-c"):
+            if "sys.prefix" in call[3] and "import autorun" not in call[3]:
+                return subprocess.CompletedProcess(argv, 0, str(venv) + "\n", "")
+            return subprocess.CompletedProcess(argv, 0, probe_stdout, "")
+        installs.append(call)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(runtime, "has_uv", lambda: True)
+    outcome = runtime.install_cache_runtime(cache, source, run=run)
+
+    assert outcome.ok, outcome.detail
+    assert len(installs) == 1, f"{runtime_state} receipt skipped reinstall: {installs}"
+
+
 def test_cache_runtime_reports_the_actual_package_install_error(tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()

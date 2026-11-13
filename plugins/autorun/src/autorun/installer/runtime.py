@@ -362,18 +362,36 @@ def cache_venv_python(cache: Path) -> Path:
     return cache / ".venv" / directory / executable
 
 
-def ensure_cache_venv(
+def _probe_cache_interpreter(
+    interpreter: Path,
+    venv_dir: Path,
+    *,
+    run: Runner,
+    import_autorun: bool = False,
+) -> bool:
+    """Prove an interpreter belongs to this venv and optionally imports autorun there."""
+    code = "import autorun; print(autorun.__file__)" if import_autorun else "import sys; print(sys.prefix)"
+    probe = run(
+        (str(interpreter), "-I", "-c", code),
+        env={"PYTHONHOME": "", "PYTHONPATH": ""},
+    )
+    if probe.returncode != 0:
+        return False
+    try:
+        found = Path(probe.stdout.strip()).resolve()
+        expected = venv_dir.resolve()
+        return found.is_relative_to(expected) if import_autorun else found == expected
+    except (OSError, ValueError):
+        return False
+
+
+def _ensure_cache_venv(
     cache: Path,
     *,
     python: str = "",
     run: Runner = _spawn,
-) -> Path:
-    """Create the managed cache venv without ever clearing its directory.
-
-    The installer supplies ``run`` so uv/pip remains the one subprocess
-    boundary. A valid cache-owned interpreter is returned untouched; a foreign
-    interpreter is never used as the install target.
-    """
+) -> tuple[Path, bool]:
+    """Return the managed interpreter and whether this run created or repaired it."""
     expected = cache_venv_python(cache)
     venv_dir = cache / ".venv"
     for directory in (cache, venv_dir):
@@ -389,12 +407,8 @@ def ensure_cache_venv(
     if expected.is_file():
         if expected.is_symlink() and not (venv_dir / "pyvenv.cfg").is_file():
             raise RuntimeError("cache interpreter is a symlink outside its managed venv")
-        probe = run(
-            (str(expected), "-I", "-c", "import sys; print(sys.prefix)"),
-            env={"PYTHONHOME": "", "PYTHONPATH": ""},
-        )
-        if probe.returncode == 0 and Path(probe.stdout.strip()).resolve() == venv_dir.resolve():
-            return expected
+        if _probe_cache_interpreter(expected, venv_dir, run=run):
+            return expected, False
     if has_uv():
         argv = ("uv", "venv", "--quiet", "--allow-existing", "--python", python or sys.executable, str(venv_dir))
     else:
@@ -403,13 +417,24 @@ def ensure_cache_venv(
     if result.returncode != 0:
         detail = _first_line(result.stderr or result.stdout)
         raise RuntimeError(detail or "cache venv creation failed")
-    probe = run(
-        (str(expected), "-I", "-c", "import sys; print(sys.prefix)"),
-        env={"PYTHONHOME": "", "PYTHONPATH": ""},
-    )
-    if probe.returncode != 0 or Path(probe.stdout.strip()).resolve() != venv_dir.resolve():
+    if not _probe_cache_interpreter(expected, venv_dir, run=run):
         raise RuntimeError("cache venv interpreter is not owned by its cache")
-    return expected
+    return expected, True
+
+
+def ensure_cache_venv(
+    cache: Path,
+    *,
+    python: str = "",
+    run: Runner = _spawn,
+) -> Path:
+    """Create the managed cache venv without ever clearing its directory.
+
+    The installer supplies ``run`` so uv/pip remains the one subprocess
+    boundary. A valid cache-owned interpreter is returned untouched; a foreign
+    interpreter is never used as the install target.
+    """
+    return _ensure_cache_venv(cache, python=python, run=run)[0]
 
 
 def _stage_cache_project(source: Path, target: Path) -> None:
@@ -471,14 +496,28 @@ def install_cache_runtime(
     lock = nullcontext() if lock_held else FileLock(str(cache.parent / INSTALL_LOCK_NAME))
     try:
         with lock:
-            cache_python = ensure_cache_venv(cache, python=python, run=run)
+            cache_python, venv_repaired = _ensure_cache_venv(cache, python=python, run=run)
             fingerprint = _cache_runtime_fingerprint(source)
             receipt = cache / ".venv" / ".autorun-runtime.json"
             try:
                 recorded = json.loads(receipt.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 recorded = {}
-            if recorded.get("source_fingerprint") == fingerprint:
+            receipt_current = (
+                recorded.get("schema") == 1
+                and recorded.get("install_mode") == "non-editable"
+                and recorded.get("source_fingerprint") == fingerprint
+            )
+            if (
+                receipt_current
+                and not venv_repaired
+                and _probe_cache_interpreter(
+                    cache_python,
+                    cache / ".venv",
+                    run=run,
+                    import_autorun=True,
+                )
+            ):
                 return Outcome("Claude cache runtime", True, f"already current: {cache_python}")
             receipt.unlink(missing_ok=True)
             with tempfile.TemporaryDirectory(
@@ -504,7 +543,13 @@ def install_cache_runtime(
                     _first_line(result.stderr or result.stdout) or "package installation failed",
                 )
             atomic_write_json(
-                receipt, {"source_fingerprint": fingerprint}, sort_keys=True
+                receipt,
+                {
+                    "schema": 1,
+                    "install_mode": "non-editable",
+                    "source_fingerprint": fingerprint,
+                },
+                sort_keys=True,
             )
             return Outcome("Claude cache runtime", True, str(cache_python))
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:

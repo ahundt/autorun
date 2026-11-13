@@ -548,9 +548,11 @@ def test_matching_runtime_receipt_skips_a_second_venv_reinstall(
     monkeypatch.setattr(runtime, "has_uv", lambda: True)
 
     first = runtime.install_cache_runtime(cache, source, run=run)
+    receipt = json.loads((venv / ".autorun-runtime.json").read_text(encoding="utf-8"))
     second = runtime.install_cache_runtime(cache, source, run=run)
 
     assert first.ok and second.ok
+    assert receipt["schema"] == 1 and receipt["install_mode"] == "non-editable"
     assert len(installs) == 1
     assert "already current" in second.detail
 
