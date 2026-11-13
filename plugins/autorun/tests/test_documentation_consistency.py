@@ -1669,3 +1669,32 @@ def test_release_runbook_uses_digest_verified_testpypi_artifacts():
         "TestPyPI candidates must be selected by exact, digest-verified URL; "
         "a simple-index lookup can select or suppress the wrong release"
     )
+
+
+def test_a_candidate_runs_every_ci_job_before_main_moves():
+    """`main` is what a Claude marketplace install fetches, so it must not be
+    where a candidate first meets Linux and Windows.
+
+    Violation this excludes: the checklist's first push of a candidate is to
+    `main`, or CI has no trigger for a branch other than `main`. That is how
+    255 commits verified only on macOS reached `main` on 2026-11-13 and failed
+    8 of 12 jobs there.
+    """
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    push = re.search(r"^  push:\n    branches: \[(?P<branches>[^\]]*)\]", workflow, re.M)
+    assert push, "ci.yml no longer declares its push branches on one line"
+    branches = {b.strip().strip("'\"") for b in push["branches"].split(",")}
+    assert {"main", "ci/**"} <= branches, (
+        f"ci.yml runs on pushes to {sorted(branches)}; a candidate needs a "
+        "`ci/**` branch that runs all twelve jobs without moving main"
+    )
+
+    releasing = (REPO_ROOT / "RELEASING.md").read_text(encoding="utf-8")
+    proof = releasing.find('git push origin "$release_sha":refs/heads/ci/')
+    to_main = releasing.find('git push origin "$release_sha":main')
+    assert 0 <= proof < to_main, (
+        "RELEASING.md must push the candidate to a ci/ branch, and read that "
+        "run, before the command that moves main"
+    )

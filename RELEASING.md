@@ -327,6 +327,20 @@ discarding the scratch directory.
 
 ### Stage 3: Push the candidate and wait for CI — **RELEASER public write**
 
+Push the candidate to a `ci/` branch first. `ci.yml` runs all twelve jobs on
+any `ci/**` push, and `main` stays where it is, so a Linux or Windows failure
+never reaches a marketplace install. Run the gated block below against that
+push; move `main` only after it prints `CI green`.
+
+```bash
+git push origin "$release_sha":refs/heads/ci/candidate
+```
+
+A local macOS run cannot stand in for this: on 2026-11-13, 255 commits that
+passed locally went straight to `main` and failed 8 of 12 jobs there. Use the
+same `ci/<topic>` push for any ordinary change that touches paths, processes,
+encodings, sockets, file modes or SQLite features.
+
 ```bash
 git push origin "$release_sha":main
 git fetch origin main

@@ -1,8 +1,10 @@
 name: autorun CI
 
 on:
+  # `ci/**` runs all twelve jobs on a candidate without moving main, which is
+  # what a Claude marketplace install fetches (RELEASING.md Stage 3).
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
   pull_request:
     branches: [main]
   # publish.yml reruns this suite against the tagged commit before it uploads

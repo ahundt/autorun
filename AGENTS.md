@@ -123,6 +123,10 @@ uv run --project plugins/autorun pytest plugins/autorun/tests/ -q               
 uvx ruff check --select E9,F63,F7,F82 .                                                 # the lint CI runs
 ```
 
+A green macOS run does not cover Linux or Windows. Before `main` moves, push
+the commit to a `ci/<topic>` branch (`git push origin HEAD:refs/heads/ci/<topic>`),
+which runs all twelve CI jobs, and read that run for the exact SHA.
+
 Paid model calls are off unless you export
 `AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1`, and every such test carries the
 `real_money` marker, so these queries list them:
