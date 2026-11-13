@@ -554,4 +554,5 @@ def test_the_suite_cannot_signal_an_autorun_daemon_it_did_not_start(tmp_path):
         own.terminate()  # a daemon-shaped child of this process stays ours to stop
         assert own.wait(timeout=10) != 0
     finally:
-        conftest._UNGUARDED["os.kill"](pid, signal.SIGKILL)
+        # Windows exposes SIGTERM but not the POSIX-only SIGKILL constant.
+        conftest._UNGUARDED["os.kill"](pid, getattr(signal, "SIGKILL", signal.SIGTERM))

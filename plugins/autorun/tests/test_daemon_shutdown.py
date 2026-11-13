@@ -110,6 +110,8 @@ def test_shutdown_request_cannot_stop_another_pid(running_daemon):
 
 
 def test_posix_stop_terminates_real_daemon_without_ipc(running_daemon, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("Windows has no POSIX graceful process signal")
     from autorun import restart_daemon
 
     ipc, home, proc = running_daemon
@@ -204,6 +206,8 @@ def test_stop_daemon_kills_after_both_graceful_paths_fail():
 
 
 def test_restart_replaces_and_stops_real_sandboxed_daemon(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("Windows daemon restart uses IPC instead of POSIX signals")
     from autorun import ipc, restart_daemon
 
     # The socket lives in this directory and AF_UNIX paths stop at 104 bytes

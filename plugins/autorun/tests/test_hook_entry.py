@@ -1626,6 +1626,8 @@ class TestHooksJson:
                         assert "hook_entry.py" in command
 
     def test_each_installed_command_carries_its_event_and_is_valid_shell(self):
+        if os.name == "nt":
+            pytest.skip("the command is validated by POSIX bash, not Windows shell")
         hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
         data = json.loads(hooks_json.read_text(encoding="utf-8"))
 

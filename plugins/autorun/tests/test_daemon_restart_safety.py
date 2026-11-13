@@ -1145,6 +1145,8 @@ class TestOnlyThisRuntimesDaemonIsSignalled:
     ):
         """The fallback's purpose survives: a daemon that took the flock but
         wrote no PID record is found, because it holds this home's lock."""
+        if os.name == "nt":
+            pytest.skip("Windows psutil cannot reliably enumerate file-lock holders")
         import subprocess
 
         from autorun.restart_daemon import get_daemon_pid
