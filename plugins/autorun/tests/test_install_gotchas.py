@@ -1769,6 +1769,64 @@ def test_forced_install_backs_up_unproven_cache_bytes_before_replacement(
     assert {str(path) for path in backups.iterdir()} <= reported
 
 
+def test_failed_forced_cache_refresh_reports_every_backup_it_created(
+    tmp_path, monkeypatch
+):
+    """Violation excluded: a later runtime failure hides completed cache backups."""
+    import subprocess
+    from autorun.installer import runtime, steps
+    from autorun.installer.orchestrate import install
+    from autorun.platforms import PLATFORMS
+
+    repo = Path(__file__).resolve().parents[3]
+    ctx = _home_context(tmp_path, monkeypatch, repo)
+    plugin = repo / "plugins" / "autorun"
+    version = steps._version(plugin)
+    cached = ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / version
+    cached.parent.mkdir(parents=True)
+    shutil.copytree(
+        plugin,
+        cached,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(".venv", "__pycache__"),
+    )
+    (cached / OWNED_MARKER_NAME).unlink(missing_ok=True)
+    (cached / "notes.txt").write_text("user notes bytes\n", encoding="utf-8")
+    backups = tmp_path / "autorun-home" / "installer" / "backups"
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "autorun-home"))
+    monkeypatch.setattr(
+        runtime,
+        "install_cache_runtime",
+        lambda *args, **kwargs: runtime.Outcome(
+            "Claude cache runtime", False, "injected runtime failure"
+        ),
+    )
+
+    result = install(
+        marketplace_root=repo,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=ctx.home,
+        harnesses=(PLATFORMS["claude"],),
+        available=("claude",),
+        run_command=lambda argv: subprocess.CompletedProcess(argv, 0, "", ""),
+        state_dir=tmp_path / "state",
+        teardown_enabled=False,
+        force=True,
+    )
+
+    assert not result.ok
+    created = tuple(backups.iterdir())
+    assert created
+    reported = {
+        outcome.detail
+        for outcome in result.registrations
+        if "cache backup" in outcome.step
+    }
+    assert {str(path) for path in created} <= reported
+    assert any("injected runtime failure" in line for line in result.lines())
+
+
 def test_markerless_claude_cache_keeps_unproven_files_then_force_backs_them_up(
     tmp_path, monkeypatch
 ):

@@ -797,6 +797,10 @@ def _registrations(
                                 ))),
                             )
                             outcomes = (cache_failure,) if failed else (*outcomes, cache_failure)
+                            outcomes = (*outcomes, *(
+                                Outcome(f"{name}: cache backup", True, str(path))
+                                for path in cache_backups
+                            ))
                         else:
                             if cache_kept and cached is not None:
                                 outcomes = (*outcomes, Outcome(
