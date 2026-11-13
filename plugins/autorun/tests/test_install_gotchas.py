@@ -1634,7 +1634,7 @@ def test_plain_claude_registration_recovers_an_interrupted_same_version_refresh(
     assert (cached / "config.py").read_text(encoding="utf-8") == "config = 'new'\n"
 
 
-def test_plain_install_and_uninstall_never_claim_or_modify_unproven_cache_files(
+def test_plain_install_and_uninstall_keep_unproven_cache_files_without_failure(
     tmp_path, monkeypatch
 ):
     import subprocess
@@ -1703,8 +1703,9 @@ def test_plain_install_and_uninstall_never_claim_or_modify_unproven_cache_files(
 
     removed = uninstall(**common)
 
-    assert not removed.ok
+    assert removed.ok
     assert {path: path.read_bytes() for path in before} == before
+    assert any("Delete this folder by hand" in line for line in removed.lines())
     assert calls
 
 

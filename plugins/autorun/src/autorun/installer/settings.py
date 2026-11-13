@@ -62,7 +62,15 @@ def autorun_config() -> Mapping[str, object]:
 
     from ..config import CONFIG, read_user_config
 
-    return ChainMap(CONFIG, read_user_config())
+    # Installer declarations own their defaults. This key is stored in CONFIG
+    # so runtime-wide defaults have one source, but it must still resolve as the
+    # setting's default rather than as a user-configured value.
+    runtime_config = {
+        key: value
+        for key, value in CONFIG.items()
+        if key != "cache_install_lock_timeout_seconds"
+    }
+    return ChainMap(runtime_config, read_user_config())
 
 
 def workaround_enabled(key: str) -> bool:
@@ -518,10 +526,13 @@ WRITE_SOURCE_METADATA = Setting(
     help="Regenerate tracked source metadata during install",
 )
 
+from ..config import CONFIG as _CONFIG_DEFAULTS
+
+
 CACHE_INSTALL_LOCK_TIMEOUT_SECONDS = Setting(
     name="cache_install_lock_timeout_seconds",
     parse=positive_seconds,
-    default=600.0,
+    default=float(_CONFIG_DEFAULTS["cache_install_lock_timeout_seconds"]),
     # The lock spans a pip reinstall, so the default permits a slow build but never waits forever.
     help="Maximum seconds to wait for another installer refreshing the same Claude cache",
 )
