@@ -38,6 +38,7 @@ from ..config import CONFIG as _CONFIG_DEFAULTS
 _CACHE_INSTALL_LOCK_TIMEOUT_DEFAULT = float(
     _CONFIG_DEFAULTS["cache_install_lock_timeout_seconds"]
 )
+CACHE_INSTALL_LOCK_TIMEOUT_MAX_SECONDS = 86_400.0
 
 T = TypeVar("T")
 
@@ -152,6 +153,8 @@ class Setting(Generic[T]):
     choices: tuple[str, ...] = ()        # argparse validation + help rendering
     repeatable: bool = False
     aliases: tuple[str, ...] = ()        # retired env vars and config keys
+    reject_invalid_tiers: bool = False  # invalid env/config must stop, not fall through
+    accepted: str = ""                  # actionable grammar/range for invalid values
 
     @property
     def option(self) -> str:
@@ -212,17 +215,27 @@ class Setting(Generic[T]):
             parsed = self._interpret(raw)
             if parsed is not None:
                 return Resolved(parsed, source)
-            if source == "cli":
-                # Falling through is right for the environment and CONFIG: a
-                # stale export should not abort an install. It is wrong for a
-                # flag the user just typed, which would install a layout they
-                # did not ask for and say nothing. Same split install.py made
-                # with `type=skill_placement_token` on the parser only.
+            if source == "cli" or self.reject_invalid_tiers:
+                # Most stale environment/config values fall through for
+                # compatibility. Safety-bounding settings opt into rejection:
+                # silently substituting a timeout changes the user's requested
+                # concurrency and failure behavior.
                 shown = " ".join(str(t) for t in raw) if isinstance(raw, (list, tuple)) else raw
-                raise ValueError(
-                    f"{self.option}: {shown!r} is not a valid value."
-                    + (f" One of: {', '.join(self.choices)}." if self.choices else "")
+                key = (
+                    self.option
+                    if source == "cli"
+                    else source.removeprefix("env ")
+                    if source.startswith("env ")
+                    else self.name
                 )
+                detail = (
+                    f" Accepted range: {self.accepted}."
+                    if self.accepted
+                    else f" One of: {', '.join(self.choices)}."
+                    if self.choices
+                    else ""
+                )
+                raise ValueError(f"{key}: {shown!r} is not a valid value.{detail}")
         return Resolved(self.default, "default")
 
     def _interpret(self, raw: object) -> T | None:
@@ -255,6 +268,8 @@ class Setting(Generic[T]):
         parts = [self.help.rstrip(".")]
         if self.choices:
             parts.append(f"One of: {', '.join(self.choices)}")
+        if self.accepted:
+            parts.append(f"Accepted range: {self.accepted}")
         parts.append(f"Default: {self.default}")
         parts.append(f"{self.env} also sets this; the flag wins")
         if self.aliases:
@@ -462,12 +477,12 @@ def resolve_all(
 
 
 def positive_seconds(raw: str) -> float | None:
-    """A positive finite seconds value for bounded installer waits."""
+    """Seconds within the declared bounded installer-wait range."""
     try:
         value = float(raw)
     except (TypeError, ValueError):
         return None
-    return value if value > 0 and value < float("inf") else None
+    return value if 0 < value <= CACHE_INSTALL_LOCK_TIMEOUT_MAX_SECONDS else None
 
 
 def harness_names() -> tuple[str, ...]:
@@ -565,6 +580,8 @@ CACHE_INSTALL_LOCK_TIMEOUT_SECONDS = Setting(
     default=_CACHE_INSTALL_LOCK_TIMEOUT_DEFAULT,
     # The lock spans a pip reinstall, so the default permits a slow build but never waits forever.
     help="Maximum seconds to wait for another installer refreshing the same Claude cache",
+    reject_invalid_tiers=True,
+    accepted="(0, 86400] seconds",
 )
 
 # --- custom harnesses -------------------------------------------------------

@@ -11,6 +11,7 @@ got wrong, and the property that makes the two parsers unable to drift.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -82,6 +83,33 @@ def test_cache_lock_timeout_uses_cli_env_config_default_precedence():
     assert setting.resolve(None, env={setting.env: "13"}, config={setting.name: 14}).value == 13
     assert setting.resolve(None, env={}, config={setting.name: 14}).value == 14
     assert setting.resolve(None, env={}, config={}).value == 600
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "86400.1", "nan", "inf", "not-a-number"])
+@pytest.mark.parametrize("tier", ["cli", "env", "config"])
+def test_cache_lock_timeout_rejects_invalid_values_at_every_tier(raw, tier):
+    """Violation excluded: an invalid timeout silently becomes the default."""
+    setting = CACHE_INSTALL_LOCK_TIMEOUT_SECONDS
+    cli = raw if tier == "cli" else None
+    env = {setting.env: raw} if tier == "env" else {}
+    config = {setting.name: raw} if tier == "config" else {}
+
+    with pytest.raises(ValueError) as raised:
+        setting.resolve(cli, env=env, config=config)
+
+    message = str(raised.value)
+    expected_key = setting.option if tier == "cli" else (
+        setting.env if tier == "env" else setting.name
+    )
+    assert expected_key in message
+    assert repr(raw) in message
+    assert "(0, 86400] seconds" in message
+
+
+def test_cache_lock_timeout_cli_validator_names_the_accepted_range():
+    setting = CACHE_INSTALL_LOCK_TIMEOUT_SECONDS
+    with pytest.raises(argparse.ArgumentTypeError, match=r"\(0, 86400\] seconds"):
+        setting.checked("86401")
 
 
 def test_the_resolved_source_says_where_a_value_came_from():
