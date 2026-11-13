@@ -116,6 +116,8 @@ __all__ = [
     "Verdict",
     "Decision",
     "PersistentFileLock",
+    "is_link_or_reparse",
+    "has_link_or_reparse_parent",
     "scan_tree",
     "compare",
     "decide",
@@ -277,6 +279,28 @@ def owns(marker: "TreeManifest | None", plugin: str) -> bool:
 # ---------------------------------------------------------------------------
 # What one file looked like when we wrote it
 # ---------------------------------------------------------------------------
+
+
+def is_link_or_reparse(info: object) -> bool:
+    """Whether an lstat result names a link-like path that must not be followed."""
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def has_link_or_reparse_parent(root: Path, relative: str) -> bool:
+    """Whether a manifest path crosses a linked directory below ``root``."""
+    current = root
+    for part in Path(relative).parts[:-1]:
+        current /= part
+        try:
+            info = current.lstat()
+        except OSError:
+            return False
+        if is_link_or_reparse(info):
+            return True
+    return False
 
 
 class FileState(Enum):
@@ -2031,6 +2055,7 @@ def withdraw_files(
     *,
     plugin: str | None = None,
     preserve_lock_path: bool = False,
+    kept: list[str] | None = None,
 ) -> tuple[str, ...]:
     """Remove only the files autorun recorded, leaving the directory and the
     user's own files in place.
@@ -2077,6 +2102,10 @@ def withdraw_files(
                 return ()
 
             for name in sorted(manifest.files):
+                if has_link_or_reparse_parent(actual, name):
+                    if kept is not None:
+                        kept.append(name)
+                    continue
                 path = actual / name
                 frozen = shared / name
                 frozen.parent.mkdir(parents=True, exist_ok=True)

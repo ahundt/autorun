@@ -59,6 +59,7 @@ from .fs import (
     atomic_write,
     compare,
     fill_tree,
+    is_link_or_reparse,
     owns,
     read_marker,
     remove_empty_parents,
@@ -385,14 +386,6 @@ def _retained_cache_files(directory: Path) -> tuple[str, ...]:
     return (*runtime, *payload)
 
 
-def _is_link_or_reparse(info: object) -> bool:
-    """Whether an lstat result names a link-like path that must not be followed."""
-    return stat.S_ISLNK(info.st_mode) or bool(
-        getattr(info, "st_file_attributes", 0)
-        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    )
-
-
 def retire_cache_versions(
     platform: object,
     *,
@@ -415,7 +408,7 @@ def retire_cache_versions(
         if directory.name in wanted:
             continue
         info = directory.lstat()
-        if _is_link_or_reparse(info):
+        if is_link_or_reparse(info):
             retained.append(RetainedCache(
                 directory, ("symlinked or reparse-point version directory",)
             ))
@@ -442,11 +435,17 @@ def retire_cache_versions(
             directory, marker, ignored_globs=CACHE_METADATA_GLOBS
         )
         expected_removals = set(marker.files) - set(edited) - set(missing)
+        linked_paths: list[str] = []
         removed_files = set(withdraw_files(
-            directory, plugin=plugin, preserve_lock_path=True
+            directory,
+            plugin=plugin,
+            preserve_lock_path=True,
+            kept=linked_paths,
         ))
         left_proven = sorted(
-            name for name in expected_removals - removed_files if (directory / name).exists()
+            name
+            for name in expected_removals - removed_files - set(linked_paths)
+            if (directory / name).exists()
         )
         if left_proven:
             raise OSError(
@@ -456,7 +455,9 @@ def retire_cache_versions(
         (directory / ".orphaned_at").unlink(missing_ok=True)
         for name in removed_files:
             remove_empty_parents((directory / name).parent, stop=directory)
-        retained.append(RetainedCache(directory, _retained_cache_files(directory)))
+        retained_files = set(_retained_cache_files(directory))
+        retained_files.update(linked_paths)
+        retained.append(RetainedCache(directory, tuple(sorted(retained_files))))
 
     lock_path = root / INSTALL_LOCK_NAME
     if lock_path.is_file():

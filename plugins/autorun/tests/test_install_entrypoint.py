@@ -730,6 +730,44 @@ def test_uninstall_keeps_unproven_cache_files_without_failing(
     assert "It remains in place so concurrent installers keep one lock authority." in output
 
 
+def test_uninstall_keeps_recorded_files_beneath_a_replaced_directory_link(
+    monkeypatch, isolated, tmp_path, capsys
+):
+    """Violation excluded: per-file retirement follows a replaced directory link."""
+    from autorun.installer import entrypoint, fs
+
+    version = isolated / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.0.0"
+    linked = version / "payload"
+    linked.mkdir(parents=True)
+    (linked / "proven.txt").write_text("proven\n", encoding="utf-8")
+    edited = version / "edited.txt"
+    edited.write_text("owned\n", encoding="utf-8")
+    (version / fs.OWNED_MARKER_NAME).write_text(
+        json.dumps(fs.TreeManifest.of(version, plugin="ar").as_payload()),
+        encoding="utf-8",
+    )
+    edited.write_text("user edit\n", encoding="utf-8")
+
+    external = tmp_path / "external"
+    linked.rename(external)
+    linked.symlink_to(external, target_is_directory=True)
+    before = {path.name: path.read_bytes() for path in external.iterdir()}
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        entrypoint,
+        "_run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+
+    assert entrypoint.uninstall_plugins("ar") == 0
+
+    output = capsys.readouterr().out
+    assert {path.name: path.read_bytes() for path in external.iterdir()} == before
+    assert (external / "proven.txt").read_bytes() == b"proven\n"
+    assert "payload/proven.txt" in output
+    assert "FAIL" not in output
+
+
 def test_uninstall_cache_io_error_still_fails(monkeypatch, isolated, capsys):
     """Violation excluded: an actual cache retirement I/O error reports success."""
     from autorun.installer import claude, entrypoint
