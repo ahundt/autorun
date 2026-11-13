@@ -112,7 +112,12 @@ def _copy_payload(source: Path, staged: Path) -> None:
     Expecting the link instead made a forced refresh of a cache Claude had
     copied fail with "directory blocks file".
     """
-    shutil.copytree(source, staged, symlinks=True)
+    shutil.copytree(
+        source,
+        staged,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(*IGNORED_GLOBS),
+    )
     root = source.resolve()
     for directory, subdirs, names in os.walk(staged):
         for name in (*subdirs, *names):
