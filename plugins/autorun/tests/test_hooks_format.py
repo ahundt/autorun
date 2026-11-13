@@ -19,6 +19,13 @@ import tempfile
 import pytest
 from pathlib import Path
 
+from e2e_support import (
+    LIVE_INSTALL_CHECKS_SKIP,
+    live_install_checks_enabled,
+    live_install_missing,
+    real_home,
+)
+
 
 def get_plugin_root():
     """Get Claude plugin root directory."""
@@ -698,11 +705,15 @@ class TestCacheCleanup:
     hook files should ever appear in the Claude cache.
     """
 
+    @pytest.mark.skipif(not live_install_checks_enabled(), reason=LIVE_INSTALL_CHECKS_SKIP)
     def test_claude_cache_only_has_claude_hooks(self):
         """Cache must hold hooks/hooks.json with Claude events, no Gemini files."""
-        cache_hooks_dir = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
+        cache_hooks_dir = real_home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
         if not cache_hooks_dir.exists():
-            pytest.skip("Plugin cache not installed")
+            live_install_missing(
+                "The Claude plugin cache",
+                "uv run --project plugins/autorun python -m autorun --install ar --force --claude",
+            )
         version_dirs = [d for d in cache_hooks_dir.iterdir() if d.is_dir()]
         if not version_dirs:
             pytest.skip("No version directories in cache")

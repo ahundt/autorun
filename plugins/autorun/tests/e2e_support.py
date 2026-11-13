@@ -19,6 +19,7 @@ from autorun.platforms import PLATFORMS, to_harness_cli_event
 
 
 REAL_MONEY_ENV = "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"
+REAL_HOME_ENV = "AUTORUN_TEST_REAL_HOME"
 LIVE_INSTALL_CHECKS_ENV = "AUTORUN_ENABLE_LIVE_INSTALL_CHECKS"
 LIVE_INSTALL_CHECKS_SKIP = (
     f"Set {LIVE_INSTALL_CHECKS_ENV}=1 to assert on this machine's installed "
@@ -130,6 +131,39 @@ def live_install_checks_enabled() -> bool:
     skip reason names the command that answers the question properly.
     """
     return os.environ.get(LIVE_INSTALL_CHECKS_ENV, "0") == "1"
+
+
+def real_home() -> Path:
+    """The home this run started with, where the live install is.
+
+    ``plugins/autorun/conftest.py`` points ``HOME`` at a scratch directory for
+    every test, so ``Path.home()`` is never the user's. Reading it made each
+    live-install check skip as "not installed" on a machine where everything
+    was installed. Only the opt-in live-install checks may call this, and only
+    to read.
+    """
+    return Path(os.environ[REAL_HOME_ENV])
+
+
+def live_install_env() -> dict[str, str] | None:
+    """The environment for a harness CLI that must see the live install, or
+    ``None`` (inherit the scratch home) when the checks are not enabled."""
+    if not live_install_checks_enabled():
+        return None
+    home = str(real_home())
+    return {**os.environ, "HOME": home, "USERPROFILE": home}
+
+
+def live_install_missing(what: str, repair: str) -> None:
+    """Report an install the live checks need: fail when they are enabled.
+
+    A skip here let the whole opt-in run report "6 skipped" and look like a
+    pass.
+    """
+    message = f"{what} is not installed under {real_home()}. Run: {repair}"
+    if live_install_checks_enabled():
+        pytest.fail(message)
+    pytest.skip(message)
 
 
 def retired_gemini_backend_enabled() -> bool:

@@ -282,6 +282,9 @@ uv run --project plugins/autorun --locked python -m autorun --install --force
 # the paid real_money tests this is the only place these run. Skipped by
 # default so an ordinary source edit does not fail the suite before the
 # reinstall.
+# Require passes, not skips: with the variable set the Claude cache checks fail
+# when the cache is missing, and only the two Gemini checks may skip (the
+# retired Gemini CLI is installed only with --gemini).
 (cd plugins/autorun && AUTORUN_ENABLE_LIVE_INSTALL_CHECKS=1 uv run --project . --locked pytest tests/ -m "e2e and not real_money" -v)
 
 # No existing tag for this version (both print nothing)

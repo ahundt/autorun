@@ -20,6 +20,7 @@ import pytest
 from e2e_support import (
     RETIRED_GEMINI_BACKEND_REASON,
     autorun_extension_listed,
+    live_install_env,
     private_daemon_env,
     real_money_enabled,
     requires_real_money,
@@ -71,6 +72,7 @@ def gemini_extension_check():
     try:
         result = subprocess.run(
             ["gemini", "extensions", "list"],
+            env=live_install_env(),
             capture_output=True,
             text=True,
             timeout=30,  # Extensions list loads credentials + experiments
@@ -178,6 +180,7 @@ class TestGeminiExtensionRegistration:
     def test_gemini_extension_loaded(self, gemini_cli_check, gemini_extension_check):
         result = subprocess.run(
             ["gemini", "extensions", "list"],
+            env=live_install_env(),
             capture_output=True,
             text=True,
             timeout=30,

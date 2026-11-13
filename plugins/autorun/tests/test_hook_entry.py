@@ -19,7 +19,12 @@ from pathlib import Path
 
 import pytest
 
-from e2e_support import LIVE_INSTALL_CHECKS_SKIP, live_install_checks_enabled
+from e2e_support import (
+    LIVE_INSTALL_CHECKS_SKIP,
+    live_install_checks_enabled,
+    live_install_missing,
+    real_home,
+)
 from autorun.platforms import hook_platforms as _hook_platforms
 
 
@@ -1872,15 +1877,15 @@ class TestCacheSync:
     where a developer fixes the source but forgets to update the cache.
     """
 
-    CACHE_ROOT = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
-
     def _get_cache_versions(self):
         """Find installed cache versions."""
-        if not self.CACHE_ROOT.exists():
+        cache_root = real_home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
+        if not cache_root.exists():
             return []
-        return [d for d in self.CACHE_ROOT.iterdir() if d.is_dir() and (d / "pyproject.toml").exists()]
+        return [d for d in cache_root.iterdir() if d.is_dir() and (d / "pyproject.toml").exists()]
 
     @pytest.mark.e2e
+    @pytest.mark.skipif(not live_install_checks_enabled(), reason=LIVE_INSTALL_CHECKS_SKIP)
     def test_cache_pyproject_no_deprecated_uv_fields(self):
         """Cached pyproject.toml must not have deprecated [tool.uv] fields.
 
@@ -1895,7 +1900,10 @@ class TestCacheSync:
 
         versions = self._get_cache_versions()
         if not versions:
-            pytest.skip("No plugin cache found (plugin not installed)")
+            live_install_missing(
+                "The Claude plugin cache",
+                "uv run --project plugins/autorun python -m autorun --install ar --force --claude",
+            )
 
         deprecated_fields = {"default-extras"}
         errors = []
@@ -2210,9 +2218,12 @@ class TestAllLocationsSync:
     @pytest.mark.skipif(not live_install_checks_enabled(), reason=LIVE_INSTALL_CHECKS_SKIP)
     def test_cache_matches_source_hook_entry(self):
         """Location 4: the current Claude cache must match current source."""
-        cache_root = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
+        cache_root = real_home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
         if not cache_root.is_dir():
-            pytest.skip("Claude Code cache not installed")
+            live_install_missing(
+                "The Claude plugin cache",
+                "uv run --project plugins/autorun python -m autorun --install ar --force --claude",
+            )
 
         manifest = json.loads(
             (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
@@ -2240,13 +2251,15 @@ class TestAllLocationsSync:
     @pytest.mark.skipif(not live_install_checks_enabled(), reason=LIVE_INSTALL_CHECKS_SKIP)
     def test_gemini_extension_hooks_match_source(self):
         """Installed Gemini hooks must match the generated registered source."""
-        gemini_ext = Path.home() / ".gemini/extensions/ar"
+        gemini_ext = real_home() / ".gemini/extensions/ar"
 
         if not gemini_ext.exists():
-            pytest.skip("Gemini extension not installed")
+            # The Gemini CLI is retired and installed only with --gemini, so
+            # its absence is not a broken install.
+            pytest.skip(f"Gemini extension not installed under {real_home()} (autorun --install --gemini)")
 
         source_hooks = (
-            Path.home()
+            real_home()
             / ".autorun/installer/extension-sources/gemini/ar/hooks/hooks.json"
         )
         ext_hooks = gemini_ext / "hooks" / "hooks.json"
@@ -2275,7 +2288,7 @@ class TestAllLocationsSync:
         """Locations 3, 9: Build artifacts should be deleted."""
         build_dirs = [
             PLUGIN_ROOT / "build",
-            Path.home() / ".gemini/extensions/ar/build"
+            real_home() / ".gemini/extensions/ar/build"
         ]
 
         for build_dir in build_dirs:

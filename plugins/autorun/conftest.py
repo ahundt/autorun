@@ -95,6 +95,11 @@ if hasattr(__import__('socket'), 'AF_UNIX'):
         )
     del _sock, _limit, _sock_size
 
+# The home this run started with, for the two things that must still see it
+# after the redirect below: the canary that fails the suite when a test
+# modifies the installed copy, and the opt-in live-install checks. setdefault,
+# because an xdist worker inherits the controller's already-redirected HOME.
+_os.environ.setdefault('AUTORUN_TEST_REAL_HOME', _os.path.expanduser('~'))
 _os.environ['AUTORUN_TEST_RUNTIME_DIR'] = _runtime
 _os.environ['AUTORUN_TEST_STATE_DIR'] = _state
 _os.environ['AUTORUN_HOME'] = _home

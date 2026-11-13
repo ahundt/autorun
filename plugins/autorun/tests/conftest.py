@@ -918,6 +918,12 @@ def _live_install_digest(path: str) -> str:
     return digest.hexdigest()
 
 
+def _real_home() -> str:
+    """The home this run started with; plugins/autorun/conftest.py records it
+    before redirecting HOME."""
+    return os.environ["AUTORUN_TEST_REAL_HOME"]
+
+
 def _live_install_fingerprint() -> dict:
     """Map each installed artifact to (size, digest); missing files map to None.
 
@@ -933,7 +939,9 @@ def _live_install_fingerprint() -> dict:
 
     fingerprint = {}
     for pattern in _LIVE_INSTALL_GLOBS:
-        expanded = os.path.expanduser(pattern)
+        # Not expanduser: the suite's own HOME is a scratch directory, and a
+        # canary reading that one watches nothing.
+        expanded = os.path.join(_real_home(), pattern[2:])
         matches = _glob.glob(expanded, recursive=True)
         # normpath, because these keys are compared against paths built
         # elsewhere. expanduser substitutes a backslash home on Windows but
@@ -1008,7 +1016,7 @@ def _check_live_install_unchanged(session) -> None:
 
 #: The default state directory in the suite's initial (already redirected)
 #: home. Individual tests may redirect HOME again; this anchor stays fixed.
-_REAL_AUTORUN_HOME = os.path.expanduser("~/.autorun")
+_REAL_AUTORUN_HOME = os.path.join(_real_home(), ".autorun")
 
 
 def _check_real_autorun_home_not_created(session) -> None:

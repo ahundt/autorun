@@ -61,7 +61,9 @@ def fake_home(tmp_path, monkeypatch):
     consults the other, so moving one name relocates the home on one platform
     only -- the test would then read a sandbox and touch a real home.
     """
-    for name in ("HOME", "USERPROFILE"):
+    # AUTORUN_TEST_REAL_HOME is what the canary reads: the suite's own HOME is
+    # a scratch directory, so a canary following HOME watched nothing.
+    for name in ("HOME", "USERPROFILE", "AUTORUN_TEST_REAL_HOME"):
         monkeypatch.setenv(name, str(tmp_path))
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
@@ -122,7 +124,9 @@ def test_deleted_cached_runtime_package_is_detected(fake_home):
 
 def test_a_created_artifact_is_detected(tmp_path, monkeypatch):
     """A home with no install must still notice one appearing mid-run."""
-    for name in ("HOME", "USERPROFILE"):
+    # AUTORUN_TEST_REAL_HOME is what the canary reads: the suite's own HOME is
+    # a scratch directory, so a canary following HOME watched nothing.
+    for name in ("HOME", "USERPROFILE", "AUTORUN_TEST_REAL_HOME"):
         monkeypatch.setenv(name, str(tmp_path))
     canary = _load_canary()
 
@@ -241,7 +245,7 @@ def test_a_suite_that_edits_the_install_exits_non_zero(tmp_path):
         encoding="utf-8",
     )
 
-    env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
+    env = dict(os.environ, HOME=str(home), USERPROFILE=str(home), AUTORUN_TEST_REAL_HOME=str(home))
     env.pop("AUTORUN_ALLOW_LIVE_INSTALL_WRITES", None)
     result = subprocess.run(
         [sys.executable, "-m", "pytest", str(suite), "-q", "-p", "no:cacheprovider",
