@@ -281,6 +281,31 @@ def test_command_typed_as_the_reply_still_runs(gate_env, cli_type):
     assert "git push" in listed, f"the allow was not recorded: {listed}"
 
 
+@pytest.mark.parametrize("channel", ["human", "ai", "both"])
+def test_a_notice_queued_by_any_prompt_handler_never_replaces_a_command(gate_env, monkeypatch, channel):
+    """The class of the bug above, independent of which handler queues the notice.
+
+    Any UserPromptSubmit handler may queue a notice and return None. A prompt
+    that is a command must still reach its handler, and the notice must go out
+    with the command's reply instead of being dropped.
+    """
+    session = _session("claude", f"notice-{channel}")
+    chain = plugins.app.chains["UserPromptSubmit"]
+
+    def notifies(ctx):
+        ctx.add_chain_notification("NOTICE-FROM-A-PROMPT-HANDLER", channel=channel)
+        return None
+
+    monkeypatch.setitem(plugins.app.chains, "UserPromptSubmit", [notifies, *chain])
+
+    said = text(session.prompt("/ar:ok 'git tag' 1h"))
+    assert "Allowed" in said and "git tag" in said, f"a queued notice replaced the command: {said}"
+    assert "NOTICE-FROM-A-PROMPT-HANDLER" in said, f"the queued notice was dropped: {said}"
+    assert "git tag" in text(session.prompt("/ar:blocks")), "the allow was not recorded"
+    # A prompt that is not a command still gets the notice.
+    assert "NOTICE-FROM-A-PROMPT-HANDLER" in text(session.prompt("carry on"))
+
+
 def test_awaiting_user_cleared_by_agent_task_update(gate_env):
     session = _session("claude", "update")
     session.seed("7", "Push release-1.0")
