@@ -676,11 +676,13 @@ class TestPsutilProcessLifecycle:
                                 with mock.patch.object(restart_mod, "is_daemon_responding", return_value=True):
                                     with mock.patch.object(restart_mod, "_display_daemon_diagnostics", return_value=True) as diagnostics:
                                         with mock.patch.object(restart_mod, "verify_bashlex", return_value=True):
-                                            with mock.patch.object(restart_mod.psutil, "process_iter", return_value=[current_proc, other_proc]):
-                                                assert restart_mod.restart_daemon() == 0
+                                            with mock.patch.object(restart_mod, "_signal_owned_daemon", return_value=True) as signal:
+                                                with mock.patch.object(restart_mod.psutil, "process_iter", return_value=[current_proc, other_proc]):
+                                                    assert restart_mod.restart_daemon() == 0
 
         diagnostics.assert_called_once_with(src_dir)
-        current_proc.kill.assert_called_once_with()
+        signal.assert_called_once_with(current_proc.pid, kill=True)
+        current_proc.kill.assert_not_called()
         other_proc.kill.assert_not_called()
 
     def test_scoped_restart_finds_only_current_runtime_from_same_source(self, tmp_path):
@@ -817,6 +819,35 @@ class TestPsutilProcessLifecycle:
 
         diagnostics.assert_called_once_with(src_dir)
         assert get_pid.call_args_list == [call(src_dir=src_dir), call(src_dir=src_dir)]
+
+    def test_remaining_process_sweep_refuses_a_pid_unowned_by_this_home(self, tmp_path):
+        """Violation excluded: the orphan sweep kills a PID this home does not own."""
+        import autorun.restart_daemon as restart_mod
+
+        src_dir = tmp_path / "current" / "plugins" / "autorun" / "src"
+        src_dir.mkdir(parents=True)
+        unowned = mock.MagicMock()
+        unowned.pid = 222
+
+        @contextmanager
+        def acquired_restart_lock():
+            yield True
+
+        with mock.patch.object(restart_mod, "restart_lock", acquired_restart_lock), \
+             mock.patch.object(restart_mod, "_resolve_src_dir", return_value=src_dir), \
+             mock.patch.object(restart_mod, "get_daemon_pid", side_effect=[None, 333]), \
+             mock.patch.object(restart_mod, "_daemon_processes_for_src", return_value=[unowned]), \
+             mock.patch.object(restart_mod.psutil, "Process", return_value=unowned), \
+             mock.patch.object(restart_mod, "_owns_this_runtime", return_value=False), \
+             mock.patch.object(restart_mod, "_clear_pycache"), \
+             mock.patch.object(restart_mod, "_check_conflicting_packages"), \
+             mock.patch.object(restart_mod, "_start_daemon", return_value=True), \
+             mock.patch.object(restart_mod, "is_daemon_responding", return_value=True), \
+             mock.patch.object(restart_mod, "_display_daemon_diagnostics", return_value=True), \
+             mock.patch.object(restart_mod, "verify_bashlex", return_value=True):
+            assert restart_mod.restart_daemon() == 0
+
+        unowned.kill.assert_not_called()
 
     def test_restart_all_daemons_kills_all_matching_daemons(self, tmp_path):
         """--restart-all-daemons is the explicit risky all-daemon stop mode."""

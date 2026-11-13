@@ -722,10 +722,13 @@ def restart_daemon(
             scope = "all matching" if all_daemons else "current source tree"
             print(f"  Killing {len(remaining_pids)} remaining daemon(s) ({scope})")
             for proc in remaining_pids:
-                try:
-                    proc.kill()  # SIGKILL equivalent
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+                if all_daemons:
+                    try:
+                        proc.kill()  # explicit cross-runtime recovery mode
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                else:
+                    _signal_owned_daemon(proc.pid, kill=True)
             time.sleep(0.5)
         elif (
             not pid
