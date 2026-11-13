@@ -79,6 +79,13 @@ def private_tmux_binary(resolved: str | None) -> str | None:
     return str(resolved)
 
 
+def _configure_pytest_basetemp(config, runtime: Path) -> Path:
+    """Give each pytest process a unique temp root outside pytest's shared pool."""
+    basetemp = Path(tempfile.mkdtemp(prefix="ar_pytest_"))
+    config.option.basetemp = str(basetemp)
+    return basetemp
+
+
 def pytest_configure(config):
     """Configure pytest with custom markers and DB isolation."""
     config.addinivalue_line("markers", "slow: marks tests as slow")
@@ -98,6 +105,7 @@ def pytest_configure(config):
     test_autorun_home = Path(os.environ["AUTORUN_HOME"])
     config._autorun_test_runtime_dir = str(test_runtime_dir)
     config._autorun_test_state_dir = str(test_state_dir)
+    config._autorun_test_basetemp = str(_configure_pytest_basetemp(config, test_runtime_dir))
     os.environ["AUTORUN_TEST_STATE_DIR"] = str(test_state_dir)
     os.environ["AUTORUN_HOME"] = str(test_autorun_home)
 
@@ -1081,6 +1089,12 @@ def pytest_sessionfinish(session, exitstatus):
             Path(test_tmux_socket).unlink(missing_ok=True)
         except OSError:
             pass
+
+    # Clean up pytest's private root separately; it deliberately lives outside
+    # AUTORUN_TEST_RUNTIME_DIR so pytest never prunes another session's tree.
+    test_basetemp = getattr(session.config, '_autorun_test_basetemp', None)
+    if test_basetemp and not should_keep_test_artifacts():
+        shutil.rmtree(test_basetemp, ignore_errors=True)
 
     # Clean up isolated state, socket, PID, and logs together.
     test_runtime_dir = getattr(session.config, '_autorun_test_runtime_dir', None)

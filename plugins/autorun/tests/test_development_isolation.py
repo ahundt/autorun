@@ -56,6 +56,31 @@ def test_pytest_redirects_home_before_any_package_import(tmp_path):
     assert observed["controls"] == controls
 
 
+def test_concurrent_pytest_sessions_get_private_non_pruning_basetemp_roots(tmp_path):
+    import types
+    import conftest
+
+    first = tmp_path / "session-one"
+    second = tmp_path / "session-two"
+    first.mkdir()
+    second.mkdir()
+    marker = first / "survivor.txt"
+    marker.write_text("owned by session one\n", encoding="utf-8")
+
+    first_config = types.SimpleNamespace(option=types.SimpleNamespace())
+    second_config = types.SimpleNamespace(option=types.SimpleNamespace())
+    first_root = conftest._configure_pytest_basetemp(first_config, first)
+    second_root = conftest._configure_pytest_basetemp(second_config, second)
+
+    assert first_root != second_root
+    assert first_root.parent == second_root.parent
+    assert first_root.name.startswith("ar_pytest_")
+    assert second_root.name.startswith("ar_pytest_")
+    assert marker.read_text(encoding="utf-8") == "owned by session one\n"
+    assert first_config.option.basetemp == str(first_root)
+    assert second_config.option.basetemp == str(second_root)
+
+
 def test_clearing_environment_keeps_home_isolation():
     from isolated_environ import isolation_only
 
