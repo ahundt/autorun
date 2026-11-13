@@ -80,18 +80,25 @@ async function surfaceStopDenial(client, sessionID, directory, reason) {
     }
   }
   if (typeof client?.session?.prompt === "function") {
-    try {
-      await client.session.prompt(continuation)
-      return
-    } catch (error) {
-      await logClient(
-        client,
-        directory,
-        "warn",
-        `OpenCode prompt continuation failed: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
+    // prompt() resolves only when the whole turn ends. Awaiting it would hold
+    // this idle handler for that long, so a failure is handled when it arrives.
+    Promise.resolve()
+      .then(() => client.session.prompt(continuation))
+      .catch(async (error) => {
+        await logClient(
+          client,
+          directory,
+          "warn",
+          `OpenCode prompt continuation failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        await warnCannotContinue(client, directory, reason)
+      })
+    return
   }
+  await warnCannotContinue(client, directory, reason)
+}
+
+async function warnCannotContinue(client, directory, reason) {
   if (typeof client?.tui?.showToast === "function") {
     try {
       await client.tui.showToast({

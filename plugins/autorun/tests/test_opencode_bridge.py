@@ -577,6 +577,25 @@ class TestDaemonSocketFrames:
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
+    def test_idle_handler_returns_while_the_prompt_fallback_turn_is_still_running(self, tmp_path, short_socket_dir):
+        """`client.session.prompt` resolves when the turn ends, so the idle handler must not wait for it."""
+        socket_path = short_socket_dir / "daemon.sock"
+        frames, thread = self._serve(
+            socket_path,
+            {
+                "OpenCodeAttach": {},
+                "Stop": {"decision": "block", "reason": "Finish task #7 before stopping."},
+            },
+        )
+        result = _run_shim(tmp_path, socket_path, "idle-prompt-pending")
+        thread.join(timeout=25)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip(), "the idle handler never returned while prompt() was pending"
+        assert json.loads(result.stdout) == {"promptCalls": 1, "toastCalls": []}
+
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    @unix_only
     def test_idle_stop_block_logs_prompt_async_rejection_before_prompt_fallback(
         self, tmp_path, short_socket_dir
     ):
@@ -939,6 +958,19 @@ if (process.argv[2] === "idle-prompt") {
   const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: oldClient })
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
   console.log(JSON.stringify({ promptCalls, toastCalls }))
+  process.exit(0)
+}
+
+if (process.argv[2] === "idle-prompt-pending") {
+  const toastCalls = []
+  const oldClient = {
+    // A turn that is still running: prompt() resolves only when it ends.
+    session: { prompt: (options) => { promptCalls.push(options); return new Promise(() => {}) } },
+    tui: { showToast: async (options) => toastCalls.push(options) },
+  }
+  const hooks = await AutorunPlugin({ serverUrl: "http://127.0.0.1:1/", directory: process.cwd(), client: oldClient })
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "idle-session" } } })
+  console.log(JSON.stringify({ promptCalls: promptCalls.length, toastCalls }))
   process.exit(0)
 }
 
