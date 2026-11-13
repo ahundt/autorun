@@ -37,6 +37,7 @@ __all__ = [
     "show_status",
     "perform_self_update",
     "install_main",
+    "main",
     "parse_selection",
     "resolve_custom_harnesses",
 ]
@@ -997,8 +998,13 @@ def _map_legacy_flags(argv: Sequence[str]) -> list[str]:
     return [commands[argv[0]], *argv[1:]] if argv[0] in commands else list(argv)
 
 
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the public autorun parser through the manifest-driven installer."""
+    from ..__main__ import main as autorun_main
+
+    return autorun_main(argv)
+
+
 def install_main(argv: Sequence[str] | None = None) -> int:
     """Compatibility entry point for ``autorun-install`` and ``-m install``."""
-    from ..__main__ import main
-
     return main(_map_legacy_flags(sys.argv[1:] if argv is None else argv))

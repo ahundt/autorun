@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -215,6 +216,175 @@ def test_isolated_daemon_paths_follow_the_fixtures_autorun_home(isolated):
     assert ipc.SOCKET_PATH == home / "daemon.sock"
     assert ipc.PORT_FILE == home / "daemon.port"
     assert ipc.TOKEN_FILE == home / "daemon.token"
+
+
+def test_main_entrypoint_dispatches_install_force_and_uninstall(monkeypatch):
+    """Violation excluded: public CLI modes bypass the installer entry point."""
+    from autorun import install as install_api
+    from autorun.installer import entrypoint
+
+    calls = []
+    monkeypatch.setattr(
+        install_api,
+        "install_plugins",
+        lambda selection, **kwargs: calls.append(("install", selection, kwargs)) or 0,
+    )
+    monkeypatch.setattr(
+        install_api,
+        "uninstall_plugins",
+        lambda selection, **kwargs: calls.append(("uninstall", selection, kwargs)) or 0,
+    )
+
+    assert entrypoint.main(["--install", "ar", "--claude"]) == 0
+    assert entrypoint.main(["--install", "ar", "--claude", "--force"]) == 0
+    assert entrypoint.main(["--uninstall", "ar", "--claude"]) == 0
+    assert calls[0][0:2] == ("install", "ar") and calls[0][2]["force"] is False
+    assert calls[1][0:2] == ("install", "ar") and calls[1][2]["force"] is True
+    assert calls[2][0:2] == ("uninstall", "ar")
+
+
+@pytest.mark.parametrize(
+    ("runtime_state", "import_result"),
+    (
+        ("missing-interpreter", None),
+        ("missing-package", None),
+        ("editable-package", "/checkout/src/autorun/__init__.py"),
+    ),
+)
+def test_main_install_repairs_every_receipt_only_runtime_state(
+    monkeypatch, isolated, runtime_state, import_result
+):
+    """Violation excluded: the CLI trusts a receipt over its cache interpreter."""
+    from autorun.installer import claude, entrypoint, runtime, steps
+    from autorun.platforms import PLATFORMS
+
+    source = REPO / "plugins" / "autorun"
+    version = steps._version(source)
+    cache = claude.cache_fallback(
+        source,
+        PLATFORMS["claude"],
+        market="autorun",
+        plugin="ar",
+        version=version,
+        home=isolated,
+    )
+    assert cache is not None
+    venv = cache / ".venv"
+    python = runtime.cache_venv_python(cache)
+    if runtime_state != "missing-interpreter":
+        python.parent.mkdir(parents=True)
+        python.write_text("interpreter placeholder\n", encoding="utf-8")
+        (venv / "pyvenv.cfg").write_text("home = isolated\n", encoding="utf-8")
+    venv.mkdir(exist_ok=True)
+    (venv / ".autorun-runtime.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "install_mode": "non-editable",
+                "source_fingerprint": runtime._cache_runtime_fingerprint(source),
+            }
+        ),
+        encoding="utf-8",
+    )
+    pip_calls = []
+
+    def run(argv, **_kwargs):
+        call = tuple(str(part) for part in argv)
+        if call[:2] == ("uv", "venv"):
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.write_text("interpreter placeholder\n", encoding="utf-8")
+            (venv / "pyvenv.cfg").write_text("home = isolated\n", encoding="utf-8")
+        elif len(call) >= 4 and call[1:3] == ("-I", "-c"):
+            if "import autorun" in call[3]:
+                return subprocess.CompletedProcess(
+                    argv,
+                    0 if import_result else 1,
+                    (import_result + "\n") if import_result else "",
+                    "missing autorun" if not import_result else "",
+                )
+            return subprocess.CompletedProcess(argv, 0, str(venv) + "\n", "")
+        elif call[:3] == ("uv", "pip", "install"):
+            pip_calls.append(call)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setenv("AUTORUN_USE_DAEMON", "0")
+    monkeypatch.setattr(entrypoint, "_run", run)
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}" if name == "claude" else None)
+    monkeypatch.setattr(runtime, "has_uv", lambda: True)
+    monkeypatch.setattr(
+        runtime,
+        "bootstrap",
+        lambda *args, **kwargs: (runtime.Outcome("bootstrap", True, "test"),),
+    )
+
+    assert entrypoint.main(["--install", "ar", "--claude"]) == 0
+    assert len(pip_calls) == 1, f"{runtime_state} skipped the package reinstall"
+
+
+def test_two_main_processes_bound_cache_lock_contention_through_config(
+    monkeypatch, isolated, tmp_path
+):
+    """Violation excluded: two CLI installs can wait forever on the cache lock."""
+    import time
+
+    from autorun.installer import claude, steps
+    from autorun.platforms import PLATFORMS
+
+    source = REPO / "plugins" / "autorun"
+    version = steps._version(source)
+    cache = claude.cache_fallback(
+        source,
+        PLATFORMS["claude"],
+        market="autorun",
+        plugin="ar",
+        version=version,
+        home=isolated,
+    )
+    assert cache is not None
+    signal = tmp_path / "runtime-started"
+    script = r'''
+import os, subprocess, time
+from pathlib import Path
+from autorun.installer import entrypoint, runtime
+
+def run(argv, **kwargs):
+    return subprocess.CompletedProcess(argv, 0, "", "")
+
+def slow_runtime(*args, **kwargs):
+    Path(os.environ["SLOW_RUNTIME_SIGNAL"]).write_text("started\n", encoding="utf-8")
+    time.sleep(float(os.environ["SLOW_RUNTIME_SECONDS"]))
+    return runtime.Outcome("Claude cache runtime", True, "slow fake completed")
+
+entrypoint._run = run
+entrypoint.shutil.which = lambda name: f"/bin/{name}" if name == "claude" else None
+runtime.bootstrap = lambda *args, **kwargs: (runtime.Outcome("bootstrap", True, "test"),)
+runtime.install_cache_runtime = slow_runtime
+raise SystemExit(entrypoint.main(["--install", "ar", "--claude", "--force"]))
+'''
+    environment = {
+        **os.environ,
+        "HOME": str(isolated),
+        "USERPROFILE": str(isolated),
+        "AUTORUN_USE_DAEMON": "0",
+        "AUTORUN_CACHE_INSTALL_LOCK_TIMEOUT_SECONDS": "0.05",
+        "SLOW_RUNTIME_SIGNAL": str(signal),
+        "SLOW_RUNTIME_SECONDS": "0.4",
+    }
+    command = [sys.executable, "-c", script]
+    first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+    deadline = time.monotonic() + 10
+    while not signal.exists() and first.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert signal.exists(), first.communicate(timeout=5)
+    second = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
+    first_stdout, first_stderr = first.communicate(timeout=15)
+
+    assert first.returncode == 0, (first_stdout, first_stderr)
+    assert second.returncode == 1, (second.stdout, second.stderr)
+    assert "waiting for another autorun install refreshing" in second.stdout
+    assert "timed out waiting for cache install lock" in second.stdout
+    assert "wait and rerun" in second.stdout
+    assert first_stderr == second.stderr == ""
 
 
 def test_selection_comes_from_the_manifest_and_accepts_the_retired_name():
