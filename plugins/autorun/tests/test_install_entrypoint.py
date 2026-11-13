@@ -382,6 +382,60 @@ def test_source_independent_uninstall_withdraws_hooks_marketplace_and_package(mo
     assert [item["name"] for item in json.loads(market.read_text())["plugins"]] == ["mine"]
 
 
+def test_uninstall_keeps_unproven_cache_files_without_failing(
+    monkeypatch, isolated, capsys
+):
+    """Violation excluded: an unproven sibling cache makes uninstall exit 1."""
+    from autorun.installer import entrypoint, fs
+
+    root = isolated / ".claude" / "plugins" / "cache" / "autorun" / "ar"
+    owned = root / "1.0.0"
+    (owned / "hooks").mkdir(parents=True)
+    (owned / "hooks" / "hook.py").write_text("owned\n", encoding="utf-8")
+    (owned / fs.OWNED_MARKER_NAME).write_text(
+        json.dumps(fs.TreeManifest.of(owned, plugin="ar").as_payload()),
+        encoding="utf-8",
+    )
+    unproven = root / "0.8.8"
+    unproven.mkdir()
+    (unproven / "notes.txt").write_text("user notes\n", encoding="utf-8")
+    (unproven / ".orphaned_at").write_text("2026-11-12T00:00:00Z\n", encoding="utf-8")
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        entrypoint,
+        "_run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+
+    assert entrypoint.uninstall_plugins("ar") == 0
+
+    output = capsys.readouterr().out
+    assert not owned.exists()
+    assert (unproven / "notes.txt").is_file()
+    assert "FAIL" not in output
+    assert f"KEEP {unproven}: notes.txt" in output
+    assert "Delete this folder by hand if you no longer want these files." in output
+
+
+def test_uninstall_cache_io_error_still_fails(monkeypatch, isolated, capsys):
+    """Violation excluded: an actual cache retirement I/O error reports success."""
+    from autorun.installer import claude, entrypoint
+
+    root = isolated / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.0.0"
+    root.mkdir(parents=True)
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        claude,
+        "retire_cache_versions",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("injected I/O failure")),
+    )
+
+    assert entrypoint.uninstall_plugins("ar") == 1
+    output = capsys.readouterr().out
+    assert "FAIL claude: ar cache retirement" in output
+    assert "injected I/O failure" in output
+
+
 def test_empty_home_uninstall_is_a_true_no_op_even_when_every_cli_is_on_path(
     monkeypatch, isolated
 ):

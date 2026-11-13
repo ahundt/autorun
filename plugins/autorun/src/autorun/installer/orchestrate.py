@@ -854,7 +854,7 @@ def _registrations(
                             files = ", ".join(item.files) or "unproven cache payload"
                             outcomes = (*outcomes, Outcome(
                                 f"{name}: {plugin} cache retirement",
-                                False,
+                                True,
                                 f"KEEP {item.path}: {files}. Delete this folder by hand "
                                 "if you no longer want these files.",
                             ))
