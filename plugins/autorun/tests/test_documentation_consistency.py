@@ -35,7 +35,7 @@ def test_marketplace_only_install_includes_the_skills_plugin():
     manifest = json.loads((REPO_ROOT / ".claude-plugin/marketplace.json").read_text())
     assert "autorun-skills" in {plugin["name"] for plugin in manifest["plugins"]}
     for name in ("README.md", "AGENTS.md"):
-        assert "claude plugin install autorun-skills@autorun" in (REPO_ROOT / name).read_text(), name
+        assert "claude plugin install autorun-skills@autorun" in (REPO_ROOT / name).read_text(encoding="utf-8"), name
 
 
 def test_pdf_extra_comment_names_the_published_distribution():

@@ -748,7 +748,8 @@ def test_uninstall_keeps_recorded_files_beneath_a_replaced_directory_link(
     version = isolated / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.0.0"
     linked = version / "payload"
     linked.mkdir(parents=True)
-    (linked / "proven.txt").write_text("proven\n", encoding="utf-8")
+    with (linked / "proven.txt").open("w", encoding="utf-8", newline="") as stream:
+        stream.write("proven\n")
     edited = version / "edited.txt"
     edited.write_text("owned\n", encoding="utf-8")
     (version / fs.OWNED_MARKER_NAME).write_text(
@@ -772,7 +773,7 @@ def test_uninstall_keeps_recorded_files_beneath_a_replaced_directory_link(
 
     output = capsys.readouterr().out
     assert {path.name: path.read_bytes() for path in external.iterdir()} == before
-    assert (external / "proven.txt").read_bytes() == b"proven\n"
+    assert (external / "proven.txt").read_bytes() == before["proven.txt"]
     assert "payload/proven.txt" in output
     assert "FAIL" not in output
 
