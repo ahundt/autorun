@@ -287,9 +287,11 @@ def test_retirement_removes_only_hash_proven_unmodified_cache_versions(source, h
     )
 
     assert removed == (old,)
-    assert tuple(item.path for item in kept) == (unproven, edited)
+    lock = old.parent / fs.INSTALL_LOCK_NAME
+    assert tuple(item.path for item in kept) == (unproven, edited, lock)
     assert kept[0].files == ("mine.txt",)
     assert kept[1].files == ("hooks/hooks.json",)
+    assert kept[2].files == ("installer synchronization lock",)
     assert current.is_dir()
     assert not old.exists()
     assert (edited / "hooks" / "hooks.json").read_text(encoding="utf-8") == "user edit\n"
@@ -351,29 +353,35 @@ def test_retirement_removes_proven_files_but_keeps_mixed_cache_user_files(
     )
 
     assert removed == ()
-    assert tuple(item.path for item in kept) == (mixed,)
+    assert tuple(item.path for item in kept) == (mixed, lock)
     assert kept[0].files == (".venv/", "hooks/hooks.json", "notes.txt")
+    assert kept[1].files == ("installer synchronization lock",)
     assert not unchanged.exists()
     assert not (mixed / OWNED_MARKER_NAME).exists()
-    assert not lock.exists()
+    assert lock.is_file()
     assert edited.read_text(encoding="utf-8") == "user edit\n"
     assert notes.read_text(encoding="utf-8") == "user notes\n"
     assert venv_file.is_file()
 
 
-def test_retirement_removes_empty_plugin_and_market_cache_parents(source, home):
-    """Violation excluded: a clean uninstall leaves empty cache parent directories."""
+def test_retirement_leaves_the_lock_and_its_cache_parent_directories(source, home):
+    """Violation excluded: unlinking the lock splits installer lock authority."""
     only = install(source, home, version="1.2.2")
     plugin_root = only.parent
     market_root = plugin_root.parent
+    lock = plugin_root / fs.INSTALL_LOCK_NAME
+    lock.touch(exist_ok=True)
 
     removed, kept = claude.retire_cache_versions(
         Harness(), market="autorun", plugin="ar", home=home
     )
 
-    assert removed == (only,) and kept == ()
-    assert not plugin_root.exists()
-    assert not market_root.exists()
+    assert removed == (only,)
+    assert tuple(item.path for item in kept) == (lock,)
+    assert kept[0].files == ("installer synchronization lock",)
+    assert lock.is_file()
+    assert plugin_root.is_dir()
+    assert market_root.is_dir()
 
 
 def test_refresh_keeps_an_edited_recorded_file_and_an_unrecorded_file(source, home):

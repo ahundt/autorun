@@ -708,6 +708,8 @@ def test_uninstall_keeps_unproven_cache_files_without_failing(
     unproven.mkdir()
     (unproven / "notes.txt").write_text("user notes\n", encoding="utf-8")
     (unproven / ".orphaned_at").write_text("2026-11-12T00:00:00Z\n", encoding="utf-8")
+    lock = root / fs.INSTALL_LOCK_NAME
+    lock.touch()
     monkeypatch.setattr(entrypoint.shutil, "which", lambda _name: None)
     monkeypatch.setattr(
         entrypoint,
@@ -723,6 +725,9 @@ def test_uninstall_keeps_unproven_cache_files_without_failing(
     assert "FAIL" not in output
     assert f"KEEP {unproven}: notes.txt" in output
     assert "Delete this folder by hand if you no longer want these files." in output
+    assert lock.is_file()
+    assert f"KEEP {lock}: installer synchronization lock." in output
+    assert "It remains in place so concurrent installers keep one lock authority." in output
 
 
 def test_uninstall_cache_io_error_still_fails(monkeypatch, isolated, capsys):

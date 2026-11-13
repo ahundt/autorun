@@ -871,8 +871,7 @@ def _registrations(
                             outcomes = (*outcomes, Outcome(
                                 f"{name}: {plugin} cache retirement",
                                 True,
-                                f"KEEP {item.path}: {files}. Delete this folder by hand "
-                                "if you no longer want these files.",
+                                f"KEEP {item.path}: {files}. {item.guidance}",
                             ))
                 done.extend(outcomes)
                 if outcomes and all(outcome.ok for outcome in outcomes):

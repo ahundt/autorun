@@ -62,7 +62,6 @@ from .fs import (
     owns,
     read_marker,
     remove_empty_parents,
-    remove_idle_install_lock,
     record_matching_tree_files,
     record_tree,
     record_tree_files,
@@ -377,6 +376,7 @@ def refresh_cache(
 class RetainedCache:
     path: Path
     files: tuple[str, ...]
+    guidance: str = "Delete this folder by hand if you no longer want these files."
 
 
 def _retained_cache_files(directory: Path) -> tuple[str, ...]:
@@ -432,6 +432,7 @@ def retire_cache_versions(
                 directory,
                 plugin=plugin,
                 ignored_globs=CACHE_METADATA_GLOBS,
+                preserve_lock_path=True,
             ):
                 raise OSError(f"could not retire proven cache tree: {directory}")
             removed.append(directory)
@@ -441,7 +442,9 @@ def retire_cache_versions(
             directory, marker, ignored_globs=CACHE_METADATA_GLOBS
         )
         expected_removals = set(marker.files) - set(edited) - set(missing)
-        removed_files = set(withdraw_files(directory, plugin=plugin))
+        removed_files = set(withdraw_files(
+            directory, plugin=plugin, preserve_lock_path=True
+        ))
         left_proven = sorted(
             name for name in expected_removals - removed_files if (directory / name).exists()
         )
@@ -455,8 +458,13 @@ def retire_cache_versions(
             remove_empty_parents((directory / name).parent, stop=directory)
         retained.append(RetainedCache(directory, _retained_cache_files(directory)))
 
-    remove_idle_install_lock(root)
-    remove_empty_parents(root, stop=base / CACHE_SUBDIR)
+    lock_path = root / INSTALL_LOCK_NAME
+    if lock_path.is_file():
+        retained.append(RetainedCache(
+            lock_path,
+            ("installer synchronization lock",),
+            "It remains in place so concurrent installers keep one lock authority.",
+        ))
     return tuple(removed), tuple(retained)
 
 

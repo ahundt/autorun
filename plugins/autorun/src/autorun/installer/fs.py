@@ -84,11 +84,38 @@ from filelock import FileLock, Timeout
 
 from ..durable_io import atomic_write_text as atomic_write, replace as durable_replace
 
+
+if os.name == "nt":  # pragma: win32 cover
+    import msvcrt
+
+    class PersistentFileLock(FileLock):
+        """A FileLock whose stable pathname remains after release."""
+
+        def _release(self) -> None:
+            fd = self._context.lock_file_fd
+            assert fd is not None
+            self._context.lock_file_fd = None
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            os.close(fd)
+else:  # pragma: posix cover
+    import fcntl
+
+    class PersistentFileLock(FileLock):
+        """A FileLock whose stable pathname remains after release."""
+
+        def _release(self) -> None:
+            fd = self._context.lock_file_fd
+            assert fd is not None
+            self._context.lock_file_fd = None
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
 __all__ = [
     "FileState",
     "TreeManifest",
     "Verdict",
     "Decision",
+    "PersistentFileLock",
     "scan_tree",
     "compare",
     "decide",
@@ -109,7 +136,6 @@ __all__ = [
     "BACKUP_SUFFIX",
     "withdrawn",
     "withdraw_files",
-    "remove_idle_install_lock",
     "remove_empty_parents",
     "dereference_links",
     "fill_tree",
@@ -1454,6 +1480,7 @@ def withdrawn(
     force: bool = False,
     backup_root: Path | None = None,
     ignored_globs: Iterable[str] = IGNORED_GLOBS,
+    preserve_lock_path: bool = False,
 ) -> bool:
     """Delete a directory autorun owns, restoring it if the delete fails.
 
@@ -1475,7 +1502,8 @@ def withdrawn(
     """
     if not target.is_dir() or target.is_symlink():
         return False
-    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+    lock_type = PersistentFileLock if preserve_lock_path else FileLock
+    with lock_type(str(target.parent / INSTALL_LOCK_NAME)):
         _resume_interrupted(target)
         if not target.is_dir() or target.is_symlink():
             return False
@@ -1998,7 +2026,12 @@ def _mine(directory: Path, plugin: str | None) -> bool:
     return marker is not None and (plugin is None or owns(marker, plugin))
 
 
-def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, ...]:
+def withdraw_files(
+    directory: Path,
+    *,
+    plugin: str | None = None,
+    preserve_lock_path: bool = False,
+) -> tuple[str, ...]:
     """Remove only the files autorun recorded, leaving the directory and the
     user's own files in place.
 
@@ -2018,7 +2051,8 @@ def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, 
     if not _mine(directory, plugin):
         return ()
     actual = directory.resolve() if directory.is_symlink() else directory
-    with FileLock(str(actual.parent / INSTALL_LOCK_NAME)):
+    lock_type = PersistentFileLock if preserve_lock_path else FileLock
+    with lock_type(str(actual.parent / INSTALL_LOCK_NAME)):
         _resume_interrupted(actual)
         marker = actual / OWNED_MARKER_NAME
         if not marker.is_file() or marker.is_symlink():
@@ -2061,23 +2095,6 @@ def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, 
             # normal cleanup retires our claim.  If the process is killed,
             # ``_resume_interrupted`` restores it and every frozen file.
         return tuple(removed)
-
-
-def remove_idle_install_lock(directory: Path) -> bool:
-    """Remove this directory's lock file only while holding that same lock."""
-    lock_path = directory / INSTALL_LOCK_NAME
-    if not lock_path.exists():
-        return False
-    lock = FileLock(str(lock_path))
-    try:
-        lock.acquire(timeout=0)
-    except Timeout:
-        return False
-    try:
-        lock_path.unlink(missing_ok=True)
-        return not lock_path.exists()
-    finally:
-        lock.release()
 
 
 def remove_empty_parents(start: Path, *, stop: Path) -> tuple[Path, ...]:
