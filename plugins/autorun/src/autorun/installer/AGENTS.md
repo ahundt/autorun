@@ -142,9 +142,11 @@ that need it. No disk access: stage generated content to a temp dir and point th
   and autorun metadata only from regular version directories, keeps edited and
   unproven files, and keeps `.venv` when those files leave the version tree in
   place. Symlinked and Windows reparse-point versions are reported without
-  reading their marker or contents. It reports each kept path and leaves the
-  cache `.autorun-install.lock` plus its plugin and market parents in place so
-  waiters and new installers retain one lock authority. Cache proof, refresh
+  reading their marker or contents; a manifest path beneath a replaced linked
+  directory is also kept and reported. It reports each kept path and uses the
+  persistent cache `.autorun-install.lock` for install, refresh, and uninstall.
+  The lock plus its plugin and market parents remain in place so waiters and new
+  installers retain one lock authority. Cache proof, refresh
   and retirement share one metadata exclusion set for
   `.orphaned_at`, `.venv`, bytecode and file-manager files. Foreign same-name
   trees are left and reported; caches under another market or plugin are never

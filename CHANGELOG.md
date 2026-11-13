@@ -722,16 +722,17 @@ enforce those policies.
      now removes hash-proven unchanged payload and autorun metadata from regular
      version directories, keeps edited and unproven files, and keeps `.venv`
      when the version tree remains. Symlinked and Windows reparse-point versions
-     are reported and never traversed. The cache `.autorun-install.lock` and its
-     parent directories remain so concurrent installers retain one lock
-     authority. Kept paths are reported, and I/O failures still fail.
+     are reported and never traversed; manifest files beneath a replaced linked
+     directory are also kept and reported. The cache `.autorun-install.lock`
+     and its parent directories remain after install, refresh, and uninstall so
+     concurrent installers retain one lock authority. I/O failures still fail.
 122. Two installs that reached daemon restart together could leave one install
-     exiting 1 because the other held the restart lock. Each install now records
-     its restart-request time before waiting. It accepts a healthy daemon only
-     when the validated daemon birth record is later than that request, proving
-     the concurrent installer restarted it; an existing daemon is replaced
-     regardless of age or source mtimes. A remaining failure carries its reason
-     and tells the user to wait and rerun the install.
+     exiting 1 because the other held the restart lock. Each install now
+     snapshots the validated daemon record before waiting and keeps a healthy
+     daemon only when that record changed while it waited, proving the
+     concurrent installer replaced it. An unchanged or unproven daemon is
+     replaced regardless of age, source mtimes, or wall-clock movement. A
+     remaining failure carries its reason and tells the user to wait and rerun.
 123. A second identical plain install printed no Claude cache result. It now
      prints an ok line naming the cache directory as already current.
 124. A forced cache refresh that created backups and then failed during a later

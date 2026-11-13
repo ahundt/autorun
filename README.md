@@ -831,7 +831,7 @@ Accepted values: `--codex-hook-source: user|plugin|both|none`;
 `--codex-plugin-marketplace: personal|github`;
 `--claude-agents-skills: link|copy|none`;
 `--skill-placement: auto|native|both` or `HARNESS=auto|native|both`, repeatable;
-`--cache-install-lock-timeout-seconds: positive seconds` (default `600`);
+`--cache-install-lock-timeout-seconds: (0, 86400] seconds` (default `600`);
 `--exit2-mode: auto|always|never`;
 `--cli: claude|gemini|antigravity|qwen|codex|pi|prime|opencode`;
 `--update-method: auto|claude|gemini|plugin|uv|pip`;
@@ -841,8 +841,11 @@ Accepted values: `--codex-hook-source: user|plugin|both|none`;
 To keep an install choice across `autorun --update` and automatic
 reinstalls, which run with no flags, put it in `autorun.config.json` under the
 flag's name with underscores: `{"codex_hook_source": "both", "skill_placement":
-{"codex": "native"}}`. A flag or `AUTORUN_<NAME>` variable still wins, and an
-invalid value is ignored in favor of the default.
+{"codex": "native"}}`. A flag or `AUTORUN_<NAME>` variable still wins. An
+invalid `cache_install_lock_timeout_seconds` value is rejected with its key,
+value and accepted range. For other install settings, an unrecognized
+environment or config-file value falls through to the next tier, then the
+default when no lower tier supplies a valid value.
 
 ## Troubleshooting
 
@@ -852,7 +855,7 @@ invalid value is ignored in favor of the default.
 | Commands do nothing | `autorun --status` checks every detected agent and runs the hook command once (`ok hook command`). Hook calls are logged to `~/.autorun/hook_entry_debug.log`, the daemon to `~/.autorun/daemon.log`. Restart the agent session after any install. |
 | Claude's task tools are missing or vanish | Claude Code 2.1.268 and later offer them to newer models only with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`. `autorun --install` sets it in `~/.claude/settings.json` unless you already did; start a new session. Without the tools autorun does not enforce tasks, and says so at session start. [Details and other agents](plugins/autorun/TROUBLESHOOTING.md#claude-task-tools-are-missing-or-vanished). |
 | Claude Code plugin will not load | `claude --debug` shows plugin loading. Reinstall: `claude plugin uninstall ar@autorun`, then the marketplace commands in [Other ways to install](#other-ways-to-install). The installed copy is under `~/.claude/plugins/cache/autorun/ar/`. |
-| Claude cache differs from this build | Run `autorun --status`. A plain `autorun --install` changes only hash-proven files. Edited files keep their last recorded hash in `.autorun-owned` and are never re-recorded; unproven files are never added. `autorun --install --force` backs up files detected as edited or unproven when the refresh selects them, prints each backup path, and refreshes the same version directory in place. It never moves or deletes that directory or its `.venv`. Explicit uninstall removes proven payload and metadata only from regular version directories. It keeps and reports edited files, unproven files, symlinked or Windows reparse-point versions, `.venv` when a version remains, and the cache `.autorun-install.lock`; the lock and its parent directories stay in place so concurrent installers keep one lock authority. Delete a kept version folder by hand only when no running session needs it. Start a new Claude session for hook-manifest changes. |
+| Claude cache differs from this build | Run `autorun --status`. A plain `autorun --install` changes only hash-proven files. Edited files keep their last recorded hash in `.autorun-owned` and are never re-recorded; unproven files are never added. `autorun --install --force` backs up files detected as edited or unproven when the refresh selects them, prints each backup path, and refreshes the same version directory in place. It never moves or deletes that directory or its `.venv`. Explicit uninstall removes proven payload and metadata only from regular version directories. It keeps and reports edited files, unproven files, symlinked or Windows reparse-point versions, `.venv` when a version remains, and the cache `.autorun-install.lock`; the lock and its parent directories stay in place after install, refresh, and uninstall so concurrent installers keep one lock authority. Delete a kept version folder by hand only when no running session needs it. Start a new Claude session for hook-manifest changes. |
 | Anything else | `autorun --install --force` republishes hooks, commands and skills. If another install holds the Claude cache lock, autorun prints the cache path and waits up to `cache_install_lock_timeout_seconds` (default 600). Values must be greater than zero and at most 86400 seconds; invalid CLI, environment, or config-file values report the key, rejected value, and accepted range. On timeout, wait for the other install to finish and rerun. Full guide: [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md). |
 
 Three same-version repair limits remain in rc4. A file changed after backup
