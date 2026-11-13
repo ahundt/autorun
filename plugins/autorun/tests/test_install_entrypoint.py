@@ -400,6 +400,7 @@ def test_two_main_processes_bound_cache_lock_contention_through_config(
     )
     assert cache is not None
     signal = tmp_path / "runtime-started"
+    release = tmp_path / "contender-exited"
     script = r'''
 import os, subprocess, time
 from pathlib import Path
@@ -410,7 +411,12 @@ def run(argv, **kwargs):
 
 def slow_runtime(*args, **kwargs):
     Path(os.environ["SLOW_RUNTIME_SIGNAL"]).write_text("started\n", encoding="utf-8")
-    time.sleep(float(os.environ["SLOW_RUNTIME_SECONDS"]))
+    # Hold the cache lock until the contending process has exited. A fixed
+    # sleep let a slow-starting contender arrive after the lock was free.
+    release = Path(os.environ["SLOW_RUNTIME_RELEASE"])
+    deadline = time.monotonic() + 30
+    while not release.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
     return runtime.Outcome("Claude cache runtime", True, "slow fake completed")
 
 entrypoint._run = run
@@ -426,7 +432,7 @@ raise SystemExit(entrypoint.main(["--install", "ar", "--claude", "--force"]))
         "AUTORUN_USE_DAEMON": "0",
         "AUTORUN_CACHE_INSTALL_LOCK_TIMEOUT_SECONDS": "0.05",
         "SLOW_RUNTIME_SIGNAL": str(signal),
-        "SLOW_RUNTIME_SECONDS": "0.4",
+        "SLOW_RUNTIME_RELEASE": str(release),
     }
     command = [sys.executable, "-c", script]
     first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
@@ -434,7 +440,10 @@ raise SystemExit(entrypoint.main(["--install", "ar", "--claude", "--force"]))
     while not signal.exists() and first.poll() is None and time.monotonic() < deadline:
         time.sleep(0.01)
     assert signal.exists(), first.communicate(timeout=5)
-    second = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
+    try:
+        second = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
+    finally:
+        release.write_text("done\n", encoding="utf-8")
     first_stdout, first_stderr = first.communicate(timeout=15)
 
     assert first.returncode == 0, (first_stdout, first_stderr)
