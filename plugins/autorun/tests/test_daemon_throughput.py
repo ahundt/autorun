@@ -16,6 +16,7 @@ import json
 import pytest
 
 from autorun import core
+from autorun import ipc
 from autorun import session_manager
 from autorun.core import EventContext, ThreadSafeDB
 from autorun.task_pause import (
@@ -387,7 +388,14 @@ def test_an_unreachable_daemon_still_names_the_restart():
     assert "autorun --restart-daemon" in str(response)
 
 
-def _restart_with_daemon_aged(monkeypatch, age_seconds, src_dir=None, answers=True, **kwargs):
+def _restart_with_daemon_aged(
+    monkeypatch,
+    age_seconds,
+    src_dir=None,
+    answers=True,
+    daemon_birth_units=None,
+    **kwargs,
+):
     """Run restart_daemon() against a daemon of the given age.
 
     ``answers`` is whether it answers a round-trip probe; it always accepts
@@ -413,6 +421,17 @@ def _restart_with_daemon_aged(monkeypatch, age_seconds, src_dir=None, answers=Tr
     monkeypatch.setattr(restart_mod, "is_daemon_responding", lambda: True)
     monkeypatch.setattr(restart_mod.ipc, "answers_round_trip", lambda *a, **k: answers)
     monkeypatch.setattr(restart_mod, "_daemon_age_seconds", lambda pid: age_seconds)
+    monkeypatch.setattr(restart_mod.time, "time", lambda: 100.0)
+    if daemon_birth_units is None:
+        daemon_birth_units = round(
+            (100.0 - age_seconds) * restart_mod.ipc.PROCESS_BIRTH_UNITS_PER_SECOND
+        )
+    monkeypatch.setattr(
+        restart_mod.ipc,
+        "daemon_record_birth_units",
+        lambda path, expected_pid=None: daemon_birth_units,
+        raising=False,
+    )
     monkeypatch.setattr(restart_mod, "_stop_daemon", stop)
     monkeypatch.setattr(restart_mod, "_start_daemon", start)
     try:
@@ -457,11 +476,23 @@ def test_a_restart_after_editing_source_is_never_coalesced(monkeypatch, tmp_path
     stop.assert_called_once()
 
 
-def test_an_install_handoff_accepts_a_fresh_healthy_daemon(monkeypatch):
-    """A concurrent install may reuse the healthy daemon the other install started."""
+def test_an_install_handoff_always_replaces_the_daemon(monkeypatch):
+    """An install must load its build even when the existing daemon is young."""
     window = core.CONFIG["daemon_restart_coalesce_seconds"]
     code, stop = _restart_with_daemon_aged(
         monkeypatch, window / 2, replace_runtime_daemon=True
+    )
+    stop.assert_called_once()
+
+
+def test_an_install_handoff_accepts_a_concurrent_restart(monkeypatch):
+    """A daemon born after this install requested restart satisfies the handoff."""
+    units = ipc.PROCESS_BIRTH_UNITS_PER_SECOND
+    code, stop = _restart_with_daemon_aged(
+        monkeypatch,
+        0,
+        daemon_birth_units=round(101.0 * units),
+        replace_runtime_daemon=True,
     )
     assert code == 0
     stop.assert_not_called()

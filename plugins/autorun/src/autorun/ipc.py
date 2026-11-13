@@ -118,8 +118,8 @@ def process_start_units(pid: int) -> int:
         return 0
 
 
-def daemon_record_pid(path: Path) -> int | None:
-    """Return the live PID named by a ``<pid> <birth>`` daemon record."""
+def _validated_daemon_record(path: Path) -> tuple[int, int] | None:
+    """Return the live ``(pid, birth)`` named by a daemon record."""
     try:
         pid_token, birth_token, *_ = path.read_text(encoding="utf-8").split()
         pid = int(pid_token)
@@ -129,7 +129,21 @@ def daemon_record_pid(path: Path) -> int | None:
     actual_birth = process_start_units(pid)
     if recorded_birth <= 0 or actual_birth != recorded_birth:
         return None
-    return pid
+    return pid, recorded_birth
+
+
+def daemon_record_pid(path: Path) -> int | None:
+    """Return the live PID named by a ``<pid> <birth>`` daemon record."""
+    record = _validated_daemon_record(path)
+    return record[0] if record is not None else None
+
+
+def daemon_record_birth_units(path: Path, *, expected_pid: int | None = None) -> int | None:
+    """Return the validated birth stamp for a daemon record and optional PID."""
+    record = _validated_daemon_record(path)
+    if record is None or (expected_pid is not None and record[0] != expected_pid):
+        return None
+    return record[1]
 
 # Whether the platform supports Unix domain sockets in Python's asyncio.
 # Windows has kernel AF_UNIX support since Windows 10 1803, but CPython

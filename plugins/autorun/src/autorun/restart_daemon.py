@@ -635,7 +635,12 @@ def restart_daemon(
         print("  ✗ ERROR: all-daemons and install handoff modes are mutually exclusive")
         return 1
 
-    # Step 0: Acquire restart lock (prevent concurrent restarts)
+    # Step 0: Acquire restart lock (prevent concurrent restarts). An install
+    # handoff may coalesce only with a daemon born after this request, proving
+    # that another installer restarted it while this process waited here.
+    restart_requested_units = round(
+        time.time() * ipc.PROCESS_BIRTH_UNITS_PER_SECOND
+    )
     # ExitStack enters the lock so a failure to create it can be reported on
     # its own, while the `with` below still owns releasing it.
     held = ExitStack()
@@ -675,18 +680,33 @@ def restart_daemon(
         # A round trip, not connect(): a wedged daemon's listen backlog still
         # accepts connections, and a wedged daemon is what a restart is for.
         if pid and not all_daemons and ipc.answers_round_trip():
-            age = _daemon_age_seconds(pid)
-            if age is not None and age < coalesce_window and not _source_newer_than(src_dir, age):
-                print(
-                    f"  ✓ Daemon PID {pid} started {age:.0f}s ago and answers a health check;"
-                    " not restarting it again."
+            if replace_runtime_daemon:
+                daemon_birth = ipc.daemon_record_birth_units(
+                    LOCK_PATH, expected_pid=pid
                 )
-                print(
-                    f"    A restart within {coalesce_window:g}s of the last one only cuts off"
-                    " every session sharing the daemon. Run it again after that"
-                    " if this daemon is still misbehaving."
-                )
-                return 0
+                if daemon_birth is not None and daemon_birth > restart_requested_units:
+                    print(
+                        f"  ✓ Concurrent install started healthy daemon PID {pid};"
+                        " not restarting it again."
+                    )
+                    return 0
+            else:
+                age = _daemon_age_seconds(pid)
+                if (
+                    age is not None
+                    and age < coalesce_window
+                    and not _source_newer_than(src_dir, age)
+                ):
+                    print(
+                        f"  ✓ Daemon PID {pid} started {age:.0f}s ago and answers a health check;"
+                        " not restarting it again."
+                    )
+                    print(
+                        f"    A restart within {coalesce_window:g}s of the last one only cuts off"
+                        " every session sharing the daemon. Run it again after that"
+                        " if this daemon is still misbehaving."
+                    )
+                    return 0
 
         # Steps 2-3: Stop the daemon owned by this source tree, if any.
         if pid:

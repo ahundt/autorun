@@ -464,6 +464,9 @@ src = Path(os.environ["RESTART_SRC"])
 restart_mod._resolve_src_dir = lambda: src
 restart_mod.get_daemon_pid = lambda **kwargs: 4242 if healthy.exists() else None
 restart_mod.ipc.answers_round_trip = lambda: healthy.exists()
+restart_mod.ipc.daemon_record_birth_units = lambda *_args, **_kwargs: (
+    int(healthy.read_text(encoding="utf-8")) if healthy.exists() else None
+)
 restart_mod._daemon_age_seconds = lambda _pid: 0.0
 restart_mod._source_newer_than = lambda *_args: False
 restart_mod._daemon_processes_for_src = lambda _src: []
@@ -478,7 +481,10 @@ restart_mod.verify_bashlex = lambda: True
 def start(_src):
     signal.write_text("started\n", encoding="utf-8")
     time.sleep(0.4)
-    healthy.write_text("healthy\n", encoding="utf-8")
+    healthy.write_text(
+        str(round(time.time() * restart_mod.ipc.PROCESS_BIRTH_UNITS_PER_SECOND)),
+        encoding="utf-8",
+    )
     return True
 restart_mod._start_daemon = start
 
