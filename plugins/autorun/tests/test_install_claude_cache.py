@@ -819,7 +819,14 @@ def test_pinned_commands_keep_each_manifest_event_for_bootstrap_failure(tmp_path
         "PreToolUse": [{"hooks": [{"type": "command", "command": claude.CONSOLE_HOOK_COMMAND}]}],
         "SessionStart": [{"hooks": [{"type": "command", "command": claude.CONSOLE_HOOK_COMMAND}]}],
     }}), encoding="utf-8")
-    interpreter = getattr(sys, "_base_executable", None) or sys.executable
+    # Before Python 3.11 sys._base_executable is the venv's own python on
+    # POSIX, which has the real `autorun` beside it: hook_entry then runs that
+    # CLI instead of failing to bootstrap, and on Linux it answers an unknown
+    # event with silence (exit 0, no output). The shared helper returns an
+    # interpreter with no autorun sibling on every version.
+    from test_hook_entry import _isolated_interpreter
+
+    interpreter = _isolated_interpreter(tmp_path)
     base = f"{interpreter} -I {hooks / 'hook_entry.py'} --cli claude"
 
     assert claude.pin_hook_command(cache, base)
