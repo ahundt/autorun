@@ -26,6 +26,7 @@ Complexity: O(E) in existing entries, one read and one atomic write.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -373,6 +374,20 @@ def withdraw_from_marketplace(path: Path, entry: Mapping[str, object]) -> bool:
     return removed
 
 
+def _linked_package_source(link: Path) -> Path | None:
+    """Resolve a sibling package from a symlink or a core.symlinks=false file."""
+    if link.is_symlink():
+        source = link.parent / os.readlink(link)
+    elif link.is_file():
+        try:
+            source = link.parent / link.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+    else:
+        source = link
+    return source if source.is_dir() else None
+
+
 def stage_plugin(
     plugin_dir: Path,
     staging: Path,
@@ -405,6 +420,10 @@ def stage_plugin(
             skipped.add(BUNDLED_PLUGINS_DIR)
             if not include_skills:
                 skipped.add("skills")
+        if source == plugin_dir / "src":
+            linked_package = source / "pdf_extraction"
+            if linked_package.is_symlink() or linked_package.is_file():
+                skipped.add(linked_package.name)
         if source == plugin_dir / "skills":
             skipped.update(
                 name for name in names
@@ -417,6 +436,14 @@ def stage_plugin(
         return skipped
 
     shutil.copytree(plugin_dir, staging, ignore=ignore)
+    linked_source = _linked_package_source(plugin_dir / "src" / "pdf_extraction")
+    if linked_source is not None:
+        shutil.copytree(
+            linked_source,
+            staging / "src" / "pdf_extraction",
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.py[cod]", "*.tmp", ".DS_Store"),
+        )
     manifest_path = staging / ".codex-plugin" / "plugin.json"
     if not include_skills and manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
