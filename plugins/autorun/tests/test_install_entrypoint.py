@@ -445,6 +445,79 @@ raise SystemExit(entrypoint.main(["--install", "ar", "--claude", "--force"]))
     assert first_stderr == second.stderr == ""
 
 
+def test_two_install_processes_coalesce_daemon_restart(monkeypatch, isolated, tmp_path):
+    """Violation excluded: a concurrent install fails only because restart is busy."""
+    import time
+
+    signal = tmp_path / "restart-started"
+    healthy = tmp_path / "daemon-healthy"
+    script = r'''
+import os, time
+from pathlib import Path
+from autorun import restart_daemon as restart_mod
+from autorun.installer import entrypoint, orchestrate, runtime
+from autorun.installer.traversal import Mode
+
+signal = Path(os.environ["RESTART_SIGNAL"])
+healthy = Path(os.environ["RESTART_HEALTHY"])
+src = Path(os.environ["RESTART_SRC"])
+restart_mod._resolve_src_dir = lambda: src
+restart_mod.get_daemon_pid = lambda **kwargs: 4242 if healthy.exists() else None
+restart_mod.ipc.answers_round_trip = lambda: healthy.exists()
+restart_mod._daemon_age_seconds = lambda _pid: 0.0
+restart_mod._source_newer_than = lambda *_args: False
+restart_mod._daemon_processes_for_src = lambda _src: []
+restart_mod._all_daemon_processes = lambda: []
+restart_mod.cleanup_stale_files = lambda: None
+restart_mod._clear_pycache = lambda _src: None
+restart_mod._check_conflicting_packages = lambda: None
+restart_mod.is_daemon_responding = lambda: healthy.exists()
+restart_mod._display_daemon_diagnostics = lambda _src: True
+restart_mod.verify_bashlex = lambda: True
+
+def start(_src):
+    signal.write_text("started\n", encoding="utf-8")
+    time.sleep(0.4)
+    healthy.write_text("healthy\n", encoding="utf-8")
+    return True
+restart_mod._start_daemon = start
+
+entrypoint.shutil.which = lambda name: f"/bin/{name}" if name == "claude" else None
+runtime.bootstrap = lambda *args, **kwargs: (runtime.Outcome("bootstrap", True, "test"),)
+orchestrate.install = lambda **kwargs: orchestrate.Result(Mode.INSTALL)
+def restart(**kwargs):
+    rc = restart_mod.restart_daemon(replace_runtime_daemon=True)
+    return runtime.Outcome("daemon restart", rc == 0, "wait and rerun" if rc else "")
+runtime.restart_daemon = restart
+raise SystemExit(entrypoint.main(["--install", "ar", "--claude"]))
+'''
+    environment = {
+        **os.environ,
+        "HOME": str(isolated),
+        "USERPROFILE": str(isolated),
+        "RESTART_SIGNAL": str(signal),
+        "RESTART_HEALTHY": str(healthy),
+        "RESTART_SRC": str(REPO / "plugins" / "autorun" / "src"),
+    }
+    command = [sys.executable, "-c", script]
+    first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+    deadline = time.monotonic() + 10
+    while not signal.exists() and first.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert signal.exists(), first.communicate(timeout=5)
+    second = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
+    first_stdout, first_stderr = first.communicate(timeout=15)
+
+    assert first.returncode == second.returncode == 0, (
+        first_stdout,
+        first_stderr,
+        second.stdout,
+        second.stderr,
+    )
+    assert "not restarting it again" in second.stdout
+    assert first_stderr == second.stderr == ""
+
+
 def test_selection_comes_from_the_manifest_and_accepts_the_retired_name():
     from autorun.installer.entrypoint import parse_selection
 

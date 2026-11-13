@@ -592,8 +592,10 @@ def test_a_failed_daemon_restart_keeps_the_cli_diagnostic():
     result = restart_daemon(run=run)
 
     assert not result.ok
-    assert result.detail == "missing filelock dependency"
-    assert result.describe() == "FAIL daemon restart — missing filelock dependency"
+    assert "missing filelock dependency" in result.detail
+    assert "wait for the other restart to finish and rerun the install" in result.detail
+    assert "=== Daemon Restart ===" not in result.detail
+    assert result.describe().startswith("FAIL daemon restart — missing filelock dependency")
 
 
 def test_installer_subprocesses_never_inherit_an_open_stdin():

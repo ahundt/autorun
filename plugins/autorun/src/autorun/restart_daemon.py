@@ -239,7 +239,7 @@ class RestartLockUnavailable(OSError):
 
 
 @contextmanager
-def restart_lock():
+def restart_lock(*, timeout: float = 0.0):
     """Context manager for the restart lock. Yields True if acquired, False otherwise.
 
     Uses filelock for cross-platform file locking (works on Unix and Windows).
@@ -252,7 +252,7 @@ def restart_lock():
                 return
             # ... do restart work ...
     """
-    lock = FileLock(str(RESTART_LOCK_PATH), timeout=0)
+    lock = FileLock(str(RESTART_LOCK_PATH), timeout=timeout)
     acquired = False
     try:
         # FileLock would create the lock's directory with the umask's mode.
@@ -634,7 +634,10 @@ def restart_daemon(
     # its own, while the `with` below still owns releasing it.
     held = ExitStack()
     try:
-        acquired = held.enter_context(restart_lock())
+        coalesce_window = float(CONFIG["daemon_restart_coalesce_seconds"])
+        acquired = held.enter_context(
+            restart_lock(timeout=coalesce_window if replace_runtime_daemon else 0.0)
+        )
     except RestartLockUnavailable as exc:
         print(f"  ✗ Cannot restart: {exc}")
         print("    This process may not write autorun's state directory (a sandbox")
@@ -661,16 +664,15 @@ def restart_daemon(
 
         # A round trip, not connect(): a wedged daemon's listen backlog still
         # accepts connections, and a wedged daemon is what a restart is for.
-        if pid and not replace_runtime_daemon and not all_daemons and ipc.answers_round_trip():
-            window = float(CONFIG["daemon_restart_coalesce_seconds"])
+        if pid and not all_daemons and ipc.answers_round_trip():
             age = _daemon_age_seconds(pid)
-            if age is not None and age < window and not _source_newer_than(src_dir, age):
+            if age is not None and age < coalesce_window and not _source_newer_than(src_dir, age):
                 print(
                     f"  ✓ Daemon PID {pid} started {age:.0f}s ago and answers a health check;"
                     " not restarting it again."
                 )
                 print(
-                    f"    A restart within {window:g}s of the last one only cuts off"
+                    f"    A restart within {coalesce_window:g}s of the last one only cuts off"
                     " every session sharing the daemon. Run it again after that"
                     " if this daemon is still misbehaving."
                 )

@@ -693,11 +693,18 @@ def restart_daemon(*, run: Runner = _spawn) -> Outcome:
         )
     except (OSError, subprocess.SubprocessError) as error:
         return Outcome("daemon restart", False, f"{type(error).__name__}: {error}")
-    return Outcome(
-        "daemon restart",
-        result.returncode == 0,
-        "" if result.returncode == 0 else _first_line(result.stderr or result.stdout),
-    )
+    detail = ""
+    if result.returncode != 0:
+        lines = [
+            line.strip()
+            for line in (result.stderr or result.stdout).splitlines()
+            if line.strip() and line.strip() != "=== Daemon Restart ==="
+        ]
+        reason = lines[0] if lines else f"restart command exited {result.returncode}"
+        detail = (
+            f"{reason}; wait for the other restart to finish and rerun the install"
+        )
+    return Outcome("daemon restart", result.returncode == 0, detail)
 
 
 # --- self-update ------------------------------------------------------------
