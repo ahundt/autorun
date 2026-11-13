@@ -2926,6 +2926,12 @@ class EventContext:
             return ctx.command_response("✅ AutoFile policy: strict-search")
             return ctx.command_response("Emergency stop!", continue_loop=False)
         """
+        # Notices queued by the prompt chain before the command ran (a task's
+        # wait on the user ending, for one) go out with the command's reply.
+        notices = "\n".join(message for message, channel in self._chain_notifications if channel != AI_ECHO_CHANNEL)
+        self._chain_notifications.clear()
+        if notices:
+            response_text = f"{notices}\n{response_text}" if response_text else notices
         resp = {
             "continue": continue_loop,
             "stopReason": "",
@@ -3126,7 +3132,7 @@ class AutorunApp:
 
         return decorator
 
-    def _run_chain(self, ctx: EventContext, chain_name: str) -> Optional[Dict]:
+    def _run_chain(self, ctx: EventContext, chain_name: str, *, flush_notifications: bool = True) -> Optional[Dict]:
         """Run a handler chain, return first non-None result ("first-wins" semantics).
 
         CHAIN RETURN VALUE CONTRACT
@@ -3157,7 +3163,7 @@ class AutorunApp:
             if result is not None:
                 return result
         # Flush accumulated notifications if no handler returned a response
-        if ctx._chain_notifications:
+        if flush_notifications and ctx._chain_notifications:
             return ctx.respond("allow", "")
         return None
 
@@ -3294,10 +3300,14 @@ class AutorunApp:
         # UserPromptSubmit: run lifecycle boundaries before command handling so
         # both commands and ordinary prompts observe the same new-turn state.
         if event == "UserPromptSubmit":
-            result = self._run_chain(ctx, event)
+            # A prompt that is a command keeps the chain's queued notices
+            # for the command's own reply (command_response). Flushing them
+            # here answered the prompt before the command ran, so a command
+            # typed as the reply that ends a task's wait on the user did nothing.
+            match = self._find_command(ctx.prompt.strip(), ctx.cli_type)
+            result = self._run_chain(ctx, event, flush_notifications=match is None)
             if result is not None:
                 return result
-            match = self._find_command(ctx.prompt.strip(), ctx.cli_type)
             if match:
                 refusal = self.refuse_unless_user(ctx, match)
                 if refusal is not None:

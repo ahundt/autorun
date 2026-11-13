@@ -259,6 +259,28 @@ def test_awaiting_user_cleared_only_by_user_authored_prompt(gate_env, author):
         assert not blocks(after, "claude"), f"a {author}-authored prompt restored enforcement: {after}"
 
 
+@pytest.mark.parametrize("cli_type", TASK_TOOL_PLATFORMS)
+def test_command_typed_as_the_reply_still_runs(gate_env, cli_type):
+    """The reply that ends a wait is often the command the wait asked for.
+
+    The restore queues a notice and returns None; the chain used to answer the
+    prompt with that notice alone, so ``/ar:ok 'git push'`` typed while a task
+    waited on push approval granted nothing and the push stayed blocked.
+    """
+    session = _session(cli_type, "command-reply")
+    session.seed("7", "Push release-1.0")
+    _enter(session)
+
+    response = session.prompt("/ar:ok 'git push' 2h")
+
+    assert session.status("7") == "in_progress", "the user's reply did not restore #7"
+    said = text(response)
+    assert "Allowed" in said and "git push" in said, f"the command typed as the reply did not run: {response}"
+    assert "#7" in said, f"the agent was not told the user replied about #7: {response}"
+    listed = text(session.prompt("/ar:blocks"))
+    assert "git push" in listed, f"the allow was not recorded: {listed}"
+
+
 def test_awaiting_user_cleared_by_agent_task_update(gate_env):
     session = _session("claude", "update")
     session.seed("7", "Push release-1.0")

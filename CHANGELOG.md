@@ -775,6 +775,13 @@ enforce those policies.
      adopts and writes that same form, so the forced install succeeds with no
      backups of those files, and a cache where an earlier build wrote the link
      is converted on the next install.
+129. A command typed as the reply to a task waiting on you did nothing. When a
+     task was marked `AUTORUN_TASK_AWAITING_USER` for push approval and you
+     answered with `/ar:ok 'git push'`, autorun reported only that the task
+     was no longer waiting, recorded no allow, and the push stayed blocked;
+     typing the command a second time worked. The command now runs on the
+     first prompt and its reply carries the notice. This affected every `/ar:`
+     command on every harness with task tools.
 
 ### For contributors
 
