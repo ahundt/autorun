@@ -66,6 +66,14 @@ def _python_sources() -> list[Path]:
     return sorted({p.resolve() for p in files})
 
 
+def _portability_sources() -> list[Path]:
+    """Return product and test Python sources, excluding this scanner's fixtures."""
+    return sorted(
+        path for path in _isolation_sources()
+        if path != Path(__file__).resolve()
+    )
+
+
 def _isolation_sources() -> list[Path]:
     """Product sources plus the tests, for checks about test isolation.
 
@@ -223,9 +231,30 @@ _POSIX_VENV = re.compile(
 )
 
 
-def posix_only_venv_paths(source: str) -> list[str]:
-    """Return venv paths written in the POSIX layout only."""
-    return [m.group(0) for m in _POSIX_VENV.finditer(source)]
+def posix_only_venv_paths(source: str, filename: str = "<test>") -> list[str]:
+    """Return unguarded venv paths written in the POSIX layout only."""
+    try:
+        tree = ast.parse(source, filename=filename)
+    except SyntaxError:
+        return [m.group(0) for m in _POSIX_VENV.finditer(source)]
+    guarded_lines = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and any(
+            token in ast.unparse(node.test) for token in ("sys.platform", "os.name", "platform.system")
+        ):
+            guarded_lines.update(range(node.body[0].lineno, (node.body[-1].end_lineno or node.body[-1].lineno) + 1))
+    documentation = _docstring_lines(tree)
+    return [
+        match.group(0)
+        for match in _POSIX_VENV.finditer(source)
+        if (
+            source.count("\n", 0, match.start()) + 1 not in guarded_lines
+            and source.count("\n", 0, match.start()) + 1 not in documentation
+            and not source.splitlines()[source.count("\n", 0, match.start())].lstrip().startswith("#")
+            and "Scripts" not in source.splitlines()[source.count("\n", 0, match.start())]
+            and "portability:" not in source.splitlines()[source.count("\n", 0, match.start())]
+        )
+    ]
 
 
 def test_no_module_assumes_a_posix_only_venv_layout():
@@ -240,7 +269,7 @@ def test_no_module_assumes_a_posix_only_venv_layout():
             line for line in text.splitlines()
             if not line.strip().startswith("#") and "Scripts" not in line
         )
-        for found in posix_only_venv_paths(body):
+        for found in posix_only_venv_paths(body, str(path)):
             offenders.append(f"{path.relative_to(PLUGIN_ROOT)}: {found}")
     assert not offenders, (
         "a venv executable path is written in the POSIX layout only. Windows "
@@ -253,6 +282,40 @@ def test_no_module_assumes_a_posix_only_venv_layout():
 def test_the_venv_layout_checker_catches_the_original_defect():
     original = 'venv_bin = Path(plugin_root) / ".venv" / "bin" / "autorun"'
     assert posix_only_venv_paths(original), "checker missed the shipped defect"
+    guarded = "if sys.platform != 'win32':\n    path = '.venv/bin/python'\n"
+    assert not posix_only_venv_paths(guarded)
+
+
+def _platform_guarded(node: ast.AST, parents: dict[int, ast.AST]) -> bool:
+    current = parents.get(id(node))
+    while current is not None:
+        if isinstance(current, ast.If):
+            condition = ast.unparse(current.test)
+            if any(token in condition for token in ("sys.platform", "os.name", "platform.system")):
+                return True
+        current = parents.get(id(current))
+    return False
+
+
+def unguarded_signal_sigkill(source: str, filename: str = "<test>") -> list[int]:
+    """Return ``signal.SIGKILL`` uses not protected by a platform branch."""
+    tree = ast.parse(source, filename=filename)
+    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    offenders = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Attribute) and node.attr == "SIGKILL"):
+            continue
+        if isinstance(node.value, ast.Name) and node.value.id == "signal" and not _platform_guarded(node, parents):
+            line = source.splitlines()[node.lineno - 1]
+            if "portability:" not in line:
+                offenders.append(node.lineno)
+    return offenders
+
+
+def test_the_signal_checker_catches_unguarded_sigkill_and_accepts_a_guard():
+    assert unguarded_signal_sigkill("os.kill(pid, signal.SIGKILL)\n") == [1]
+    guarded = "if sys.platform != 'win32':\n    os.kill(pid, signal.SIGKILL)\n"
+    assert not unguarded_signal_sigkill(guarded)
 
 
 # --- 3. background spawns that only detach on POSIX --------------------------
@@ -366,6 +429,81 @@ def test_the_encoding_checker_catches_both_defects_and_accepts_the_fix():
         'subprocess.run(argv, text=True, encoding="utf-8", errors="replace")\n'
     )
     assert not text_io_without_encoding("Prompt(text=True)\n"), "only subprocess calls"
+
+
+def dbstat_without_fallback(source: str, filename: str = "<test>") -> list[int]:
+    """Return dbstat SQL literals unless their try block catches OperationalError."""
+    tree = ast.parse(source, filename=filename)
+    documentation = _docstring_lines(tree)
+    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    offenders = []
+    for node in ast.walk(tree):
+        if (
+            not isinstance(node, ast.Constant)
+            or not isinstance(node.value, str)
+            or "dbstat" not in node.value.lower()
+            or node.lineno in documentation
+            or "portability:" in source.splitlines()[node.lineno - 1]
+        ):
+            continue
+        current = parents.get(id(node))
+        fallback = False
+        while current is not None:
+            if isinstance(current, ast.Try):
+                fallback = any("OperationalError" in ast.unparse(handler.type) for handler in current.handlers if handler.type)
+                if fallback:
+                    break
+            current = parents.get(id(current))
+        if not fallback:
+            offenders.append(node.lineno)
+    return sorted(set(offenders))
+
+
+def test_the_dbstat_checker_requires_an_operationalerror_fallback():
+    assert dbstat_without_fallback('conn.execute("SELECT * FROM dbstat")\n') == [1]
+    guarded = (
+        "try:\n    conn.execute(\"SELECT * FROM dbstat\")\n"
+        "except sqlite3.OperationalError:\n    use_page_count()\n"
+    )
+    assert not dbstat_without_fallback(guarded)
+
+
+def test_portability_scan_has_files():
+    assert _portability_sources(), "portability scan found zero Python files"
+
+
+def repo_text_io_without_encoding(source: str, filename: str = "<test>") -> list[int]:
+    """Reuse the text-I/O AST scan for lines that name repository documents."""
+    lines = source.splitlines()
+    return [
+        lineno for lineno in text_io_without_encoding(source, filename)
+        if any(token in lines[lineno - 1] for token in ("REPO_ROOT", "PLUGIN_ROOT", ".md", "README", "AGENTS", "SKILL"))
+        and "portability:" not in lines[lineno - 1]
+    ]
+
+
+def test_no_new_portability_offenders_in_product_or_tests():
+    offenders = []
+    checks = (
+        (unguarded_signal_sigkill, "signal.SIGKILL", _portability_sources()),
+        (dbstat_without_fallback, "dbstat without sqlite3.OperationalError fallback", _portability_sources()),
+        (lambda value, name: [line for line in posix_only_venv_paths(value, name)], "POSIX-only venv path", _python_sources()),
+    )
+    for checker, description, paths in checks:
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            for lineno in checker(text, str(path)):
+                offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{lineno}: {description}")
+    for path in _python_sources():
+        text = path.read_text(encoding="utf-8")
+        for lineno in repo_text_io_without_encoding(text, str(path)):
+            offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{lineno}: repository text I/O without encoding")
+    assert not offenders, "cross-platform portability violations:\n" + "\n".join(offenders)
+
+
+# The repository-document rule is deliberately product-only: tests may read
+# temporary files in the platform's locale, while product reads of shipped
+# Markdown must always name UTF-8. The helper remains tested above for both.
 
 
 # --- 4. home redirects that move only one variable ---------------------------

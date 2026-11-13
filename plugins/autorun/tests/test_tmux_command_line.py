@@ -688,7 +688,7 @@ class TestSplitWindowsOnAPrivateServer:
             # tests' tmux servers then stalled for 10 seconds at a time.
             for _ in range(50):
                 if pid_file.exists() and pid_file.read_text().strip():
-                    os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    os.kill(int(pid_file.read_text()), getattr(signal, "SIGKILL", signal.SIGTERM))
                     break
                 time.sleep(0.1)
 
