@@ -206,8 +206,11 @@ def stop_owned(sandbox, live_pid):
                         f"{pid} {psutil.Process(pid).cmdline()}" for pid in pids))
         for pid in pids:
             try:
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
+                if os.name == "nt":
+                    psutil.Process(pid).terminate()
+                else:
+                    os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, psutil.NoSuchProcess, psutil.AccessDenied):
                 owned.discard(pid)
         deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
         while time.monotonic() < deadline and owned.intersection(holders(sandbox)):
