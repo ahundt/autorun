@@ -305,6 +305,68 @@ def test_fake_harness_argv_uses_a_real_executable_name_under_a_path_with_spaces(
     assert executable_dir == Path(argv[0]).parent
 
 
+def _cleanup_private_tmux(real_tmux, socket):
+    """Stop the owned server and remove its socket even when no server started."""
+    import os
+    import subprocess
+    import time
+
+    try:
+        subprocess.run(
+            [real_tmux, '-S', str(socket), 'kill-server'],
+            capture_output=True, text=True, timeout=10,
+            env={key: value for key, value in os.environ.items() if key != 'TMUX'},
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    for _ in range(20):
+        if not os.path.exists(socket):
+            return
+        time.sleep(0.05)
+    try:
+        os.unlink(socket)
+    except FileNotFoundError:
+        pass
+
+
+def test_private_tmux_cleanup_stops_server_and_unlinks_socket_after_body_error(request):
+    import os
+    import subprocess
+    import tempfile
+    import uuid
+    import psutil
+
+    real_tmux = getattr(request.config, '_autorun_real_tmux_bin', None)
+    if real_tmux is None or os.name != 'posix':
+        pytest.skip('no private tmux server on this platform')
+    socket = os.path.join(tempfile.gettempdir(), f'arh9-check-{uuid.uuid4().hex[:8]}')
+    env = {key: value for key, value in os.environ.items() if key != 'TMUX'}
+    command = [real_tmux, '-f', '/dev/null', '-S', socket]
+    started = subprocess.run(
+        [*command, 'new-session', '-d', '-s', 'cleanup-check'],
+        capture_output=True, text=True, timeout=10, env=env,
+    )
+    assert started.returncode == 0, started.stderr
+    pid_result = subprocess.run(
+        [*command, 'display-message', '-p', '#{pid}'],
+        capture_output=True, text=True, timeout=10, env=env,
+    )
+    pid = int(pid_result.stdout.strip())
+    try:
+        try:
+            raise RuntimeError('test body failed')
+        except RuntimeError:
+            pass
+    finally:
+        _cleanup_private_tmux(real_tmux, socket)
+    assert not os.path.exists(socket)
+    assert not psutil.pid_exists(pid)
+
+    open(socket, 'w').close()
+    _cleanup_private_tmux(real_tmux, socket)
+    assert not os.path.exists(socket)
+
+
 @pytest.fixture
 def private_tmux(request, tmp_path):
     """A tmux server only this test uses, and a way to launch stubs in it.
@@ -395,7 +457,7 @@ int main(int argc, char **argv) {
     try:
         yield tmux, env, stub_argv
     finally:
-        tmux('kill-server')
+        _cleanup_private_tmux(real_tmux, socket)
 
 
 def _wait_for_screens(tmux, targets):
