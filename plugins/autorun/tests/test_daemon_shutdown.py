@@ -206,8 +206,10 @@ def test_stop_daemon_kills_after_both_graceful_paths_fail():
 def test_restart_replaces_and_stops_real_sandboxed_daemon(tmp_path, monkeypatch):
     from autorun import ipc, restart_daemon
 
-    home = tmp_path / "ar-home"
-    home.mkdir()
+    # The socket lives in this directory and AF_UNIX paths stop at 104 bytes
+    # on macOS; tmp_path under the default TMPDIR is already past that, and
+    # the daemon then exits 1 with "AF_UNIX path too long".
+    home = Path(tempfile.mkdtemp(prefix="d", dir=os.environ["AUTORUN_TEST_RUNTIME_DIR"]))
     monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
     for name, filename in [
         ("SOCKET_PATH", "daemon.sock"),
