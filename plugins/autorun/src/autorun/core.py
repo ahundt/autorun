@@ -3476,7 +3476,9 @@ class AutorunDaemon:
             semaphore.release()
             raise
         active = self._active_dispatches.setdefault(event, {})
-        active[dispatch] = (time.monotonic() + timeout, ctx.session_id)
+        # The deadline this request gives up on, so the slot counts as overdue
+        # from the moment the caller is told the handler timed out.
+        active[dispatch] = (deadline, ctx.session_id)
 
         def release(completed: asyncio.Future) -> None:
             semaphore.release()

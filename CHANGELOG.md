@@ -744,6 +744,11 @@ enforce those policies.
 124. A forced cache refresh that created backups and then failed during a later
      runtime step omitted those backup paths from the failure output. It now
      reports every backup it created on both success and failure paths.
+125. A session whose handler had just timed out could take a second handler
+     slot when the daemon was busy, because the slot's deadline was recorded
+     after the handler was scheduled, later than the deadline the request
+     gave up on. The slot now carries the request's own deadline, so the
+     session's next request is turned away until the hung handler ends.
 
 ### For contributors
 

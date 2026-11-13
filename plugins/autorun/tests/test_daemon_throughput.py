@@ -889,6 +889,37 @@ async def test_a_session_with_an_overdue_handler_does_not_take_a_second_slot(mon
 
 
 @pytest.mark.asyncio
+async def test_a_handler_is_overdue_at_the_deadline_its_caller_gave_up_on(monkeypatch):
+    """The slot's recorded deadline is the one the request timed out on, not a
+    later one taken after the handler was scheduled; otherwise the session's
+    next request arrives before that later deadline and takes a second slot."""
+    import asyncio
+    import time
+
+    timeout_seconds = 0.05
+    daemon, release = _blocking_daemon(monkeypatch, timeout_seconds, slots=2)
+    monkeypatch.setitem(core.CONFIG, "daemon_dispatch_timeout_cooldown_seconds", 0.0)
+    loop = asyncio.get_running_loop()
+    schedule = loop.run_in_executor
+
+    def slow_schedule(executor, func, *args):
+        future = schedule(executor, func, *args)
+        time.sleep(timeout_seconds / 2)  # a loaded machine: scheduling takes a while
+        return future
+
+    monkeypatch.setattr(loop, "run_in_executor", slow_schedule)
+    try:
+        first = await daemon._dispatch_with_timeout(EventContext(session_id="hang-1", event="PreToolUse"), "codex")
+        assert "daemon_dispatch_timeout" in str(first)
+        again = await daemon._dispatch_with_timeout(EventContext(session_id="hang-1", event="PreToolUse"), "codex")
+        assert "daemon_dispatch_contained" in str(again)
+        assert daemon.app.dispatch.call_count == 1
+    finally:
+        release.set()
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
 async def test_a_request_whose_hook_already_gave_up_is_not_dispatched(monkeypatch):
     """The hook stops waiting at its deadline. Running the handler after that
     spends a slot on an answer nobody reads and can apply side effects (a
