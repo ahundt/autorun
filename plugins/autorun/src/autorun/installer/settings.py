@@ -31,7 +31,13 @@ import argparse
 import os
 import re
 from dataclasses import dataclass
-from typing import Callable, Generic, Iterable, Mapping, Sequence, TypeVar
+from typing import Callable, Generic, Iterable, Mapping, MutableMapping, Sequence, TypeVar
+
+from ..config import CONFIG as _CONFIG_DEFAULTS
+
+_CACHE_INSTALL_LOCK_TIMEOUT_DEFAULT = float(
+    _CONFIG_DEFAULTS["cache_install_lock_timeout_seconds"]
+)
 
 T = TypeVar("T")
 
@@ -43,8 +49,50 @@ __all__ = [
 ]
 
 
-def autorun_config() -> Mapping[str, object]:
-    """autorun's ``CONFIG``, then the user config file, as one live view.
+class _AutorunConfigView(MutableMapping[str, object]):
+    """A live CONFIG view whose installer default still yields to the user file."""
+
+    def __init__(self, runtime: MutableMapping[str, object], user: Mapping[str, object]):
+        self.runtime = runtime
+        self.user = user
+
+    def __getitem__(self, key: str) -> object:
+        if key == "cache_install_lock_timeout_seconds":
+            if key in self.user:
+                return self.user[key]
+            value = self.runtime[key]
+            if value == _CACHE_INSTALL_LOCK_TIMEOUT_DEFAULT:
+                raise KeyError(key)
+            return value
+        if key in self.runtime:
+            return self.runtime[key]
+        return self.user[key]
+
+    def __setitem__(self, key: str, value: object) -> None:
+        self.runtime[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        if key == "cache_install_lock_timeout_seconds":
+            self.runtime[key] = _CACHE_INSTALL_LOCK_TIMEOUT_DEFAULT
+        else:
+            del self.runtime[key]
+
+    def __iter__(self):
+        keys = set(self.runtime) | set(self.user)
+        if (
+            "cache_install_lock_timeout_seconds" not in self.user
+            and self.runtime.get("cache_install_lock_timeout_seconds")
+            == _CACHE_INSTALL_LOCK_TIMEOUT_DEFAULT
+        ):
+            keys.discard("cache_install_lock_timeout_seconds")
+        return iter(keys)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def autorun_config() -> MutableMapping[str, object]:
+    """autorun's ``CONFIG`` and user config file as one live view.
 
     ``CONFIG`` alone never held an install setting: ``apply_user_config``
     overlays only runtime keys, so every install key in
@@ -58,19 +106,9 @@ def autorun_config() -> Mapping[str, object]:
     Imported inside the call because ``config.py`` pulls in the rest of the
     package; the installer must stay importable on its own.
     """
-    from collections import ChainMap
-
     from ..config import CONFIG, read_user_config
 
-    # Installer declarations own their defaults. This key is stored in CONFIG
-    # so runtime-wide defaults have one source, but it must still resolve as the
-    # setting's default rather than as a user-configured value.
-    runtime_config = {
-        key: value
-        for key, value in CONFIG.items()
-        if key != "cache_install_lock_timeout_seconds"
-    }
-    return ChainMap(runtime_config, read_user_config())
+    return _AutorunConfigView(CONFIG, read_user_config())
 
 
 def workaround_enabled(key: str) -> bool:
@@ -526,13 +564,10 @@ WRITE_SOURCE_METADATA = Setting(
     help="Regenerate tracked source metadata during install",
 )
 
-from ..config import CONFIG as _CONFIG_DEFAULTS
-
-
 CACHE_INSTALL_LOCK_TIMEOUT_SECONDS = Setting(
     name="cache_install_lock_timeout_seconds",
     parse=positive_seconds,
-    default=float(_CONFIG_DEFAULTS["cache_install_lock_timeout_seconds"]),
+    default=_CACHE_INSTALL_LOCK_TIMEOUT_DEFAULT,
     # The lock spans a pip reinstall, so the default permits a slow build but never waits forever.
     help="Maximum seconds to wait for another installer refreshing the same Claude cache",
 )

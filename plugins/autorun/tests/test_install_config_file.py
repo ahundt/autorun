@@ -45,6 +45,7 @@ def test_every_install_setting_resolves_from_the_file(config_home):
         "hook_no_sync": False,
         "hook_python": "/opt/python3.13",
         "write_source_metadata": True,
+        "cache_install_lock_timeout_seconds": 45,
         "tool": True,
         "conductor": False,
         "update_method": "uv",
