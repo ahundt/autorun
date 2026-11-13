@@ -151,6 +151,13 @@ that need it. No disk access: stage generated content to a temp dir and point th
   `.orphaned_at`, `.venv`, bytecode and file-manager files. Foreign same-name
   trees are left and reported; caches under another market or plugin are never
   visited.
+- **Claude writes a link that leaves the plugin as its content.** Its own
+  `plugin install`/`plugin update` keeps `CLAUDE.md -> AGENTS.md` and turns
+  `src/pdf_extraction -> ../../pdf-extractor/src/pdf_extraction` into a
+  directory of files. `claude._copy_payload` is the one owner of that form
+  for the expected tree, adoption and the fallback fill. Expecting the link
+  made a forced install fail with "directory blocks file", and no sandbox
+  with a stand-in `claude` reproduces it, because the stand-in copies nothing.
 - **Never `uv tool uninstall` a name whose console script is also ours.** uv
   removes scripts by *name*, not by owner, and every uv tool shares one bin
   directory. Measured, with `autorun-ai` installed and providing all three:

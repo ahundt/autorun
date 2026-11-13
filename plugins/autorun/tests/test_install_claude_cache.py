@@ -887,3 +887,93 @@ def test_a_backslash_in_the_plugin_root_keeps_hooks_json_parseable(tmp_path):
     claude.substitute_root(root)
     command = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
     assert command == f"python {root}/hooks/hook_entry.py"
+
+
+# ─── A link that leaves the plugin ───────────────────────────────────────────
+# Claude's own `plugin install`/`plugin update` copies the marketplace source
+# and writes a link whose target is outside the plugin as that target's
+# content (observed on 2026-11-13: `src/pdf_extraction ->
+# ../../pdf-extractor/src/pdf_extraction` arrived in the cache as a directory
+# of files, while `CLAUDE.md -> AGENTS.md` stayed a link). autorun must expect
+# that form, or a forced install fails with "directory blocks file".
+
+
+@pytest.fixture
+def source_with_outside_link(source, tmp_path):
+    shared = tmp_path / "sibling" / "pkg"
+    shared.mkdir(parents=True)
+    (shared / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (source / "src").mkdir()
+    (source / "src" / "pkg").symlink_to(Path("..") / ".." / "sibling" / "pkg", target_is_directory=True)
+    (source / "AGENTS.md").write_text("guidance\n", encoding="utf-8")
+    (source / "CLAUDE.md").symlink_to("AGENTS.md")
+    return source
+
+
+def _copy_as_claude_does(source: Path, home: Path) -> Path:
+    import shutil
+
+    cached = claude.cache_dir(Harness(), market="autorun", plugin="ar", version="1.2.3", home=home)
+    shutil.copytree(source, cached, symlinks=True)
+    link = cached / "src" / "pkg"
+    link.unlink()
+    shutil.copytree((source / "src" / "pkg").resolve(), link)
+    return cached
+
+
+def test_forced_refresh_accepts_the_directory_claude_wrote_for_an_outside_link(
+    source_with_outside_link, home, tmp_path
+):
+    source = source_with_outside_link
+    cached = _copy_as_claude_does(source, home)
+    backed_up: list[Path] = []
+
+    claude.refresh_cache(
+        source, cached, force=True, backup_root=tmp_path / "backups", backed_up=backed_up
+    )
+
+    assert backed_up == []
+    assert (cached / "src" / "pkg" / "__init__.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert not (cached / "src" / "pkg").is_symlink()
+    assert (cached / "CLAUDE.md").is_symlink()
+    assert claude.cache_mismatches(source, cached) == ()
+
+
+def test_plain_refresh_keeps_nothing_in_a_cache_claude_copied(source_with_outside_link, home):
+    source = source_with_outside_link
+    cached = _copy_as_claude_does(source, home)
+    kept: list[str] = []
+
+    claude.refresh_cache(source, cached, kept=kept)
+
+    assert kept == []
+    assert claude.cache_mismatches(source, cached) == ()
+
+
+def test_the_fallback_writes_an_outside_link_as_its_content(source_with_outside_link, home):
+    written = install(source_with_outside_link, home)
+
+    assert not (written / "src" / "pkg").is_symlink()
+    assert (written / "src" / "pkg" / "__init__.py").is_file()
+    assert (written / "CLAUDE.md").is_symlink()
+    marker = read_marker(written)
+    assert marker is not None and "src/pkg/__init__.py" in marker.files
+    assert not [path for path in claude.cache_mismatches(source_with_outside_link, written) if path.startswith("src/")]
+
+
+def test_refresh_replaces_a_cached_outside_link_with_its_content(source_with_outside_link, home):
+    import shutil
+
+    source = source_with_outside_link
+    cached = claude.cache_dir(Harness(), market="autorun", plugin="ar", version="1.2.3", home=home)
+    shutil.copytree(source, cached, symlinks=True)  # what an earlier autorun build wrote
+    assert fs.record_matching_tree_files(
+        source, cached, plugin="ar", ignored_globs=claude.CACHE_METADATA_GLOBS
+    )
+    assert "src/pkg" in read_marker(cached).files
+
+    assert claude.refresh_cache(source, cached) == cached
+
+    assert not (cached / "src" / "pkg").is_symlink()
+    assert (cached / "src" / "pkg" / "__init__.py").is_file()
+    assert claude.cache_mismatches(source, cached) == ()

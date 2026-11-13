@@ -766,6 +766,15 @@ enforce those policies.
 127. One PostToolUse hook read task-pause state from storage three times while
      checking task reminders. Each hook now reads it once and reuses that value
      until the same hook changes the pause state.
+128. `autorun --install --force` from a source checkout failed for Claude with
+     `cache fallback — _PublicationRefused: directory blocks file
+     src/pdf_extraction`, exited 1 and skipped the daemon restart, whenever
+     Claude's own `plugin install` or `plugin update` had copied the plugin
+     into the cache. Claude writes a link that leaves the plugin as the
+     content it points at; autorun expected the link. autorun now expects,
+     adopts and writes that same form, so the forced install succeeds with no
+     backups of those files, and a cache where an earlier build wrote the link
+     is converted on the next install.
 
 ### For contributors
 

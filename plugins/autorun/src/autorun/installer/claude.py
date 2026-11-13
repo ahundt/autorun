@@ -43,6 +43,7 @@ only proven generated trees.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import stat
@@ -100,6 +101,41 @@ SUBSTITUTED_NAMES = ("hooks.json", "plugin.json", "settings.json")
 #: file-manager metadata from the ordinary installer ignore set, plus Claude's
 #: registration-withdrawal timestamp.
 CACHE_METADATA_GLOBS = (*IGNORED_GLOBS, ".orphaned_at")
+
+
+def _copy_payload(source: Path, staged: Path) -> None:
+    """Copy a plugin the way Claude's own installer writes it into the cache.
+
+    Claude keeps a link that stays inside the plugin (``CLAUDE.md ->
+    AGENTS.md``) and writes a link that leaves it (``src/pdf_extraction ->
+    ../../pdf-extractor/src/pdf_extraction``) as the content it points at.
+    Expecting the link instead made a forced refresh of a cache Claude had
+    copied fail with "directory blocks file".
+    """
+    shutil.copytree(source, staged, symlinks=True)
+    root = source.resolve()
+    for directory, subdirs, names in os.walk(staged):
+        for name in (*subdirs, *names):
+            path = Path(directory) / name
+            if not path.is_symlink():
+                continue
+            target = (source / path.relative_to(staged)).resolve()
+            if target == root or root in target.parents or not target.exists():
+                continue
+            path.unlink()
+            if target.is_dir():
+                shutil.copytree(target, path, symlinks=True)
+            else:
+                shutil.copy2(target, path)
+
+
+@contextmanager
+def _payload(source: Path) -> Iterator[Path]:
+    """A temporary copy of ``source`` in the form the cache holds."""
+    with tempfile.TemporaryDirectory(prefix=".autorun-payload-") as temporary:
+        staged = Path(temporary) / "payload"
+        _copy_payload(source, staged)
+        yield staged
 
 
 def _cache_scan(root: Path) -> dict[str, str]:
@@ -171,12 +207,13 @@ def record_cache(source: Path, directory: Path, *, plugin: str = "") -> bool:
     if not plugin:
         return False
     if read_marker(directory) is None:
-        return record_matching_tree_files(
-            source,
-            directory,
-            plugin=plugin,
-            ignored_globs=CACHE_METADATA_GLOBS,
-        )
+        with _payload(source) as payload:
+            return record_matching_tree_files(
+                payload,
+                directory,
+                plugin=plugin,
+                ignored_globs=CACHE_METADATA_GLOBS,
+            )
     return record_tree(
         directory,
         plugin=plugin,
@@ -185,20 +222,41 @@ def record_cache(source: Path, directory: Path, *, plugin: str = "") -> bool:
     )
 
 
-def _cache_keep_paths(directory: Path, plugin: str) -> tuple[str, ...]:
+def _same_link(source: Path, directory: Path, relative: str) -> bool:
+    """Whether the cache holds the link the source ships at ``relative``.
+
+    An earlier build copied a link that leaves the plugin as a link. That is
+    autorun's own write, so a refresh replaces it without a backup.
+    """
+    ours, cached = source / relative, directory / relative
+    try:
+        return ours.is_symlink() and cached.is_symlink() and os.readlink(ours) == os.readlink(cached)
+    except OSError:
+        return False
+
+
+def _cache_keep_paths(
+    directory: Path, plugin: str, source: Path | None = None
+) -> tuple[str, ...]:
     marker = read_marker(directory)
     if marker is None or not owns(marker, plugin):
         return ("unproven cache payload",)
     edited, _missing, extra = compare(
         directory, marker, ignored_globs=CACHE_METADATA_GLOBS
     )
-    return tuple(sorted((*edited, *extra)))
+    return tuple(
+        sorted(
+            relative
+            for relative in (*edited, *extra)
+            if source is None or not _same_link(source, directory, relative)
+        )
+    )
 
 
 def cache_refresh_fix(source: Path, directory: Path, backup_root: Path) -> str:
     """The next command that can repair the cache's observed ownership state."""
     marker = read_marker(directory)
-    if marker is None or _cache_keep_paths(directory, _manifest_name(source)):
+    if marker is None or _cache_keep_paths(directory, _manifest_name(source), source):
         return (
             "run `autorun --install --force`; it backs up unproven or edited files to "
             f"{backup_root} and then refreshes the cache"
@@ -215,7 +273,7 @@ def _expected_cache_tree(
         prefix=f".autorun-expected-{directory.name}-"
     ) as temporary:
         staged = Path(temporary) / "payload"
-        shutil.copytree(source, staged, symlinks=True)
+        _copy_payload(source, staged)
         substitute_root(staged, root=directory)
         if hook_command:
             pin_hook_command(staged, hook_command)
@@ -291,15 +349,18 @@ def refresh_cache(
         timeout_seconds=lock_timeout_seconds,
         wait_notice=wait_notice,
     ):
-        if read_marker(directory) is None and not record_matching_tree_files(
-            source,
-            directory,
-            plugin=plugin,
-            ignored_globs=CACHE_METADATA_GLOBS,
-            lock_held=True,
-        ):
-            raise RuntimeError(f"KEEP {directory}: could not record matching cache files")
-        kept_paths = _cache_keep_paths(directory, plugin)
+        if read_marker(directory) is None:
+            with _payload(source) as payload:
+                adopted = record_matching_tree_files(
+                    payload,
+                    directory,
+                    plugin=plugin,
+                    ignored_globs=CACHE_METADATA_GLOBS,
+                    lock_held=True,
+                )
+            if not adopted:
+                raise RuntimeError(f"KEEP {directory}: could not record matching cache files")
+        kept_paths = _cache_keep_paths(directory, plugin, source)
         if kept_paths and not force:
             if kept is not None:
                 kept.extend(kept_paths)
@@ -504,7 +565,10 @@ def cache_fallback(
     target = cache_dir(platform, market=market, plugin=plugin, version=version, home=home)
     if target is None or not source.is_dir():
         return None
-    written = fill_tree(source, target)
+    if target.exists() or target.is_symlink():
+        return None
+    with _payload(source) as payload:
+        written = fill_tree(payload, target)
     if written is not None and not record_cache(source, written, plugin=plugin):
         raise RuntimeError(f"could not record Claude cache ownership for {written}")
     return written

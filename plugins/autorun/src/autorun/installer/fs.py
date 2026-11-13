@@ -1378,6 +1378,17 @@ def refresh_unmarked_tree(
                     pass
             replace_path(source_path, target_path, relative)
 
+        # A link the tree no longer ships goes first: a directory may now be
+        # shipped at the same path, and its files cannot be written through
+        # the link.
+        for relative in sorted(set(scan_tree(target, ignored_globs=ignored_globs)) - set(expected)):
+            target_path = destination(relative)
+            if target_path.is_symlink():
+                verify_backup(relative, target_path)
+                verify_selection(relative, target_path)
+                target_path.unlink()
+                notify(f"remove {relative}")
+
         for relative in sorted(set(expected) - last):
             publish(relative)
 
