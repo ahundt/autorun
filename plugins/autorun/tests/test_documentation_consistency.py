@@ -25,21 +25,21 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 def test_install_help_names_every_marketplace_plugin():
     from autorun.__main__ import create_parser
 
-    manifest = json.loads((REPO_ROOT / ".claude-plugin/marketplace.json").read_text())
+    manifest = json.loads((REPO_ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
     action = next(action for action in create_parser()._actions if "--install" in action.option_strings)
     for plugin in manifest["plugins"]:
         assert plugin["name"] in action.help, action.help
 
 
 def test_marketplace_only_install_includes_the_skills_plugin():
-    manifest = json.loads((REPO_ROOT / ".claude-plugin/marketplace.json").read_text())
+    manifest = json.loads((REPO_ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
     assert "autorun-skills" in {plugin["name"] for plugin in manifest["plugins"]}
     for name in ("README.md", "AGENTS.md"):
         assert "claude plugin install autorun-skills@autorun" in (REPO_ROOT / name).read_text(encoding="utf-8"), name
 
 
 def test_pdf_extra_comment_names_the_published_distribution():
-    assert "autorun[pdf]" not in (PLUGIN_ROOT / "pyproject.toml").read_text()
+    assert "autorun[pdf]" not in (PLUGIN_ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
 EXCLUDED_DOC_PARTS = {".git", ".venv", "notes", "rejected_plans", "worktrees"}

@@ -2205,7 +2205,7 @@ def test_a_kept_user_skill_is_reported_with_its_path_and_the_way_out(sandbox):
 
     mine = sandbox / ".agents" / "skills" / "commit"
     mine.mkdir(parents=True)
-    (mine / "SKILL.md").write_text("---\nname: commit\ndescription: mine\n---\nmine\n")
+    (mine / "SKILL.md").write_text("---\nname: commit\ndescription: mine\n---\nmine\n", encoding="utf-8")
     (sandbox / ".codex").mkdir(exist_ok=True)
     result = orchestrate.preview(
         marketplace_root=REPO,
@@ -2219,7 +2219,7 @@ def test_a_kept_user_skill_is_reported_with_its_path_and_the_way_out(sandbox):
     warning = next(f for f in result.findings if f.check == "skill placement")
     assert str(mine) in warning.detail and "ar:commit" in warning.detail
     assert "rerun `autorun --install`" in warning.fix
-    assert (mine / "SKILL.md").read_text().endswith("mine\n"), "the user's copy stays"
+    assert (mine / "SKILL.md").read_text(encoding="utf-8").endswith("mine\n"), "the user's copy stays"
 
 
 def _can_symlink(tmp_path) -> bool:
@@ -2242,8 +2242,8 @@ def test_a_symlinked_user_file_is_edited_through_its_link(tmp_path):
 
     dotfiles = tmp_path / "dotfiles"
     dotfiles.mkdir()
-    (dotfiles / "settings.json").write_text('{"theme": "dark"}\n')
-    (dotfiles / "CLAUDE.md").write_text("# mine\n")
+    (dotfiles / "settings.json").write_text('{"theme": "dark"}\n', encoding="utf-8")
+    (dotfiles / "CLAUDE.md").write_text("# mine\n", encoding="utf-8")
     home = tmp_path / "home"
     home.mkdir()
     settings = home / "settings.json"
@@ -2256,21 +2256,21 @@ def test_a_symlinked_user_file_is_edited_through_its_link(tmp_path):
     block = Block("claude-memory-md")
     assert memory.splice(guide, "autorun guidance", block)
     assert settings.is_symlink() and guide.is_symlink()
-    assert json.loads((dotfiles / "settings.json").read_text())["env"] == {"X": "1"}
-    assert "autorun guidance" in (dotfiles / "CLAUDE.md").read_text()
+    assert json.loads((dotfiles / "settings.json").read_text(encoding="utf-8"))["env"] == {"X": "1"}
+    assert "autorun guidance" in (dotfiles / "CLAUDE.md").read_text(encoding="utf-8")
 
     assert steps.apply_switches([switch], Mode.UNINSTALL) == [f"removed {switch.describe()}"]
     assert memory.strip(guide, block)
     assert settings.is_symlink() and guide.is_symlink()
-    assert json.loads((dotfiles / "settings.json").read_text()) == {"theme": "dark"}
-    assert (dotfiles / "CLAUDE.md").read_text() == "# mine\n"
+    assert json.loads((dotfiles / "settings.json").read_text(encoding="utf-8")) == {"theme": "dark"}
+    assert (dotfiles / "CLAUDE.md").read_text(encoding="utf-8") == "# mine\n"
 
-    (dotfiles / "AGENTS.md").write_text("")
+    (dotfiles / "AGENTS.md").write_text("", encoding="utf-8")
     only_ours = home / "AGENTS.md"
     only_ours.symlink_to(dotfiles / "AGENTS.md")
     memory.splice(only_ours, "autorun guidance", block)
     assert memory.strip(only_ours, block)
-    assert only_ours.is_symlink() and (dotfiles / "AGENTS.md").read_text() == ""
+    assert only_ours.is_symlink() and (dotfiles / "AGENTS.md").read_text(encoding="utf-8") == ""
 
 
 def test_a_dangling_link_is_refused_not_replaced(tmp_path):
@@ -2286,7 +2286,7 @@ def test_a_dangling_link_is_refused_not_replaced(tmp_path):
     assert note.startswith("skipped ") and "does not exist" in note, note
     assert settings.is_symlink() and not settings.exists()
     record = tmp_path / "state" / "switches.json"
-    assert not record.exists() or "X" not in record.read_text(), "nothing claims the value"
+    assert not record.exists() or "X" not in record.read_text(encoding="utf-8"), "nothing claims the value"
 
     guide = tmp_path / "CLAUDE.md"
     guide.symlink_to(tmp_path / "unmounted" / "CLAUDE.md")
@@ -2427,7 +2427,7 @@ def test_the_kept_skill_warning_finds_a_differently_cased_directory(sandbox):
     root = sandbox / "shared"
     mine = root / "Cache"
     mine.mkdir(parents=True)
-    (mine / "SKILL.md").write_text("---\nname: cache\ndescription: mine\n---\n")
+    (mine / "SKILL.md").write_text("---\nname: cache\ndescription: mine\n---\n", encoding="utf-8")
     ours = root / "commit"  # autorun's own marked copy is not a conflict
     ours.mkdir()
     from autorun.installer.fs import record_tree

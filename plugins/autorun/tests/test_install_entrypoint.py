@@ -1053,7 +1053,7 @@ def test_custom_claude_flavor_uses_the_portable_commands_and_agents_layout(monke
         == 0
     )
     assert list((isolated / ".mine" / "commands").glob("ar-*.md"))
-    guidance = (isolated / ".mine" / "AGENTS.md").read_text()
+    guidance = (isolated / ".mine" / "AGENTS.md").read_text(encoding="utf-8")
     assert "Mine" in guidance and "ForgeCode" not in guidance
 
 
@@ -1077,7 +1077,7 @@ def test_uninstall_with_a_custom_harness_removes_what_install_put_there(monkeypa
 
     assert entry.main(["--uninstall", "ar", "--custom-harness", spec]) == 0
     assert not list((root / "commands").glob("ar-*.md"))
-    assert "Mine" not in ((root / "AGENTS.md").read_text() if (root / "AGENTS.md").exists() else "")
+    assert "Mine" not in ((root / "AGENTS.md").read_text(encoding="utf-8") if (root / "AGENTS.md").exists() else "")
 
 
 def test_a_custom_harness_named_like_any_registered_harness_is_refused(monkeypatch, isolated, capsys):

@@ -554,7 +554,7 @@ def test_rule_discovery_does_not_glob_an_unchanged_directory(tmp_path, monkeypat
     rules = project / ".claude"
     rules.mkdir(parents=True)
     (project / ".git").mkdir()
-    (rules / "autorun.one.local.md").write_text("rule")
+    (rules / "autorun.one.local.md").write_text("rule", encoding="utf-8")
     old_enough = integrations.DIRECTORY_MTIME_RESOLUTION_NS / 1e9 * 2
     _age_directory(rules, old_enough)
     # Path.home() reads USERPROFILE on Windows and HOME elsewhere.
@@ -571,7 +571,7 @@ def test_rule_discovery_does_not_glob_an_unchanged_directory(tmp_path, monkeypat
     assert integrations._integration_files(str(project)) == first
     assert globbed == []
 
-    (rules / "autorun.two.local.md").write_text("rule")
+    (rules / "autorun.two.local.md").write_text("rule", encoding="utf-8")
     _age_directory(rules, old_enough / 2)
     assert len(integrations._integration_files(str(project))) == len(first) + 1
 
@@ -591,7 +591,7 @@ def test_a_just_changed_directory_is_listed_again(tmp_path, monkeypatch):
     integrations._rule_file_listing_cache.clear()
 
     assert integrations._integration_files(str(project)) == []
-    (rules / "autorun.new.local.md").write_text("rule")
+    (rules / "autorun.new.local.md").write_text("rule", encoding="utf-8")
     assert len(integrations._integration_files(str(project))) == 1
 
 

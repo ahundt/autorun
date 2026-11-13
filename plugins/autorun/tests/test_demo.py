@@ -834,16 +834,18 @@ def setup_mock_git_repo(work_dir: Path) -> None:
     run(["git", "config", "commit.gpgsign", "false"])
 
     (work_dir / "main.py").write_text(
-        "# Main module\n\ndef main():\n    print('Hello')\n\n# TODO: add input validation\n"
+        "# Main module\n\ndef main():\n    print('Hello')\n\n# TODO: add input validation\n",
+        encoding="utf-8",
     )
     (work_dir / "auth.py").write_text(
-        "# Authentication\n\ndef login(user, pwd):\n    pass  # TODO: implement\n"
+        "# Authentication\n\ndef login(user, pwd):\n    pass  # TODO: implement\n",
+        encoding="utf-8",
     )
-    (work_dir / "README.md").write_text("# Demo Project\n\nA sample project.\n")
+    (work_dir / "README.md").write_text("# Demo Project\n\nA sample project.\n", encoding="utf-8")
     run(["git", "add", "."])
     run(["git", "commit", "-m", "Initial commit"])
 
-    (work_dir / "utils.py").write_text("# Utilities\n\ndef helper():\n    return None\n")
+    (work_dir / "utils.py").write_text("# Utilities\n\ndef helper():\n    return None\n", encoding="utf-8")
     run(["git", "add", "utils.py"])
     run(["git", "commit", "-m", "Add utilities"])
 

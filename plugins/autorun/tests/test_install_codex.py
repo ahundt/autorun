@@ -387,7 +387,7 @@ def test_a_symlinked_skill_is_flattened_when_staged(tmp_path):
     assert dereference_links(tmp_path / "staged") == ()
 
     assert not (staged / "SKILL.md").is_symlink()
-    assert (staged / "SKILL.md").read_text() == "# real content\n"
+    assert (staged / "SKILL.md").read_text(encoding="utf-8") == "# real content\n"
 
 
 def test_a_symlinked_directory_is_flattened_too(tmp_path):

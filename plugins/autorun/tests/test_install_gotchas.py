@@ -190,7 +190,7 @@ def test_two_steps_yielding_an_identical_intent_decide_it_once(ctx, source, tmp_
     decisions = run([Fake("h", (step, step))], ctx, Mode.INSTALL)
 
     assert [d.verdict for d in decisions] == [Verdict.PUBLISH]
-    assert (target / "SKILL.md").read_text() == "v1\n"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "v1\n"
 
 
 def test_a_shared_and_an_exclusive_intent_for_one_directory(ctx, source, tmp_path):
@@ -243,7 +243,7 @@ def test_a_target_that_is_a_file_rather_than_a_directory(tmp_path, source):
     decision = publish_tree(source, target, plugin="ar")
 
     assert decision.verdict is Verdict.KEEP
-    assert target.read_text() == "i am a file the user made\n"
+    assert target.read_text(encoding="utf-8") == "i am a file the user made\n"
     assert withdrawn(target) is False, "a file is never removed as an owned tree"
 
 
@@ -1104,7 +1104,7 @@ def test_a_shared_publish_with_nothing_to_ship_claims_nothing(tmp_path):
 
     publish_files(staging, shared, plugin="ar")
 
-    assert (shared / "theirs.md").read_text() == "theirs\n"
+    assert (shared / "theirs.md").read_text(encoding="utf-8") == "theirs\n"
     assert read_marker(shared).files == {}, "we claimed no files"
 
 
@@ -1133,9 +1133,9 @@ def test_every_shipped_file_lands_however_many_collide(tmp_path, collides):
 
     assert decision.verdict is Verdict.PUBLISH
     for name in shipped:
-        assert (shared / name).read_text() == "ours\n", f"{name} must be installed"
+        assert (shared / name).read_text(encoding="utf-8") == "ours\n", f"{name} must be installed"
     for name in collides:
-        assert (shared / f"{name}.autorun-backup").read_text() == "MINE\n", \
+        assert (shared / f"{name}.autorun-backup").read_text(encoding="utf-8") == "MINE\n", \
             "the user's content is preserved, not discarded"
 
 
@@ -1155,8 +1155,8 @@ def test_backups_are_numbered_so_they_never_overwrite_each_other(tmp_path):
     (staging / "ar-go.md").write_text("ours-v2\n", encoding="utf-8")
     publish_files(staging, shared, plugin="ar")
 
-    assert (shared / "ar-go.md.autorun-backup").read_text() == "FIRST\n"
-    assert (shared / "ar-go.md.autorun-backup.1").read_text() == "SECOND\n"
+    assert (shared / "ar-go.md.autorun-backup").read_text(encoding="utf-8") == "FIRST\n"
+    assert (shared / "ar-go.md.autorun-backup.1").read_text(encoding="utf-8") == "SECOND\n"
 
 
 def test_our_own_unchanged_file_is_replaced_without_a_backup(tmp_path):
@@ -1171,7 +1171,7 @@ def test_our_own_unchanged_file_is_replaced_without_a_backup(tmp_path):
     (staging / "ar-go.md").write_text("ours-v2\n", encoding="utf-8")
     publish_files(staging, shared, plugin="ar")
 
-    assert (shared / "ar-go.md").read_text() == "ours-v2\n"
+    assert (shared / "ar-go.md").read_text(encoding="utf-8") == "ours-v2\n"
     assert not list(shared.glob("*.autorun-backup*")), "no backup for our own file"
 
 
@@ -1205,7 +1205,7 @@ def test_refusing_instead_of_backing_up_is_still_available(tmp_path):
     decision = publish_files(staging, shared, plugin="ar", backup=False)
 
     assert decision.verdict is Verdict.KEEP
-    assert (shared / "ar-go.md").read_text() == "MINE\n"
+    assert (shared / "ar-go.md").read_text(encoding="utf-8") == "MINE\n"
     assert not list(shared.glob("*.autorun-backup*"))
 
 
@@ -1220,7 +1220,7 @@ def test_withdrawing_a_shared_file_the_user_edited_leaves_it(tmp_path):
     (shared / "go.md").write_text("MY EDIT\n", encoding="utf-8")
 
     assert withdraw_files(shared, plugin="ar") == ()
-    assert (shared / "go.md").read_text() == "MY EDIT\n"
+    assert (shared / "go.md").read_text(encoding="utf-8") == "MY EDIT\n"
 
 
 # ─── Modes ──────────────────────────────────────────────────────────────────

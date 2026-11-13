@@ -494,16 +494,18 @@ def test_no_new_portability_offenders_in_product_or_tests():
             text = path.read_text(encoding="utf-8")
             for lineno in checker(text, str(path)):
                 offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{lineno}: {description}")
-    for path in _python_sources():
+    for path in _portability_sources():
         text = path.read_text(encoding="utf-8")
         for lineno in repo_text_io_without_encoding(text, str(path)):
             offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{lineno}: repository text I/O without encoding")
     assert not offenders, "cross-platform portability violations:\n" + "\n".join(offenders)
 
 
-# The repository-document rule is deliberately product-only: tests may read
-# temporary files in the platform's locale, while product reads of shipped
-# Markdown must always name UTF-8. The helper remains tested above for both.
+def test_repository_text_scope_covers_the_ci_failure_and_both_source_trees():
+    assert repo_text_io_without_encoding("(REPO_ROOT / name).read_text()\n") == [1]
+    paths = _portability_sources()
+    assert any("/tests/" in f"/{path.as_posix()}" for path in paths)
+    assert any("/src/" in f"/{path.as_posix()}" for path in paths)
 
 
 # --- 4. home redirects that move only one variable ---------------------------

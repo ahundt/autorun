@@ -185,18 +185,20 @@ def test_capability_snapshot_reads_the_source_tree_it_runs_from(tmp_path, monkey
     manifest = '{"name": "autorun", "plugins": [{"name": "ar", "source": "./plugins/autorun"}]}'
     outer = tmp_path / "outer"
     (outer / ".claude-plugin").mkdir(parents=True)
-    (outer / ".claude-plugin" / "marketplace.json").write_text(manifest)
+    (outer / ".claude-plugin" / "marketplace.json").write_text(manifest, encoding="utf-8")
     worktree = outer / ".claude" / "worktrees" / "w"
     (worktree / ".claude-plugin").mkdir(parents=True)
-    (worktree / ".claude-plugin" / "marketplace.json").write_text(manifest)
+    (worktree / ".claude-plugin" / "marketplace.json").write_text(manifest, encoding="utf-8")
     plugin = worktree / "plugins" / "autorun"
     (plugin / ".claude-plugin").mkdir(parents=True)
     (plugin / ".claude-plugin" / "marketplace.json").write_text(
-        '{"name": "autorun", "plugins": [{"name": "ar", "source": "./"}]}'
+        '{"name": "autorun", "plugins": [{"name": "ar", "source": "./"}]}',
+        encoding="utf-8",
     )
     (plugin / "skills" / "only-in-worktree").mkdir(parents=True)
     (plugin / "skills" / "only-in-worktree" / "SKILL.md").write_text(
-        "---\nname: only-in-worktree\ndescription: present only here\n---\n"
+        "---\nname: only-in-worktree\ndescription: present only here\n---\n",
+        encoding="utf-8",
     )
     monkeypatch.setattr(
         capability_snapshot, "__file__", str(plugin / "src" / "autorun" / "capability_snapshot.py")

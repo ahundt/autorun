@@ -94,7 +94,7 @@ def test_an_unmarked_directory_is_the_users_whatever_its_name(tmp_path, source):
 
     assert decision.verdict is Verdict.KEEP
     assert decision.reason == "user-authored"
-    assert (theirs / "SKILL.md").read_text() == "hand written\n"
+    assert (theirs / "SKILL.md").read_text(encoding="utf-8") == "hand written\n"
     assert withdrawn(theirs) is False
     assert (theirs / "SKILL.md").is_file(), "refused removal must not delete"
 
@@ -116,7 +116,7 @@ def test_an_empty_unmarked_directory_is_published_into_like_an_absent_one(
     decision = publish_tree(source, leftover, plugin="ar")
 
     assert decision.verdict is Verdict.PUBLISH, decision.describe()
-    assert (leftover / "SKILL.md").read_text() == "version one\n"
+    assert (leftover / "SKILL.md").read_text(encoding="utf-8") == "version one\n"
     assert read_marker(leftover) is not None, "adopted tree must be ours to remove"
     assert withdrawn(leftover) is True
     assert not leftover.exists()
@@ -178,7 +178,7 @@ def test_exact_external_receipt_can_adopt_but_is_rechecked_inside_lock(
 
     assert decision.verdict is Verdict.KEEP
     assert decision.reason == "user-authored"
-    assert (target / "SKILL.md").read_text() == "installed by harness\n"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "installed by harness\n"
     assert read_marker(target) is None
 
 
@@ -214,7 +214,7 @@ def test_a_shared_directory_is_emptied_per_file_not_wholesale(tmp_path):
 
     assert withdraw_files(shared, plugin="ar") == ("ar-go.md", "ar-stop.md")
     assert not (shared / "ar-go.md").exists()
-    assert (shared / "my-own.md").read_text() == "theirs\n", "user file survives"
+    assert (shared / "my-own.md").read_text(encoding="utf-8") == "theirs\n", "user file survives"
     assert shared.is_dir(), "a shared directory is never removed"
 
 
@@ -400,7 +400,7 @@ def test_a_failed_publish_restores_the_previous_contents(tmp_path, source):
             (staged / "partial").write_text("half\n", encoding="utf-8")
             raise RuntimeError("interrupted")
 
-    assert (target / "SKILL.md").read_text() == "version one\n"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "version one\n"
     assert not (target / "partial").exists()
 
 
@@ -479,7 +479,7 @@ def test_a_failed_removal_puts_the_directory_back(tmp_path, source, monkeypatch)
     with pytest.raises(OSError):
         withdrawn(target, plugin="ar")
 
-    assert (target / "SKILL.md").read_text() == "version one\n", "restored intact"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "version one\n", "restored intact"
 
 
 def test_ownership_is_rechecked_inside_the_lock(tmp_path, source):
@@ -544,7 +544,7 @@ def test_a_user_edit_inside_an_owned_tree_survives_reinstall(tmp_path, source):
 
     assert decision.verdict is Verdict.KEEP
     assert decision.edited == ("SKILL.md",)
-    assert (target / "SKILL.md").read_text() == "MY OWN EDIT\n"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "MY OWN EDIT\n"
     assert "SKILL.md" in decision.describe(), "the report names the file"
 
 

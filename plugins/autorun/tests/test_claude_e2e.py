@@ -2142,11 +2142,13 @@ class TestClaudeE2ERealMoney:
             "DEFAULT_PORT = 8080\n"
             "DEFAULT_HOST = 'localhost'\n\n"
             "def get_database_url(host='localhost', port=5432):\n"
-            "    return f'postgresql://{host}:{port}/app'\n"
+            "    return f'postgresql://{host}:{port}/app'\n",
+            encoding="utf-8",
         )
         (tmp_path / "README.md").write_text(
             "# Sample Project\n\n"
-            "A small Python project with greeting and math utilities.\n"
+            "A small Python project with greeting and math utilities.\n",
+            encoding="utf-8",
         )
 
     def _detect_task_activity(self, combined: str) -> dict:

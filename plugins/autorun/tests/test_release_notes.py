@@ -204,9 +204,9 @@ def test_dev_releases_count_as_prereleases():
 
 def _write_repo(root: Path, changelog: str) -> None:
     (root / "plugins" / "autorun").mkdir(parents=True)
-    (root / "plugins" / "autorun" / "pyproject.toml").write_text('version = "0.0.2"\n')
+    (root / "plugins" / "autorun" / "pyproject.toml").write_text('version = "0.0.2"\n', encoding="utf-8")
     (root / "docs" / "releases").mkdir(parents=True)
-    (root / "CHANGELOG.md").write_text(changelog)
+    (root / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
 
 
 def test_build_refuses_a_missing_or_duplicate_section_or_no_previous(tmp_path):
@@ -230,7 +230,7 @@ def test_check_fails_on_a_stale_file_and_passes_once_regenerated(tmp_path, monke
     notes = tmp_path / "docs" / "releases" / "0.0.2.md"
     assert b"\r\n" not in notes.read_bytes()
     assert release_notes.main(["--check"]) == 0
-    notes.write_text(notes.read_text() + "edited by hand\n")
+    notes.write_text(notes.read_text(encoding="utf-8") + "edited by hand\n", encoding="utf-8")
     assert release_notes.main(["--check"]) == 1
 
 

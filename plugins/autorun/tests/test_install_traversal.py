@@ -177,7 +177,7 @@ def test_a_shared_directory_the_user_already_owns_still_accepts_our_files(ctx, h
     run([harness], ctx, Mode.INSTALL)
 
     assert (commands / "go.md").is_file(), "ours was added"
-    assert (commands / "theirs.md").read_text() == "pre-existing\n", "theirs untouched"
+    assert (commands / "theirs.md").read_text(encoding="utf-8") == "pre-existing\n", "theirs untouched"
     assert set(read_marker(commands).files) == {"go.md"}, "only ours is claimed"
 
 

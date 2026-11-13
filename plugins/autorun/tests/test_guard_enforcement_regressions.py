@@ -473,7 +473,8 @@ def _rule_file(root, name, pattern):
     claude = root / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
     (claude / f"autorun.{name}.local.md").write_text(
-        f"---\nname: {name}\npatterns: [{pattern}]\naction: block\n---\n{name} rule says no\n"
+        f"---\nname: {name}\npatterns: [{pattern}]\naction: block\n---\n{name} rule says no\n",
+        encoding="utf-8",
     )
 
 
