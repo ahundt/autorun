@@ -3,7 +3,7 @@
 
 Performs a full stop-cleanup-start cycle with:
 - Exclusive restart lock (prevents concurrent restarts)
-- Authenticated IPC shutdown with terminate/kill fallback
+- Platform-appropriate graceful shutdown with authenticated IPC fallback
 - Stale file cleanup (socket, lock)
 - __pycache__ purge (prevents stale bytecode)
 - Conflicting package detection
@@ -564,12 +564,12 @@ def _signal_owned_daemon(pid: int, *, kill: bool = False) -> bool:
             return False
         proc.kill() if kill else proc.terminate()
     except (psutil.NoSuchProcess, psutil.AccessDenied):
-        pass
+        return False
     return True
 
 
 def _stop_daemon(pid: int, *, src_dir: Path | None = None) -> None:
-    """Stop through authenticated IPC, falling back to terminate then kill."""
+    """Stop with the platform's graceful mechanism, then fall back and kill."""
     try:
         owned = _owns_this_runtime(psutil.Process(pid))
     except psutil.Error:
@@ -577,16 +577,26 @@ def _stop_daemon(pid: int, *, src_dir: Path | None = None) -> None:
     if not owned:
         print(f"  ✗ Not stopping PID {pid}: it is not the daemon of {ipc.AUTORUN_CONFIG_DIR}")
         return
-    print(f"  Requesting graceful shutdown of PID {pid}")
+
     timeout = float(CONFIG["daemon_shutdown_timeout_seconds"])
-    shutdown_clean = ipc.request_shutdown(pid) and wait_for_shutdown(
-        max_wait=timeout, src_dir=src_dir
-    )
+    signal_first = ipc.terminate_is_graceful()
+    shutdown_clean = False
+
+    if signal_first:
+        print(f"  Sending terminate to PID {pid}")
+        if _signal_owned_daemon(pid):
+            shutdown_clean = wait_for_shutdown(max_wait=timeout, src_dir=src_dir)
 
     if not shutdown_clean:
+        print(f"  Requesting graceful shutdown of PID {pid}")
+        shutdown_clean = ipc.request_shutdown(pid) and wait_for_shutdown(
+            max_wait=timeout, src_dir=src_dir
+        )
+
+    if not shutdown_clean and not signal_first:
         print(f"  Sending terminate to PID {pid}")
-        _signal_owned_daemon(pid)  # SIGTERM on Unix, TerminateProcess on Windows
-        shutdown_clean = wait_for_shutdown(max_wait=timeout, src_dir=src_dir)
+        if _signal_owned_daemon(pid):
+            shutdown_clean = wait_for_shutdown(max_wait=timeout, src_dir=src_dir)
 
     if not shutdown_clean:
         # Daemon didn't shut down cleanly - force it

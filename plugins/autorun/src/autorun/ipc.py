@@ -152,6 +152,18 @@ HAS_UNIX_SOCKETS = hasattr(socket, "AF_UNIX")
 
 
 
+def terminate_is_graceful(windows: bool | None = None) -> bool:
+    """Whether ``psutil.Process.terminate`` lets the daemon clean up.
+
+    POSIX delivers SIGTERM, which the daemon handles with its async shutdown
+    path. Windows calls TerminateProcess, so authenticated IPC must go first.
+    ``windows`` overrides the platform for tests.
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    return not windows
+
+
 def detached_spawn_kwargs(windows: bool | None = None) -> dict:
     """Popen options that let the daemon outlive the process starting it.
 

@@ -380,15 +380,15 @@ class TestPsutilProcessLifecycle:
             with mock.patch('psutil.Process', side_effect=psutil.NoSuchProcess(99999)):
                 assert get_daemon_pid() is None
 
-    def test_stop_daemon_uses_psutil_terminate(self):
-        """_stop_daemon() uses psutil.Process.terminate, not os.kill(SIGTERM)."""
+    def test_posix_stop_uses_psutil_terminate_before_ipc(self):
+        """POSIX _stop_daemon() uses psutil terminate before socket fallback."""
         from autorun.restart_daemon import _stop_daemon
 
         mock_proc = mock.MagicMock()
         with mock.patch('psutil.Process', return_value=mock_proc) as mock_cls:
             with mock.patch('autorun.restart_daemon.wait_for_shutdown', return_value=True):
                 with mock.patch('autorun.restart_daemon.ipc') as mock_ipc:
-                    mock_ipc.request_shutdown.return_value = False
+                    mock_ipc.terminate_is_graceful.return_value = True
                     mock_ipc.SOCKET_PATH.exists.return_value = False
                     with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock, \
                             mock.patch('autorun.restart_daemon._owns_this_runtime', return_value=True):
@@ -397,16 +397,32 @@ class TestPsutilProcessLifecycle:
 
             mock_cls.assert_called_with(12345)
             mock_proc.terminate.assert_called_once()
+            mock_ipc.request_shutdown.assert_not_called()
+
+    def test_signal_owned_daemon_reports_access_denied(self):
+        """A denied terminate was not delivered and must enable IPC fallback."""
+        import psutil
+
+        from autorun.restart_daemon import _signal_owned_daemon
+
+        mock_proc = mock.MagicMock()
+        mock_proc.terminate.side_effect = psutil.AccessDenied(12345)
+        with mock.patch('psutil.Process', return_value=mock_proc), \
+                mock.patch('autorun.restart_daemon._owns_this_runtime', return_value=True):
+            assert _signal_owned_daemon(12345) is False
 
     def test_stop_daemon_falls_back_to_kill(self):
-        """_stop_daemon() uses psutil.Process.kill when terminate times out."""
+        """_stop_daemon() uses psutil.Process.kill when graceful paths fail."""
         from autorun.restart_daemon import _stop_daemon
 
         mock_proc = mock.MagicMock()
         with mock.patch('psutil.Process', return_value=mock_proc):
             with mock.patch('autorun.restart_daemon.wait_for_shutdown', return_value=False):
                 with mock.patch('autorun.restart_daemon.cleanup_stale_files'), \
-                        mock.patch('autorun.restart_daemon._owns_this_runtime', return_value=True):
+                        mock.patch('autorun.restart_daemon._owns_this_runtime', return_value=True), \
+                        mock.patch('autorun.restart_daemon.ipc') as mock_ipc:
+                    mock_ipc.terminate_is_graceful.return_value = True
+                    mock_ipc.request_shutdown.return_value = False
                     _stop_daemon(12345)
 
             mock_proc.terminate.assert_called_once()

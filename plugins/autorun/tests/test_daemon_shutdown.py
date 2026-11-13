@@ -1,4 +1,4 @@
-"""Graceful restart uses the same authenticated IPC lifecycle on both transports."""
+"""Daemon shutdown chooses the graceful first step from platform capabilities."""
 
 import asyncio
 import json
@@ -109,13 +109,14 @@ def test_shutdown_request_cannot_stop_another_pid(running_daemon):
     assert ipc.answers_round_trip()
 
 
-def test_stop_daemon_exits_without_terminate_or_kill(running_daemon, monkeypatch):
+def test_posix_stop_terminates_real_daemon_without_ipc(running_daemon, monkeypatch):
     from autorun import restart_daemon
 
     ipc, home, proc = running_daemon
     monkeypatch.setattr(restart_daemon, "LOCK_PATH", home / "daemon.lock")
-    with mock.patch.object(restart_daemon.psutil.Process, "terminate",
-                           side_effect=AssertionError("graceful stop must not terminate")), \
+    with mock.patch.object(restart_daemon.ipc, "terminate_is_graceful", return_value=True), \
+            mock.patch.object(restart_daemon.ipc, "request_shutdown",
+                              side_effect=AssertionError("clean SIGTERM must not request IPC")), \
             mock.patch.object(restart_daemon.psutil.Process, "kill",
                               side_effect=AssertionError("graceful stop must not kill")), \
             mock.patch.object(restart_daemon, "cleanup_stale_files",
@@ -127,27 +128,128 @@ def test_stop_daemon_exits_without_terminate_or_kill(running_daemon, monkeypatch
     assert not (home / "daemon.flock").exists()
 
 
-@pytest.mark.parametrize(
-    "acknowledged, waits, terminated, killed",
-    [(True, [True], False, False), (False, [True], True, False),
-     (False, [False], True, True), (True, [False, True], True, False),
-     (True, [False, False], True, True)],
-    ids=["graceful", "request-failed", "request-failed-kill", "exit-timeout", "exit-timeout-kill"],
-)
-def test_stop_daemon_uses_ipc_then_terminate_kill_fallback(acknowledged, waits, terminated, killed):
+@pytest.mark.parametrize("windows, expected", [(False, True), (True, False)])
+def test_terminate_is_graceful_depends_on_platform(windows, expected):
+    from autorun import ipc
+
+    assert ipc.terminate_is_graceful(windows=windows) is expected
+
+
+def _stop_call_order(*, graceful_signal, signal_results, waits, acknowledged):
     from autorun import restart_daemon
 
-    with mock.patch.object(restart_daemon.ipc, "request_shutdown",
-                           return_value=acknowledged) as shutdown, \
-            mock.patch.object(restart_daemon.psutil, "Process") as process, \
-            mock.patch.object(restart_daemon, "wait_for_shutdown", side_effect=waits), \
+    calls = []
+
+    def signal(_pid, *, kill=False):
+        calls.append("kill" if kill else "terminate")
+        return signal_results.pop(0)
+
+    def request(_pid):
+        calls.append("ipc")
+        return acknowledged
+
+    def wait(**_kwargs):
+        calls.append("wait")
+        return waits.pop(0)
+
+    with mock.patch.object(restart_daemon.ipc, "terminate_is_graceful",
+                           return_value=graceful_signal), \
+            mock.patch.object(restart_daemon.ipc, "request_shutdown", side_effect=request), \
+            mock.patch.object(restart_daemon, "_signal_owned_daemon", side_effect=signal), \
+            mock.patch.object(restart_daemon, "wait_for_shutdown", side_effect=wait), \
             mock.patch.object(restart_daemon, "cleanup_stale_files"), \
             mock.patch.object(restart_daemon, "_owns_this_runtime", return_value=True), \
             mock.patch.object(restart_daemon.time, "sleep"):
         restart_daemon._stop_daemon(12345)
-    shutdown.assert_called_once_with(12345)
-    assert process.return_value.terminate.called is terminated
-    assert process.return_value.kill.called is killed
+    return calls
+
+
+@pytest.mark.parametrize(
+    "graceful_signal, signal_results, waits, acknowledged, expected",
+    [
+        (True, [True], [True], True, ["terminate", "wait"]),
+        (True, [True], [False, True], True, ["terminate", "wait", "ipc", "wait"]),
+        (True, [False], [True], True, ["terminate", "ipc", "wait"]),
+        (False, [], [True], True, ["ipc", "wait"]),
+        (False, [True], [True], False, ["ipc", "terminate", "wait"]),
+        (False, [True], [False, True], True, ["ipc", "wait", "terminate", "wait"]),
+    ],
+    ids=[
+        "posix-signal-exits",
+        "posix-signal-timeout-ipc",
+        "posix-signal-denied-ipc",
+        "windows-ipc-exits",
+        "windows-old-daemon-terminate",
+        "windows-ipc-timeout-terminate",
+    ],
+)
+def test_stop_daemon_platform_order(
+    graceful_signal, signal_results, waits, acknowledged, expected
+):
+    assert _stop_call_order(
+        graceful_signal=graceful_signal,
+        signal_results=list(signal_results),
+        waits=list(waits),
+        acknowledged=acknowledged,
+    ) == expected
+
+
+def test_stop_daemon_kills_after_both_graceful_paths_fail():
+    assert _stop_call_order(
+        graceful_signal=True,
+        signal_results=[True, True],
+        waits=[False],
+        acknowledged=False,
+    ) == ["terminate", "wait", "ipc", "kill"]
+
+
+def test_restart_replaces_and_stops_real_sandboxed_daemon(tmp_path, monkeypatch):
+    from autorun import ipc, restart_daemon
+
+    home = tmp_path / "ar-home"
+    home.mkdir()
+    monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
+    for name, filename in [
+        ("SOCKET_PATH", "daemon.sock"),
+        ("PORT_FILE", "daemon.port"),
+        ("TOKEN_FILE", "daemon.token"),
+    ]:
+        monkeypatch.setattr(ipc, name, home / filename)
+    monkeypatch.setattr(restart_daemon, "LOCK_PATH", home / "daemon.lock")
+    monkeypatch.setattr(restart_daemon, "RESTART_LOCK_PATH", home / "daemon-restart.lock")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("AUTORUN_HOME", str(home))
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "state"))
+
+    env = dict(os.environ)
+    code = "from autorun.daemon import main; main()"
+    with (home / "output.log").open("w") as output:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", code], env=env, cwd=tmp_path,
+            stdout=output, stderr=output,
+        )
+    try:
+        deadline = time.monotonic() + 10
+        while not ipc.answers_round_trip(timeout=0.1):
+            assert proc.poll() is None, (home / "output.log").read_text()
+            assert time.monotonic() < deadline, (home / "output.log").read_text()
+            time.sleep(0.01)
+        old_pid = ipc.daemon_record_pid(home / "daemon.lock")
+        assert old_pid is not None
+
+        assert restart_daemon.restart_daemon(replace_runtime_daemon=True) == 0
+        new_pid = ipc.daemon_record_pid(home / "daemon.lock")
+        assert new_pid is not None and new_pid != old_pid
+        assert proc.wait(timeout=5) == 0
+        assert ipc.answers_round_trip(timeout=1)
+    finally:
+        new_pid = ipc.daemon_record_pid(home / "daemon.lock")
+        if new_pid is not None:
+            restart_daemon._stop_daemon(new_pid)
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=5)
 
 
 def test_shutdown_request_timeout_returns_false(monkeypatch, tmp_path):
