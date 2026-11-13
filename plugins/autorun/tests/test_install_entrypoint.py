@@ -321,6 +321,64 @@ def test_main_install_repairs_every_receipt_only_runtime_state(
     assert len(pip_calls) == 1, f"{runtime_state} skipped the package reinstall"
 
 
+def test_second_plain_main_install_reports_current_claude_cache(
+    monkeypatch, isolated, capsys
+):
+    """Violation excluded: an identical plain install says nothing about its cache."""
+    from autorun.installer import claude, entrypoint, runtime, steps
+    from autorun.platforms import PLATFORMS
+
+    source = REPO / "plugins" / "autorun"
+    version = steps._version(source)
+    cache = claude.cache_fallback(
+        source,
+        PLATFORMS["claude"],
+        market="autorun",
+        plugin="ar",
+        version=version,
+        home=isolated,
+    )
+    assert cache is not None
+    venv = cache / ".venv"
+    python = runtime.cache_venv_python(cache)
+    python.parent.mkdir(parents=True)
+    python.write_text("interpreter placeholder\n", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text("home = isolated\n", encoding="utf-8")
+    imported = venv / "lib" / "site-packages" / "autorun" / "__init__.py"
+    (venv / ".autorun-runtime.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "install_mode": "non-editable",
+                "source_fingerprint": runtime._cache_runtime_fingerprint(source),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def run(argv, **_kwargs):
+        call = tuple(str(part) for part in argv)
+        if len(call) >= 4 and call[1:3] == ("-I", "-c"):
+            output = str(imported) if "import autorun" in call[3] else str(venv)
+            return subprocess.CompletedProcess(argv, 0, output + "\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setenv("AUTORUN_USE_DAEMON", "0")
+    monkeypatch.setattr(entrypoint, "_run", run)
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}" if name == "claude" else None)
+    monkeypatch.setattr(
+        runtime,
+        "bootstrap",
+        lambda *args, **kwargs: (runtime.Outcome("bootstrap", True, "test"),),
+    )
+
+    assert entrypoint.main(["--install", "ar", "--claude"]) == 0
+    capsys.readouterr()
+    assert entrypoint.main(["--install", "ar", "--claude"]) == 0
+    output = capsys.readouterr().out
+    assert f"ok   claude: cache refresh — already current: {cache}" in output
+
+
 def test_two_main_processes_bound_cache_lock_contention_through_config(
     monkeypatch, isolated, tmp_path
 ):

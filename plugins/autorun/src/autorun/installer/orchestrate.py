@@ -729,6 +729,8 @@ def _registrations(
                         filled = None
                         cache_backups: list[Path] = []
                         cache_kept: list[str] = []
+                        cache_runtime_outcome: Outcome | None = None
+                        cache_refresh_result: Path | None = None
                         try:
                             cached = claude.cache_dir(
                                 platform,
@@ -760,20 +762,21 @@ def _registrations(
                                         hook_command = claude.cache_hook_command(cached)
 
                                         def before_hooks() -> None:
-                                            cache_runtime = runtime.install_cache_runtime(
+                                            nonlocal cache_runtime_outcome
+                                            cache_runtime_outcome = runtime.install_cache_runtime(
                                                 cached,
                                                 source,
                                                 python=str(ctx.settings.get("hook_python") or ""),
                                                 run=run,
                                                 lock_held=True,
                                             )
-                                            if not cache_runtime.ok:
-                                                raise RuntimeError(cache_runtime.detail)
+                                            if not cache_runtime_outcome.ok:
+                                                raise RuntimeError(cache_runtime_outcome.detail)
                                     else:
                                         hook_command = str(
                                             ctx.settings.get("_claude_hook_command") or ""
                                         )
-                                claude.refresh_cache(
+                                cache_refresh_result = claude.refresh_cache(
                                     source,
                                     cached,
                                     plugin=plugin,
@@ -802,6 +805,19 @@ def _registrations(
                                 for path in cache_backups
                             ))
                         else:
+                            if (
+                                cached is not None
+                                and cache_refresh_result is None
+                                and not cache_kept
+                                and not cache_backups
+                                and cache_runtime_outcome is not None
+                                and cache_runtime_outcome.detail.startswith("already current:")
+                            ):
+                                outcomes = (*outcomes, Outcome(
+                                    f"{name}: cache refresh",
+                                    True,
+                                    f"already current: {cached}",
+                                ))
                             if cache_kept and cached is not None:
                                 outcomes = (*outcomes, Outcome(
                                     f"{name}: cache refresh",
