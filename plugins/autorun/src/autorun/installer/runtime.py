@@ -24,6 +24,7 @@ and is called by install and status only, never on a hook path.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from importlib import util as importlib_util
 import os
@@ -36,11 +37,13 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from contextlib import nullcontext
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from .fs import FileLock, IGNORED_GLOBS, INSTALL_LOCK_NAME
+from ..durable_io import atomic_write_json
+from .fs import FileLock, IGNORED_GLOBS, INSTALL_LOCK_NAME, scan_tree
 
 __all__ = [
     "DirectCommand", "UvCommand", "hook_command", "hook_command_fields", "has_uv", "python_runner", "Probe", "probe_runtime", "probe_hook_runtime",
@@ -440,43 +443,72 @@ def _stage_cache_project(source: Path, target: Path) -> None:
         support.write_build_metadata(source, target / "src" / "autorun" / "metadata.json")
 
 
+def _cache_runtime_fingerprint(source: Path) -> str:
+    payload = json.dumps(
+        scan_tree(source, ignored_globs=(*IGNORED_GLOBS, ".venv")),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def install_cache_runtime(
     cache: Path,
     source: Path,
     *,
     python: str = "",
     run: Runner = _spawn,
+    lock_held: bool = False,
 ) -> Outcome:
     """Install a source checkout non-editably into Claude's cache venv.
 
     The checkout's build inputs are staged beside the cache so the build
     cannot write into the checkout, and the cache hook then runs a snapshot
-    that later checkout edits cannot change. A wheel-installed CLI does not
-    come here: its tool venv is already a non-editable install.
+    that later checkout edits cannot change. A receipt inside ``.venv`` skips
+    pip when the source fingerprint already matches. A wheel-installed CLI does
+    not come here: its tool venv is already a non-editable install.
     """
-    lock = FileLock(str(cache.parent / INSTALL_LOCK_NAME))
-    lock.acquire()
+    lock = nullcontext() if lock_held else FileLock(str(cache.parent / INSTALL_LOCK_NAME))
     try:
-        cache_python = ensure_cache_venv(cache, python=python, run=run)
-        with tempfile.TemporaryDirectory(prefix=".autorun-cache-project-", dir=str(cache.parent)) as staging:
-            package = Path(staging) / "project"
-            _stage_cache_project(source, package)
-            if has_uv():
-                argv = ("uv", "pip", "install", "--python", str(cache_python), "--reinstall", "--quiet", str(package))
-            else:
-                argv = (str(cache_python), "-m", "pip", "install", "--force-reinstall", "--quiet", str(package))
-            result = run(argv, env={"PYTHONHOME": "", "PYTHONPATH": ""})
-        if result.returncode != 0:
-            return Outcome(
-                "Claude cache runtime",
-                False,
-                _first_line(result.stderr or result.stdout) or "package installation failed",
+        with lock:
+            cache_python = ensure_cache_venv(cache, python=python, run=run)
+            fingerprint = _cache_runtime_fingerprint(source)
+            receipt = cache / ".venv" / ".autorun-runtime.json"
+            try:
+                recorded = json.loads(receipt.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                recorded = {}
+            if recorded.get("source_fingerprint") == fingerprint:
+                return Outcome("Claude cache runtime", True, f"already current: {cache_python}")
+            receipt.unlink(missing_ok=True)
+            with tempfile.TemporaryDirectory(
+                prefix=".autorun-cache-project-", dir=str(cache.parent)
+            ) as staging:
+                package = Path(staging) / "project"
+                _stage_cache_project(source, package)
+                if has_uv():
+                    argv = (
+                        "uv", "pip", "install", "--python", str(cache_python),
+                        "--reinstall", "--quiet", str(package),
+                    )
+                else:
+                    argv = (
+                        str(cache_python), "-m", "pip", "install",
+                        "--force-reinstall", "--quiet", str(package),
+                    )
+                result = run(argv, env={"PYTHONHOME": "", "PYTHONPATH": ""})
+            if result.returncode != 0:
+                return Outcome(
+                    "Claude cache runtime",
+                    False,
+                    _first_line(result.stderr or result.stdout) or "package installation failed",
+                )
+            atomic_write_json(
+                receipt, {"source_fingerprint": fingerprint}, sort_keys=True
             )
-        return Outcome("Claude cache runtime", True, str(cache_python))
+            return Outcome("Claude cache runtime", True, str(cache_python))
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         return Outcome("Claude cache runtime", False, f"{type(error).__name__}: {error}")
-    finally:
-        lock.release()
 
 
 def sync_dependencies_argv(plugin_dir: Path, *, uv_tool_env: bool = False) -> tuple[str, ...]:

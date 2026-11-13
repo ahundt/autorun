@@ -1634,6 +1634,141 @@ def test_plain_claude_registration_recovers_an_interrupted_same_version_refresh(
     assert (cached / "config.py").read_text(encoding="utf-8") == "config = 'new'\n"
 
 
+def test_plain_install_and_uninstall_never_claim_or_modify_unproven_cache_files(
+    tmp_path, monkeypatch
+):
+    import subprocess
+    from autorun.installer import runtime, steps
+    from autorun.installer.orchestrate import install, uninstall
+    from autorun.platforms import PLATFORMS
+
+    repo = Path(__file__).resolve().parents[3]
+    ctx = _home_context(tmp_path, monkeypatch, repo)
+    plugin = repo / "plugins" / "autorun"
+    version = steps._version(plugin)
+    cached = (
+        ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / version
+    )
+    cached.parent.mkdir(parents=True)
+    shutil.copytree(plugin, cached, ignore=shutil.ignore_patterns(".venv", "__pycache__"))
+    marker = cached / OWNED_MARKER_NAME
+    marker.unlink(missing_ok=True)
+    hook = cached / "hooks" / "hooks.json"
+    hook.write_text(
+        json.dumps({
+            "hooks": {
+                "PreToolUse": [{"hooks": [{
+                    "type": "command",
+                    "command": "autorun --cli claude",
+                }]}]
+            },
+            "user": "${CLAUDE_PLUGIN_ROOT} keep",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    notes = cached / "notes.txt"
+    notes.write_bytes(b"user notes stay byte-identical\n")
+    before = {hook: hook.read_bytes(), notes: notes.read_bytes()}
+
+    monkeypatch.setattr(
+        runtime,
+        "install_cache_runtime",
+        lambda *args, **kwargs: runtime.Outcome("Claude cache runtime", True, "fake"),
+    )
+    calls = []
+
+    def fake_claude(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    common = dict(
+        marketplace_root=repo,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=ctx.home,
+        harnesses=(PLATFORMS["claude"],),
+        available=("claude",),
+        run_command=fake_claude,
+        state_dir=tmp_path / "state",
+        teardown_enabled=False,
+    )
+    installed = install(**common)
+
+    assert installed.ok
+    assert {path: path.read_bytes() for path in before} == before
+    receipt = read_marker(cached)
+    assert receipt is not None
+    assert "hooks/hooks.json" not in receipt.files
+    assert "notes.txt" not in receipt.files
+
+    removed = uninstall(**common)
+
+    assert not removed.ok
+    assert {path: path.read_bytes() for path in before} == before
+    assert calls
+
+
+def test_forced_install_backs_up_unproven_cache_bytes_before_replacement(
+    tmp_path, monkeypatch
+):
+    import subprocess
+    from autorun.installer import runtime, steps
+    from autorun.installer.orchestrate import install
+    from autorun.platforms import PLATFORMS
+
+    repo = Path(__file__).resolve().parents[3]
+    ctx = _home_context(tmp_path, monkeypatch, repo)
+    plugin = repo / "plugins" / "autorun"
+    version = steps._version(plugin)
+    cached = (
+        ctx.home / ".claude" / "plugins" / "cache" / "autorun" / "ar" / version
+    )
+    cached.parent.mkdir(parents=True)
+    shutil.copytree(
+        plugin,
+        cached,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(".venv", "__pycache__"),
+    )
+    (cached / OWNED_MARKER_NAME).unlink(missing_ok=True)
+    hook = cached / "hooks" / "hooks.json"
+    hook.write_text("user hook bytes\n", encoding="utf-8")
+    notes = cached / "notes.txt"
+    notes.write_text("user notes bytes\n", encoding="utf-8")
+    backups = tmp_path / "autorun-home" / "installer" / "backups"
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "autorun-home"))
+    monkeypatch.setattr(
+        runtime,
+        "install_cache_runtime",
+        lambda *args, **kwargs: runtime.Outcome("Claude cache runtime", True, "fake"),
+    )
+
+    result = install(
+        marketplace_root=repo,
+        plugins=("ar",),
+        settings={"skill_placement": {"": "auto"}},
+        home=ctx.home,
+        harnesses=(PLATFORMS["claude"],),
+        available=("claude",),
+        run_command=lambda argv: subprocess.CompletedProcess(argv, 0, "", ""),
+        state_dir=tmp_path / "state",
+        teardown_enabled=False,
+        force=True,
+    )
+
+    assert result.ok
+    backed_up = {path.read_text(encoding="utf-8") for path in backups.iterdir()}
+    assert {"user hook bytes\n", "user notes bytes\n"} <= backed_up
+    assert not notes.exists()
+    assert hook.read_text(encoding="utf-8") != "user hook bytes\n"
+    reported = {
+        outcome.detail
+        for outcome in result.registrations
+        if "cache backup" in outcome.step
+    }
+    assert {str(path) for path in backups.iterdir()} <= reported
+
+
 def test_markerless_claude_cache_keeps_unproven_files_then_force_backs_them_up(
     tmp_path, monkeypatch
 ):

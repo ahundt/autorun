@@ -73,7 +73,7 @@ import re
 import shutil
 import stat
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -82,7 +82,7 @@ from typing import Callable, Iterable, Iterator, Mapping, MutableMapping
 
 from filelock import FileLock
 
-from ..durable_io import atomic_write_text as atomic_write
+from ..durable_io import atomic_write_text as atomic_write, replace as durable_replace
 
 __all__ = [
     "FileState",
@@ -101,6 +101,7 @@ __all__ = [
     "publish_files",
     "publish_link",
     "record_tree",
+    "record_tree_files",
     "preserved_paths",
     "decide_link",
     "withdraw_link",
@@ -475,6 +476,7 @@ def record_tree(
     plugin: str,
     ownership_proof: Callable[[Path], bool],
     ignored_globs: Iterable[str] = IGNORED_GLOBS,
+    lock_held: bool = False,
 ) -> bool:
     """Fingerprint a regular tree after its native installer materializes it.
 
@@ -487,7 +489,7 @@ def record_tree(
         return True
     if not directory.is_dir():
         return False
-    with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+    with (nullcontext() if lock_held else FileLock(str(directory.parent / INSTALL_LOCK_NAME))):
         if (
             not directory.is_dir()
             or directory.is_symlink()
@@ -507,12 +509,48 @@ def record_tree(
     return True
 
 
+def record_tree_files(
+    directory: Path,
+    *,
+    plugin: str,
+    files: Mapping[str, str],
+    ownership_proof: Callable[[Path], bool],
+    lock_held: bool = False,
+) -> bool:
+    """Record exactly the files a caller proved or wrote, never ambient extras."""
+    if not directory.is_dir() or directory.is_symlink():
+        return False
+    with (nullcontext() if lock_held else FileLock(str(directory.parent / INSTALL_LOCK_NAME))):
+        marker = read_marker(directory)
+        if marker is None or not owns(marker, plugin) or not ownership_proof(directory):
+            return False
+        for relative, fingerprint in files.items():
+            try:
+                if _fingerprint(directory / relative) != fingerprint:
+                    return False
+            except (FileNotFoundError, OSError):
+                return False
+        atomic_write(
+            directory / OWNED_MARKER_NAME,
+            json.dumps(
+                TreeManifest(
+                    plugin=marker.plugin,
+                    files=dict(files),
+                    settings=marker.settings,
+                ).as_payload(),
+                indent=2,
+            ) + "\n",
+        )
+    return True
+
+
 def record_matching_tree_files(
     source: Path,
     directory: Path,
     *,
     plugin: str,
     ignored_globs: Iterable[str] = IGNORED_GLOBS,
+    lock_held: bool = False,
 ) -> bool:
     """Record only unmarked cache files whose bytes match the shipped source.
 
@@ -526,7 +564,7 @@ def record_matching_tree_files(
         or directory.is_symlink()
     ):
         return False
-    with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+    with (nullcontext() if lock_held else FileLock(str(directory.parent / INSTALL_LOCK_NAME))):
         if not directory.is_dir() or directory.is_symlink() or read_marker(directory) is not None:
             return False
         expected = scan_tree(source, ignored_globs=ignored_globs)
@@ -550,6 +588,7 @@ def record_tree_intent(
     intended_files: Mapping[str, str],
     ownership_proof: Callable[[Path], bool],
     ignored_globs: Iterable[str] = IGNORED_GLOBS,
+    lock_held: bool = False,
 ) -> bool:
     """Durably record a file-by-file refresh target before any replacement.
 
@@ -560,7 +599,7 @@ def record_tree_intent(
     """
     if not directory.is_dir() or directory.is_symlink():
         return False
-    with FileLock(str(directory.parent / INSTALL_LOCK_NAME)):
+    with (nullcontext() if lock_held else FileLock(str(directory.parent / INSTALL_LOCK_NAME))):
         marker = read_marker(directory)
         if (
             marker is None
@@ -1164,6 +1203,10 @@ def refresh_unmarked_tree(
     backed_up: list[Path] | None = None,
     ignored_globs: Iterable[str] = IGNORED_GLOBS,
     after_step: Callable[[str], None] | None = None,
+    last_relatives: Iterable[str] = (),
+    before_last: Callable[[], None] | None = None,
+    selected_files: Mapping[str, str] | None = None,
+    lock_held: bool = False,
 ) -> bool:
     """Refresh a proven harness cache without moving its public directory.
 
@@ -1213,14 +1256,15 @@ def refresh_unmarked_tree(
                 temporary.symlink_to(os.readlink(source_path), target_is_directory=source_path.is_dir())
             else:
                 shutil.copy2(source_path, temporary)
-            os.replace(temporary, target_path)
+            durable_replace(temporary, target_path)
         finally:
             if temporary.exists() or temporary.is_symlink():
                 temporary.unlink()
         notify(f"replace {relative}")
 
     expected = scan_tree(source, ignored_globs=ignored_globs)
-    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+    last = set(last_relatives)
+    with (nullcontext() if lock_held else FileLock(str(target.parent / INSTALL_LOCK_NAME))):
         try:
             if not ownership_proof(target):
                 raise _PublicationRefused(Decision(Verdict.KEEP, target, "ownership proof failed"))
@@ -1232,6 +1276,7 @@ def refresh_unmarked_tree(
             raise _PublicationRefused(
                 Decision(Verdict.KEEP, target, "backup root required before forced refresh")
             )
+        backup_fingerprints: dict[str, str] = {}
         for relative in wanted_backups:
             target_path = destination(relative)
             if not (target_path.is_file() or target_path.is_symlink()):
@@ -1242,26 +1287,61 @@ def refresh_unmarked_tree(
                 backup_root,
                 name=f"{target.name}-{relative.replace('/', '-')}",
             )
+            backup_fingerprints[relative] = _fingerprint(backup)
             if backed_up is not None:
                 backed_up.append(backup)
 
-        for relative in sorted(expected):
+        def verify_backup(relative: str, target_path: Path) -> None:
+            recorded = backup_fingerprints.get(relative)
+            if recorded is None:
+                return
+            try:
+                current = _fingerprint(target_path)
+            except (FileNotFoundError, OSError) as error:
+                raise RuntimeError(f"{relative} changed after backup") from error
+            if current != recorded:
+                raise RuntimeError(f"{relative} changed after backup")
+
+        def verify_selection(relative: str, target_path: Path) -> None:
+            if selected_files is None:
+                return
+            selected = selected_files.get(relative)
+            try:
+                current = _fingerprint(target_path)
+            except (FileNotFoundError, OSError):
+                current = None
+            if current != selected:
+                raise RuntimeError(f"{relative} changed after refresh selection")
+
+        def publish(relative: str) -> None:
             source_path = source / relative
             target_path = destination(relative)
+            verify_backup(relative, target_path)
+            verify_selection(relative, target_path)
             if target_path.exists() or target_path.is_symlink():
                 try:
                     if _fingerprint(source_path) == _fingerprint(target_path):
-                        continue
+                        return
                 except (FileNotFoundError, OSError):
                     pass
             replace_path(source_path, target_path, relative)
+
+        for relative in sorted(set(expected) - last):
+            publish(relative)
 
         actual = scan_tree(target, ignored_globs=ignored_globs)
         for relative in sorted(set(actual) - set(expected), reverse=True):
             target_path = destination(relative)
             if target_path.is_symlink() or target_path.is_file():
+                verify_backup(relative, target_path)
+                verify_selection(relative, target_path)
                 target_path.unlink()
                 notify(f"remove {relative}")
+
+        if before_last is not None:
+            before_last()
+        for relative in sorted(set(expected) & last):
+            publish(relative)
 
         for directory, subdirs, _names in os.walk(target, topdown=False):
             path = Path(directory)

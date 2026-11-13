@@ -93,6 +93,23 @@ def test_same_version_cache_mismatch_names_stale_and_changed_files(source, home)
     assert "hooks/hook_entry.py" in mismatches
 
 
+def test_same_version_refresh_compares_substituted_manifests_to_the_current_build(source, home):
+    written = install(source, home)
+    old = json.loads((written / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    old["hooks"].pop("PreToolUse")
+    (written / "hooks" / "hooks.json").write_text(
+        json.dumps(old), encoding="utf-8"
+    )
+    _record_cache(written)
+
+    assert claude.refresh_cache(source, written) == written
+
+    installed = json.loads(
+        (written / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    )
+    assert "PreToolUse" in installed["hooks"]
+
+
 def test_refresh_replaces_plugin_payload_in_place_and_preserves_managed_runtime(source, home):
     (source / "stale.txt").write_text("old payload\n", encoding="utf-8")
     written = install(source, home)
@@ -209,11 +226,21 @@ def test_refresh_crash_after_each_file_keeps_hook_entry_manifest_and_venv_usable
         interrupted_receipt = json.loads(
             (crashed / OWNED_MARKER_NAME).read_text(encoding="utf-8")
         )
-        assert interrupted_receipt["intent"]["files"] == fs.scan_tree(source)
+        with claude._expected_cache_tree(
+            source,
+            crashed,
+            hook_command=claude._installed_hook_command(source, crashed),
+        ) as expected:
+            assert interrupted_receipt["intent"]["files"] == fs.scan_tree(expected)
 
         assert claude.refresh_cache(source, crashed) == crashed
         assert claude.cache_mismatches(source, crashed) == ()
-        assert fs.scan_tree(crashed) == fs.scan_tree(source)
+        with claude._expected_cache_tree(
+            source,
+            crashed,
+            hook_command=claude._installed_hook_command(source, crashed),
+        ) as expected:
+            assert fs.scan_tree(crashed) == fs.scan_tree(expected)
         assert _round_trip(crashed) == "new"
         final_receipt = json.loads(
             (crashed / OWNED_MARKER_NAME).read_text(encoding="utf-8")
@@ -286,8 +313,11 @@ def test_refresh_keeps_an_edited_recorded_file_and_an_unrecorded_file(source, ho
 def test_unmarked_matching_cache_is_adopted_but_same_named_fork_is_kept(source, home):
     matching = install(source, home, version="1.2.4")
     (matching / OWNED_MARKER_NAME).unlink()
-    assert claude.refresh_cache(source, matching) is None
+    assert claude.refresh_cache(source, matching) == matching
     assert read_marker(matching) is not None
+    assert "${CLAUDE_PLUGIN_ROOT}" not in (
+        matching / "hooks" / "hooks.json"
+    ).read_text(encoding="utf-8")
 
     fork = install(source, home, version="1.2.5")
     (fork / OWNED_MARKER_NAME).unlink()
@@ -339,6 +369,190 @@ def test_native_cache_creation_wins_a_fallback_publication_race(
         source, Harness(), market="autorun", plugin="ar", version="1.2.3", home=home
     ) is None
     assert (runtime / "__init__.py").read_text(encoding="utf-8") == "native = True\n"
+
+
+def test_forced_refresh_stops_if_a_file_changes_after_its_backup(
+    source, home, tmp_path, monkeypatch
+):
+    written = install(source, home)
+    target = written / "hooks" / "hooks.json"
+    target.write_text("user edit before backup\n", encoding="utf-8")
+    original_park = fs._park_backup
+
+    def park_then_edit(path, backup_root, *, name=""):
+        backup = original_park(path, backup_root, name=name)
+        if path == target:
+            path.write_text("user edit after backup\n", encoding="utf-8")
+        return backup
+
+    monkeypatch.setattr(fs, "_park_backup", park_then_edit)
+
+    with pytest.raises(RuntimeError, match="changed after backup"):
+        claude.refresh_cache(
+            source,
+            written,
+            force=True,
+            backup_root=tmp_path / "backups",
+        )
+
+    assert target.read_text(encoding="utf-8") == "user edit after backup\n"
+    marker = read_marker(written)
+    assert marker is not None and marker.intended_files
+
+
+def test_replace_retries_a_transient_windows_sharing_violation(
+    source, home, monkeypatch
+):
+    from autorun import durable_io
+
+    written = install(source, home)
+    (source / "new.txt").write_text("new\n", encoding="utf-8")
+    real_replace = durable_io.os.replace
+    calls = 0
+
+    def sharing_violation(src, dst):
+        nonlocal calls
+        if Path(dst) == written / "new.txt":
+            calls += 1
+            if calls <= 2:
+                raise PermissionError("sharing violation")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(durable_io, "_RETRY_DENIED_REPLACE", True)
+    monkeypatch.setattr(durable_io, "REPLACE_RETRY_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(durable_io.os, "replace", sharing_violation)
+
+    assert claude.refresh_cache(source, written) == written
+    assert calls >= 3
+    assert (written / "new.txt").read_text(encoding="utf-8") == "new\n"
+
+
+def test_exhausted_replace_retry_keeps_intent_and_the_next_run_finishes(
+    source, home, monkeypatch
+):
+    from autorun import durable_io
+
+    written = install(source, home)
+    (source / "new.txt").write_text("new\n", encoding="utf-8")
+    real_replace = durable_io.os.replace
+
+    monkeypatch.setattr(durable_io, "_RETRY_DENIED_REPLACE", True)
+    monkeypatch.setattr(durable_io, "REPLACE_RETRY_SECONDS", 0)
+    def sharing_violation(src, dst):
+        if Path(dst) == written / "new.txt":
+            raise PermissionError("sharing violation")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(durable_io.os, "replace", sharing_violation)
+
+    with pytest.raises(PermissionError, match="sharing violation"):
+        claude.refresh_cache(source, written)
+
+    marker = read_marker(written)
+    assert marker is not None and marker.intended_files
+    monkeypatch.setattr(durable_io.os, "replace", real_replace)
+
+    assert claude.refresh_cache(source, written) == written
+    assert (written / "new.txt").read_text(encoding="utf-8") == "new\n"
+    final = read_marker(written)
+    assert final is not None and not final.intended_files
+
+
+def test_cache_intent_replacement_runtime_and_receipt_share_one_lock(
+    source, home, monkeypatch
+):
+    written = install(source, home)
+    (source / "payload.py").write_text("current = True\n", encoding="utf-8")
+    real_lock = claude.FileLock
+    acquisitions = 0
+    active = 0
+
+    class CountingLock:
+        def __init__(self, path):
+            self.inner = real_lock(path)
+
+        def __enter__(self):
+            nonlocal acquisitions, active
+            acquisitions += 1
+            self.inner.__enter__()
+            active += 1
+            return self
+
+        def __exit__(self, *args):
+            nonlocal active
+            active -= 1
+            return self.inner.__exit__(*args)
+
+    monkeypatch.setattr(claude, "FileLock", CountingLock)
+    monkeypatch.setattr(
+        fs,
+        "FileLock",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("nested cache lock acquisition")
+        ),
+    )
+    callback_states = []
+
+    assert claude.refresh_cache(
+        source,
+        written,
+        before_hooks=lambda: callback_states.append(active),
+    ) == written
+
+    assert acquisitions == 1
+    assert callback_states == [1]
+    assert active == 0
+    assert not read_marker(written).intended_files
+
+
+def test_runtime_finishes_before_hooks_json_is_replaced(source, home):
+    written = install(source, home)
+    (source / "payload.py").write_text("current = True\n", encoding="utf-8")
+    source_hook = source / "hooks" / "hooks.json"
+    document = json.loads(source_hook.read_text(encoding="utf-8"))
+    document["hooks"]["Stop"] = ["${CLAUDE_PLUGIN_ROOT}/hooks/entry.py"]
+    source_hook.write_text(json.dumps(document), encoding="utf-8")
+    order = []
+
+    claude.refresh_cache(
+        source,
+        written,
+        after_step=order.append,
+        before_hooks=lambda: order.append("runtime ready"),
+    )
+
+    assert order.index("replace payload.py") < order.index("runtime ready")
+    assert order.index("runtime ready") < order.index("replace hooks/hooks.json")
+
+
+def test_matching_runtime_receipt_skips_a_second_venv_reinstall(
+    source, tmp_path, monkeypatch
+):
+    from autorun.installer import runtime
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    venv = cache / ".venv"
+    python = runtime.cache_venv_python(cache)
+    python.parent.mkdir(parents=True)
+    python.write_text("interpreter placeholder\n", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text("home = isolated\n", encoding="utf-8")
+    installs = []
+
+    def run(argv, **_kwargs):
+        if tuple(argv[1:3]) == ("-I", "-c"):
+            return subprocess.CompletedProcess(argv, 0, str(venv) + "\n", "")
+        installs.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(runtime, "has_uv", lambda: True)
+
+    first = runtime.install_cache_runtime(cache, source, run=run)
+    second = runtime.install_cache_runtime(cache, source, run=run)
+
+    assert first.ok and second.ok
+    assert len(installs) == 1
+    assert "already current" in second.detail
 
 
 def test_versions_sit_beside_each_other_and_none_is_pruned(source, home):

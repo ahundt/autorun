@@ -749,6 +749,30 @@ def _registrations(
                                 if filled is not None:
                                     cached = filled
                             if cached is not None:
+                                manifest = source / "hooks" / "hooks.json"
+                                hook_command = ""
+                                before_hooks = None
+                                if manifest.is_file():
+                                    # Build the final manifest before comparing
+                                    # cache bytes. The private runtime is ready
+                                    # before hooks.json becomes visible.
+                                    if (source / "pyproject.toml").is_file():
+                                        hook_command = claude.cache_hook_command(cached)
+
+                                        def before_hooks() -> None:
+                                            cache_runtime = runtime.install_cache_runtime(
+                                                cached,
+                                                source,
+                                                python=str(ctx.settings.get("hook_python") or ""),
+                                                run=run,
+                                                lock_held=True,
+                                            )
+                                            if not cache_runtime.ok:
+                                                raise RuntimeError(cache_runtime.detail)
+                                    else:
+                                        hook_command = str(
+                                            ctx.settings.get("_claude_hook_command") or ""
+                                        )
                                 claude.refresh_cache(
                                     source,
                                     cached,
@@ -757,35 +781,9 @@ def _registrations(
                                     backup_root=backup_root(ctx),
                                     backed_up=cache_backups,
                                     kept=cache_kept,
+                                    hook_command=hook_command,
+                                    before_hooks=before_hooks,
                                 )
-                                if claude.substitute_root(cached):
-                                    if not claude.record_cache(source, cached, plugin=plugin):
-                                        raise RuntimeError(f"could not record substituted cache payload at {cached}")
-                                manifest = cached / "hooks" / "hooks.json"
-                                if manifest.is_file():
-                                    # A checkout's cached Claude copy gets its
-                                    # own non-editable venv. Hookless assets
-                                    # (the PDF plugin) need no runtime or pin.
-                                    if (source / "pyproject.toml").is_file():
-                                        cache_runtime = runtime.install_cache_runtime(
-                                            cached,
-                                            source,
-                                            python=str(ctx.settings.get("hook_python") or ""),
-                                            run=run,
-                                        )
-                                        if not cache_runtime.ok:
-                                            raise RuntimeError(cache_runtime.detail)
-                                        if claude.pin_hook_command(cached, claude.cache_hook_command(cached)):
-                                            if not claude.record_cache(source, cached, plugin=plugin):
-                                                raise RuntimeError(f"could not record pinned cache payload at {cached}")
-                                    else:
-                                        # A wheel-installed CLI's tool venv is
-                                        # already non-editable; pin to it.
-                                        if claude.pin_hook_command(
-                                            cached, str(ctx.settings.get("_claude_hook_command") or "")
-                                        ):
-                                            if not claude.record_cache(source, cached, plugin=plugin):
-                                                raise RuntimeError(f"could not record pinned cache payload at {cached}")
                         except Exception as error:
                             cache_failure = Outcome(
                                 f"{name}: cache fallback",
