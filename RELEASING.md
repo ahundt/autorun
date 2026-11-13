@@ -192,13 +192,27 @@ command that must run outside the lock has to say why, on the line.
    sbx autorun --version     # expect the candidate version
    # Every tree should read "already current" and each hooks file "current".
    sbx autorun --status
-   pkill -f "$sb/tools/autorun-ai" || true   # the sandbox daemon, and only it
+   sbx autorun --state-status
+   # If state-status reports the compatible task-definition fallback, stop the
+   # sandbox daemon with the ownership check below, run
+   # `sbx autorun --state-rebuild-tasks`, then repeat install/status. The rebuild
+   # is optional offline maintenance; startup must not require it.
+   pids=$(lsof -t +D "$sb" 2>/dev/null || true)
+   if [ -n "$pids" ]; then
+     ps -o pid,command -p $pids
+     live_pid=$(awk 'NR == 1 { print $1 }' "$HOME/.autorun/daemon.lock" 2>/dev/null || true)
+     for pid in $pids; do test -z "$live_pid" || test "$pid" != "$live_pid"; done
+     kill $pids
+   fi
    echo "inspect, then remove: $sb"
    EOF
    ```
 
    A harness whose CLI is not on `PATH` is skipped; put a stub on the
-   sandbox's `bin` to exercise its publish step.
+   sandbox's `bin` to exercise its publish step. If the upgrade rehearsal
+   exposes a rollback need, use the designated recovery-commit recipe in
+   [Stage 7](#roll-back-a-live-install-to-the-designated-recovery-commit), not
+   `previous=1.0.0rc3`; that variable is only the upgrade source.
 7. Commit the bump, the section, and the generated notes together, so every
    commit passes `test_release_notes.py`. Do not push yet.
 
@@ -722,10 +736,14 @@ its contents have been inspected.
 ### Roll back a live install to the designated recovery commit
 
 The designated known-good code is local tag `recovery/live-known-good`, commit
-`bdcdb9ac`. Do not substitute an earlier release candidate. Every command and
-interactive check in this recipe changes or exercises a live installation and
-is therefore a **RELEASER live recovery action**, never an automated release
-step.
+`bdcdb9ac`. Do not substitute an earlier release candidate. Schema revision 3
+keeps compatibility `user_version` 2, so this rollback does not normally need
+`--state-rebuild-tasks`; use that command only when `autorun --state-status`
+from the candidate explicitly reports the compatible task-definition fallback,
+and only offline after every daemon using the store has stopped. Every command
+and interactive check in this recipe changes or exercises a live installation
+and is therefore a **RELEASER live recovery action**, never an automated
+release step.
 
 1. **RELEASER live recovery action — install the pinned distribution:**
 
