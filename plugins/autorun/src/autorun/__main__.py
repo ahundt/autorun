@@ -1287,8 +1287,12 @@ def _main(argv: Sequence[str] | None = None) -> int:
         return install_plugins(selection, **install_kwargs)
 
     if args.status:
+        from autorun import ipc
         from autorun.install import show_status
 
+        # Status reads ~/.autorun only when a harness is installed; without
+        # this, on a machine with none it left an open directory open.
+        ipc.ensure_config_dir()
         return show_status(
             custom_harnesses=args.custom_harness,
             include_legacy_gemini=args.gemini,

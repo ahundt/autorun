@@ -856,6 +856,9 @@ def test_pinned_commands_keep_each_manifest_event_for_bootstrap_failure(tmp_path
         capture_output=True, env=environment, check=True,
     )
 
+    assert tool.stdout.strip(), (
+        f"the pinned PreToolUse command printed nothing: rc={tool.returncode} stderr={tool.stderr!r}"
+    )
     tool_response = json.loads(tool.stdout)
     assert tool.returncode == 2
     assert tool_response["hookSpecificOutput"]["permissionDecision"] == "deny"

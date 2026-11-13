@@ -795,13 +795,20 @@ def test_no_room_for_the_rebuild_keeps_revision_2_and_says_what_it_needs(tmp_pat
     _force_defensive_sqlite(monkeypatch)
     real = shutil.disk_usage
     monkeypatch.setattr(sm.shutil, "disk_usage", lambda path: real(path)._replace(free=512 * 1024))
-    tasks_bytes = sum(
-        size for (size,) in _read(
-            db_path,
-            "SELECT pgsize FROM dbstat WHERE name IN "
-            "(SELECT name FROM sqlite_master WHERE tbl_name = 'tasks')",
+    try:
+        tasks_bytes = sum(
+            size for (size,) in _read(
+                db_path,
+                "SELECT pgsize FROM dbstat WHERE name IN "
+                "(SELECT name FROM sqlite_master WHERE tbl_name = 'tasks')",
+            )
         )
-    )
+    except sqlite3.OperationalError:
+        # A SQLite built without the dbstat table (the macOS and Windows CI
+        # interpreters): the store sizes the rebuild from the whole file.
+        (pages,), = _read(db_path, "PRAGMA page_count")
+        (page_size,), = _read(db_path, "PRAGMA page_size")
+        tasks_bytes = pages * page_size
     needed_mb = math.ceil(2.2 * tasks_bytes / (1024 * 1024))
 
     store = SQLiteStore(db_path)
