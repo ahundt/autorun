@@ -32,6 +32,7 @@ import sys
 import time
 import subprocess
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 import psutil
@@ -42,6 +43,9 @@ from .config import CONFIG
 
 LOCK_PATH = ipc.AUTORUN_LOCK_PATH
 RESTART_LOCK_PATH = ipc.daemon_restart_lock_path()
+_RESTART_LOCK_TIMEOUT_SECONDS: ContextVar[float] = ContextVar(
+    "restart_lock_timeout_seconds", default=0.0
+)
 
 
 def _pid_matches_src(pid: int, src_dir: Path) -> bool:
@@ -239,7 +243,7 @@ class RestartLockUnavailable(OSError):
 
 
 @contextmanager
-def restart_lock(*, timeout: float = 0.0):
+def restart_lock():
     """Context manager for the restart lock. Yields True if acquired, False otherwise.
 
     Uses filelock for cross-platform file locking (works on Unix and Windows).
@@ -252,7 +256,9 @@ def restart_lock(*, timeout: float = 0.0):
                 return
             # ... do restart work ...
     """
-    lock = FileLock(str(RESTART_LOCK_PATH), timeout=timeout)
+    lock = FileLock(
+        str(RESTART_LOCK_PATH), timeout=_RESTART_LOCK_TIMEOUT_SECONDS.get()
+    )
     acquired = False
     try:
         # FileLock would create the lock's directory with the umask's mode.
@@ -635,9 +641,13 @@ def restart_daemon(
     held = ExitStack()
     try:
         coalesce_window = float(CONFIG["daemon_restart_coalesce_seconds"])
-        acquired = held.enter_context(
-            restart_lock(timeout=coalesce_window if replace_runtime_daemon else 0.0)
+        token = _RESTART_LOCK_TIMEOUT_SECONDS.set(
+            coalesce_window if replace_runtime_daemon else 0.0
         )
+        try:
+            acquired = held.enter_context(restart_lock())
+        finally:
+            _RESTART_LOCK_TIMEOUT_SECONDS.reset(token)
     except RestartLockUnavailable as exc:
         print(f"  ✗ Cannot restart: {exc}")
         print("    This process may not write autorun's state directory (a sandbox")

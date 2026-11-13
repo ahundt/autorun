@@ -1275,8 +1275,11 @@ def _main(argv: Sequence[str] | None = None) -> int:
             "codex_plugin_marketplace": args.codex_plugin_marketplace,
             "claude_agents_skills": args.claude_agents_skills,
             "skill_placement": args.skill_placement,
-            "cache_install_lock_timeout_seconds": args.cache_install_lock_timeout_seconds,
         }
+        if args.cache_install_lock_timeout_seconds is not None:
+            install_kwargs["cache_install_lock_timeout_seconds"] = (
+                args.cache_install_lock_timeout_seconds
+            )
         if args.install_dry_run:
             install_kwargs["dry_run"] = True
         if args.custom_harness:

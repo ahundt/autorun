@@ -457,13 +457,14 @@ def test_a_restart_after_editing_source_is_never_coalesced(monkeypatch, tmp_path
     stop.assert_called_once()
 
 
-def test_an_install_handoff_always_replaces_the_daemon(monkeypatch):
-    """An install must load the new code however recently the daemon started."""
+def test_an_install_handoff_accepts_a_fresh_healthy_daemon(monkeypatch):
+    """A concurrent install may reuse the healthy daemon the other install started."""
     window = core.CONFIG["daemon_restart_coalesce_seconds"]
     code, stop = _restart_with_daemon_aged(
         monkeypatch, window / 2, replace_runtime_daemon=True
     )
-    stop.assert_called_once()
+    assert code == 0
+    stop.assert_not_called()
 
 
 def _age_directory(path, seconds_ago):

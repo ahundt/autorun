@@ -495,6 +495,7 @@ raise SystemExit(entrypoint.main(["--install", "ar", "--claude"]))
         **os.environ,
         "HOME": str(isolated),
         "USERPROFILE": str(isolated),
+        "AUTORUN_USE_DAEMON": "1",
         "RESTART_SIGNAL": str(signal),
         "RESTART_HEALTHY": str(healthy),
         "RESTART_SRC": str(REPO / "plugins" / "autorun" / "src"),
