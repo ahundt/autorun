@@ -1,6 +1,7 @@
 # Changelog
 
-Notable changes to the autorun marketplace (`ar` and `pdf-extractor`).
+Notable changes to the autorun marketplace (`ar`, `autorun-skills`, and
+`pdf-extractor`).
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
@@ -8,35 +9,95 @@ marketplace itself carries a separate `version` field.
 
 ## [1.0.0rc4] - 2026-11-07
 
-autorun 1.0.0rc4 is the last release candidate before 1.0.0. autorun checks an
-AI coding agent's tool calls before they run, on Claude Code, Google
-Antigravity, Qwen Code, Codex CLI, Pi, ForgeCode, and OpenCode; it stops
-`rm -rf`, for example, and suggests `trash` instead. Since 1.0.0rc3, the daemon
-keeps answering with 200 sessions sharing it instead of blocking tool calls and
-telling agents to restart it, and a review of every module
-fixed ways past the guards (an `/ar:ok` allow approved the whole command line,
-and commands run through a wrapper or a shell went unchecked), an
-`autorun --update` that installed unreleased code, an `autorun --no-bootstrap`
-that blocked every tool call, task statuses that a harness's own task list
-overwrote, installs that removed another harness's plugin, and failures in
-`/ar:tabs`, `/ar:tabw`, plan export, and `extract-pdfs`. Task state and the
-`/ar` commands carry over from rc3; two default guards that never fired now do,
-and `/ar:no` reads several words as one pattern (see Changed).
+autorun 1.0.0rc4 changes command names, skill ownership, task-state handling,
+harness hooks, tmux targeting, and same-version Claude cache repair. It ships
+three marketplace plugins and supports Claude Code, legacy Gemini CLI, Google
+Antigravity, Qwen Code, Codex CLI, Pi, Prime Agent, ForgeCode, and OpenCode.
+Enforcement depends on each harness's hook contract: ForgeCode and Prime 0.10
+receive guidance and skills without runtime tool or Stop enforcement.
 
 ### Upgrading from 1.0.0rc3
 
-`autorun --install` republishes what each harness loads and restarts the
-autorun daemon, as it did for rc3. There is no new setting to add, including
-for a Claude Code marketplace-only install. Agent sessions already running are
-served by the restarted daemon. `uv tool list` shows `autorun-ai` if you
-installed with uv. From 1.0.0rc1, use the same commands; the 1.0.0rc3 notes
-describe what changed between rc1 and rc3.
+1. Run the generated package upgrade commands, then restart each harness so it
+   reloads hooks and skills. `autorun --install` publishes `ar`,
+   `autorun-skills`, and `pdf-extractor`. A Claude marketplace-only install must
+   also run `claude plugin install autorun-skills@autorun`; the generated
+   marketplace command updates `ar` only.
+2. Replace retired command names in instructions and automation. Use
+   `/ar:status`, `/ar:file allow`, `/ar:file justify`, `/ar:file existing-only`,
+   `/ar:go`, `/ar:goprocess`, `/ar:stop`, `/ar:estop`, `/ar:plannew`,
+   `/ar:planrefine`, `/ar:planupdate`, `/ar:planprocess`, `/ar:planexport`, and
+   the `--global` forms of `ok`, `no`, and `clear`. Short names such as `st`,
+   `allow`, `j`, `find`, `run`, `gp`, `x`, `sos`, `pn`, `pr`, `pu`, `pp`, and
+   `pe` are input tolerance only where the harness forwards them; unprefixed
+   legacy slash commands are removed.
+3. Remove obsolete configuration entries. This includes `stage1_completion`,
+   `stage2_completion`, `stage3_completion`, `recheck_template`,
+   `plan_accepted_marker`, `monitor_stop_delay_seconds`,
+   `task_staleness_no_tasks_threshold`, `task_staleness_threshold`,
+   `shared_agents_plugins_subdir`, `delegation_ttl_seconds`,
+   `ghost_clear_min_consecutive_blocks`, `ghost_clear_hash_length`, and
+   `ghost_clear_injection_template`.
+4. Update skill references. Eleven general skills now belong to the
+   `autorun-skills` plugin, so Claude uses names such as
+   `/autorun-skills:streamline-text`. Rename `parallel-subagent` references to
+   `test-fixes-in-parallel`.
+5. Replace the retired tmux skills with `/ar:tmux` or the CLI. Run
+   `autorun tmux list`, then send with `autorun tmux send --to %3 -- continue`.
+   `--to` accepts one pane id, comma-separated pane ids, `all`, or
+   `awaiting-input`; shifting letter targets are refused.
+6. Review policies that depended on the old read redirects. Plain `grep`,
+   `find`, `cat`, `head`, `tail`, and `echo ... > file` no longer have default
+   redirect guards. A broader command-wide replacement is
+   `/ar:no --global cat`. The `find` guard still blocks `-delete`, `-fprint`,
+   `-fprint0`, `-fprintf`, and `-fls`.
+7. For an earlier same-version rc4 Claude cache, run
+   `autorun --install --force`. The installer refreshes the cache in place,
+   keeps its version directory and `.venv`, and backs up edited or unproven
+   files before replacing proven autorun-owned payloads.
+
+### Highlights
+
+1. Stop decisions now come from durable task state. An agent can record
+   `AUTORUN_TASK_AWAITING_USER(<id>): <decision>`; autorun stores the decision,
+   lets waiting-only Stops continue to later stage checks, and restores the
+   previous task status after a newer user prompt or an explicit task update.
+2. Delegated work remains delegated until SubagentStop, a matching harness
+   process ending, or a task update supplies evidence. Forks inherit only the
+   task ids that crossed their boundary, and work created in a side
+   conversation remains owned there. The fourth consecutive no-tool Stop may
+   pass through the loop guard, but it does not complete or ignore any task.
+3. SQLite keeps compatibility `user_version` 2 and adds schema revision 3.
+   Startup rewrites supported task definitions in place and uses a compatible
+   encoded fallback if SQLite refuses the rewrite. `autorun --state-status`
+   reports repair state; after stopping every daemon that uses the store,
+   `autorun --state-rebuild-tasks` performs the optional offline rebuild.
+4. Hook and output contracts are recorded for all nine harnesses. Qwen shows
+   allowed-Stop notices through `systemMessage`; Antigravity routes prompt
+   policy and deferred Stop notices through `PreInvocation`; Pi and Prime's
+   bridge carries lifecycle notices; Codex installs compact and parent-session
+   delegation hooks; OpenCode handles prompt, Stop, and compaction events.
+5. Permission-changing chat commands accept user-authored input only. Models,
+   subagents, replayed automation, and OpenCode's model-callable bridge cannot
+   grant `/ar:ok`, change file policy, disable the cache check, or pause task
+   enforcement.
+6. Prompt-time cache expiry checks default to a warning at 100,000 input tokens
+   where the harness supplies usable lifetime and transcript data.
+   `/ar:cache on` requests blocking where supported; resending the same blocked
+   prompt lets it proceed.
+7. `autorun tmux list` discovers foreground panes for every registered harness.
+   Sends type literal text, press Enter separately, refuse dialogs and panes
+   mid-turn, and fail when submission or readback cannot be confirmed.
+8. The wheel and source distribution carry all three marketplace plugins.
+   Eleven general skills moved to `autorun-skills`; `ar` keeps the skills used
+   by its own commands.
 
 ### Changed
 
-1. The default `echo >` rule now blocks `echo ... > file`. It matched only when
-   autorun could not parse the command, so it almost never fired. Allow one use
-   with `/ar:ok 'echo >'`.
+1. The former default redirects for `grep`, `find`, `cat`, `head`, `tail`, and
+   `echo ... > file` were removed. Ordinary reads and redirections now follow
+   the shell and harness permissions unless another rule matches. Use a custom
+   or global `/ar:no` rule when a command-wide block is required.
 2. `git stash clear`, which deletes every stash at once, is now blocked while a
    stash exists, as `git stash drop` already was. Allow one use with
    `/ar:ok 'git stash clear'`.
@@ -52,28 +113,45 @@ describe what changed between rc1 and rc3.
 5. Rule files (`.claude/autorun.*.local.md`) are now read from the session's
    directory and each parent up to the repository root, nearest first, then
    `~/.claude/`. Outside a repository only the session's directory is read.
-6. Skills now install into each harness's own plugin, extension, or package
-   folder instead of the shared `~/.agents/skills`, so they no longer mix with
-   skills you keep there. Pi and Prime get one package under
-   `~/.pi/agent/packages/ar` (and `~/.prime/agent/packages/ar`), listed in
-   their `settings.json` `packages`. Upgrading moves the copies autorun put
-   in `~/.agents/skills` to the new folders; a copy you edited stays where it
-   is, and the install output names it. `--skill-placement both` still also
-   writes `~/.agents/skills`.
-7. Four skills ship with autorun: `task-lifecycle-workflow`,
-   `synthesize-project-requirements`, `write-durable-goal-prompts`, and
-   `write-decision-ready-technical-reports`. If you keep a skill with one of
-   these names in `~/.agents/skills`, agents that read that folder list both.
+6. Skills install into each harness's native plugin, extension, or package
+   folder instead of defaulting to the shared `~/.agents/skills` tree.
+   General-purpose skills now belong to the separate `autorun-skills` plugin;
+   edited or unowned copies are retained and reported. `--skill-placement both`
+   still also writes the shared skill tree.
+7. `autorun-skills` ships eleven general-purpose skills. `ar` keeps seven
+   integration skills used by autorun commands: `plannew`, `planrefine`,
+   `planupdate`, `planprocess`, `commit`, `philosophy`, and `tmux`.
+8. Safety guards are a mitigation for cooperative models, not an operating
+   system sandbox or a security boundary. Host permissions, harness behavior,
+   and commands outside configured rules still apply.
+9. Prime 0.10 uses a Rust runtime without Pi's extension API. autorun installs
+   guidance and skills there, but cannot enforce prompt, tool, Stop, subagent,
+   permission, or compaction policy at runtime.
+10. OpenCode exposes no native prompt-origin field. autorun classifies a
+    non-synthetic root-session prompt as user input by checking `parentID` and
+    synthetic parts; another plugin or API client can submit the same shape.
+11. The K0 capture was not run for this candidate. Prompt-time cache expiry
+    therefore remains `warn` by default; missing lifetime, usage, or transcript
+    data passes without a block.
+12. The final candidate has not been measured at 200 simultaneous sessions on
+    a quiet machine. No 200-session capacity, latency, or stability claim is
+    made for this release.
 
 ### Removed
 
-1. Nine configuration keys that nothing read: `stage1_completion`,
-   `stage2_completion`, `stage3_completion`, `recheck_template`,
-   `plan_accepted_marker`, `monitor_stop_delay_seconds`,
-   `task_staleness_no_tasks_threshold`, `task_staleness_threshold`, and
-   `shared_agents_plugins_subdir`. A value for one of them in
-   `autorun.config.json` changed nothing; it is now skipped as an unknown key,
-   and `autorun --status` no longer reports it.
+1. Configuration keys with no current behavior were removed:
+   `stage1_completion`, `stage2_completion`, `stage3_completion`,
+   `recheck_template`, `plan_accepted_marker`, `monitor_stop_delay_seconds`,
+   `task_staleness_no_tasks_threshold`, `task_staleness_threshold`,
+   `shared_agents_plugins_subdir`, `delegation_ttl_seconds`,
+   `ghost_clear_min_consecutive_blocks`, `ghost_clear_hash_length`, and
+   `ghost_clear_injection_template`.
+2. Legacy unprefixed command registrations and duplicate command documents were
+   removed. Retired `/ar:` spellings remain input tolerance only; current help,
+   manifests, and command output use one advertised name per command.
+3. The old `autorun.main`, `autorun.ai_monitor`, `autorun.tmux_injector`, and
+   shadowing `plugins/autorun/autorun.py` launchers were removed. Use `autorun`
+   or `python -m autorun`.
 
 ### Fixed
 
@@ -88,12 +166,6 @@ describe what changed between rc1 and rc3.
    `~/.qwen/settings.json`) and said nothing, so Qwen sessions had no
    `todo_write` and autorun did not enforce task tracking there until a second
    install. One install now turns it on.
-3. The `/ar:tabw` "set mode" action pressed Shift+Tab into a tmux session named
-   after the window number instead of the window you chose, and reported
-   success whatever mode resulted. It now cycles the chosen window, reads its
-   status line after each press, and reports failure if the mode never appears.
-4. `/ar:tabs` failed with a `TypeError` on every run before listing any
-   session. It now lists them.
 5. `extract-pdfs` on a folder whose subfolders held PDFs with the same name,
    such as `a/report.pdf` and `b/report.pdf`, wrote a single `report.md`: the
    second PDF was skipped as already extracted, or with `--no-resume` it
@@ -107,14 +179,15 @@ describe what changed between rc1 and rc3.
    other session's unfinished plan was exported as accepted and the plan you
    accepted was filed as not accepted. Each session now uses its own newest
    plan.
-8. `/ar:pe dir` with an absolute folder archived the plan but reported "Plan
-   export FAILED ... NOT archived", and a `~/...` folder created a directory
-   literally named `~` inside the project. Both now export where you asked.
-9. With `/ar:pe rejected off`, a plan you never accepted was written to the
-   accepted `notes/` folder. It is no longer written anywhere.
-10. `/ar:pe status` showed `notes` as the export folder for a configuration
-    using the older `output_dir` key, while exports went to that folder. Status
-    now shows where exports actually go.
+8. `/ar:planexport dir` with an absolute folder archived the plan but reported
+   "Plan export FAILED ... NOT archived", and a `~/...` folder created a
+   directory literally named `~` inside the project. Both now export where you
+   asked.
+9. With `/ar:planexport rejected off`, a plan you never accepted was written to
+   the accepted `notes/` folder. It is no longer written anywhere.
+10. `/ar:planexport status` showed `notes` as the export folder for a
+    configuration using the older `output_dir` key, while exports went to that
+    folder. Status now shows where exports actually go.
 11. Commands started through a wrapper or a shell skipped every guard:
     `nohup rm -rf x`, `time rm -rf x`, `echo x | xargs rm -rf`,
     `bash -lc 'rm -rf x'`, a multi-line `bash -c`, `bash <<EOF`,
@@ -205,24 +278,6 @@ describe what changed between rc1 and rc3.
     so a delegation waiting for you to verify it showed only as "and 1 more".
     Every blocking task is now named, and a returned delegation says to verify
     the results.
-34. `/ar:tabs` missed Claude in a window split into panes, and counted any
-    process with `claude` in its arguments, such as
-    `vim ~/.claude/settings.json`, as Claude, so `/ar:tabs all:continue` could
-    type into it.
-35. In `/ar:tabs`, `awaiting` was read as the session letters A, W, A, I, ...;
-    `all` with 12 or more sessions reached A, L, L; a mistyped letter group was
-    dropped while the rest ran; and selecting a session typed its suggested
-    action, such as "let it work", into Claude. An invalid selection now sends
-    nothing and says why, and only `continue` and `interrupt` are sent as
-    default actions.
-36. `/ar:tabw continue` refused to send at Claude Code's own `❯` prompt
-    ("unknown_state"), and `/ar:tabs` marked a window as awaiting input when
-    its output said "waiting for build".
-37. A tmux window whose title, path, or session name contained `|` disappeared
-    from `/ar:tabs` and `/ar:tabw`.
-38. autorun's tmux helpers took the tmux server's process id from `$TMUX` as
-    the current session's name, so a prompt meant for the current session
-    created a new session with that number as its name and typed into it.
 39. Bug-workaround keys in `autorun.config.json` accepted only `true` or
     `false`; `"always"`, `"never"`, `"auto"`, and version ranges, which the
     documentation lists, were dropped without a word. They now load, and the
@@ -273,10 +328,10 @@ describe what changed between rc1 and rc3.
 52. Block suggestions were built from the whole line, so
     `cd /tmp && rm -rf build` suggested `trash /tmp && rm build`. They now use
     the blocked command's own arguments.
-53. With `/ar:j`, Claude Code, Codex, and the Gemini family had every new file
-    refused whatever justification the agent wrote, because autorun read it only
-    from the field Pi sends. On Pi, the example justification in autorun's own
-    message counted as one.
+53. With `/ar:file justify`, Claude Code, Codex, and the Gemini family had
+    every new file refused whatever justification the agent wrote, because
+    autorun read it only from the field Pi sends. On Pi, the example
+    justification in autorun's own message counted as one.
 54. Guards added or changed under `default_integrations` in
     `autorun.config.json` were ignored; the shipped table always applied.
 55. `/ar:no regex:terraform\s+destroy` stored `terraforms+destroy`, so nothing
@@ -306,10 +361,6 @@ describe what changed between rc1 and rc3.
     quotation".
 63. `/ar:no format` stored the advice for `rm`, because "rm" is inside
     "format".
-64. With a locale that is not UTF-8 (such as `LANG=C`), `/ar:tabs` and
-    `/ar:tabw` could not see Claude Code's `❯` prompt, and window titles lost
-    their non-ASCII characters: tmux printed them as `_`. autorun now asks
-    tmux for UTF-8 output whatever the locale.
 65. Commands inside `bash -c`, `sh -c`, `eval`, a heredoc fed to a shell, or
     `find -exec` skipped the conditions some guards check:
     `bash -c 'git restore notes.txt'` ran on a file with unsaved changes, and
@@ -331,65 +382,21 @@ describe what changed between rc1 and rc3.
     archived plans still being written, its own included. Recovery now takes
     only the cleared session's plans, and leaves alone any plan whose session
     is still running.
-71. `/ar:tabw continue` and messages sent to Claude skipped an idle window
-    whose last reply contained a numbered list or ended in a question, taking
-    it for a choice dialog. A choice prompt now needs Claude Code's `❯` cursor
-    on a numbered option.
 72. Asking about a tmux session that did not exist created it, so listing
     windows could leave empty sessions behind; creating a session on purpose
     could report success without creating it.
-73. `/ar:tabs all:` with no command pressed Enter in every session. It is now
-    refused and nothing is sent.
-74. autorun's tmux monitor and injector checked the default `autorun` session
-    instead of the session they were given.
 75. When the daemon failed during a permission request in Qwen Code (or Claude
     Code or Codex set up to send one), autorun's deny was in a shape the tool
     ignores, so the usual permission prompt appeared instead. The deny now
     uses the tool's own format on every path.
 76. In Pi and Prime Agent with `AUTORUN_DISABLE=1`, task results told you to
     restart the daemon; they now say autorun is disabled.
-77. With about 60 sessions sharing one daemon, autorun blocked tool calls
-    across all of them with `daemon_dispatch_contained`, and the agents ran
-    the `autorun --restart-daemon` the message recommended: twenty restarts
-    in thirty minutes, each deleting the socket every other session was
-    using. Four changes stop this:
-    1. Each tool call took about five state-database write transactions,
-       including four for reading whether tasks were paused, and every
-       session waited behind every other. Reads no longer take a write
-       transaction.
-    2. One slow call now pauses checks for its own session only, not for
-       every session.
-    3. A denial caused by load says it clears by itself within a few seconds
-       and not to restart the daemon. An unreachable daemon still names the
-       restart.
-    4. `autorun --restart-daemon` does nothing when a daemon that started
-       within the last minute is answering.
-
-    A first tool call after a restart no longer pays about 0.6 s to load the
-    shell parser, and finding project rule files no longer lists their
-    directories on every call. The daemon accepts as many waiting connections
-    as the operating system allows, not asyncio's default of 100. The daemon
-    log records each session once, not two lines per tool call, which had
-    rotated away all but the last half hour of history.
-    `autorun --status` with a missing dependency now names the module and the
-    reinstall command, not a traceback. In a 100-session test (five tool calls each,
-    all sessions at once, same machine load before and after), the median
-    check before a tool call fell from 844 ms to 54 ms, against a 3 s limit.
-    At a steady 66 tool calls per second, five times the rate logged during
-    the outage, no call failed and 99% answered within 9 ms.
-
-    When every check slot is held by a call past its deadline, the denial
-    still names the restart, since waiting will not clear it. Inside Codex's
-    sandbox, `autorun --restart-daemon` reports that it cannot take the lock,
-    not a `PermissionError` traceback. The disable message now says to set
-    `AUTORUN_DISABLE=1` where the harness is launched: agents had put it in
-    front of 1,055 commands, where it has no effect. A client that hangs up
-    mid-request is logged as one warning, not an error with a traceback.
-    A request the daemon took and never answered says to retry once and run
-    the restart only if that is blocked too, in the Python client and the
-    JavaScript bridge alike. The restart's no-op now requires the daemon to
-    answer a health probe, not merely accept a connection, so a stuck daemon
-    under a minute old is replaced.
+77. Under concurrent load, one slow session could make unrelated sessions see
+    `daemon_dispatch_contained` and restart advice, causing repeated restarts.
+    Reads no longer take write transactions, slow-call containment is scoped to
+    its session, overload messages distinguish a busy daemon from an
+    unreachable one, and restart refuses to replace a recently started daemon
+    that answers its health probe.
 78. Codex blocked plain file reads behind a wrapper (`rtk cat f`,
     `env LC_ALL=C head f`, `LC_ALL=C tail -n 40 log`) and told the agent to
     use a "shell file inspection tool" with a `file_path=` parameter Codex
@@ -619,6 +626,49 @@ describe what changed between rc1 and rc3.
      now reads those keys from the file, below flags and `AUTORUN_*`
      variables; an invalid value falls back to the default, and an absent
      file, as before a first install, changes nothing.
+121. Stop treated every open dependency and delegated task as work the current
+     agent could do, while timer-based delegation expiry could return live work
+     to pending. Stop now separates actionable work from waiting work and ends
+     a delegation only on a matching completion, process-liveness, or task
+     update signal.
+122. A task waiting for a user decision either blocked Stop indefinitely or
+     required a global pause. The `awaiting-user` status now stores the
+     decision and previous status, survives Pi reprojection and downgrade, and
+     is restored by a newer user prompt or an explicit task update.
+123. Forks and side conversations could receive a parent's task list without a
+     durable ownership boundary. A fork now inherits only task ids that existed
+     at the fork boundary; tasks it creates remain enforced in that
+     conversation, and an inherited task becomes its responsibility only after
+     it updates the task.
+124. The task table's status constraint could reject a new task status, and a
+     defensive layout repair could copy every task during daemon startup.
+     Schema revision 3 removes status policy from the table definition, rewrites
+     supported metadata in place, and uses a compatible fallback encoding when
+     SQLite refuses the rewrite. The optional full rebuild is offline only.
+125. Rolling state authority back from SQLite to JSON omitted task rows stored
+     only in SQLite. `autorun --state-rollback` now exports current task rows to
+     JSON before changing the backend.
+126. Qwen and Antigravity could lose autorun notices on an allowed Stop because
+     their native response carriers differed from Claude's. Qwen now uses
+     `systemMessage`, and Antigravity preserves deferred notices through its
+     own output contract.
+127. OpenCode missed prompt, Stop, and compaction enforcement or could classify
+     an originless frame as user input. The bridge now handles those lifecycle
+     routes, treats lookup failure and originless frames as automation, and
+     caches bounded session-parent lookups.
+128. Prime 0.10 rejected the Pi extension package as incompatible. Installation
+     now detects that runtime and publishes supported guidance and skills
+     without claiming hook enforcement.
+129. A forced same-version Claude registration could withdraw the active cache,
+     replace its version tree or `.venv`, and lose edited files. Refresh now
+     updates proven payloads in place, records ownership in `.autorun-owned`,
+     backs up edited or unproven files, recovers interrupted refreshes, and
+     leaves harness-owned metadata alone.
+130. `autorun task gc` rejected SQLite state, and the JSON path could accept a
+     negative TTL or require a session identity in a plain terminal. SQLite GC
+     now expires eligible whole sessions with archive-before-delete; it refuses
+     negative TTL, non-default patterns, and `--no-archive`, while protecting
+     unfinished and identifiable current sessions.
 
 ### For contributors
 
@@ -671,7 +721,7 @@ describe what changed between rc1 and rc3.
    `Platform.tool_input_aliases`. `test_bridge_timeout_order.py` pins the
    JavaScript bridge's 5 s timer above the hook wrapper and daemon-response
    timeouts in `CONFIG` for Pi, Prime and OpenCode.
-8. Windows CI runs 55 tests it used to skip. The skill-audit tests run
+8. Windows CI runs tests it used to skip. The skill-audit tests run
    `audit-skill.sh` under Git for Windows' bash (`platforms.posix_shell`), and
    the script accepts Python 3 as `python3` or `python`, passing over a
    `python3` that cannot run it, such as the Windows Store alias. The Pi
@@ -704,10 +754,8 @@ describe what changed between rc1 and rc3.
     The socket-path guard measures encoded bytes, including non-ASCII paths.
     Multiprocess tests use loopback manager proxies so a long scratch path
     cannot prevent the lock assertions from running, and shut each manager down
-    after use. A concurrent two-runtime test exercises both daemon transports,
-    200 simultaneous sessions, and every registered hook route.
-    IPC tests keep token creation and cleanup private, and lifecycle probes
-    publish stand-in artifacts in their own fixture directories.
+    after use. IPC tests keep token creation and cleanup private, and lifecycle
+    probes publish stand-in artifacts in their own fixture directories.
     The inherited Claude project alias and uv project, tool and Python paths
     are cleared before they can redirect a test into a developer installation;
     the shared uv cache stays available.
