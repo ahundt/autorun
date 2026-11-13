@@ -47,6 +47,7 @@ import shlex
 import shutil
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
@@ -59,12 +60,15 @@ from .fs import (
     fill_tree,
     owns,
     read_marker,
+    remove_empty_parents,
+    remove_idle_install_lock,
     record_matching_tree_files,
     record_tree,
     record_tree_files,
     record_tree_intent,
     refresh_unmarked_tree,
     scan_tree,
+    withdraw_files,
     withdrawn,
 )
 
@@ -368,6 +372,18 @@ def refresh_cache(
             return None
 
 
+@dataclass(frozen=True, slots=True)
+class RetainedCache:
+    path: Path
+    files: tuple[str, ...]
+
+
+def _retained_cache_files(directory: Path) -> tuple[str, ...]:
+    payload = tuple(sorted(_cache_scan(directory)))
+    runtime = (".venv/",) if (directory / ".venv").is_dir() else ()
+    return (*runtime, *payload)
+
+
 def retire_cache_versions(
     platform: object,
     *,
@@ -375,33 +391,56 @@ def retire_cache_versions(
     plugin: str,
     keep: Iterable[str] = (),
     home: Path | None = None,
-) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
-    """Remove proven generated versions except ``keep``; return removed, kept.
-
-    A malformed or foreign same-name tree is left in place and reported in the
-    second tuple. This is the cache-specific equivalent of the installer's
-    marker rule: no positive ownership proof, no deletion.
-    """
+) -> tuple[tuple[Path, ...], tuple[RetainedCache, ...]]:
+    """Retire proven payload while preserving and describing every kept file."""
     base = discovery.config_dir(platform, home=home)
     if base is None:
         return (), ()
     root = base / CACHE_SUBDIR / market / plugin
     wanted = set(keep)
-    removed, unproven = [], []
+    removed: list[Path] = []
+    retained: list[RetainedCache] = []
     if not root.is_dir():
         return (), ()
     for directory in sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name):
         if directory.name in wanted:
             continue
-        if withdrawn(
-            directory,
-            plugin=plugin,
-            ignored_globs=CACHE_METADATA_GLOBS,
-        ):
+        marker = read_marker(directory)
+        if marker is None or not owns(marker, plugin) or not marker.files:
+            retained.append(RetainedCache(directory, _retained_cache_files(directory)))
+            continue
+        kept_paths = _cache_keep_paths(directory, plugin)
+        if not kept_paths:
+            if not withdrawn(
+                directory,
+                plugin=plugin,
+                ignored_globs=CACHE_METADATA_GLOBS,
+            ):
+                raise OSError(f"could not retire proven cache tree: {directory}")
             removed.append(directory)
-        else:
-            unproven.append(directory)
-    return tuple(removed), tuple(unproven)
+            continue
+
+        edited, missing, _extra = compare(
+            directory, marker, ignored_globs=CACHE_METADATA_GLOBS
+        )
+        expected_removals = set(marker.files) - set(edited) - set(missing)
+        removed_files = set(withdraw_files(directory, plugin=plugin))
+        left_proven = sorted(
+            name for name in expected_removals - removed_files if (directory / name).exists()
+        )
+        if left_proven:
+            raise OSError(
+                f"could not remove proven cache file(s) from {directory}: "
+                + ", ".join(left_proven)
+            )
+        (directory / ".orphaned_at").unlink(missing_ok=True)
+        for name in removed_files:
+            remove_empty_parents((directory / name).parent, stop=directory)
+        retained.append(RetainedCache(directory, _retained_cache_files(directory)))
+
+    remove_idle_install_lock(root)
+    remove_empty_parents(root, stop=base / CACHE_SUBDIR)
+    return tuple(removed), tuple(retained)
 
 
 def installed_versions(

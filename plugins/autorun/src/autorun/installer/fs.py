@@ -80,7 +80,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, MutableMapping
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from ..durable_io import atomic_write_text as atomic_write, replace as durable_replace
 
@@ -109,6 +109,8 @@ __all__ = [
     "BACKUP_SUFFIX",
     "withdrawn",
     "withdraw_files",
+    "remove_idle_install_lock",
+    "remove_empty_parents",
     "dereference_links",
     "fill_tree",
     "refresh_unmarked_tree",
@@ -2059,6 +2061,37 @@ def withdraw_files(directory: Path, *, plugin: str | None = None) -> tuple[str, 
             # normal cleanup retires our claim.  If the process is killed,
             # ``_resume_interrupted`` restores it and every frozen file.
         return tuple(removed)
+
+
+def remove_idle_install_lock(directory: Path) -> bool:
+    """Remove this directory's lock file only while holding that same lock."""
+    lock_path = directory / INSTALL_LOCK_NAME
+    if not lock_path.exists():
+        return False
+    lock = FileLock(str(lock_path))
+    try:
+        lock.acquire(timeout=0)
+    except Timeout:
+        return False
+    try:
+        lock_path.unlink(missing_ok=True)
+        return not lock_path.exists()
+    finally:
+        lock.release()
+
+
+def remove_empty_parents(start: Path, *, stop: Path) -> tuple[Path, ...]:
+    """Remove empty directories from ``start`` upward, never including ``stop``."""
+    removed = []
+    current = start
+    while current != stop and stop in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        removed.append(current)
+        current = current.parent
+    return tuple(removed)
 
 
 def edit_target(path: Path) -> Path:

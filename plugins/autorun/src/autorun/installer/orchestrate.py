@@ -829,25 +829,35 @@ def _registrations(
                 )
                 if cache_lifecycle_ok:
                     keep = ()
-                    removed, unproven = claude.retire_cache_versions(
-                        platform,
-                        market=registration_market,
-                        plugin=plugin,
-                        keep=keep,
-                        home=ctx.home,
-                    )
-                    if removed:
-                        outcomes = (*outcomes, Outcome(
-                            f"{name}: {plugin} cache retirement",
-                            True,
-                            ", ".join(str(path) for path in removed),
-                        ))
-                    if unproven:
+                    try:
+                        removed, retained = claude.retire_cache_versions(
+                            platform,
+                            market=registration_market,
+                            plugin=plugin,
+                            keep=keep,
+                            home=ctx.home,
+                        )
+                    except OSError as error:
                         outcomes = (*outcomes, Outcome(
                             f"{name}: {plugin} cache retirement",
                             False,
-                            "left unproven cache tree(s): " + ", ".join(str(path) for path in unproven),
+                            f"{type(error).__name__}: {error}",
                         ))
+                    else:
+                        if removed:
+                            outcomes = (*outcomes, Outcome(
+                                f"{name}: {plugin} cache retirement",
+                                True,
+                                ", ".join(str(path) for path in removed),
+                            ))
+                        for item in retained:
+                            files = ", ".join(item.files) or "unproven cache payload"
+                            outcomes = (*outcomes, Outcome(
+                                f"{name}: {plugin} cache retirement",
+                                False,
+                                f"KEEP {item.path}: {files}. Delete this folder by hand "
+                                "if you no longer want these files.",
+                            ))
                 done.extend(outcomes)
                 if outcomes and all(outcome.ok for outcome in outcomes):
                     commit_registration()

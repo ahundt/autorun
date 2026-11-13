@@ -287,11 +287,59 @@ def test_retirement_removes_only_hash_proven_unmodified_cache_versions(source, h
     )
 
     assert removed == (old,)
-    assert kept == (unproven, edited)
+    assert tuple(item.path for item in kept) == (unproven, edited)
+    assert kept[0].files == ("mine.txt",)
+    assert kept[1].files == ("hooks/hooks.json",)
     assert current.is_dir()
     assert not old.exists()
     assert (edited / "hooks" / "hooks.json").read_text(encoding="utf-8") == "user edit\n"
     assert (unproven / "mine.txt").is_file()
+
+
+def test_retirement_removes_proven_files_but_keeps_mixed_cache_user_files(
+    source, home
+):
+    """Violation excluded: one user file strands every proven cache payload file."""
+    mixed = install(source, home, version="1.2.2")
+    edited = mixed / "hooks" / "hooks.json"
+    edited.write_text("user edit\n", encoding="utf-8")
+    notes = mixed / "notes.txt"
+    notes.write_text("user notes\n", encoding="utf-8")
+    venv_file = mixed / ".venv" / "managed-by-claude.json"
+    venv_file.parent.mkdir()
+    venv_file.write_text("{}\n", encoding="utf-8")
+    unchanged = mixed / ".claude-plugin" / "plugin.json"
+    lock = mixed.parent / fs.INSTALL_LOCK_NAME
+    lock.touch()
+
+    removed, kept = claude.retire_cache_versions(
+        Harness(), market="autorun", plugin="ar", home=home
+    )
+
+    assert removed == ()
+    assert tuple(item.path for item in kept) == (mixed,)
+    assert kept[0].files == (".venv/", "hooks/hooks.json", "notes.txt")
+    assert not unchanged.exists()
+    assert not (mixed / OWNED_MARKER_NAME).exists()
+    assert not lock.exists()
+    assert edited.read_text(encoding="utf-8") == "user edit\n"
+    assert notes.read_text(encoding="utf-8") == "user notes\n"
+    assert venv_file.is_file()
+
+
+def test_retirement_removes_empty_plugin_and_market_cache_parents(source, home):
+    """Violation excluded: a clean uninstall leaves empty cache parent directories."""
+    only = install(source, home, version="1.2.2")
+    plugin_root = only.parent
+    market_root = plugin_root.parent
+
+    removed, kept = claude.retire_cache_versions(
+        Harness(), market="autorun", plugin="ar", home=home
+    )
+
+    assert removed == (only,) and kept == ()
+    assert not plugin_root.exists()
+    assert not market_root.exists()
 
 
 def test_refresh_keeps_an_edited_recorded_file_and_an_unrecorded_file(source, home):
