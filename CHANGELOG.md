@@ -712,20 +712,26 @@ enforce those policies.
      unfinished and identifiable current sessions.
 120. The Claude cache-parent lock could wait forever while another installer
      ran pip. Its timeout now resolves from the command line, environment,
-     `autorun.config.json`, then a 600-second default. The installer prints the
-     cache path while waiting and, on timeout, names the lock, elapsed time, and
-     wait-and-rerun action.
+     `autorun.config.json`, then a 600-second default. Accepted values are
+     greater than zero and at most 86400 seconds; invalid values name the key,
+     rejected value, and range instead of silently using the default. The
+     installer prints the cache path while waiting and, on timeout, names the
+     lock, elapsed time, and wait-and-rerun action.
 121. Uninstall left every proven file when a cache version also contained an
      edited or unproven file, then treated the preserved tree as a failure. It
-     now removes hash-proven unchanged payload and autorun metadata, keeps
-     edited and unproven files, keeps `.venv` when the version tree remains,
-     lists each kept relative path with a manual deletion action, removes idle
-     locks and empty parents, and exits successfully. I/O failures still fail.
+     now removes hash-proven unchanged payload and autorun metadata from regular
+     version directories, keeps edited and unproven files, and keeps `.venv`
+     when the version tree remains. Symlinked and Windows reparse-point versions
+     are reported and never traversed. The cache `.autorun-install.lock` and its
+     parent directories remain so concurrent installers retain one lock
+     authority. Kept paths are reported, and I/O failures still fail.
 122. Two installs that reached daemon restart together could leave one install
-     exiting 1 because the other held the restart lock. Install handoffs now
-     wait within the existing restart-coalescing window and accept the fresh,
-     healthy daemon started by the other install. A remaining restart failure
-     carries its reason and tells the user to wait and rerun the install.
+     exiting 1 because the other held the restart lock. Each install now records
+     its restart-request time before waiting. It accepts a healthy daemon only
+     when the validated daemon birth record is later than that request, proving
+     the concurrent installer restarted it; an existing daemon is replaced
+     regardless of age or source mtimes. A remaining failure carries its reason
+     and tells the user to wait and rerun the install.
 123. A second identical plain install printed no Claude cache result. It now
      prints an ok line naming the cache directory as already current.
 124. A forced cache refresh that created backups and then failed during a later

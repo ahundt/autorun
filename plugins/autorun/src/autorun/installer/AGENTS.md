@@ -115,7 +115,9 @@ that need it. No disk access: stage generated content to a temp dir and point th
   selection, backup, replacement, runtime work, `hooks.json` publication and the
   final receipt. Its timeout is the resolved
   `cache_install_lock_timeout_seconds` setting (CLI, environment, config file,
-  then 600 seconds); waiting is printed by the installer, never by hook code.
+  then 600 seconds). Its accepted range is `(0, 86400]` seconds; invalid values
+  stop with the key, rejected value, and range. Waiting is printed by the
+  installer, never by hook code.
   Before the first replacement, the marker gains `intent.files`; recovery
   accepts either the prior or intended hash, and the completed receipt drops
   `intent`. A markerless cache adopts each raw bundled file whose hash matches;
@@ -137,10 +139,13 @@ that need it. No disk access: stage generated content to a temp dir and point th
   last after the runtime succeeds. Upgrades retain every old version because a
   running session may still invoke its captured hook command. Only explicit
   uninstall retires cache versions: it removes hash-proven unchanged payload
-  and autorun metadata, keeps edited and unproven files, and keeps `.venv` when
-  those files leave the version tree in place. It reports each kept relative
-  path and removes idle lock files plus empty plugin and market parents. Cache
-  proof, refresh and retirement share one metadata exclusion set for
+  and autorun metadata only from regular version directories, keeps edited and
+  unproven files, and keeps `.venv` when those files leave the version tree in
+  place. Symlinked and Windows reparse-point versions are reported without
+  reading their marker or contents. It reports each kept path and leaves the
+  cache `.autorun-install.lock` plus its plugin and market parents in place so
+  waiters and new installers retain one lock authority. Cache proof, refresh
+  and retirement share one metadata exclusion set for
   `.orphaned_at`, `.venv`, bytecode and file-manager files. Foreign same-name
   trees are left and reported; caches under another market or plugin are never
   visited.
