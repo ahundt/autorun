@@ -6,8 +6,8 @@ succeeds.
 
 ## Install
 
-`extract-pdfs` ships in autorun. Its extraction libraries are an optional extra,
-so nobody who never opens a PDF downloads them:
+`extract-pdfs` ships in autorun. Its Python extraction backends are optional,
+so they are not installed unless you request them:
 
 ```bash
 uv tool install 'autorun-ai[pdf]'
@@ -40,7 +40,7 @@ The `pdf-extractor` plugin adds `/pdf-extractor:extract` and a skill that loads
 when you ask an agent to extract, convert, parse or read a PDF.
 
 ```bash
-uv tool install --force autorun-ai && autorun --install pdf-extractor   # every detected agent
+uv tool install --force autorun-ai && autorun --install pdf-extractor   # each detected agent
 
 claude plugin marketplace add https://github.com/ahundt/autorun.git    # Claude Code alone
 claude plugin install pdf-extractor@autorun

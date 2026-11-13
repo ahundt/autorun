@@ -128,7 +128,7 @@ uv tool install --editable plugins/autorun && autorun --install
 # Without uv
 python -m pip install -e plugins/autorun && autorun --install
 
-# PDF extraction: `extract-pdfs` always installs; its backends are this extra
+# PDF extraction: `extract-pdfs` is included; this extra installs its backends
 uv tool install --force 'autorun-ai[pdf]' && extract-pdfs --list-backends
 ```
 
