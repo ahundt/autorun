@@ -67,6 +67,8 @@ receive guidance and skills without runtime tool or Stop enforcement.
    task ids that crossed their boundary, and work created in a side
    conversation remains owned there. The fourth consecutive no-tool Stop may
    pass through the loop guard, but it does not complete or ignore any task.
+   Only a prompt the user wrote or main-agent tool activity restarts that
+   sequence.
 3. SQLite keeps compatibility `user_version` 2 and adds schema revision 3.
    Startup rewrites supported task definitions in place and uses a compatible
    encoded fallback if SQLite refuses the rewrite. `autorun --state-status`
