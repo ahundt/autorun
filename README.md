@@ -717,7 +717,7 @@ autorun --install ar --codex         # one plugin (ar; autorun is an alias), one
 autorun --install --claude           # also --gemini, --antigravity, --qwen, --pi, --prime, --codex
 autorun --install --custom-harness 'lab=qwen:qwen-lab:/path/to/config::Qwen Lab'   # repeatable
 autorun --install-dry-run --codex    # preview every write
-autorun --install --force            # same-version repair; backs up edits and refreshes caches in place
+autorun --install --force            # same-version repair; reports backups made before in-place replacement
 autorun --install --tool             # also run uv tool install for the CLI
 autorun --uninstall                  # everything incl. the autorun-ai tool, or a comma-separated plugin list; keeps ~/.autorun
 ```
@@ -851,7 +851,7 @@ invalid value is ignored in favor of the default.
 | Commands do nothing | `autorun --status` checks every detected agent and runs the hook command once (`ok hook command`). Hook calls are logged to `~/.autorun/hook_entry_debug.log`, the daemon to `~/.autorun/daemon.log`. Restart the agent session after any install. |
 | Claude's task tools are missing or vanish | Claude Code 2.1.268 and later offer them to newer models only with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`. `autorun --install` sets it in `~/.claude/settings.json` unless you already did; start a new session. Without the tools autorun does not enforce tasks, and says so at session start. [Details and other agents](plugins/autorun/TROUBLESHOOTING.md#claude-task-tools-are-missing-or-vanished). |
 | Claude Code plugin will not load | `claude --debug` shows plugin loading. Reinstall: `claude plugin uninstall ar@autorun`, then the marketplace commands in [Other ways to install](#other-ways-to-install). The installed copy is under `~/.claude/plugins/cache/autorun/ar/`. |
-| Claude cache differs from this build | Run `autorun --status`. Recorded stale files are repaired by `autorun --install`. Unproven or edited files require `autorun --install --force`, which prints each backup path under `~/.autorun/installer/backups/` before refreshing the same version directory in place; it never removes that directory or its `.venv`. Start a new Claude session for hook-manifest changes. |
+| Claude cache differs from this build | Run `autorun --status`. A plain `autorun --install` changes only hash-proven files and leaves unproven or edited files byte-identical and outside the receipt. `autorun --install --force` backs up every unproven or edited byte sequence under `~/.autorun/installer/backups/` before replacement, prints each backup path, and refreshes the same version directory in place; it never removes that directory or its `.venv`. Start a new Claude session for hook-manifest changes. |
 | Anything else | `autorun --install --force` republishes hooks, commands and skills; edited Claude cache files are backed up first. Full guide: [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md). |
 
 ## Related tools

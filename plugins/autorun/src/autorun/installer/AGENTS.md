@@ -106,26 +106,35 @@ that need it. No disk access: stage generated content to a temp dir and point th
   marker and no decision names them.
 - **Claude cache payloads use the ordinary hash receipt, but a cache-specific walk.**
   `<config>/plugins/cache/<market>/<plugin>/<version>/` carries `.autorun-owned`
-  with the hashes autorun recorded after fallback, placeholder substitution and
-  command pinning, but remains outside the general publication sweep. A plain
-  install refreshes only recorded, unchanged payload files, one file at a time,
-  with each changed file published by same-directory atomic rename. Before the
-  first replacement, the same marker gains `intent.files`, the target hashes;
-  recovery accepts either the prior or intended hash, then the completed receipt
-  drops `intent`. Edited and unproven files are kept, the rest of the install
-  succeeds, and the report names `autorun --install --force` plus the backup
-  directory. A markerless cache adopts each file whose hash matches the bundled
-  payload; non-matching files remain unproven. Forced refresh backs every kept
-  file up under `~/.autorun/installer/backups/`, prints each generated path, and
-  then refreshes in place. The version root and `.venv` of every version are
-  never moved, renamed or deleted during install; Claude registration refresh
-  uses `plugin update`/`enable`, never an uninstall/reinstall cycle. Upgrades
-  retain every old version because a running session may still invoke its
-  captured hook command. Only explicit uninstall may retire a hash-proven,
-  unmodified selected-plugin version. Cache proof, refresh and retirement share
-  one metadata exclusion set for `.orphaned_at`, `.venv`, bytecode and
-  file-manager files. Foreign same-name trees are left and reported; caches
-  under another market or plugin are never visited.
+  with only the hashes autorun wrote or proved, and remains outside the general
+  publication sweep. A plain install compares every proven file with the exact
+  installed form for this build, including placeholder substitution and hook
+  command pinning in `hooks.json`, `plugin.json` and `settings.json`; edited and
+  unproven files stay byte-identical and outside the receipt. One cache-parent
+  lock covers intent recording, selection, backup, replacement, runtime work,
+  `hooks.json` publication and the final receipt. Before the first replacement,
+  the marker gains `intent.files`; recovery accepts either the prior or intended
+  hash, and the completed receipt drops `intent`. A markerless cache adopts each
+  raw bundled file whose hash matches; non-matching files remain unproven.
+  Forced refresh copies every edited or unproven file that it will replace to
+  `~/.autorun/installer/backups/` first and reports each path; if bytes change
+  after backup, the run stops with its intent intact rather than overwrite an
+  unbacked sequence. The version root and `.venv` of every version are never
+  moved, renamed or deleted during install; Claude registration refresh uses
+  `plugin update`/`enable`, never an uninstall/reinstall cycle. During
+  changed-build venv reinstall, a hook that hits the incomplete runtime denies
+  tool-gate events (exit 2 for Claude PreToolUse) and allows lifecycle/context
+  events with an `[autorun]` import error; this residual window remains because
+  running sessions retain
+  the same `.venv` path. Matching runtime fingerprints skip reinstall, and
+  changed installs replace `hooks.json` last after the runtime succeeds,
+  shrinking exposure without adding a hook-path lock. Upgrades retain every old
+  version because a running session may still invoke its captured hook command.
+  Only explicit uninstall may retire a hash-proven, unmodified selected-plugin
+  version. Cache proof, refresh and retirement share one metadata exclusion set
+  for `.orphaned_at`, `.venv`, bytecode and file-manager files. Foreign same-name
+  trees are left and reported; caches under another market or plugin are never
+  visited.
 - **Never `uv tool uninstall` a name whose console script is also ours.** uv
   removes scripts by *name*, not by owner, and every uv tool shares one bin
   directory. Measured, with `autorun-ai` installed and providing all three:
