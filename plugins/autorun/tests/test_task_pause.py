@@ -11,7 +11,7 @@ import pytest
 
 from autorun import plugins
 from autorun import session_manager
-from autorun.core import EventContext, ThreadSafeDB
+from autorun.core import AutorunApp, EventContext, ThreadSafeDB
 from autorun.scoped_allow import ScopeSpec
 from autorun.session_manager import SessionBackendError, SessionPersistenceError
 from autorun.platforms import hook_platforms
@@ -710,6 +710,63 @@ def test_resume_is_idempotent_and_generation_compare_is_atomic():
     assert not resume_task_pause(ctx, expected_generation="wrong")
     assert resume_task_pause(ctx, expected_generation=pause.generation)
     assert not resume_task_pause(ctx)
+
+
+@pytest.mark.parametrize(
+    ("event", "expected_reads"),
+    [("PreToolUse", 1), ("PostToolUse", 1), ("Stop", 0)],
+)
+def test_one_dispatch_reads_task_pause_state_once(monkeypatch, event, expected_reads):
+    store = ThreadSafeDB()
+    ctx = _context(
+        f"pause-read-count-{event}",
+        event=event,
+        store=store,
+        tool_name="Bash",
+    )
+    reads = 0
+    original = ThreadSafeDB.get_stored
+
+    def counted_get_stored(self, key, default=None):
+        nonlocal reads
+        if self is store and key.endswith(":task_enforcement_pause"):
+            reads += 1
+        return original(self, key, default)
+
+    monkeypatch.setattr(ThreadSafeDB, "get_stored", counted_get_stored)
+
+    plugins.app.dispatch(ctx)
+
+    assert reads == expected_reads
+
+
+def test_pause_granted_through_context_is_seen_later_in_same_dispatch():
+    local_app = AutorunApp()
+    observed = []
+
+    @local_app.on("PostToolUse")
+    def grant_after_first_check(ctx):
+        observed.append(task_enforcement_is_paused(ctx))
+        activate_task_pause(ctx, scope=ScopeSpec(ttl_seconds=300.0), reason="")
+
+    @local_app.on("PostToolUse")
+    def check_after_grant(ctx):
+        observed.append(task_enforcement_is_paused(ctx))
+
+    local_app.dispatch(_context("pause-same-dispatch", event="PostToolUse"))
+
+    assert observed == [False, True]
+
+
+def test_pause_changed_between_dispatches_is_seen_by_next_context():
+    store = ThreadSafeDB()
+    first = _context("pause-next-dispatch", store=store)
+    writer = _context("pause-next-dispatch", store=store)
+    second = _context("pause-next-dispatch", store=store)
+
+    assert not task_enforcement_is_paused(first)
+    activate_task_pause(writer, scope=ScopeSpec(ttl_seconds=300.0), reason="")
+    assert task_enforcement_is_paused(second)
 
 
 def test_state_failure_enforces_tasks_normally():

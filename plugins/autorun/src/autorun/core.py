@@ -1850,6 +1850,8 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
 
 
 _DEFERRED_STOP_NOTICES = "deferred_stop_notices"
+_DISPATCH_CACHE_KEY = object()
+_DISPATCH_CACHE_MISSING = object()
 
 
 class EventContext:
@@ -2085,6 +2087,11 @@ class EventContext:
     def deadline_monotonic(self) -> float | None:
         """Absolute deadline shared by every stage of this hook request."""
         return self._deadline_monotonic
+
+    @property
+    def dispatch_cache(self) -> "dict | None":
+        """Feature memos scoped to the current :meth:`AutorunApp.dispatch` call."""
+        return object.__getattribute__(self, "_state").get(_DISPATCH_CACHE_KEY)
 
     @property
     def transcript_path(self) -> "str | None":
@@ -3228,11 +3235,20 @@ class AutorunApp:
         return user_only_refusal(command, ctx.cli_type)
 
     def dispatch(self, ctx: EventContext) -> Dict:
-        """
-        Unified dispatch - routes all events through consistent pattern.
+        """Route one event with a feature cache that cannot outlive the dispatch."""
+        state = object.__getattribute__(ctx, "_state")
+        previous = state.get(_DISPATCH_CACHE_KEY, _DISPATCH_CACHE_MISSING)
+        state[_DISPATCH_CACHE_KEY] = {}
+        try:
+            return self._dispatch_with_cache(ctx)
+        finally:
+            if previous is _DISPATCH_CACHE_MISSING:
+                state.pop(_DISPATCH_CACHE_KEY, None)
+            else:
+                state[_DISPATCH_CACHE_KEY] = previous
 
-        DRY: Single method handles all event types with minimal branching.
-        """
+    def _dispatch_with_cache(self, ctx: EventContext) -> Dict:
+        """Dispatch implementation while the context's feature cache is active."""
         store = getattr(ctx, "_store", None)
         if store is None or not hasattr(store, "batch_writes"):
             return self._dispatch_unbatched(ctx)

@@ -756,6 +756,9 @@ enforce those policies.
      restarts now send the ownership-checked graceful signal first and use IPC
      only if signalling is denied or shutdown times out. Windows remains IPC
      first because terminate there cannot run the daemon's cleanup.
+127. One PostToolUse hook read task-pause state from storage three times while
+     checking task reminders. Each hook now reads it once and reuses that value
+     until the same hook changes the pause state.
 
 ### For contributors
 

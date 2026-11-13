@@ -80,6 +80,18 @@ class TaskPause:
         return cls(grant=grant, generation=generation, reason=reason)
 
 
+def _update_pause_state(ctx: EventContext, updater) -> object:
+    """Write pause state and refresh this dispatch's memo, when one exists."""
+    value = ctx.state_update(_STATE_KEY, updater)
+    try:
+        cache = ctx.dispatch_cache
+    except AttributeError:
+        cache = None
+    if cache is not None:
+        cache[_STATE_KEY] = value
+    return value
+
+
 def activate_task_pause(
     ctx: EventContext,
     *,
@@ -118,7 +130,7 @@ def activate_task_pause(
         ),
         reason=reason.strip(),
     )
-    ctx.state_update(_STATE_KEY, lambda _current: pause.to_dict())
+    _update_pause_state(ctx, lambda _current: pause.to_dict())
     return pause
 
 
@@ -143,7 +155,7 @@ def resume_task_pause(
         resumed = True
         return None
 
-    ctx.state_update(_STATE_KEY, clear_if_current)
+    _update_pause_state(ctx, clear_if_current)
     return resumed
 
 
@@ -155,10 +167,24 @@ def _active_pause(ctx: EventContext, *, now: float | None) -> TaskPause | None:
     serialised behind every other session's; routing these reads through
     ``state_update`` cost four of them per tool call and, at sixty sessions,
     pushed hook dispatch past its timeout (2026-11-06).
+
+    ``EventContext.dispatch_cache`` is discarded when ``app.dispatch`` returns.
+    The first pause check reads storage so another process's grant or resume
+    counts; later checks in this dispatch reuse that value. Pause writes refresh
+    the memo, while direct callers and the next hook read storage again.
     """
-    # From storage: a pause granted or resumed by another process (the
-    # hook's in-process fallback, a daemon overlapping a restart) must count.
-    stored = ctx.state_get_stored(_STATE_KEY)
+    try:
+        cache = ctx.dispatch_cache
+    except AttributeError:
+        cache = None
+    if cache is None:
+        # Lightweight and direct-call contexts keep the original fresh-read
+        # behaviour and, in particular, preserve unreadable-state failures.
+        stored = ctx.state_get_stored(_STATE_KEY)
+    else:
+        if _STATE_KEY not in cache:
+            cache[_STATE_KEY] = ctx.state_get_stored(_STATE_KEY)
+        stored = cache[_STATE_KEY]
     if stored is None:
         return None
     pause = TaskPause.from_value(stored)
@@ -176,7 +202,7 @@ def _active_pause(ctx: EventContext, *, now: float | None) -> TaskPause | None:
         current = fresh
         return fresh.to_dict()
 
-    ctx.state_update(_STATE_KEY, prune)
+    _update_pause_state(ctx, prune)
     return current
 
 
@@ -232,7 +258,7 @@ def task_pause_allows_stop(
         return replace(pause, grant=claim.grant).to_dict()
 
     try:
-        ctx.state_update(_STATE_KEY, decide)
+        _update_pause_state(ctx, decide)
     except SessionPersistenceError as exc:
         logger.warning(
             "Task-pause Stop claim failed; enforcing tasks normally: %s",
