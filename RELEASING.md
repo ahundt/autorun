@@ -238,7 +238,7 @@ test -z "$(git status --porcelain=v1)"
 # workspace root instead and collects four `ModuleNotFoundError: pdf_extraction`.
 uv run --project plugins/autorun --locked --extra pdf pytest plugins/pdf-extractor/tests/ -v
 (cd plugins/autorun && uv run --project . --locked pytest tests/test_release_artifacts.py -m release -v)
-(cd plugins/autorun && AUTORUN_ENABLE_STATE_BENCHMARK=1 uv run --project . --locked pytest tests/test_state_store_benchmark.py -m benchmark -v)
+(cd plugins/autorun && AUTORUN_ENABLE_STATE_BENCHMARK=1 uv run --project . --locked pytest tests/test_state_store_benchmark.py -m benchmark -v -s)
 
 # CONFIG must still load after a version bump. No test above imports it at the
 # top level, so a broken table reaches the release as an import error.
