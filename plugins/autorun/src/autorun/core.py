@@ -3654,7 +3654,7 @@ class AutorunDaemon:
         event = "unknown"
         tool = ""
         cli_type = "claude"
-        # None = pass-through (dispatch returned None = nothing fired = output nothing)
+        # None is pass-through only when dispatch completes; cancellation fails closed.
         response = None
         skip_response = False
         shutdown_requested = False
@@ -3861,6 +3861,12 @@ class AutorunDaemon:
                         "starts_agent_turn": match.starts_agent_turn
                     }
 
+        except asyncio.CancelledError:
+            response = daemon_failure_response(
+                event, cli_type, "Daemon is restarting; request evaluation did not finish",
+                event_code="daemon_dispatch_contained",
+            )
+            raise
         except asyncio.LimitOverrunError as e:
             # Buffer size exceeded - provide actionable guidance
             current_mb = READ_BUFFER_LIMIT // (1024 * 1024)

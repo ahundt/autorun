@@ -1108,7 +1108,11 @@ the module alone on a quiet machine:
 uv run --project plugins/autorun --locked pytest plugins/autorun/tests/test_simulated_300_sessions.py -rs
 ```
 
-A skip is not a pass. The same module holds a check that does not depend on
+A skip is not a pass. The burst measures the host first: it runs 300 sessions
+where 300 starts cost at most 40% of the `SessionStart` deadline in CPU time,
+and proportionally fewer, down to 60, on a slower host such as a hosted
+Windows runner. The count it used is in the `CAPACITY_METRICS` line; a release
+needs one run that reports 300. The same module holds a check that does not depend on
 the host: 300 session starts must cost less CPU than the `SessionStart`
 dispatch deadline.
 

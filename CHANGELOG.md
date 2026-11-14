@@ -797,6 +797,12 @@ enforce those policies.
      closing now share the hook's deadline. A hook that runs out of time while
      a daemon restart is in progress now tells the agent to retry once before
      restarting the daemon, instead of telling it to restart at once.
+133. A tool call that was being checked at the moment the daemon shut down
+     could be allowed without a decision. The daemon answered the unfinished
+     check with an empty reply, which every harness reads as no objection. It
+     showed on Python 3.10 and 3.11, where a restart cancels requests still in
+     flight. An unfinished check is now blocked with the message to retry in
+     a few seconds.
 
 ### For contributors
 
@@ -894,7 +900,10 @@ enforce those policies.
     state and tasks, exact counters, resource recovery, and a restart during a
     burst. Its deadlines are wall-clock, so the burst skips beside other
     xdist workers and on a host loaded past its core count; CI runs it
-    serially on every operating system. A second check in the module is
+    serially on every operating system. It measures the host first and runs
+    300 sessions where 300 starts cost at most 40% of the start deadline,
+    and proportionally fewer, down to 60, on a slower host. A second check
+    in the module is
     host-independent: 300 session starts must cost less CPU than the
     `SessionStart` deadline. `RELEASING.md` describes both beside the opt-in
     `scripts/load_gate.py` benchmark.
