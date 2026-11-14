@@ -243,7 +243,9 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch):
             while sampling:
                 try:
                     samples.append(resources(process))
-                except psutil.NoSuchProcess:
+                except psutil.Error:
+                    # The daemon exits during the restart. Linux then answers
+                    # AccessDenied for /proc/<pid>/fd, not NoSuchProcess.
                     return
                 await asyncio.sleep(0.01)
 
