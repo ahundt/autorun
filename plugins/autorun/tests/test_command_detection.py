@@ -878,8 +878,10 @@ def test_heredoc_normalization_leaves_here_strings_alone() -> None:
     from autorun.command_detection import _normalize_heredoc_delimiters
 
     assert _normalize_heredoc_delimiters("bash <<< 'x y'") == "bash <<< 'x y'"
-    assert _normalize_heredoc_delimiters("cat <<-'EOF'") == "cat <<- EOF"
-    assert _normalize_heredoc_delimiters('cat <<"END-MSG"') == "cat << END-MSG"
+    for source, expected in (("cat <<-'EOF'", "cat <<- EOF"), ('cat <<"END-MSG"', "cat << END-MSG")):
+        normalized = _normalize_heredoc_delimiters(source)
+        assert normalized.rstrip() == expected
+        assert len(normalized) == len(source)  # AST offsets still index the original quotes.
 
 
 # ─── Redirect operators in patterns ───────────────────────────────────────────

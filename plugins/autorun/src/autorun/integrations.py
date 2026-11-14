@@ -45,8 +45,6 @@ from .command_detection import (
     COMMAND_PREFIXES,
     _get_basename,
     command_matches_pattern,
-    command_tokens_for,
-    extract_commands,
     git_subcommand_index,
     nested_scripts,
     shell_command_from_tool_input,
@@ -882,17 +880,8 @@ def _destructive_segments(cmd: str) -> list[list[str]]:
     `["git", <verb>, ...subcmd_args]` regardless of whether the source
     command had `git -C <path> checkout ...` or `git checkout ...` form.
     """
-    from autorun.command_detection import _SHELL_OPERATORS, _shlex_split_safe
-
     found: list[list[str]] = []
-    for segment in _SHELL_OPERATORS.split(cmd):
-        segment = segment.strip()
-        if not segment:
-            continue
-        try:
-            tokens = _shlex_split_safe(segment)
-        except Exception:
-            tokens = segment.split()
+    for _segment, tokens in shell_segments(cmd):
         tokens = strip_transparent_command_wrappers(tokens)
         # One basename authority, shared with the pattern layer: it already
         # matched `/usr/bin/git checkout` this way, so a raw-token comparison
@@ -1278,20 +1267,15 @@ def _sed_modifies_files(ctx: any) -> bool:
         cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
         if not cmd:
             return False
-        # Every sed on the line, the way `_tmutil_mutates_backup_safety` reads
-        # every tmutil: `command_tokens_for` answers with one segment, so a
-        # read-only `sed -n` ahead of an in-place edit spoke for both, and a
-        # `sh -c "sed -i ..."` body — whose argv[0] is the shell — was not seen
-        # at all. `extract_commands` splits the segments and recurses into
-        # shell bodies.
-        _names, command_strings = extract_commands(cmd)
-        return any(
-            _sed_tokens_edit_in_place(command_tokens_for(one, "sed"))
-            for one in command_strings
-        )
-    except Exception as e:
-        logger.warning("_sed_modifies_files predicate error: %s", e)
+        for _segment, tokens in shell_segments(cmd):
+            tokens = strip_transparent_command_wrappers(tokens)
+            if tokens and _get_basename(tokens[0]) == "sed" and _sed_tokens_edit_in_place(tokens):
+                return True
         return False
+    except Exception as e:
+        # The pattern matched a sed; a parse failure must not let -i through.
+        logger.warning("_sed_modifies_files fail-safe block: %s", e)
+        return True
 
 
 #: find actions that truncate the file named right after them.
@@ -1529,9 +1513,10 @@ def _tmutil_mutates_backup_safety(ctx: any) -> bool:
         return False
 
     try:
-        _names, command_strings = extract_commands(cmd)
-        for command_string in command_strings:
-            tokens = command_tokens_for(command_string, "tmutil")
+        for _segment, tokens in shell_segments(cmd):
+            tokens = strip_transparent_command_wrappers(tokens)
+            if not tokens or _get_basename(tokens[0]) != "tmutil":
+                continue
             if len(tokens) > 1 and tokens[1] in _TMUTIL_CONSENT_REQUIRED_VERBS:
                 return True
         return False

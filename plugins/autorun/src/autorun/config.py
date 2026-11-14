@@ -335,14 +335,16 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "when": "_shell_runs_downloaded_script",
         "suggestion": (
-            "Blocked: this shell would run a script straight from a network download "
-            "(curl or wget). autorun checks each command before it runs, but it cannot "
+            "Blocked: this shell would run a script autorun cannot read: one straight "
+            "from a network download (curl or wget), or a shell nested more than 3 "
+            "levels deep. autorun checks each command before it runs, but it cannot "
             "read the commands inside a script it never sees, so none of its guards can "
             "check what this script does.\n\n"
             "**Instead:** download the file, read it, then run it:\n"
             "  curl -fsSL -o /tmp/install.sh <url>\n"
             "  # read /tmp/install.sh first ({read})\n"
-            "  sh /tmp/install.sh\n\n"
+            "  sh /tmp/install.sh\n"
+            "For nested shells, run the inner command directly.\n\n"
             "To allow (default 1 use): /ar:ok <shell>, the shell the download is fed to, e.g. /ar:ok sh or /ar:ok bash\n"
             "Scope: [N|5m|permanent] (default 1 use)"
         ),

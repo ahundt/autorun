@@ -112,11 +112,22 @@ def test_fallback_substitution_quote_and_parenthesis_boundaries(body, expected):
 
 
 @pytest.mark.parametrize("depth", range(1, 6))
-def test_fallback_substitutions_obey_existing_depth_limit(depth):
+def test_fallback_substitutions_obey_existing_depth_limit(depth, monkeypatch):
     script = "find . -delete"
     for _ in range(depth):
         script = f"echo $({script})"
     tokens = [tokens for _, tokens, _ in command_detection._fallback_segments(script)]
     assert (["find", ".", "-delete"] in tokens) == (
-        depth < command_detection._MAX_RECURSION_DEPTH
+        depth <= command_detection._MAX_RECURSION_DEPTH
     )
+    monkeypatch.setattr(command_detection, "BASHLEX_AVAILABLE", False)
+    command_detection.extract_commands.cache_clear()
+    command_detection._extract_cached.cache_clear()
+    try:
+        assert _decision(script) == "deny"
+        assert command_detection._extract_cached(script).inspection_incomplete == (
+            depth > command_detection._MAX_RECURSION_DEPTH
+        )
+    finally:
+        command_detection.extract_commands.cache_clear()
+        command_detection._extract_cached.cache_clear()
