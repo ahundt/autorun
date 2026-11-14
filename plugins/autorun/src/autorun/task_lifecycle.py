@@ -120,6 +120,7 @@ _MAX_AWAITING_USER_DECISION_CHARS = 300
 # them without reading every task row. The task row is the truth; an id whose
 # row moved on is dropped when the user next writes.
 _AWAITING_USER_INDEX = "awaiting_user_task_ids"
+_AWAITING_USER_GENERATIONS = "awaiting_user_generations"
 # Volatile flag set by a blocked Stop: the next main-agent tool call restarts
 # the loop guard's count (plugins.reset_stop_loop_guard_on_tool_activity).
 STOP_LOOP_GUARD_ARMED = "stop_loop_guard_armed"
@@ -3238,12 +3239,16 @@ class TaskLifecycle:
                 return [], unstated
             prompt_marker = prompt.marker
 
+        # One id per recording. The index carries it too, so a prompt can tell
+        # which question it is answering from a read that takes no lock.
+        generation = uuid.uuid4().hex
+
         def entering(decision: str) -> Callable[[Dict], bool]:
             def update(task: Dict) -> bool:
                 status = task.get("status")
                 if status not in BLOCKING_TASK_STATUSES:
                     return False
-                task.setdefault("metadata", {})["awaiting_user"] = {"decision": decision, "previous_status": status, "generation": uuid.uuid4().hex}
+                task.setdefault("metadata", {})["awaiting_user"] = {"decision": decision, "previous_status": status, "generation": generation}
                 if prompt_marker:
                     task["metadata"]["awaiting_user"]["transcript_prompt_marker"] = prompt_marker
                 task["status"] = AWAITING_USER_STATUS
@@ -3256,6 +3261,10 @@ class TaskLifecycle:
             waiting = list(metadata.get(_AWAITING_USER_INDEX, []))
             waiting.extend(task_id for task_id in decisions if task_id not in waiting)
             metadata[_AWAITING_USER_INDEX] = waiting
+            generations = metadata.get(_AWAITING_USER_GENERATIONS)
+            generations = dict(generations) if isinstance(generations, dict) else {}
+            generations.update({str(task_id): generation for task_id in decisions})
+            metadata[_AWAITING_USER_GENERATIONS] = generations
             _reset_stop_block_sequence(metadata)
 
         entered = self._update_task_rows({task_id: entering(decision) for task_id, decision in decisions.items()}, index)
@@ -3270,12 +3279,18 @@ class TaskLifecycle:
         either. A subagent, harness or automation prompt changes nothing: the
         Pi-family bridge answers every blocked Stop with an automation-authored
         continuation turn, and letting that restart the guard kept a model that
-        stops without acting blocked forever. Reads the session metadata
-        without the writer slot first, so a prompt with nothing to reset and
-        nothing waiting on the user writes nothing and reads no task row.
+        stops without acting blocked forever. A prompt answers exactly the
+        questions its one metadata read shows indexed; the write restores a
+        task only while it still holds that question's generation. With
+        nothing waiting and nothing to reset it takes no transaction, and it
+        never reads a task row outside the write.
         """
         if resolve_prompt_author(ctx) != "user":
             return False
+        # One read, taken without the writer slot, is this prompt's whole view:
+        # the indexed tasks and the generation of the question each one holds.
+        # The write below restores a task only if it still holds that
+        # generation, so a question recorded after this read is never cleared.
         metadata = get_session_manager().read_field(self.global_key, "session_metadata", {}, timeout=self._state_lock_timeout)
         metadata = metadata if isinstance(metadata, dict) else {}
         waiting = [str(task_id) for task_id in metadata.get(_AWAITING_USER_INDEX, [])]
@@ -3285,23 +3300,21 @@ class TaskLifecycle:
             if expected_waits is None and not _stop_sequence_is_reset(metadata):
                 self.atomic_update_metadata(_reset_stop_block_sequence)
             return False
+        seen = metadata.get(_AWAITING_USER_GENERATIONS)
+        seen = seen if isinstance(seen, dict) else {}
 
-        if expected_waits is None:
-            # Snapshot only indexed waits; the write must not clear a newer question.
-            expected_waits = {}
-            with self._session_state() as state:
-                repository = self._prepare_task_storage(state)
-                for task_id in waiting:
-                    task = state.get("tasks", {}).get(task_id) if repository is None else repository.get_task(self.global_key, task_id, self._state_lock_timeout)
-                    if isinstance(task, dict):
-                        expected_waits[task_id] = copy.deepcopy((task.get("metadata") or {}).get("awaiting_user"))
+        def answers(task_id: str, wait) -> bool:
+            if expected_waits is not None:
+                return task_id in expected_waits and wait == expected_waits[task_id]
+            # A wait recorded before generations existed carries none on either side.
+            return (wait or {}).get("generation") == seen.get(task_id)
 
         applied: set = set()
 
         def restored(task: Dict) -> bool:
             if task.get("status") != AWAITING_USER_STATUS:
                 return False
-            if str(task["id"]) not in expected_waits or (task.get("metadata") or {}).get("awaiting_user") != expected_waits[str(task["id"])]:
+            if not answers(str(task["id"]), (task.get("metadata") or {}).get("awaiting_user")):
                 return False
             record = (task.get("metadata") or {}).pop("awaiting_user", None) or {}
             previous = record.get("previous_status")
@@ -3313,6 +3326,9 @@ class TaskLifecycle:
         def clear_index(metadata: Dict) -> None:
             _reset_stop_block_sequence(metadata)
             metadata[_AWAITING_USER_INDEX] = [task_id for task_id in metadata.get(_AWAITING_USER_INDEX, []) if str(task_id) not in applied]
+            generations = metadata.get(_AWAITING_USER_GENERATIONS)
+            if isinstance(generations, dict):
+                metadata[_AWAITING_USER_GENERATIONS] = {task_id: value for task_id, value in generations.items() if str(task_id) not in applied}
 
         changed = self._update_task_rows({task_id: restored for task_id in waiting}, clear_index)
         for task_id in changed:

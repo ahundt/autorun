@@ -2,7 +2,9 @@
 
 import contextlib
 import copy
+import concurrent.futures
 import json
+import threading
 import time
 
 import pytest
@@ -357,6 +359,249 @@ def test_prompt_restore_keeps_newer_wait_on_same_task(gate_env, monkeypatch, dec
     session.prompt("newer decision approved", prompt_author="user")
     assert session.status("A") == "in_progress"
     assert not session.manager.session_metadata.get("awaiting_user_task_ids")
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+@pytest.mark.parametrize("decision", ["approve newer decision", "approve first decision"])
+def test_prompt_restore_keeps_wait_recorded_after_index_read(gate_env, monkeypatch, backend, decision):
+    monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+    sm._reset_for_testing()
+    session = Session("review-index-snapshot", "claude")
+    session.seed("A", "First decision")
+    session.stop(awaiting("A", "approve first decision"))
+    original = copy.deepcopy(session.task("A")["metadata"]["awaiting_user"])
+    main_thread = threading.get_ident()
+    started = threading.Event()
+    actor = []
+    newer = []
+
+    def replace_wait():
+        started.set()
+        session.prompt("first decision approved", prompt_author="user")
+        session.stop(awaiting("A", decision))
+        newer.append(copy.deepcopy(session.task("A")["metadata"]["awaiting_user"]))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        class Index(list):
+            def __iter__(self):
+                if not actor:
+                    actor.append(executor.submit(replace_wait))
+                    assert started.wait(5), "other prompt never started"
+                return super().__iter__()
+
+        def indexed(metadata):
+            if threading.get_ident() == main_thread and isinstance(metadata, dict) and metadata.get("awaiting_user_task_ids"):
+                return {**metadata, "awaiting_user_task_ids": Index(metadata["awaiting_user_task_ids"])}
+            return metadata
+
+        real_read = sm.SessionStateManager.read_field
+
+        def read(self, session_id, field, *args, **kwargs):
+            value = real_read(self, session_id, field, *args, **kwargs)
+            return indexed(value) if field == "session_metadata" else value
+
+        monkeypatch.setattr(sm.SessionStateManager, "read_field", read)
+        for proxy in (sm._StateProxy, sm._SQLiteStateProxy):
+            real_get = proxy.get
+
+            def get(self, key, default=None, _real=real_get):
+                value = _real(self, key, default)
+                return indexed(value) if key == "session_metadata" else value
+
+            monkeypatch.setattr(proxy, "get", get)
+
+        real_state = TaskLifecycle._session_state
+
+        @contextlib.contextmanager
+        def enter(self):
+            # At the old snapshot-entry seam the actor can finish. With an
+            # atomic read it must wait until that read releases its lock.
+            if threading.get_ident() == main_thread and actor:
+                actor[0].result(timeout=5)
+            with real_state(self) as state:
+                yield state
+
+        monkeypatch.setattr(TaskLifecycle, "_session_state", enter)
+        session.prompt("older reply", prompt_author="user")
+        assert actor, "index-read seam was not exercised"
+        actor[0].result(timeout=5)
+        assert newer[0]["generation"] != original["generation"]
+        assert session.status("A") == "awaiting-user"
+        assert session.task("A")["metadata"]["awaiting_user"] == newer[0]
+        assert session.manager.session_metadata.get("awaiting_user_task_ids") == ["A"]
+        session.prompt("newer decision approved", prompt_author="user")
+        assert session.status("A") == "in_progress"
+        assert not session.manager.session_metadata.get("awaiting_user_task_ids")
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+@pytest.mark.parametrize("seam", ["before_read", "after_snapshot", "before_write", "after_write"])
+@pytest.mark.parametrize("action", ["restore_only", "replace_same", "wait_other"])
+def test_prompt_restore_interleavings(gate_env, monkeypatch, backend, seam, action):
+    monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+    sm._reset_for_testing()
+    session = Session("review-wait-seams", "claude")
+    session.seed("A", "First decision")
+    session.seed("B", "Second decision")
+    session.stop(awaiting("A", "approve first decision"))
+    injected = []
+    newer = []
+    target = "B" if action == "wait_other" else "A"
+
+    def inject(self):
+        if injected or self.ctx is None or self.ctx.prompt != "older reply":
+            return
+        injected.append(seam)
+        if action != "wait_other":
+            session.prompt("other reply", prompt_author="user")
+        if action != "restore_only":
+            session.stop(awaiting(target, "approve next decision"))
+            newer.append(copy.deepcopy(session.task(target)["metadata"]["awaiting_user"]))
+
+    # The prompt's view is one lock-free metadata read; the seams sit on
+    # either side of it.
+    real_restore = TaskLifecycle.restore_awaiting_user
+    restoring = []
+
+    def restore(self, ctx, **kwargs):
+        restoring.append(self)
+        try:
+            return real_restore(self, ctx, **kwargs)
+        finally:
+            restoring.pop()
+
+    real_read = sm.SessionStateManager.read_field
+
+    def read(manager, session_id, field, *args, **kwargs):
+        seamed = field == "session_metadata" and restoring
+        if seamed and seam == "before_read":
+            inject(restoring[-1])
+        value = real_read(manager, session_id, field, *args, **kwargs)
+        if seamed and seam == "after_snapshot":
+            inject(restoring[-1])
+        return value
+
+    real_update = TaskLifecycle._update_task_rows
+
+    def update(self, updaters, metadata_update=None):
+        if seam == "before_write":
+            inject(self)
+        result = real_update(self, updaters, metadata_update)
+        if seam == "after_write":
+            inject(self)
+        return result
+
+    monkeypatch.setattr(TaskLifecycle, "restore_awaiting_user", restore)
+    monkeypatch.setattr(sm.SessionStateManager, "read_field", read)
+    monkeypatch.setattr(TaskLifecycle, "_update_task_rows", update)
+    session.prompt("older reply", prompt_author="user")
+    assert injected == [seam]
+    survives = action != "restore_only" and seam != "before_read"
+    assert session.status(target) == ("awaiting-user" if survives else "in_progress")
+    assert session.manager.session_metadata.get("awaiting_user_task_ids", []) == ([target] if survives else [])
+    if survives:
+        assert session.task(target)["metadata"]["awaiting_user"] == newer[0]
+        session.prompt("next decision approved", prompt_author="user")
+        assert session.status(target) == "in_progress"
+        assert not session.manager.session_metadata.get("awaiting_user_task_ids")
+    assert session.status("A") == "in_progress"
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_prompt_restore_between_other_reply_and_new_question(gate_env, monkeypatch, backend):
+    monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+    sm._reset_for_testing()
+    session = Session("review-split-reply", "claude")
+    session.seed("A", "First decision")
+    session.stop(awaiting("A", "approve first decision"))
+    real_update = TaskLifecycle._update_task_rows
+    injected = []
+
+    def update(self, updaters, metadata_update=None):
+        if injected or self.ctx is None or self.ctx.prompt != "older reply":
+            return real_update(self, updaters, metadata_update)
+        injected.append("A")
+        session.prompt("other reply", prompt_author="user")
+        result = real_update(self, updaters, metadata_update)
+        assert not result, "the older prompt restored an already-restored task"
+        session.stop(awaiting("A", "approve next decision"))
+        return result
+
+    monkeypatch.setattr(TaskLifecycle, "_update_task_rows", update)
+    session.prompt("older reply", prompt_author="user")
+    assert injected == ["A"]
+    assert session.status("A") == "awaiting-user"
+    assert session.manager.session_metadata.get("awaiting_user_task_ids") == ["A"]
+    session.prompt("next decision approved", prompt_author="user")
+    assert session.status("A") == "in_progress"
+    assert not session.manager.session_metadata.get("awaiting_user_task_ids")
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_prompt_with_empty_index_keeps_wait_recorded_after_read(gate_env, monkeypatch, backend):
+    monkeypatch.setitem(sm._CONFIG, "state_backend", backend)
+    sm._reset_for_testing()
+    session = Session("review-empty-index", "claude")
+    session.seed("A", "First decision")
+    session.stop(awaiting("A", "approve first decision"))
+    real_state = TaskLifecycle._session_state
+    replied = []
+    inserted = []
+
+    @contextlib.contextmanager
+    def after_read(self):
+        if not replied and self.ctx is not None and self.ctx.prompt == "older reply":
+            replied.append("A")
+            session.prompt("other reply", prompt_author="user")
+        with real_state(self) as state:
+            yield state
+        if not inserted and self.ctx is not None and self.ctx.prompt == "older reply":
+            inserted.append("A")
+            session.stop(awaiting("A", "approve first decision"))
+
+    monkeypatch.setattr(TaskLifecycle, "_session_state", after_read)
+    session.prompt("older reply", prompt_author="user")
+    assert replied == ["A"]
+    assert inserted == ["A"]
+    assert session.status("A") == "awaiting-user"
+    assert session.manager.session_metadata.get("awaiting_user_task_ids") == ["A"]
+    session.prompt("decision approved", prompt_author="user")
+    assert session.status("A") == "in_progress"
+    assert not session.manager.session_metadata.get("awaiting_user_task_ids")
+
+
+@pytest.mark.parametrize("waiting", [False, True])
+def test_prompt_restore_transaction_count(gate_env, monkeypatch, capsys, waiting):
+    monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+    sm._reset_for_testing()
+    session = Session("review-prompt-cost", "claude")
+    session.seed("A", "First decision")
+    if waiting:
+        session.stop(awaiting("A", "approve first decision"))
+    else:
+        session.prompt("settle loop guard", prompt_author="user")
+    counts = {"read": 0, "write": 0}
+    real_read = sm.SQLiteStore.read_field
+    real_write = sm.SQLiteStore.write_transaction
+
+    def read(self, session_id, field, *args, **kwargs):
+        if session_id == session.manager.global_key and not self._owner().transaction_depth:
+            counts["read"] += 1
+        return real_read(self, session_id, field, *args, **kwargs)
+
+    @contextlib.contextmanager
+    def write(self, owner):
+        if not owner.transaction_depth:
+            counts["write"] += 1
+        with real_write(self, owner) as connection:
+            yield connection
+
+    monkeypatch.setattr(sm.SQLiteStore, "read_field", read)
+    monkeypatch.setattr(sm.SQLiteStore, "write_transaction", write)
+    session.prompt("approved", prompt_author="user")
+    with capsys.disabled():
+        print(f"UserPromptSubmit waiting={waiting}: {counts}, total={sum(counts.values())}")
+    assert sum(counts.values()) <= (4 if waiting else 1), counts
 
 
 def test_noop_pretool_write_transactions(tmp_path, monkeypatch, record_property, capsys):
