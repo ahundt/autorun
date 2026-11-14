@@ -447,14 +447,15 @@ def test_a_load_denial_tells_the_agent_to_wait_not_to_restart(event_code):
     assert "autorun --status" in text
 
 
-def test_an_unreachable_daemon_still_names_the_restart():
-    """The restart advice stays where a restart is the repair."""
+def test_an_unreachable_daemon_names_stand_down_without_a_restart():
+    """Explicit block mode gives the human an exit without a restart storm."""
     from autorun.client import build_daemon_failure_response
 
     response = build_daemon_failure_response(
         "PreToolUse", "codex", "Daemon unavailable", event_code="daemon_unavailable_or_timeout"
     )
-    assert "autorun --restart-daemon" in str(response)
+    assert "AUTORUN_DISABLE" in str(response)
+    assert "Do not restart" in str(response)
 
 
 def _restart_with_daemon_aged(
@@ -836,7 +837,7 @@ async def test_slots_held_by_handlers_past_their_deadline_report_a_stall(monkeyp
         )
         text = str(blocked)
         assert "daemon_dispatch_stalled" in text
-        assert "autorun --restart-daemon" in text
+        assert "Do not restart" in text
     finally:
         release.set()
         await asyncio.sleep(0)
@@ -1005,13 +1006,12 @@ async def test_a_request_whose_hook_already_gave_up_is_not_dispatched(monkeypatc
         release.set()
 
 
-def test_an_unanswered_request_says_retry_once_then_restart():
+def test_an_unanswered_request_says_wait_without_restart():
     """A request the daemon never answered is ambiguous: a loaded daemon and a
     wedged one look the same from the client, since the kernel queues the
-    connection either way. Restart advice on the first one sent fifteen agents
-    restarting a loaded daemon (2026-11-06); load advice on every one leaves a
-    wedged daemon wedged. So: retry once, and restart only if it repeats --
-    a restart against a fresh daemon that passes a health check does nothing.
+    connection either way. Restart advice sent fifteen agents restarting a
+    loaded daemon (2026-11-06). The default now uses local guards; explicit
+    block-mode denials say wait, never restart, and name the human's stand-down.
     """
     from autorun import client
 
@@ -1022,9 +1022,9 @@ def test_an_unanswered_request_says_retry_once_then_restart():
     reason = client.build_daemon_failure_response(
         "PreToolUse", "codex", str(accepted), event_code=code
     )["hookSpecificOutput"]["permissionDecisionReason"]
-    assert "Retry the same tool call once" in reason
-    assert "autorun --restart-daemon" in reason
-    assert "Do not run" not in reason
+    assert "Wait and retry" in reason
+    assert "do not restart" in reason
+    assert "AUTORUN_DISABLE" in reason
 
 
 def test_the_js_bridge_gives_the_same_advice_for_an_unanswered_request():
@@ -1036,7 +1036,7 @@ def test_the_js_bridge_gives_the_same_advice_for_an_unanswered_request():
 
     bridge = (Path(client.__file__).parent / "bridge_template" / "daemon-client.mjs").read_text()
     assert f"const RESPONSE_TIMEOUT_GUIDANCE = {json.dumps(client.RESPONSE_TIMEOUT_GUIDANCE)};" in bridge
-    assert "AR_EVENT_V1:daemon_response_timeout" in bridge
+    assert "daemon_response_timeout" in bridge
 
 
 def test_a_response_timeout_on_python_3_10_is_still_an_unanswered_request(monkeypatch):

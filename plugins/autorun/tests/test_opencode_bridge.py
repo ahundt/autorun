@@ -192,6 +192,28 @@ class TestDaemonSocketFrames:
         assert "Number.parseInt" not in source
         assert "port <= 65535" in source
 
+    @pytest.mark.skipif(shutil.which("bun") is None or not hasattr(socket, "AF_UNIX"), reason="Bun and Unix sockets required")
+    @pytest.mark.parametrize("degraded", [True, False])
+    def test_tool_allow_notice_reaches_user_and_tool_result(self, tmp_path, short_socket_dir, degraded):
+        from autorun import client
+        from autorun.platforms import PLATFORMS
+        response = (client.degraded_tool_response({"hook_event_name": "PreToolUse", "tool_name": "read"}, "opencode", "daemon_response_timeout")
+                    if degraded else PLATFORMS["opencode"].hook_protocol.pretool_response("allow", "healthy hint", "PreToolUse"))
+        path = short_socket_dir / "notice.sock"
+        frames, thread = self._serve(path, {"PreToolUse": response}, connections=3)
+        result = _run_shim(tmp_path, path, "degraded-notice")
+        thread.join(timeout=10)
+        assert result.returncode == 0 and result.stderr == "", result.stderr
+        output = json.loads(result.stdout)
+        assert output["output"].startswith("contents")
+        if degraded:
+            assert client.DEGRADED_NOTICE in output["output"]
+            assert len(output["toasts"]) == 1
+            assert client.DEGRADED_NOTICE in output["toasts"][0]["body"]["message"]
+        else:
+            assert output == {"output": "contents", "toasts": []}
+        assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "PreToolUse", "PostToolUse"]
+
     def _serve(self, socket_path, replies, connections=2):
         """Answer N frames the way the daemon does: one connection each.
 
@@ -351,7 +373,7 @@ class TestDaemonSocketFrames:
 
         assert "denied:" in result.stdout, result.stdout
         assert "autorun" in result.stdout.lower()
-        assert "restart-daemon" in result.stdout, "the block must name the way out"
+        assert "wait and retry" in result.stdout, "an unavailable guard must name the way out"
 
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
@@ -795,7 +817,7 @@ class TestDaemonSocketFrames:
         )
 
         assert "denied:" in result.stdout, result.stdout
-        assert "timed out" in result.stdout, result.stdout
+        assert "critical guards could not finish" in result.stdout, result.stdout
 
 
 class TestDaemonRecordsTheAttachment:
@@ -1042,6 +1064,18 @@ if (process.argv[2] === "compact") {
   await hooks["experimental.session.compacting"]({ sessionID: "compact-session" }, output)
   console.log(JSON.stringify(output.context))
   await hooks.event({ event: { type: "session.compacted", properties: { sessionID: "compact-session" } } })
+  process.exit(0)
+}
+
+if (process.argv[2] === "degraded-notice") {
+  const toasts = []
+  client.tui = { showToast: async options => toasts.push(options) }
+  const hooks = await AutorunPlugin({ directory: process.cwd(), client })
+  const input = { tool: "read", sessionID: "tool-session", callID: "c1" }
+  await hooks["tool.execute.before"](input, { args: {} })
+  const output = { title: "file", output: "contents", metadata: {} }
+  await hooks["tool.execute.after"](input, output)
+  console.log(JSON.stringify({output: output.output, toasts}))
   process.exit(0)
 }
 

@@ -548,7 +548,9 @@ class TestNoRegressions:
         assert len(sent) == 1, f"one hook was sent {len(sent)} times"
         assert not spawned, "a daemon that answered the connect was replaced"
         output = capsys.readouterr().out
-        assert '"deny"' in output, output
+        response = json.loads(output)
+        assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert "[AR_EVENT_V1:degraded_decision]" in output
         assert "failed to start" not in output, output
 
     def test_poll_timeout_is_5s(self):
@@ -753,14 +755,17 @@ main()
                 assert len((home / "builds").read_text().splitlines()) == 1
                 survivor = next(p for p in processes if p.poll() is None)
                 # Windows venv launchers can retain a separate interpreter child.
-                owned = {survivor.pid, *(p.pid for p in psutil.Process(survivor.pid).children(recursive=True))}
+                owned = {survivor.pid}
+                if os.name == "nt":
+                    owned.update(p.pid for p in psutil.Process(survivor.pid).children(recursive=True))
                 assert int((home / "daemon.lock").read_text().split()[0]) in owned
             finally:
                 children = []
                 for process in processes:
                     try:
                         children.extend(psutil.Process(process.pid).children(recursive=True))
-                    except psutil.NoSuchProcess:
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                        # Reap the exact Popen handles even if enumeration fails.
                         pass
                 for child in children:
                     try:

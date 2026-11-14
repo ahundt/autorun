@@ -80,6 +80,38 @@ def test_an_absent_file_changes_nothing(config_home):
     assert config_module.apply_user_config(dict(defaults)) == defaults
 
 
+@pytest.mark.parametrize("value,expected", [("critical-guards", "critical-guards"), ("block", "block"), ("allow", "allow"), ("unknown", "critical-guards")])
+def test_overload_policy_file_and_environment_tiers(config_home, monkeypatch, value, expected):
+    _write(config_home, {"overload_policy": value})
+    config_module.apply_user_config(config_module.CONFIG)
+    assert config_module.overload_policy() == expected
+    assert ("unknown value" in config_module.overload_policy_status()) == (value == "unknown")
+    monkeypatch.setenv("AUTORUN_OVERLOAD_POLICY", "allow")
+    assert config_module.overload_policy() == "allow"
+    monkeypatch.setenv("AUTORUN_OVERLOAD_POLICY", "misspelled")
+    assert config_module.overload_policy() == "critical-guards"
+    assert "unknown value 'misspelled'" in config_module.overload_policy_status()
+
+
+def test_status_reports_unknown_overload_policy_without_daemon(config_home, monkeypatch, capsys):
+    from autorun.installer import entrypoint
+    monkeypatch.setenv("AUTORUN_OVERLOAD_POLICY", "typo")
+    monkeypatch.setattr(entrypoint, "_marketplace_root", lambda: config_home)
+    monkeypatch.setattr(entrypoint, "parse_selection", lambda *args: ())
+    monkeypatch.setattr(entrypoint, "_resolved_settings", lambda **kwargs: ({}, ()))
+    monkeypatch.setattr(entrypoint, "_harnesses", lambda *args: ((), {}, (), ()))
+    assert entrypoint.show_status() == 1
+    assert "overload_policy=critical-guards (unknown value 'typo'" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("value", [123, {}, None, True])
+def test_invalid_overload_policy_file_type_is_reported(config_home, value):
+    _write(config_home, {"overload_policy": value})
+    config_module.apply_user_config(config_module.CONFIG)
+    assert config_module.overload_policy() == "critical-guards"
+    assert "unknown value" in config_module.overload_policy_status()
+
+
 def test_a_file_value_overrides_the_default(config_home):
     _write(config_home, {"log_file_backup_count": 9})
     merged = config_module.apply_user_config(dict(config_module.default_config()))

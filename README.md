@@ -860,6 +860,23 @@ default when no lower tier supplies a valid value.
 
 ## Troubleshooting
 
+When the daemon is busy, unreachable, misses a deadline, or cannot evaluate
+session state, tool hooks use a local, stateless check. Ordinary shell commands
+and non-shell tools proceed with a notice; built-in destructive-command guards
+still deny dangerous shell commands. `/ar:no` rules, `/ar:ok` grants, the file
+policy, and task and plan gating are not checked until autorun answers again.
+A grant cannot bypass a guard during this period. Do not restart the daemon
+under load. A guard error or exhausted guard budget denies that shell call
+with wait-and-retry guidance; other tools continue.
+
+Set `overload_policy` in `~/.autorun/autorun.config.json` or override it with
+`AUTORUN_OVERLOAD_POLICY`: `critical-guards` (default), `block` (deny every
+tool-gate call), or `allow` (permit every call without local guards). Unknown
+values use `critical-guards` and are reported by `autorun --status`. Hooks read
+this setting without the daemon. Non-gate events and Stop are unchanged.
+If the Python package itself cannot be imported, the stdlib hook still denies
+tool calls and gives repair guidance; the guard code is unavailable in that case.
+
 | Symptom | Fix |
 |---|---|
 | `autorun: command not found` after `uv tool install` | `uv tool update-shell`, then open a new terminal; `uv tool dir --bin` prints the folder. Installed hooks call autorun by full path, so they work either way. |

@@ -276,7 +276,7 @@ class TestHookEntryExecutionPriority:
                 return False
 
             def settimeout(self, timeout):
-                assert timeout == hook_entry.hook_timeout_for_cli("codex")
+                assert timeout == hook_entry.hook_timeout_for_cli("codex") - 0.3
 
             def connect(self, address):
                 assert address == expected_address
@@ -320,6 +320,33 @@ class TestHookEntryExecutionPriority:
         assert 0 < deadline - time.time() <= hook_entry.hook_timeout_for_cli("codex")
         assert json.loads(capsys.readouterr().out)["decision"] == "block"
 
+    @pytest.mark.parametrize("supplied", [None, 1000.05])
+    def test_direct_failure_keeps_the_remaining_guard_budget(self, tmp_path, monkeypatch, supplied):
+        hook_entry = load_hook_entry_module()
+        stage_daemon_endpoint(tmp_path)
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+        monkeypatch.setattr(hook_entry.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(hook_entry, "hook_timeout_for_cli", lambda cli: 1.0)
+        observed = []
+        def local(payload, *args, **kwargs):
+            observed.append(payload[hook_entry.HOOK_DEADLINE_PAYLOAD_KEY])
+            return 0
+        monkeypatch.setattr(hook_entry, "_try_degraded_tool", local)
+        class Socket:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def settimeout(self, timeout): pass
+            def connect(self, address): pass
+            def sendall(self, data): pass
+            def makefile(self, *args, **kwargs):
+                return io.StringIO(json.dumps({"reason": "[AR_EVENT_V1:daemon_dispatch_timeout] busy"}) + "\n")
+        monkeypatch.setattr(hook_entry.socket, "socket", lambda *args: Socket())
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash"}
+        if supplied is not None:
+            payload[hook_entry.HOOK_DEADLINE_PAYLOAD_KEY] = supplied
+        assert hook_entry.try_daemon(json.dumps(payload), "claude") == (True, 0)
+        assert observed == [1000.8 if supplied is None else supplied]
+
     def test_direct_daemon_unavailable_uses_existing_cli_fallback(
         self, tmp_path, monkeypatch
     ):
@@ -357,18 +384,16 @@ class TestHookEntryExecutionPriority:
 
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
         monkeypatch.setattr(hook_entry.socket, "socket", lambda *_args: TimeoutSocket())
-        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex"})
+        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex", "tool_name": "Bash", "tool_input": {"command": "rm -rf victim"}})
 
-        with pytest.raises(SystemExit) as exc:
-            hook_entry.try_daemon(payload, "codex")
-
-        assert exc.value.code == 0
+        assert hook_entry.try_daemon(payload, "codex") == (True, 0)
         response = json.loads(capsys.readouterr().out)
-        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert response["decision"] == "block"
         # Busy or stuck: the client's own wording, so the agent gets one
         # answer however the hook reached the daemon.
         assert "[AR_EVENT_V1:daemon_response_timeout]" in response["reason"]
-        assert hook_entry._RESPONSE_TIMEOUT_GUIDANCE in response["reason"]
+        assert "trash" in response["reason"]
+        assert "degraded_decision" in response["reason"]
 
     def test_daemon_closing_without_an_answer_says_retry(self, tmp_path, monkeypatch, capsys):
         """A daemon that closes the connection unanswered is restarting or
@@ -398,13 +423,13 @@ class TestHookEntryExecutionPriority:
 
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
         monkeypatch.setattr(hook_entry.socket, "socket", lambda *_args: ClosedSocket())
-        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex"})
+        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex", "tool_name": "Bash", "tool_input": {"command": "rm -rf victim"}})
 
-        with pytest.raises(SystemExit):
-            hook_entry.try_daemon(payload, "codex")
+        assert hook_entry.try_daemon(payload, "codex") == (True, 0)
 
         reason = json.loads(capsys.readouterr().out)["reason"]
-        assert hook_entry._RETRY_GUIDANCE in reason
+        assert "retry when it recovers" in reason
+        assert "trash" in reason
         assert hook_entry._INTERVENTION_GUIDANCE not in reason
 
     def test_connected_daemon_invalid_response_fails_closed(self, tmp_path, monkeypatch, capsys):
@@ -435,15 +460,13 @@ class TestHookEntryExecutionPriority:
         monkeypatch.setattr(
             hook_entry.socket, "socket", lambda *_args: InvalidResponseSocket()
         )
-        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex"})
+        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex", "tool_name": "Bash", "tool_input": {"command": "rm -rf victim"}})
 
-        with pytest.raises(SystemExit) as exc:
-            hook_entry.try_daemon(payload, "codex")
-
-        assert exc.value.code == 0
+        assert hook_entry.try_daemon(payload, "codex") == (True, 0)
         response = json.loads(capsys.readouterr().out)
-        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-        assert "invalid response" in response["reason"]
+        assert response["decision"] == "block"
+        assert "degraded_decision" in response["reason"]
+        assert "trash" in response["reason"]
 
     @pytest.mark.parametrize("cli_type", sorted(p.name for p in _hook_platforms()))
     def test_connected_daemon_invalid_lifecycle_response_uses_native_noop(
@@ -1261,6 +1284,30 @@ class TestTryCliRobustness:
         else:
             assert _without_failure_message(response, expected) == expected
 
+    def test_missing_client_never_replays_a_gate_through_direct_state_dispatch(self, tmp_path):
+        plugin = tmp_path / "partial-plugin"
+        package = plugin / "src" / "autorun"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        marker = tmp_path / "direct-state-dispatch"
+        (package / "__main__.py").write_text(
+            f"def main(argv=None):\n    open({str(marker)!r}, 'w').write('state was consulted')\n    return 0\n", encoding="utf-8")
+        runner = (
+            "import importlib.util,io,json,sys; "
+            f"spec=importlib.util.spec_from_file_location('hook',{str(HOOK_ENTRY)!r}); "
+            "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+            "sys.argv=['hook_entry.py','--cli','antigravity']; "
+            "sys.stdin=io.StringIO(json.dumps({'hook_event_name':'PreToolUse','tool_name':'run_command','tool_input':{'command':'rm -rf victim'}})); "
+            "module.run_fallback()"
+        )
+        env = {**os.environ, "AUTORUN_PLUGIN_ROOT": str(plugin), "AUTORUN_NO_BOOTSTRAP": "1",
+               "AUTORUN_HOME": str(tmp_path / "autorun-home")}
+        result = subprocess.run([_isolated_interpreter(tmp_path), "-c", runner], env=env,
+                                capture_output=True, text=True, timeout=10, cwd=tmp_path)
+        assert not marker.exists(), "a failed local guard owner consulted session state"
+        assert result.returncode == 0 and result.stderr == "", result.stderr
+        assert json.loads(result.stdout)["decision"] == "deny"
+
     @pytest.mark.parametrize("failure", ["ImportError", "RuntimeError"])
     def test_antigravity_fallback_failure_uses_root_deny_schema(
         self, tmp_path, failure
@@ -1270,7 +1317,7 @@ class TestTryCliRobustness:
         package = plugin / "src" / "autorun"
         package.mkdir(parents=True)
         (package / "__init__.py").write_text("", encoding="utf-8")
-        (package / "__main__.py").write_text(
+        (package / "client.py").write_text(
             f"raise {failure}('injected fallback failure')\n",
             encoding="utf-8",
         )
@@ -1480,10 +1527,11 @@ class TestTryCliRobustness:
             module.main()
 
         captured = capsys.readouterr()
-        assert exc.value.code == 2
+        assert exc.value.code == 0
         output = json.loads(captured.out)
-        assert output.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
-        assert "timed out" in captured.err
+        assert output.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
+        assert "degraded_decision" in captured.out
+        assert captured.err == ""
 
     def test_the_pipe_to_the_cli_child_is_utf8_both_ways(self, monkeypatch, capsys):
         """try_cli hands the payload to its child with text=True, which encodes

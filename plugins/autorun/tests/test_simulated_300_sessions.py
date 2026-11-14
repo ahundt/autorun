@@ -184,11 +184,19 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
         assert isinstance(response, dict), f"{index} {event}: malformed {response!r}"
         outcome = gate.classify(json.dumps(response), "", 0, deny)
         if restarting and outcome in {"refused_or_overloaded", "fail_closed"}:
+            assert deny, f"{index}: ordinary command denied during restart: {response}"
             specific = response.get("hookSpecificOutput", {})
             assert specific.get("permissionDecision") == "deny", f"{index}: restart failed open {response}"
             assert any(guidance in json.dumps(response) for guidance in (
                 client.load_guidance(), client.RESPONSE_TIMEOUT_GUIDANCE,
             )), f"{index}: no wait/retry guidance {response}"
+            return response
+        if restarting and outcome == "degraded_allow":
+            assert not deny, f"{index}: guarded call allowed during restart"
+            return response
+        if restarting and outcome == "intended_denial" and "degraded_decision" in json.dumps(response):
+            assert deny and response["hookSpecificOutput"]["permissionDecision"] == "deny"
+            assert "trash" in json.dumps(response) and "retry when it recovers" in json.dumps(response)
             return response
         expected = "intended_denial" if deny else "allowed"
         assert outcome == expected, f"{index} {event} {fields}: {outcome}, expected {expected}: {response}"
@@ -301,7 +309,7 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
 
             async def during_restart(i):
                 await barrier.wait()
-                return await request(i, "PreToolUse", {"tool_name": "Bash", "tool_input": {"command": "rm -rf x", "_capacity_restart": True}}, True, restarting=True)
+                return await request(i, "PreToolUse", {"tool_name": "Bash", "tool_input": {"command": "rm -rf x" if i % 2 else "git status", "_capacity_restart": True}}, bool(i % 2), restarting=True)
 
             pending = [asyncio.create_task(during_restart(i)) for i in range(sessions)]
             barrier.set()
@@ -504,15 +512,17 @@ async def test_connect_cannot_outlive_the_prepared_hook_deadline(tmp_path, monke
     monkeypatch.setattr(client, "subprocess", SimpleNamespace(
         Popen=forbidden_spawn, DEVNULL=client.subprocess.DEVNULL))
     payload, cli = client.prepare_payload_for_daemon(
-        {"hook_event_name": "PreToolUse", "cli_type": "claude", "_pid": 12345})
+        {"hook_event_name": "PreToolUse", "cli_type": "claude", "_pid": 12345,
+         "tool_name": "Bash", "tool_input": {"command": "git status"}})
     payload[client.DEADLINE_PAYLOAD_KEY] = time.time() + 0.1
     started = time.monotonic()
     with FileLock(str(restart_lock)):
         response = await client.forward_prepared_payload(payload, cli)
     elapsed = time.monotonic() - started
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert elapsed < 0.5, f"connect ignored the 0.1s hook deadline: {elapsed:.3f}s"
-    assert client.RESPONSE_TIMEOUT_GUIDANCE in json.dumps(response), "active restart got unrecoverable guidance"
+    assert "degraded_decision" in json.dumps(response)
+    assert client.DEGRADED_NOTICE in json.dumps(response), "active restart lost the degraded notice"
 
 
 def test_context_gc_preserves_live_grants_and_refreshes_cached_state(sqlite_manager):

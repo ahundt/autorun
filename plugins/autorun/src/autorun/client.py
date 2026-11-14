@@ -19,7 +19,7 @@ Autorun v0.7 Client - Thin Forwarder to Daemon
 
 Forwards hook payloads to daemon via Unix socket.
 Auto-starts daemon if not running.
-Fails open on any errors.
+Tool-gate failures use local critical guards; other events fail open.
 
 Hook Exit Codes:
 ----------------
@@ -35,6 +35,7 @@ References:
 - Hook docs: https://code.claude.com/docs/en/hooks
 """
 
+import re
 import os
 import sys
 import json
@@ -54,10 +55,11 @@ except ImportError:
     import logging
 
     logger = logging.getLogger(__name__)
+    logger.addHandler(logging.NullHandler())
     DEBUG_ENABLED = False
 
 from . import ipc
-from .platforms import PLATFORMS as _PLATFORMS
+from .platforms import DEGRADED_EVENT_CODE, PLATFORMS as _PLATFORMS
 
 DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 #: The autorun tool gates plus every harness name for them in the registry
@@ -253,13 +255,13 @@ def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
 #: not clear by waiting, and hook_entry.py:471-477 records what that advice
 #: cost: every attached session looping against a hook that could not succeed.
 #:
-#: It must name AUTORUN_DISABLE. Every tool call that could repair the daemon --
-#: including the ``autorun --restart-daemon`` named below -- is itself a
-#: PreToolUse call this gate denies, so without this the reader has no exit at
-#: all. Allowlisting the repair command instead was tried and refused, because
-#: ``uv tool install autorun --with <package>`` passes such a check and runs
-#: arbitrary build code; see hook_entry.py:479-484. Standing a broken safety
-#: gate down is a human's decision, and this env var is how a human makes it.
+#: It must name AUTORUN_DISABLE. Under explicit overload_policy=block, or
+#: when the package cannot import, every repair command is itself a denied
+#: PreToolUse. That historical deadlock (hook_entry.py comments) is why a
+#: human must have an exit. Allowlisting a repair command was refused because
+#: `uv tool install autorun --with <package>` can execute arbitrary build code.
+#: With the default critical-guards policy, clients now allow ordinary tools
+#: and consult only shipped guards; state failures no longer deny every tool.
 #:
 #: Kept ASCII on purpose: the exit-2 deny path prints this to stderr as raw
 #: text, whose encoding belongs to whatever launched the harness.
@@ -285,18 +287,18 @@ LOAD_EVENT_CODES = frozenset({
     "state_lock_contended",
 })
 
-#: A request the daemon never answered. From the client a loaded daemon and a
-#: wedged one look the same: the kernel queues the connection for either. So
-#: retry once, and restart only if it repeats. The restart is safe to advise
-#: because `--restart-daemon` leaves a daemon alone that started moments ago
-#: and answers a health probe, so repeated advice cannot become a restart
-#: loop. The JS bridge carries this exact text (daemon-client.mjs).
+#: A request the daemon never answered. A loaded daemon and a wedged one look
+#: the same: the kernel queues the connection for either. Earlier advice said
+#: retry once, then restart (with restart coalescing). The 2026-11-06 restart
+#: storm above showed why tool failures must never request a restart under
+#: load. Now only overload_policy=block reaches this denial text; other
+#: policies make a local decision. The JS bridge carries this exact text.
 RESPONSE_TIMEOUT_GUIDANCE = (
     "Blocking this tool call because the autorun daemon took the request but "
-    "did not answer in time: it is either very busy or stuck. Retry the same "
-    "tool call once. If that is blocked the same way, run "
-    "`autorun --restart-daemon` in a terminal; it leaves a daemon that just "
-    "restarted and answers a health check alone, and replaces one that does not."
+    "did not answer in time and a local decision is unavailable or overload_policy=block is selected. "
+    "Wait and retry when autorun answers again; do not restart the daemon. "
+    "If this persists, tell the user; AUTORUN_DISABLE=1 at harness launch "
+    "stands autorun down."
 )
 
 #: Errors that mean a request was sent and no answer came back. On 3.10
@@ -324,12 +326,130 @@ def load_guidance() -> str:
 
     cooldown = float(CONFIG["daemon_dispatch_timeout_cooldown_seconds"])
     return (
-        "Blocking this tool call because autorun is busy and could not evaluate "
-        f"it in time. This clears on its own within {cooldown:g}s: retry the "
+        "Blocking this tool call because autorun is busy and a local decision "
+        "is unavailable or overload_policy=block is selected. "
+        f"The session cooldown is {cooldown:g}s: retry the "
         "same tool call after that. Do not run `autorun --restart-daemon`: a "
         "restart cuts off every session sharing the daemon and adds load. If "
-        "this repeats for minutes, tell the user; `autorun --status` diagnoses it."
+        "this repeats for minutes, tell the user; `autorun --status` diagnoses it. "
+        "The user can launch the harness with AUTORUN_DISABLE=1 to stand autorun down."
     )
+
+
+DEGRADED_FAILURE_CODES = LOAD_EVENT_CODES | {
+    "daemon_dispatch_stalled", "state_evaluation_failed", "daemon_failure",
+    "daemon_response_timeout", "daemon_unavailable_or_timeout",
+}
+DEGRADED_NOTICE = (
+    "Autorun could not answer, so built-in destructive-command guards are still "
+    "enforced locally while /ar:no rules, /ar:ok grants, the file policy and "
+    "task and plan gating are not checked until autorun answers again. "
+    "Do not restart the daemon. If this lasts more than a few minutes, tell "
+    "the user: `autorun --status` diagnoses it."
+)
+DEGRADED_ALLOW_NOTICE = (
+    "Autorun could not answer and overload_policy=allow permits this call "
+    "without built-in destructive-command guards, /ar:no rules, /ar:ok grants, "
+    "the file policy or task and plan gating until autorun answers again. "
+    "Do not restart the daemon. If this lasts more than a few minutes, tell "
+    "the user: `autorun --status` diagnoses it."
+)
+
+
+_FAILURE_TAG = re.compile(r"\[autorun\] \[AR_EVENT_V1:([a-z_]+)\]")
+
+
+def degraded_failure_code(response: dict) -> str | None:
+    """Recognize only infrastructure failures, never a normal policy denial."""
+    specific = response.get("hookSpecificOutput") or {}
+    reason = (specific.get("permissionDecisionReason")
+              or (specific.get("decision") or {}).get("message")
+              or response.get("reason") or response.get("systemMessage") or "")
+    # The daemon puts the tag first. A policy denial can quote the command it
+    # blocked, so a tag anywhere else in the text is the command's, not ours.
+    match = _FAILURE_TAG.match(reason)
+    return match.group(1) if match and match.group(1) in DEGRADED_FAILURE_CODES else None
+
+
+def _critical_guard_reason(payload: dict, cli_type: str) -> str | None:
+    """Shipped block guards only, using the daemon's matcher and predicates."""
+    from types import SimpleNamespace
+    from .config import DEFAULT_INTEGRATIONS
+    from .command_detection import command_matches_pattern, shell_command_from_tool_input
+    from .integrations import Integration, check_when_predicate
+
+    inputs = payload.get("tool_input") or {}
+    ctx = SimpleNamespace(tool_input=inputs, cli_type=cli_type,
+                          cwd=payload.get("cwd") or payload.get("_cwd") or os.getcwd())
+    command = shell_command_from_tool_input(inputs)
+    for name, spec in DEFAULT_INTEGRATIONS.items():
+        guard = Integration.from_dict(name, spec)
+        if guard.event not in {"bash", "all"} or guard.action_for_cli(cli_type) != "block":
+            continue
+        for pattern in guard.patterns:
+            if (command_matches_pattern(command, pattern)
+                    and check_when_predicate(guard.when, ctx, pattern, raise_errors=True)):
+                from .platforms import format_suggestion
+                return format_suggestion(guard.message_for_cli(cli_type), cli_type)
+    return None
+
+
+def degraded_tool_response(payload: dict, cli_type: str, event_code: str,
+                           message: str = "Autorun could not produce a normal decision") -> dict:
+    """Stateless fallback: guard errors or exhausted budgets deny shell calls
+    with wait-and-retry guidance and allow non-shell tools; never consult state.
+
+    A daemonized thread inside this hook bounds guard imports, parsing and git
+    probes on all OSes; the hook stops waiting at its remaining deadline.
+    """
+    from .config import BASH_TOOLS, overload_policy
+    from .platforms import platform_for
+
+    event = payload.get("hook_event_name", "PreToolUse")
+    if not is_tool_gate_event(event):
+        return build_daemon_failure_response(event, cli_type, message, event_code)
+    policy = overload_policy()
+    if policy == "block":
+        return build_daemon_failure_response(event, cli_type, message, event_code)
+    decision = "allow"
+    reason = DEGRADED_ALLOW_NOTICE if policy == "allow" else DEGRADED_NOTICE
+    platform = platform_for(cli_type)
+    is_shell = payload.get("tool_name") in BASH_TOOLS or payload.get("tool_name") == platform.tool_names.get("bash")
+    if policy == "critical-guards" and is_shell:
+        import queue
+        import threading
+
+        result = queue.Queue(maxsize=1)
+        def check():
+            try:
+                result.put((_critical_guard_reason(payload, cli_type), None))
+            except Exception as exc:
+                result.put((None, exc))
+
+        deadline = monotonic_deadline(payload.get(DEADLINE_PAYLOAD_KEY))
+        if deadline is None:
+            deadline = client_deadline(cli_type)
+        # The wrapper margin remains after the IPC deadline; keep 25ms to emit.
+        budget = max(0.0, deadline + CLIENT_BUDGET_MARGIN_SECONDS - time.monotonic() - 0.025)
+        try:
+            if budget <= 0:
+                raise TimeoutError("no guard budget remains")
+            threading.Thread(target=check, daemon=True).start()
+            guard_reason, error = result.get(timeout=budget)
+            if error is not None:
+                raise error
+            if guard_reason:
+                decision = "deny"
+                reason = (guard_reason + "\nAutorun is degraded and session grants "
+                          "(/ar:ok) cannot be consulted right now; retry when it recovers.")
+        except Exception as exc:
+            logger.warning("Degraded critical guards unavailable: %s", type(exc).__name__)
+            decision = "deny"
+            reason = ("Autorun is degraded and its critical guards could not finish; "
+                      "wait and retry this shell call when it recovers; do not restart the daemon.")
+    tagged = f"[autorun] [AR_EVENT_V1:{event_code}] [AR_EVENT_V1:{DEGRADED_EVENT_CODE}] {reason}"
+    return platform.hook_protocol.degraded_tool_response(
+        decision, tagged, _hook_specific_harness_cli_event_name(event, cli_type))
 
 
 def build_daemon_failure_response(
@@ -340,7 +460,9 @@ def build_daemon_failure_response(
 ) -> dict:
     """Build a platform-correct fallback for daemon communication failures.
 
-    Permission-gate hooks fail closed. Lifecycle/context hooks fail open.
+    Build the daemon's failure signal or an explicit overload_policy=block
+    answer. Hook clients replace gate failures with degraded_tool_response;
+    lifecycle/context hooks keep their existing fail-open answer.
     """
     tagged_message = f"[AR_EVENT_V1:{event_code}] {message}".strip()
     if not is_tool_gate_event(event):
@@ -358,8 +480,9 @@ def build_daemon_failure_response(
     else:
         reason = (
             f"[autorun] {tagged_message}. Blocking tool use because autorun could "
-            f"not evaluate this permission gate. Repair with "
-            f"`autorun --restart-daemon` in a terminal. {UNRECOVERABLE_GUIDANCE}"
+            f"not evaluate this permission gate; a local decision is unavailable "
+            f"or overload_policy=block is selected. "
+            f"Do not restart the daemon under load. {UNRECOVERABLE_GUIDANCE}"
         )
     try:
         from .platforms import platform_for
@@ -394,11 +517,12 @@ def output_hook_response(response: dict, event: str = "unknown", cli_type: str =
 
     Single consolidation point for ALL 4 input paths:
     - Path 1: Normal daemon response (success)
-    - Path 2: JSON decode error (tool gates fail closed, others answer as unhandled)
-    - Path 3: Buffer overflow error (fail-open)
-    - Path 4: Exception (fail-open)
+    - Path 2: JSON decode error (local gate policy, others unhandled)
+    - Path 3: Buffer overflow error (local gate policy, others fail open)
+    - Path 4: Exception (local gate policy, others fail open)
 
-    TWO OUTPUT PATHWAYS selected by single flag check:
+    Healthy replies retain the configured workaround; degraded decisions use
+    native JSON without stderr. The two output pathways are:
     - Pathway A (Bug #4669 Workaround): JSON + stderr + exit 2
     - Pathway B (Standard): JSON + exit 0
 
@@ -413,8 +537,10 @@ def output_hook_response(response: dict, event: str = "unknown", cli_type: str =
 
     Reference: docs/hooks_api_reference.md lines 395-427
     """
-    from .config import should_use_exit2_workaround
-    from .core import validate_hook_response
+    from .config import overload_policy, should_use_exit2_workaround
+    validate = source != "degraded" or overload_policy() == "block"
+    if validate:
+        from .core import validate_hook_response
 
     # ═══════════════════════════════════════════════════════════════
     # SHARED: Pass-through — no response (None or {}) means nothing fired
@@ -443,7 +569,8 @@ def output_hook_response(response: dict, event: str = "unknown", cli_type: str =
     # SHARED: Enforce strict schema filtering (CRITICAL for Claude Code)
     # ═══════════════════════════════════════════════════════════════
     # This prevents "Invalid input" errors when daemon returns Gemini-style fields to Claude.
-    response = validate_hook_response(event, response, cli_type=cli_type)
+    if validate:
+        response = validate_hook_response(event, response, cli_type=cli_type)
 
     # ═══════════════════════════════════════════════════════════════
     # SHARED: Extract decision (DRY - works for Claude and Gemini)
@@ -458,13 +585,13 @@ def output_hook_response(response: dict, event: str = "unknown", cli_type: str =
     print(json.dumps(response))
 
     # Lifecycle logging before exit (DRY)
-    exit_code = 2 if (decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type})) else 0
+    exit_code = 2 if (source != "degraded" and decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type})) else 0
     _log_hook_lifecycle("DAEMON→CLIENT RESPONSE", Source=source, Decision=decision, ExitCode=exit_code)
 
     # ═══════════════════════════════════════════════════════════════
     # SINGLE FLAG CHECK: Select pathway
     # ═══════════════════════════════════════════════════════════════
-    if decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type}):
+    if source != "degraded" and decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type}):
         # ╔═══════════════════════════════════════════════════════════╗
         # ║ PATHWAY A: Bug #4669 Workaround (Claude Code)           ║
         # ║ - Print reason to stderr (AI sees this)                 ║
@@ -530,13 +657,13 @@ def get_stable_process_identity() -> StableProcessIdentity:
         stable = stable or psutil.Process(fallback_pid)
         try:
             started_at_units = round(stable.create_time() * _PROCESS_BIRTH_UNITS_PER_SECOND)
-        except (psutil.Error, ValueError, AttributeError, TypeError):
+        except (psutil.Error, OSError, ValueError, AttributeError, TypeError):
             started_at_units = None
         return StableProcessIdentity(
             pid=stable.pid,
             started_at_units=started_at_units,
         )
-    except psutil.Error:
+    except (psutil.Error, OSError):
         return StableProcessIdentity(fallback_pid, None)
 
 
@@ -719,7 +846,7 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
             )
         sent = False
         try:
-            from .core import READ_BUFFER_LIMIT
+            from .ipc import READ_BUFFER_LIMIT
 
             reader, writer = await asyncio.wait_for(
                 ipc.connect(limit=READ_BUFFER_LIMIT),
@@ -752,18 +879,19 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
                 # Parse response and route through unified output handler
                 try:
                     resp_json = json.loads(resp_text)
+                    code = degraded_failure_code(resp_json) if is_tool_gate_event(hook_event) else None
+                    if code:
+                        return output_hook_response(
+                            degraded_tool_response(payload, cli_type, code),
+                            event=hook_event, cli_type=cli_type, source="degraded")
                     return output_hook_response(resp_json, event=hook_event, cli_type=cli_type, source="daemon")
                 except json.JSONDecodeError:
                     if is_tool_gate_event(hook_event):
                         return output_hook_response(
-                            build_daemon_failure_response(
-                                hook_event,
-                                cli_type,
-                                "Daemon returned invalid JSON",
-                            ),
+                            degraded_tool_response(payload, cli_type, "daemon_failure", "Daemon returned invalid JSON"),
                             event=hook_event,
                             cli_type=cli_type,
-                            source="daemon-invalid-json",
+                            source="degraded",
                         )
                     # Not a reply this harness can read: Gemini CLI, Qwen
                     # Code and Antigravity require JSON on stdout, so answer
@@ -784,14 +912,10 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
             # Response from daemon exceeded buffer (shouldn't happen - response is tiny)
             logger.error(f"Client buffer error: {e}")
             return output_hook_response(
-                build_daemon_failure_response(
-                    hook_event,
-                    cli_type,
-                    f"Client buffer error: Daemon response too large. {e}",
-                ),
+                degraded_tool_response(payload, cli_type, "daemon_failure", f"Client buffer error: Daemon response too large. {e}"),
                 event=hook_event,
                 cli_type=cli_type,
-                source="buffer-error",
+                source="degraded" if is_tool_gate_event(hook_event) else "buffer-error",
             )
         except UNANSWERED_REQUEST_ERRORS as e:
             if isinstance(e, PermissionError):
@@ -943,19 +1067,19 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
     except Exception as e:
         logger.error(f"Client exception while contacting daemon: {e}", exc_info=True)
         return output_hook_response(
-            build_daemon_failure_response(
-                hook_event,
+            degraded_tool_response(
+                payload,
                 cli_type,
-                f"Daemon unavailable or timed out: {e}",
                 event_code=(
                     "daemon_response_timeout"
                     if waited_for_daemon and isinstance(e, RuntimeError)
                     else failure_event_code(e)
                 ),
+                message=f"Daemon unavailable or timed out: {e}",
             ),
             event=hook_event,
             cli_type=cli_type,
-            source="exception",
+            source="degraded" if is_tool_gate_event(hook_event) else "exception",
         )
 
 

@@ -40,8 +40,8 @@ MILLISECONDS_PER_SECOND = 1000
 TAIL_PERCENTILES = (90, 99)
 OUTCOMES = ("allowed", "intended_denial", "unexpected_denial", "refused_or_overloaded",
             "timed_out", "fail_closed", "hook_stderr", "nonzero_exit", "invalid_response",
-            "missed_guard")
-BAD_OUTCOMES = OUTCOMES[2:]
+            "missed_guard", "degraded_allow")
+BAD_OUTCOMES = OUTCOMES[2:-1]
 FAIL_CLOSED_TEXT = ("fail.closed", "fail-closed", "blocking tool use to avoid fail-open",
                     "daemon_failure", "blocking tool use because autorun could not evaluate",
                     "blocking this tool call because",
@@ -132,6 +132,22 @@ def workload(session, rounds, platform, sandbox):
 
 def classify(stdout, stderr, returncode, expected_denial):
     text = (stdout + "\n" + stderr).lower()
+    if "[ar_event_v1:degraded_decision]" in text:
+        try:
+            response = json.loads(stdout)
+            specific = response.get("hookSpecificOutput", {})
+            denied = (response.get("decision") in {"deny", "block"}
+                      or specific.get("permissionDecision") == "deny"
+                      or specific.get("decision", {}).get("behavior") == "deny")
+        except (ValueError, AttributeError, TypeError):
+            return "invalid_response"
+        if stderr:
+            return "hook_stderr"
+        if returncode:
+            return "nonzero_exit"
+        if denied:
+            return "intended_denial" if expected_denial else "unexpected_denial"
+        return "degraded_allow"
     # Infrastructure failure takes precedence over a denial and its exit-2 stderr.
     if any(token in text for token in LOAD_TEXT):
         return "refused_or_overloaded"

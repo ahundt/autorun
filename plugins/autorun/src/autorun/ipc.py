@@ -34,6 +34,13 @@ from pathlib import Path
 
 from .durable_io import atomic_write_text, unlink
 
+# Shared by client and daemon: importing core merely to size a reader used
+# to load the daemon before a degraded Read could be allowed.
+try:
+    READ_BUFFER_LIMIT = int(os.environ.get("AUTORUN_BUFFER_LIMIT") or 2**30)
+except ValueError:
+    READ_BUFFER_LIMIT = 2**30
+
 def _get_autorun_config_dir() -> Path:
     """Get autorun config/data directory (~/.autorun/).
 

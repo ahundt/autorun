@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { autorunDisabled, createDaemonBridge, denialReason, responseMessage } from "./daemon-client.mjs";
+import { autorunDisabled, createDaemonBridge, degradedNotice, denialReason, responseMessage } from "./daemon-client.mjs";
 
 const TASK_STATUSES = ["pending", "in_progress", "completed", "deleted"];
 const TASK_ID_SCHEMA = {
@@ -413,7 +413,19 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
       tool_input: event.input,
     });
     const reason = denialReason(response);
-    return reason ? { block: true, reason } : undefined;
+    if (reason) return { block: true, reason };
+    const notice = degradedNotice(response);
+    if (notice) {
+      try {
+        pi.sendMessage(
+          { customType: "autorun-degraded", content: notice, display: true },
+          { triggerTurn: false, deliverAs: "nextTurn" },
+        );
+      } catch {
+        // A failed notice must not turn this allow into a blocked tool.
+      }
+    }
+    return undefined;
   });
 
   pi.on("tool_result", async (event, ctx) => {

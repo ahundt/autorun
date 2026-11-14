@@ -327,6 +327,16 @@ DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_EPOCH"
 #: test_client_fail_closed.py.
 HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_epoch"
 
+#: Time a tool-gate hook keeps back from waiting on the daemon so that, when
+#: no answer comes, the local critical-guard check still fits inside the hook
+#: budget. A cold check of a shell command measured 143 ms (interpreter start
+#: excluded here, since this process is already running); 0.3 s is twice that.
+#: tests/test_overload_policy.py pins that every harness's daemon wait minus
+#: this reserve still exceeds the daemon's own dispatch budget.
+DEGRADED_CHECK_RESERVE_SECONDS = 0.3
+#: Time kept to write the response and exit after any local decision.
+HOOK_EMIT_MARGIN_SECONDS = 0.2
+
 
 def cli_env_with_deadline(cli_type: str) -> dict:
     """Environment for the CLI child carrying this wrapper's actual deadline.
@@ -731,6 +741,16 @@ def fail_after_cli_timeout(cli_type: str, event_name: str) -> NoReturn:
     timeout = hook_timeout_for_cli(cli_type)
     message = f"autorun CLI timed out after {timeout:g}s"
     if is_tool_gate_event(event_name):
+        try:
+            position = sys.stdin.tell()
+            payload = json.load(sys.stdin)
+            sys.stdin.seek(position)
+        except (OSError, ValueError):
+            payload = {}
+        if isinstance(payload, dict) and payload.get("tool_name"):
+            code = _try_degraded_tool(payload, cli_type, "daemon_response_timeout")
+            if code is not None:
+                sys.exit(code)
         # A timeout is usually a cold daemon, which the next event finds warm.
         fail_closed_tool_gate(message, cli_type, event_name, recoverable=True)
     fail_open_for_cli(message, cli_type, event_name)
@@ -1068,12 +1088,14 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     payload.setdefault("_cwd", payload.get("cwd") or os.getcwd())
     payload["cli_type"] = cli_type
     timeout = hook_timeout_for_cli(cli_type)
+    # Preserve the local emit margin without changing healthy daemon frames.
+    guard_deadline = payload.get(HOOK_DEADLINE_PAYLOAD_KEY, time.time() + timeout - HOOK_EMIT_MARGIN_SECONDS)
     payload[HOOK_DEADLINE_PAYLOAD_KEY] = time.time() + timeout
     event_name = payload.get("hook_event_name", "unknown")
     connected = False
     try:
         with socket.socket(family, socket.SOCK_STREAM) as daemon_socket:
-            daemon_socket.settimeout(timeout)
+            daemon_socket.settimeout(max(0.01, timeout - (DEGRADED_CHECK_RESERVE_SECONDS if is_tool_gate_event(event_name) else 0)))
             daemon_socket.connect(address)
             connected = True
             daemon_socket.sendall(preamble + json.dumps(payload).encode("utf-8") + b"\n")
@@ -1084,6 +1106,10 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
         response = json.loads(response_line)
         if not isinstance(response, dict):
             raise ValueError("daemon response is not a JSON object")
+        if is_tool_gate_event(event_name) and "[AR_EVENT_V1:" in response_line:
+            code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: guard_deadline}, cli_type, response=response)
+            if code is not None:
+                return True, code
         return True, _emit_daemon_result(response, cli_type, event_name)
     except socket.timeout:
         if connected:
@@ -1093,6 +1119,9 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
                 f"request but did not answer within {timeout:g}s"
             )
             if is_tool_gate_event(event_name):
+                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: guard_deadline}, cli_type, "daemon_response_timeout")
+                if code is not None:
+                    return True, code
                 fail_closed_tool_gate(
                     message, cli_type, event_name, guidance=_RESPONSE_TIMEOUT_GUIDANCE
                 )
@@ -1105,6 +1134,9 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
             message = f"Daemon closed the connection without answering: {type(error).__name__}"
             _append_debug_log(message)
             if is_tool_gate_event(event_name):
+                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: guard_deadline}, cli_type, "daemon_response_timeout")
+                if code is not None:
+                    return True, code
                 fail_closed_tool_gate(message, cli_type, event_name, recoverable=True)
             fail_open_for_cli(message, cli_type, event_name)
         return False, 0
@@ -1113,9 +1145,32 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
             message = f"Daemon returned an invalid response: {type(error).__name__}"
             _append_debug_log(message)
             if is_tool_gate_event(event_name):
+                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: guard_deadline}, cli_type, "daemon_failure")
+                if code is not None:
+                    return True, code
                 fail_closed_tool_gate(message, cli_type, event_name)
             fail_open_for_cli(message, cli_type, event_name)
         return False, 0
+
+
+def _try_degraded_tool(payload: dict, cli_type: str, event_code: str = "daemon_failure",
+                       *, response: dict | None = None) -> int | None:
+    """Use the one Python policy owner; missing package keeps the stdlib denial."""
+    plugin_root = get_plugin_root()
+    src_dir = Path(plugin_root) / "src" if plugin_root else get_src_dir()
+    if src_dir and str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+    try:
+        from autorun.client import degraded_failure_code, degraded_tool_response, output_hook_response
+    except ImportError:
+        return None
+    if response is not None:
+        event_code = degraded_failure_code(response)
+        if event_code is None:
+            return None
+    return output_hook_response(
+        degraded_tool_response(payload, cli_type, event_code),
+        event=payload.get("hook_event_name", "PreToolUse"), cli_type=cli_type, source="degraded")
 
 
 def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, event_name: str = "unknown") -> bool:
@@ -1131,9 +1186,9 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, e
     Returns:
         False when the CLI failed or answered with something that is not a
         hook response, so the caller may try the fallback. Otherwise it does
-        not return: it emits the response and exits, and a timeout fails
-        closed (tool gates) or open (everything else) without a fallback,
-        which would overrun the wrapper's budget the CLI already spent.
+        not return: it emits the response and exits. A timeout uses the local
+        tool-gate check when importable, or the stdlib denial when not; other
+        events fail open. It never replays the timed-out daemon request.
 
     Exit Code Handling:
         Exit code 0 = CLI succeeded (even when denying tool access)
@@ -1180,7 +1235,7 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, e
             # locale: cli_env_with_deadline sets the child's PYTHONIOENCODING.
             encoding="utf-8",
             errors="replace",
-            timeout=hook_timeout_for_cli(cli_type),
+            timeout=max(0.1, hook_timeout_for_cli(cli_type) - (DEGRADED_CHECK_RESERVE_SECONDS if is_tool_gate_event(event_name) else 0)),
             env=cli_env_with_deadline(cli_type),
         )
 
@@ -1615,11 +1670,11 @@ def get_src_dir() -> Path | None:
 
 
 def run_fallback() -> None:
-    """Run with direct import (limited functionality, no external deps).
+    """Use local guards for tool gates and direct dispatch for other events.
 
     This is the fallback when no CLI is available. It attempts to import autorun directly from the plugin source. If dependencies are missing,
-    it spawns a background bootstrap process and returns fail_open so the CLI
-    can continue. The next hook invocation will find deps installed.
+    it keeps the existing bootstrap/repair path: tool gates deny and other
+    events fail open. The next hook invocation can find repaired dependencies.
 
     Safety: Works with both Claude Code and Gemini CLI via get_plugin_root().
     """
@@ -1643,10 +1698,24 @@ def run_fallback() -> None:
     if src_str not in sys.path:
         sys.path.insert(0, src_str)
 
+    event_name = _peek_event_name()
+    if is_tool_gate_event(event_name):
+        try:
+            position = sys.stdin.tell()
+            payload = json.load(sys.stdin)
+            sys.stdin.seek(position)
+        except (OSError, ValueError):
+            payload = {}
     try:
-        # The primary CLI path already tried daemon mode. Fallback must be an
-        # actual in-process dispatch path, otherwise a daemon timeout can repeat
-        # and exceed the outer hook process timeout.
+        if is_tool_gate_event(event_name):
+            # Keep import failures on the original bootstrap/repair path.
+            __import__("autorun.client")
+            code = _try_degraded_tool(payload, detect_cli_type(payload), "daemon_unavailable_or_timeout")
+            if code is None:
+                raise ImportError("autorun client unavailable for critical guards")
+            sys.exit(code)
+
+        # Non-gate events retain their in-process fallback, without a second IPC.
         os.environ["AUTORUN_USE_DAEMON"] = "0"
 
         from autorun.__main__ import main as autorun_main
@@ -1762,6 +1831,14 @@ def main() -> None:
     log_debug(f"Hook entry stdin ({len(stdin_data)} bytes)")
 
     cli_type = detect_cli_type(payload_for_detection)
+    wrapper_deadline = time.time() + hook_timeout_for_cli(cli_type) - HOOK_EMIT_MARGIN_SECONDS
+    if isinstance(payload_for_detection, dict) and payload_for_detection.get("_autorun_degraded_check") is True:
+        payload = payload_for_detection if isinstance(payload_for_detection, dict) else {}
+        payload.setdefault(HOOK_DEADLINE_PAYLOAD_KEY, wrapper_deadline)
+        code = _try_degraded_tool(payload, cli_type, payload.get("_autorun_failure_code", "daemon_unavailable_or_timeout"))
+        if code is not None:
+            sys.exit(code)
+        fail_closed_tool_gate("Cannot import autorun for critical guards", cli_type, event_name)
     if isinstance(payload_for_detection, dict):
         payload_for_detection = prepare_hook_payload(payload_for_detection, cli_type)
         event_name = payload_for_detection.get("hook_event_name", event_name)
@@ -1779,6 +1856,7 @@ def main() -> None:
         try:
             payload = json.loads(stdin_data)
             payload = prepare_hook_payload(payload, cli_type)
+            payload.setdefault(HOOK_DEADLINE_PAYLOAD_KEY, wrapper_deadline)
             stdin_data = json.dumps(payload)
             event_name = payload.get("hook_event_name", event_name)
             log_debug(
@@ -1787,6 +1865,7 @@ def main() -> None:
         except (json.JSONDecodeError, Exception) as e:
             log_debug(f"Could not inject cli_type: {e}")
 
+    sys.stdin = io.StringIO(stdin_data)
     autorun_bin = get_autorun_bin()
     log_debug(f"Selected binary: {autorun_bin}")
     if _can_use_direct_daemon(autorun_bin):

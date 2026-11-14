@@ -2,7 +2,7 @@
 // Policy and command parsing remain in Python; this file maps OpenCode events
 // to portable hook frames and native veto behavior.
 
-import { createDaemonBridge, denialReason, responseMessage } from "./daemon-client.mjs"
+import { createDaemonBridge, degradedNotice, denialReason, responseMessage } from "./daemon-client.mjs"
 
 const bridge = createDaemonBridge({
   cliType: "opencode",
@@ -133,6 +133,7 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
   // ids; Map insertion order supplies the LRU. A failed SDK lookup covers this
   // prompt plus the next two, then one later prompt retries.
   const promptAuthors = new Map()
+  const toolNotices = new Map()
   const promptAuthorCacheLimit = 8
   const failedLookupPromptCount = 3
 
@@ -230,9 +231,27 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
       })
       const reason = denialReason(response)
       if (reason) throw new Error(reason)
+      const notice = degradedNotice(response)
+      if (notice) {
+        if (!toolNotices.has(input.sessionID)) toolNotices.set(input.sessionID, new Map())
+        toolNotices.get(input.sessionID).set(input.callID, notice)
+        if (typeof client?.tui?.showToast === "function") {
+          Promise.resolve().then(() => client.tui.showToast({
+            query: { directory },
+            body: { title: "Autorun is degraded", message: notice, variant: "warning" },
+          })).catch(() => {})
+        }
+      }
     },
 
-    "tool.execute.after": async (input) => {
+    "tool.execute.after": async (input, output) => {
+      const notices = toolNotices.get(input.sessionID)
+      const notice = notices?.get(input.callID)
+      notices?.delete(input.callID)
+      if (notices?.size === 0) toolNotices.delete(input.sessionID)
+      if (notice && output && typeof output.output === "string") {
+        output.output += `\n\n${notice}`
+      }
       // Activity resets the Stop loop; todo.updated owns task-result capture.
       await bridge.askDaemon({
         hook_event_name: "PostToolUse",
@@ -257,6 +276,7 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
       if (event?.type === "session.deleted") {
         const sessionID = properties.sessionID ?? properties.id ?? properties.info?.id
         if (sessionID) promptAuthors.delete(String(sessionID))
+        if (sessionID) toolNotices.delete(sessionID)
         return
       }
       if (event?.type === "session.idle") {

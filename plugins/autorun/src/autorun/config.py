@@ -884,6 +884,8 @@ CONFIG = {
     # remain alive instead of spawning an unbounded cluster of worker threads.
     "daemon_dispatch_max_concurrent_per_event": 4,
     "daemon_dispatch_timeout_cooldown_seconds": 5.0,
+    # Hook-local failure policy; no daemon or session state is needed to read it.
+    "overload_policy": "critical-guards",
     # How far past its budget a slot holder must be before "every slot is
     # held" is reported as a stall needing a restart rather than as load.
     # Budgets are 2-3 s; under machine load handlers run at a multiple of
@@ -1282,6 +1284,25 @@ def user_config_path():
     home = os.environ.get("AUTORUN_HOME")
     base = Path(home) if home else Path.home() / ".autorun"
     return base / USER_CONFIG_FILENAME
+
+
+def overload_policy() -> str:
+    """Environment > config file > default; an unknown value keeps critical guards."""
+    import os
+
+    value = os.environ.get("AUTORUN_OVERLOAD_POLICY", CONFIG["overload_policy"])
+    return value if value in ("critical-guards", "block", "allow") else "critical-guards"
+
+
+def overload_policy_status() -> str:
+    """Include invalid input in --status without making a hook print warnings."""
+    import os
+
+    value = os.environ.get("AUTORUN_OVERLOAD_POLICY",
+                           read_user_config().get("overload_policy", CONFIG["overload_policy"]))
+    effective = overload_policy()
+    suffix = f" (unknown value {value!r}; using critical-guards)" if value != effective else ""
+    return f"overload_policy={effective}{suffix}"
 
 
 def read_user_config() -> dict:

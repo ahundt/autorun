@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Client fallback behavior for daemon failures.
+"""Native failure signals and the explicit block/package-missing responses.
 
-Permission-gate hooks must never fail open when the daemon is slow, missing,
-or returns invalid data. Lifecycle/context events may continue permissively.
+Default hook-local decisions are exercised through IPC in test_overload_policy.
+Lifecycle/context failures continue permissively.
 """
 
 import json
@@ -123,22 +123,23 @@ def test_the_wrapper_and_the_client_agree_on_the_unrecoverable_guidance():
     from autorun.client import RESPONSE_TIMEOUT_GUIDANCE
     from autorun.config import HOOK_DEADLINE_PAYLOAD_KEY
 
-    assert module._RESPONSE_TIMEOUT_GUIDANCE == RESPONSE_TIMEOUT_GUIDANCE
+    # The package-missing stdlib fallback retains its original guidance.
+    # Only the importable client can run the stateless policy.
+    assert "Retry the same tool call once" in module._RESPONSE_TIMEOUT_GUIDANCE
+    assert "do not restart" in RESPONSE_TIMEOUT_GUIDANCE
     assert module.HOOK_DEADLINE_PAYLOAD_KEY == HOOK_DEADLINE_PAYLOAD_KEY
     from autorun.config import HOOK_DEADLINE_ENV_VAR
 
     assert module.DEADLINE_ENV_VAR == HOOK_DEADLINE_ENV_VAR
 
-    # The JavaScript bridge (Pi, Prime, OpenCode) is installed by a verbatim
-    # copy, so it keeps a third spelling of both sentences.
+    # The JS bridge keeps the same wire deadline key; its denial-only timeout
+    # guidance copy is pinned by test_daemon_throughput.
     import json
 
     bridge = (
         Path(__file__).resolve().parents[1]
         / "src" / "autorun" / "bridge_template" / "daemon-client.mjs"
     ).read_text(encoding="utf-8")
-    assert f"const INTERVENTION_GUIDANCE = {json.dumps(UNRECOVERABLE_GUIDANCE)};" in bridge
-    assert f"const RETRY_GUIDANCE = {json.dumps(module._RETRY_GUIDANCE)};" in bridge
     assert f"const HOOK_DEADLINE_PAYLOAD_KEY = {json.dumps(HOOK_DEADLINE_PAYLOAD_KEY)};" in bridge
 
 

@@ -621,7 +621,7 @@ def _predicate_views(ctx: any, pattern: str | None):
             yield _ScriptView(ctx, script)
 
 
-def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> bool:
+def check_when_predicate(when: str, ctx: any, pattern: str | None = None, *, raise_errors: bool = False) -> bool:
     """
     Check when predicate. O(1) for Python, O(cmd) for bash.
 
@@ -630,6 +630,8 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
         ctx: Event context (not used for most predicates)
         pattern: Matched integration pattern, when known. Pattern-aware
             predicates use this to avoid command-wide false positives.
+        raise_errors: Propagate built-in predicate exceptions to the local
+            fail-safe check; daemon callers retain their existing behavior.
 
     Returns:
         True if condition met, False otherwise
@@ -647,6 +649,8 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
                     if pred_func(view):
                         return True
                 except Exception as e:
+                    if raise_errors:
+                        raise
                     logger.warning(f"When predicate '{when}' failed: {e}")
             return False
 

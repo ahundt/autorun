@@ -102,25 +102,8 @@ def dispatch_timeout_for_event(event: str) -> float:
     return _DISPATCH_TIMEOUT_BY_EVENT.get(event, 2.0)
 
 
-# Buffer size for reading hook payloads (asyncio default is 64KB = 2^16)
-# Need larger than default to accept full payloads before truncating
-# Client sends full transcript (can be 200MB+), server truncates to 64KB after reading
-_DEFAULT_LIMIT = asyncio.streams._DEFAULT_LIMIT  # 64KB (2^16 = 65536)
-
-# Allow override via AUTORUN_BUFFER_LIMIT env var (in bytes)
-# Default: 1GB (2^30) handles sessions up to 1GB
-# Found actual sessions: 511MB, so need more than 512MB headroom
-_env_limit = os.environ.get("AUTORUN_BUFFER_LIMIT")
-if _env_limit:
-    try:
-        READ_BUFFER_LIMIT = int(_env_limit)
-    except ValueError:
-        # Logger not available yet at module load time
-        # CRITICAL: Don't print to stderr - breaks hooks!
-        # Invalid buffer limit - silently use default 1GB
-        READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2**14)  # 1GB (2^30)
-else:
-    READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2**14)  # 1GB (2^30)
+# Shared transport bound; keep this export for existing callers.
+from .ipc import READ_BUFFER_LIMIT
 
 # === LOGGING ===
 # Keep package import side-effect-light. Metadata commands such as
@@ -149,7 +132,7 @@ class StateWriteOutcome:
         return self.status is not StateWriteStatus.FAILED
 
 
-CANONICAL_COMMAND_PREFIX = "/ar:"
+from .platforms import CANONICAL_COMMAND_PREFIX
 
 
 _COMMAND_STARTS_AGENT_TURN_ATTRIBUTE = "__autorun_starts_agent_turn__"
@@ -214,15 +197,8 @@ def apply_command_match(ctx, match: "CommandMatch") -> None:
 # API tool_names (layer 1), NOT CLI display names (layer 2). For Codex they may
 # name shell commands such as `rg --files` when Codex has no dedicated model tool.
 # The UX mismatch (Claude "Glob" displayed as "Search") is cosmetic, not functional.
-CLI_TOOL_NAMES: dict[str, dict[str, str]] = {name: dict(p.tool_names) for name, p in _PLATFORMS.items() if p.tool_names}
-
-
-def get_tool_names(cli_type: str) -> dict[str, str]:
-    """Get tool name dict for a CLI. Returns empty dict for unknown CLIs.
-
-    Unknown CLI → all placeholders pass through unchanged (safe, generic).
-    """
-    return CLI_TOOL_NAMES.get(cli_type, {})
+from .platforms import (CLI_TOOL_NAMES, DEGRADED_EVENT_CODE, get_tool_names, command_display_prefix,
+                        format_command_for_cli, format_commands_for_cli, format_suggestion)
 
 
 def _command_prefixes_for_cli(cli_type: str | None) -> tuple[str, ...]:
@@ -295,73 +271,9 @@ def canonicalize_command_prompt(prompt: str, cli_type: str | None = None) -> str
     return prompt
 
 
-def command_display_prefix(cli_type: str | None) -> str:
-    """Return the preferred user-facing autorun command prefix for a platform."""
-    return platform_for(cli_type).command_display_prefix or CANONICAL_COMMAND_PREFIX
-
-
-def format_command_for_cli(command: str, cli_type: str | None) -> str:
-    """Render one canonical /ar:* command in the platform's preferred spelling."""
-    display_prefix = command_display_prefix(cli_type)
-    if display_prefix == CANONICAL_COMMAND_PREFIX:
-        return command
-    if command.startswith(CANONICAL_COMMAND_PREFIX):
-        return f"{display_prefix}{command[len(CANONICAL_COMMAND_PREFIX) :]}"
-    return command
-
-
 def user_only_refusal(command: str, cli_type: str | None) -> str:
     """What a guarded command answers anyone but the user, in this harness's spelling."""
     return CONFIG["user_only_command_refusal"].format(command=format_command_for_cli(command, cli_type))
-
-
-def format_commands_for_cli(text: str, cli_type: str | None) -> str:
-    """Render canonical /ar:* command mentions for the target platform."""
-    display_prefix = command_display_prefix(cli_type)
-    if display_prefix == CANONICAL_COMMAND_PREFIX:
-        return text
-    return text.replace(CANONICAL_COMMAND_PREFIX, display_prefix)
-
-
-@lru_cache(maxsize=64)
-def format_suggestion(msg: str, cli_type: str) -> str:
-    """Resolve {tool_key} placeholders in safety-guard suggestion strings to the
-    correct CLI-specific guidance, so the AI receives actionable instructions.
-
-    WHY THIS EXISTS:
-        Safety guards block bash commands (grep, find, cat, etc.) and suggest the
-        equivalent AI tool or shell affordance instead. Without this, Claude
-        would be told "use Grep" while Gemini (which calls it grep_search) or
-        Codex (which should use rg/apply_patch/update_plan) would receive wrong
-        instructions. The daemon handles multiple CLIs on the same socket, so
-        cli_type determines which guidance to use per request.
-
-    WHY lru_cache:
-        The daemon is shared across all concurrent AI sessions (multiple Claude and
-        Gemini instances). AIs retry blocked commands, and multiple sessions trigger
-        the same integrations independently. Input space is bounded: ~14 integrations
-        × 2 CLIs + 2 policy_blocked × 2 CLIs ≈ 32 unique (msg, cli_type) pairs.
-        maxsize=64 comfortably covers this with room for growth.
-
-    WHY str.replace() NOT str.format_map():
-        format_map() raises ValueError on positional fields like `xargs -I{} mv {}`,
-        which appear in shell examples in the git clean suggestion string. str.replace()
-        is safe for arbitrary text and only substitutes exact dispatch table keys.
-
-    Only replaces {grep}, {glob}, {read}, {write}, {edit}, {bash}, {ls}.
-    Everything else — {args}, {}, {0}, shell syntax — passes through unchanged.
-
-    Args:
-        msg: Suggestion string with optional {tool_key} placeholders.
-        cli_type: CLI identifier ("claude", "gemini", or any future CLI).
-
-    Returns:
-        msg with guidance placeholders resolved for cli_type. Unknown CLI or unknown
-        placeholder leaves msg unchanged.
-    """
-    for key, value in get_tool_names(cli_type).items():
-        msg = msg.replace(f"{{{key}}}", value)
-    return format_commands_for_cli(msg, cli_type)
 
 
 AI_ECHO_CHANNEL = "ai-echo"
@@ -1844,7 +1756,13 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     # 2. Filter hookSpecificOutput if present and supported
     if "hookSpecificOutput" in filtered and schema["hso"]:
         hso = filtered["hookSpecificOutput"]
-        filtered["hookSpecificOutput"] = {k: v for k, v in hso.items() if k in schema["hso"]}
+        allowed_hso = schema["hso"]
+        context = hso.get("additionalContext", "")
+        # Native PreToolUse context carries degraded notices to the model;
+        # preserve the legacy filtering of every healthy response.
+        if event == "PreToolUse" and isinstance(context, str) and f"[AR_EVENT_V1:{DEGRADED_EVENT_CODE}]" in context:
+            allowed_hso = allowed_hso | {"additionalContext"}
+        filtered["hookSpecificOutput"] = {k: v for k, v in hso.items() if k in allowed_hso}
     elif "hookSpecificOutput" in filtered:
         # Event does not support hookSpecificOutput (e.g. Stop, SessionStart)
         del filtered["hookSpecificOutput"]
@@ -3406,7 +3324,8 @@ def daemon_failure_response(event: str, cli_type: str, message: str, event_code:
     failure built from Claude's common fields reached Antigravity's Stop as
     continue/stopReason/suppressOutput/systemMessage. Handler responses are
     already filtered by ``respond()``; this does the same for failures. Tool
-    gates are left as built: they are already native.
+    gates are left as native failure signals: clients read the event tag and
+    apply the hook-local overload policy without consulting session state.
     """
     from .client import build_daemon_failure_response, is_tool_gate_event
 

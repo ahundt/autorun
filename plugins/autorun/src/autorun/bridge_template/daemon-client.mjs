@@ -1,7 +1,7 @@
 // Shared in-process transport for JavaScript/TypeScript harness adapters.
 //
-// Policy stays in the Python daemon. This module owns only newline-delimited
-// JSON transport, bounded hook-entry fallback, and response extraction.
+// Decisions stay in Python: the daemon normally, the hook client when degraded.
+// This module owns JSON transport, bounded fallback, and response extraction.
 
 import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
@@ -45,42 +45,8 @@ export function autorunDisabled() {
   return value === "1" || value === "true" || value === "yes";
 }
 
-// Verbatim copies of hooks/hook_entry.py's _RETRY_GUIDANCE and
-// _INTERVENTION_GUIDANCE (= autorun.client.UNRECOVERABLE_GUIDANCE). This file is
-// installed by a plain copy, so it cannot import them;
-// test_client_fail_closed.py pins all three spellings together.
-const RETRY_GUIDANCE = "This clears on its own; retry shortly.";
-// = autorun.client.RESPONSE_TIMEOUT_GUIDANCE, for a request the daemon took and
-// never answered; test_daemon_throughput.py pins the two together.
-const RESPONSE_TIMEOUT_GUIDANCE = "Blocking this tool call because the autorun daemon took the request but did not answer in time: it is either very busy or stuck. Retry the same tool call once. If that is blocked the same way, run `autorun --restart-daemon` in a terminal; it leaves a daemon that just restarted and answers a health check alone, and replaces one that does not.";
-const INTERVENTION_GUIDANCE = "Retrying will not help: the same failure repeats. Repair it in a terminal (run the repair step named in the error, or `autorun --status` for diagnosis) and the next hook recovers on its own. To stand autorun down, ask the user to start a new session with AUTORUN_DISABLE=1 set where the harness is launched; a prefix on a command has no effect.";
-
-// Same reason shape as hook_entry.py's fail_closed_tool_gate; the repair step
-// is the one autorun.client.build_daemon_failure_response names.
-function blockedBecause(message, recoverable = false) {
-  const guidance = recoverable
-    ? RETRY_GUIDANCE
-    : "Repair with `autorun --restart-daemon` in a terminal. " + INTERVENTION_GUIDANCE;
-  return {
-    hookSpecificOutput: {
-      permissionDecision: "deny",
-      permissionDecisionReason:
-        `[autorun] ${message}. Blocking tool use to avoid fail-open. ${guidance}`,
-    },
-  };
-}
-
-// The Python client reports the same failure under the same event code.
-function didNotAnswer() {
-  return {
-    hookSpecificOutput: {
-      permissionDecision: "deny",
-      permissionDecisionReason:
-        "[autorun] [AR_EVENT_V1:daemon_response_timeout] autorun daemon did not answer in time. " +
-        RESPONSE_TIMEOUT_GUIDANCE,
-    },
-  };
-}
+// Denial-only copy of autorun.client.RESPONSE_TIMEOUT_GUIDANCE, pinned by tests.
+const RESPONSE_TIMEOUT_GUIDANCE = "Blocking this tool call because the autorun daemon took the request but did not answer in time and a local decision is unavailable or overload_policy=block is selected. Wait and retry when autorun answers again; do not restart the daemon. If this persists, tell the user; AUTORUN_DISABLE=1 at harness launch stands autorun down.";
 
 export function denialReason(response) {
   if (!response) return null;
@@ -98,6 +64,17 @@ export function responseMessage(response) {
     response?.hookSpecificOutput?.permissionDecisionReason ??
     ""
   );
+}
+
+export function degradedNotice(response) {
+  const message = responseMessage(response);
+  return !denialReason(response) && message.includes("[AR_EVENT_V1:degraded_decision]") ? message : "";
+}
+
+function failureCode(response) {
+  const message = denialReason(response) ?? "";
+  const match = message.match(/\[AR_EVENT_V1:(daemon_dispatch_timeout|daemon_dispatch_contained|daemon_dispatch_stalled|state_lock_contended|state_evaluation_failed|daemon_failure|daemon_response_timeout|daemon_unavailable_or_timeout)\]/);
+  return match?.[1] ?? null;
 }
 
 export function createDaemonBridge({
@@ -164,9 +141,24 @@ export function createDaemonBridge({
     return (await exchange(payload, Date.now() + timeoutMs)).response;
   }
 
-  async function askHookEntry(payload, deadline) {
+  function lastResort(payload, failureCode) {
+    // All three bridge harnesses call their shell tool "bash". Python owns
+    // the guards; without it we can only deny shells and permit other tools.
+    const shell = payload.tool_name === "bash";
+    return { hookSpecificOutput: {
+      permissionDecision: shell ? "deny" : "allow",
+      permissionDecisionReason: `[autorun] [AR_EVENT_V1:${failureCode}] [AR_EVENT_V1:degraded_decision] ` +
+        (shell
+          ? "Autorun is degraded and its critical guards could not finish; wait and retry this shell call when it recovers; do not restart the daemon." +
+            (failureCode === "daemon_response_timeout" ? " " + RESPONSE_TIMEOUT_GUIDANCE : "")
+          : "Autorun could not answer, so built-in destructive-command guards are still enforced by denying shell calls while /ar:no rules, /ar:ok grants, the file policy and task and plan gating are not checked until autorun answers again; Do not restart the daemon."),
+    }};
+  }
+
+  async function askHookEntry(payload, deadline, failureCode = "daemon_unavailable_or_timeout") {
+    const failed = () => lastResort(payload, failureCode);
     if (!Array.isArray(hookEntryCommand) || hookEntryCommand.length === 0) {
-      return blockedBecause("autorun daemon unreachable");
+      return failed();
     }
     return new Promise((resolve) => {
       let stdout = "";
@@ -184,12 +176,12 @@ export function createDaemonBridge({
           stdio: ["pipe", "pipe", "ignore"],
         });
       } catch {
-        resolve(blockedBecause("autorun daemon and hook entry both unreachable"));
+        resolve(failed());
         return;
       }
       const timer = setTimeout(
         // A timeout is usually a cold start, as in hook_entry's own timeout.
-        () => finish(blockedBecause("hook entry timed out", true)),
+        () => finish(failed()),
         Math.max(deadline - Date.now(), 0),
       );
       child.stdout.setEncoding("utf8");
@@ -197,38 +189,23 @@ export function createDaemonBridge({
         stdout += chunk;
       });
       child.on("error", () =>
-        finish(blockedBecause("autorun daemon and hook entry both unreachable")),
+        finish(failed()),
       );
-      child.on("close", (code) => {
-        // Silence after exit 0 is consent. hook_entry.py writes nothing when a
-        // tool is allowed; only a decision puts JSON on stdout. Handing "" to
-        // JSON.parse throws, and treating that throw as a malfunction turned
-        // every allow routed through this fallback into a deny reading
-        // "hook entry returned an invalid response". The fallback runs whenever
-        // the daemon is unreachable -- a restart, an install, a crash -- so a
-        // routine blip blocked every command the user ran.
-        //
-        // Do not "simplify" this back to a bare JSON.parse: the empty case and
-        // the unparseable case must stay distinct.
+      child.on("close", () => {
+        // Local-only mode always emits a verdict, including an allow notice.
+        // Silence cannot prove the guards ran; use the bounded last resort.
         if (stdout.trim() === "") {
-          // Exit 2 carries a deny whose reason went to stderr (issue #4669
-          // workaround), and stderr is not captured here, so a silent exit 2
-          // is a decision we cannot read rather than an absent one.
-          finish(
-            code === 0
-              ? null
-              : blockedBecause(code === 2
-                ? "hook entry denied without a readable reason"
-                : "hook entry failed without a readable response"),
-          );
+          finish(failed());
           return;
         }
         try {
-          finish(JSON.parse(stdout));
+          const parsed = JSON.parse(stdout);
+          const decision = parsed?.hookSpecificOutput?.permissionDecision ?? parsed?.decision;
+          finish(["allow", "approve", "deny", "block"].includes(decision) ? parsed : failed());
         } catch {
           // Output that is present but unparseable is a real malfunction: a
           // permission gate that cannot read its own verdict must not fail open.
-          finish(blockedBecause("hook entry returned an invalid response"));
+          finish(failed());
         }
       });
       // A hook entry may exit before reading stdin (an allow needs no input).
@@ -238,7 +215,11 @@ export function createDaemonBridge({
       // verdict comes from the exit status and stdout in "close" above, so a
       // failed write carries no information of its own.
       child.stdin.on("error", () => {});
-      child.stdin.end(JSON.stringify({ ...payload, cli_type: cliType }) + "\n");
+      child.stdin.end(JSON.stringify({ ...payload, cli_type: cliType,
+        _autorun_degraded_check: true,
+        _autorun_failure_code: failureCode,
+        [HOOK_DEADLINE_PAYLOAD_KEY]: deadline / 1000 - 0.2,
+      }) + "\n");
     });
   }
 
@@ -246,10 +227,12 @@ export function createDaemonBridge({
     if (autorunDisabled()) return null;
     // One deadline for both routes, so a tool call waits at most timeoutMs.
     const deadline = Date.now() + timeoutMs;
-    const { response, connected } = await exchange(payload, deadline);
-    if (response) return response;
-    if (connected) return didNotAnswer();
-    return askHookEntry(payload, deadline);
+    // Reserve interpreter startup and a bounded check inside the same budget.
+    const { response, connected } = await exchange(payload, deadline - Math.min(500, timeoutMs / 2));
+    const code = failureCode(response);
+    if (response && !code) return response;
+    return askHookEntry(payload, deadline, code ?? (connected
+      ? "daemon_response_timeout" : "daemon_unavailable_or_timeout"));
   }
 
   // promptAuthor is who wrote the command: "user", "model" or "automation"

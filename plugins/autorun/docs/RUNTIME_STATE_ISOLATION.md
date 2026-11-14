@@ -324,8 +324,11 @@ plus one allowed and one denied hook request for each installed harness schema.
 
 ## Failure Guidance
 
-- Repeated hook timeout: check daemon responsiveness and logs, then run
-  `autorun --restart-daemon`; do not mask persistent I/O with a larger timeout.
+- Repeated hook timeout: do not restart the daemon under load or raise the
+  timeout to mask persistent I/O. Tool gates use the local `overload_policy`
+  (`critical-guards` by default): built-in destructive-command guards remain,
+  while `/ar:no`, `/ar:ok`, file policy, and task and plan gating are not checked.
+  `block` denies every tool-gate call; `allow` skips the local guards too.
 - Test removed the live socket or PID file: confirm import-time `AUTORUN_HOME`
   isolation and run the daemon restart command once after fixing the test root.
 - Command reports success but the next hook reads old configuration: find the

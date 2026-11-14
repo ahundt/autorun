@@ -1930,6 +1930,7 @@ class TestDemoFree:
         hook = str(root / "hooks" / "hook_entry.py")
         base = ["uv", "run", "--quiet", "--project", str(root),
                 "python", hook, "--cli", "claude"]
+        env = _isolated_daemon_env()
 
         # Enable strict mode
         set_payload = {
@@ -1938,7 +1939,7 @@ class TestDemoFree:
             "_cwd": "/tmp", "_pid": os.getpid(),
         }
         subprocess.run(base, input=json.dumps(set_payload),
-                       capture_output=True, text=True, timeout=15)
+                       capture_output=True, text=True, timeout=15, env=env)
 
         # Attempt to write a new file
         write_payload = {
@@ -1948,7 +1949,7 @@ class TestDemoFree:
             "_cwd": "/tmp", "_pid": os.getpid(),
         }
         result = subprocess.run(base, input=json.dumps(write_payload),
-                                capture_output=True, text=True, timeout=15)
+                                capture_output=True, text=True, timeout=15, env=env)
         assert result.returncode == 2, (
             f"Write to new file must be blocked in strict mode, got {result.returncode}"
         )

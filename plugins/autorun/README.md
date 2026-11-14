@@ -33,6 +33,23 @@ the `pdf` extra.
 
 ## What each agent gets
 
+If the daemon is busy, unreachable, misses a deadline or cannot evaluate state,
+`overload_policy=critical-guards` (default) allows ordinary commands and
+non-shell tools with a notice and runs the built-in destructive-command guards
+locally for shell tools. No session state is read: `/ar:no` rules, `/ar:ok`
+grants, the file policy, and task and plan gating are not checked until autorun
+answers again. A guarded command stays blocked even with a grant. A guard error
+or exhausted budget denies that shell call with wait-and-retry guidance.
+Do not restart the daemon under load.
+
+The `overload_policy` key in `~/.autorun/autorun.config.json` accepts
+`critical-guards`, `block` (deny every tool-gate call) and `allow` (allow every
+call without local guards); `AUTORUN_OVERLOAD_POLICY` overrides the file.
+Unknown values use `critical-guards` and appear in `autorun --status`.
+If the Python package cannot be imported, the stdlib hook still denies tool
+calls with repair guidance because it has no guard code. Stop and other
+non-gate events keep their existing behavior.
+
 | Agent | Safety hook | Keeps working past Stop | Commands and skills |
 |---|---|---|---|
 | Claude Code | native hooks | yes | native |

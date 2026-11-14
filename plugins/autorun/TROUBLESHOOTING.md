@@ -57,6 +57,24 @@ repeated reinstall attempts are the problem.
 
 ## Commands or guards do nothing
 
+If a notice says autorun is degraded, keep working and let the daemon recover;
+do not restart it under load. The local default guards still deny destructive
+shell commands. Ordinary shell commands and non-shell tools proceed. `/ar:no`
+rules, `/ar:ok` grants, the file policy, and task and plan gating are not checked
+until autorun answers again. A guarded command cannot use a session grant.
+If a local guard errors or runs out of budget, that shell call is denied with
+wait-and-retry guidance; non-shell tools continue.
+
+`overload_policy` in `~/.autorun/autorun.config.json` has three values:
+`critical-guards` (default), `block` (blanket tool-gate denial on daemon
+failure), and `allow` (no local guards). `AUTORUN_OVERLOAD_POLICY` overrides
+the file; an unknown value falls back to `critical-guards` and is reported by
+`autorun --status`. These choices cover load denials, client response timeouts,
+an unavailable daemon, and session-state evaluation failures. They do not
+change Stop or non-gate events. If the Python package itself cannot import,
+the stdlib hook still denies tool calls and gives the repair guidance above:
+there are no guard predicates to run.
+
 1. `autorun --status` checks every detected agent and runs the hook command
    once; a working hook reports `ok hook command`.
 2. Restart the agent session. Each agent reads its hooks when the session

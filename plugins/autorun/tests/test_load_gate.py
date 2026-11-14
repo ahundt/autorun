@@ -20,6 +20,18 @@ LOAD_BENCHMARK = pytest.mark.skipif(
 )
 
 
+def test_degraded_allow_is_not_a_load_failure():
+    import json
+    notice = "[AR_EVENT_V1:daemon_response_timeout] [AR_EVENT_V1:degraded_decision] degraded"
+    for response in ({"hookSpecificOutput": {"permissionDecision": "allow", "permissionDecisionReason": notice}},
+                     {"decision": "allow", "reason": notice},
+                     {"hookSpecificOutput": {"additionalContext": notice}}):
+        assert gate.classify(json.dumps(response), "", 0, False) == "degraded_allow"
+        assert gate.classify(json.dumps(response), "", 0, True) == "degraded_allow"
+    assert "degraded_allow" in gate.OUTCOMES
+    assert "degraded_allow" not in gate.BAD_OUTCOMES
+
+
 @pytest.mark.parametrize("platform", ["nt", "posix"])
 def test_cleanup_signals_only_the_started_daemon_and_its_descendants(tmp_path, monkeypatch, platform):
     (tmp_path / "ar").mkdir()

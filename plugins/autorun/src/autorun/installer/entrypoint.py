@@ -816,6 +816,7 @@ def _registry_entries() -> Mapping[str, Sequence[str]]:
 def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: bool = False) -> int:
     """Preview the next install and run checks a file walk cannot answer."""
     from .. import __build_time__, __commit__, __version__
+    from ..config import overload_policy_status
 
     print(
         "build "
@@ -823,6 +824,7 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
         f"package={Path(__file__).resolve().parents[1]} "
         f"python={Path(sys.executable).resolve()}"
     )
+    print(overload_policy_status())
     hooks_disabled = os.environ.get("AUTORUN_DISABLE", "").strip().lower() in (
         "1",
         "true",

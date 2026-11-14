@@ -848,6 +848,17 @@ enforce those policies.
      and `git -c alias.x='!cmd' x`. `parallel --dry-run` only prints and is
      allowed.
 
+139. When autorun was too busy to answer, every tool call in every session
+     could be blocked until the daemon recovered. Failed permission checks now
+     use `overload_policy=critical-guards`: ordinary shell commands and other
+     tools proceed with a notice, while the built-in destructive-command
+     guards still block dangerous shell commands locally. `block` keeps the
+     previous blanket denial; `allow` permits all calls without local guards.
+     While degraded, `/ar:no` rules, `/ar:ok` grants, the file policy, and task
+     and plan gating are not checked. A guarded command stays blocked even
+     with a session grant. Wait for autorun to answer again; do not restart
+     the daemon under load.
+
 ### For contributors
 
 1. `installer/fs.py:decide` publishes into an existing directory that has no
