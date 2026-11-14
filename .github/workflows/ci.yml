@@ -116,7 +116,7 @@ jobs:
         run: >-
           uv run --project . --locked pytest tests/
           -m "not tmux and not e2e and not release"
-          --tb=short -v
+          --tb=short -v --durations=40 --durations-min=1.0
           --junitxml=${{ github.workspace }}/test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
 
       - name: Report suite wall time against its ceiling
@@ -129,19 +129,25 @@ jobs:
         # the Windows job in run 31925817960 ran 25:35 before failing, and
         # nothing flagged the duration itself.
         #
-        # Local reference on an idle 16-core macOS machine: 6,111 tests in
-        # ~4m30s serial. Windows gets a larger ceiling because its process
-        # spawn and uv resolution are materially slower, and that is expected
-        # rather than a defect.
+        # Each ceiling is about 1.5 times the typical time of that runner, so
+        # a doubling fails and runner weather does not. Measured on the
+        # 13,700-test suite of 2026-11-14 across the runs of that day:
+        # Windows 1,157-1,652s with the test set unchanged between the fastest
+        # and slowest (so the spread is the runner, not the code), macOS
+        # 787-1,049s, Ubuntu 396-780s. The earlier 1,500s and 900s ceilings sat
+        # inside those ranges and failed four of nine Windows runs whose tests
+        # all passed. Windows is higher because its process spawn and uv
+        # resolution are materially slower. --durations in the test step prints
+        # the slowest tests, so a breach names its cause in the same log.
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           elapsed=$(( $(date +%s) - SUITE_START ))
           case "${{ matrix.os }}" in
-            windows-latest) ceiling=1500 ;;
-            macos-latest)   ceiling=900  ;;
-            *)              ceiling=900  ;;
+            windows-latest) ceiling=2300 ;;
+            macos-latest)   ceiling=1350 ;;
+            *)              ceiling=1050 ;;
           esac
           printf '### Suite wall time\n\n%s on %s: **%ds** (ceiling %ds)\n' \
             "py${{ matrix.python-version }}" "${{ matrix.os }}" \
