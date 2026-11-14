@@ -67,7 +67,12 @@ with an expired budget or broken parser. If a full check fails or runs out of
 budget, a command is denied with wait-and-retry guidance only when it names a
 guarded command as a whole word (quotes and backslashes are removed first, so
 `"r"m` counts) or uses `$'...'`, `eval`, `printf`, `base64`, `xxd` or process
-substitution. `npm run format` and `git commit -m "fix"` proceed. When the full
+substitution. `npm run format` and `git commit -m "fix"` proceed. `find`, `sed`,
+`tmutil` and a shell running a script count only with the option that makes them
+destructive (`-delete`, `-i`, a `curl` or `wget`), so `find . -name x` and
+`bash build.sh` proceed. The denial names the guard the command matched and
+repeats that guard's own guidance, for example to use `trash` instead of `rm`.
+When the full
 check cannot run, a spelling outside that list can escape; with budget the full
 check catches supported spellings as before.
 

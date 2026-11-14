@@ -818,7 +818,7 @@ class TestDaemonSocketFrames:
         )
 
         assert "denied:" in result.stdout, result.stdout
-        assert "critical guards could not finish" in result.stdout, result.stdout
+        assert "guard check did not answer in time" in result.stdout, result.stdout
 
 
 class TestDaemonRecordsTheAttachment:

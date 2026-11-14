@@ -1768,7 +1768,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
     payload = json.loads(result.stdout)
     assert (payload["denial"] is not None) == denied
     if denied:
-        assert "critical guards could not finish" in payload["denial"]
+        assert "guard check did not answer in time" in payload["denial"]
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
@@ -1971,7 +1971,7 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
     assert result.returncode == 0, f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
     payload = json.loads(result.stdout)
     assert payload["denial"] is not None, "unparseable hook output must still block"
-    assert "critical guards could not finish" in payload["denial"]
+    assert "guard check did not answer in time" in payload["denial"]
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for the Pi bridge")
@@ -2090,11 +2090,14 @@ console.log(JSON.stringify(rows));
             assert "[AR_EVENT_V1:degraded_decision]" in row["message"]
         assert f"[AR_EVENT_V1:{failure}]" in row["message"]
         if policy in {"critical-guards", "unknown"} and call in guarded:
-            # With no answer the Python check has only the bridge's 500 ms
-            # reserve; on a stalled runner it may not finish, and the denial
-            # then says so instead of naming the guard. Still a denial.
+            # With no answer the Python hook has only the bridge's 500 ms
+            # reserve. If it starts but cannot finish the check, its denial
+            # still carries the guard's text; if it does not answer at all on
+            # a stalled runner, the bridge's own denial names what it matched.
             assert guarded[call] in row["message"] or (
-                failure == "daemon_response_timeout" and "could not finish" in row["message"]), row
+                failure == "daemon_response_timeout"
+                and "guard check did not answer in time" in row["message"]
+                and f"`{call.split()[0]}" in row["message"]), row
         if call not in guarded and policy != "block":
             assert format_commands_for_cli("/ar:no", cli_type) in row["message"] and "Do not restart" in row["message"]
 
@@ -2124,7 +2127,7 @@ console.log(JSON.stringify({{ denial: denialReason(await bridge.askToolGate({{
     assert result.returncode == 0, result.stderr
     denial = json.loads(result.stdout)["denial"]
     assert denial is not None, "a crashed fallback must not allow tool use"
-    assert "critical guards could not finish" in denial
+    assert "guard check did not answer in time" in denial
     assert "wait and retry" in denial
 
 
@@ -2214,7 +2217,7 @@ console.log(JSON.stringify({{denial: denialReason(await bridge.askToolGate({{
 ''', encoding="utf-8")
     result = subprocess.run(_javascript_command(driver), capture_output=True, text=True, timeout=10)
     assert result.returncode == 0 and result.stderr == "", result.stderr
-    assert "critical guards could not finish" in json.loads(result.stdout)["denial"]
+    assert "guard check did not answer in time" in json.loads(result.stdout)["denial"]
 
 
 def _close_handler_bodies(source: str) -> list[str]:
@@ -2366,11 +2369,13 @@ console.log(JSON.stringify(rows));
 
 def test_review_bridge_screen_data_pinned():
     import re
-    from autorun.config import critical_guard_tokens, SHELL_NAME_HIDING_FEATURES, SHELL_TOOL_NAMES, BASH_TOOLS
+    from autorun.config import (critical_guard_tokens, critical_guard_screens, SHELL_NAME_HIDING_FEATURES,
+                                SHELL_TOOL_NAMES, BASH_TOOLS)
     source = BRIDGE_SOURCE.read_text()
     for name, expected in [("CRITICAL_GUARD_TOKENS", list(map(list, critical_guard_tokens()))),
                            ("SHELL_NAME_HIDING_FEATURES", list(SHELL_NAME_HIDING_FEATURES)),
+                           ("CRITICAL_GUARD_SCREENS", critical_guard_screens()),
                            ("SHELL_TOOL_NAMES", sorted(SHELL_TOOL_NAMES)), ("BASH_TOOLS", sorted(BASH_TOOLS))]:
-        match = re.search(r"const " + name + r" = (\[.*?\]);", source)
+        match = re.search(r"const " + name + r" = ([\[{].*?[\]}]);\n", source)
         assert match is not None, name
         assert json.loads(match.group(1)) == expected

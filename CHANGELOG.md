@@ -856,7 +856,12 @@ enforce those policies.
      only a command that names a guarded command as a whole word (quotes and
      backslashes removed first), or that uses `$'...'`, `eval`, `printf`,
      `base64`, `xxd` or process substitution, is denied with wait-and-retry
-     guidance. `npm run format` and `git commit -m "fix"` proceed.
+     guidance. `npm run format` and `git commit -m "fix"` proceed. `find`,
+     `sed`, `tmutil` and a shell running a script count only with the option
+     that makes them destructive (`-delete`, `-i`, a `curl` or `wget`), so
+     `find . -name x` and `bash build.sh` proceed. A denial without a finished
+     check says which guard the command names and gives that guard's own
+     guidance.
      `/ar:no` rules, `/ar:ok` grants, the file policy, and task and plan gating
      are not checked while degraded. `block` denies every tool-gate call;
      `allow` permits every call without guards. Do not restart the daemon under

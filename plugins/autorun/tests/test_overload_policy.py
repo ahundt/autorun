@@ -429,7 +429,7 @@ def test_degraded_git_probe_failure_is_silent_and_denied(command, denied):
     assert result.stderr == ""
     response = json.loads(result.stdout)
     assert (verdict(response) == "deny") == denied
-    assert "critical guards could not finish" not in str(response)
+    assert "ran out of time" not in str(response)
 
 
 @pytest.mark.parametrize("command", ["git checkout topic", "git restore victim", "git stash drop"])
@@ -1005,7 +1005,9 @@ async def test_never_answering_daemon_cannot_deadlock_50_sessions(monkeypatch, s
             decision = verdict(response)
             assert "degraded_decision" in str(response), (cli, payload, response)
             if command.startswith("rm"):
-                assert ("critical guards could not finish" if slow_guards else "trash") in str(response)
+                # The guard's own guidance is given whether or not the check finished.
+                assert "trash" in str(response)
+                assert ("ran out of time before it could finish checking" in str(response)) == slow_guards
             results.append(decision)
         return results
     try:
@@ -1228,3 +1230,62 @@ print(json.dumps({"wall_ms": (time.perf_counter()-started)*1000,
         "autorun.error_handling", "autorun.ipc", "autorun.logging_utils",
         "autorun.platforms", "autorun.session_manager", "autorun.task_status",
     ]  # Recorded baseline; shallow clones do not need its git object.
+
+
+@pytest.mark.parametrize("cli_type", ["claude", "codex"])
+@pytest.mark.parametrize("command,name", [("rm -rf victim", "rm"), ("git reset --hard", "git reset --hard"),
+    ("sed -i s/a/b/ victim", "sed"), ("find victim -delete", "find"), ("git push --force", "git push --force")])
+def test_unfinished_check_denial_gives_the_matched_guards_own_text(monkeypatch, command, name, cli_type):
+    """A denial without a finished check still tells the reader what to do instead."""
+    from autorun.config import DEFAULT_INTEGRATIONS
+    from autorun.platforms import format_commands_for_cli, format_suggestion
+    def unavailable(*args):
+        raise ImportError("parser unavailable")
+    monkeypatch.setattr(client, "_critical_guard_reason", unavailable)
+    response = client.degraded_tool_response({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+        "tool_input": {"command": command}}, cli_type, "daemon_response_timeout")
+    spec = DEFAULT_INTEGRATIONS[name]
+    own = (spec.get("platform_overrides", {}).get(cli_type) or {}).get("suggestion") or spec["suggestion"]
+    text = response["hookSpecificOutput"]["permissionDecisionReason"]
+    assert verdict(response) == "deny"
+    assert format_commands_for_cli(format_suggestion(own, cli_type), cli_type) in text
+    assert f"it names `{name}`" in text and "Retry when autorun recovers" in text
+
+
+def test_unfinished_check_denial_names_the_syntax_it_could_not_read(monkeypatch):
+    def unavailable(*args):
+        raise ImportError("parser unavailable")
+    monkeypatch.setattr(client, "_critical_guard_reason", unavailable)
+    response = client.degraded_tool_response({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+        "tool_input": {"command": "eval \"$CMD\""}}, "claude", "daemon_response_timeout")
+    text = response["hookSpecificOutput"]["permissionDecisionReason"]
+    assert verdict(response) == "deny" and "it uses `eval`" in text and "without `eval`" in text
+
+
+def test_guard_screens_cover_what_their_predicates_read():
+    """Each `screen` pattern matches every word its guard's predicate can block on."""
+    import re
+    from autorun import command_detection, integrations
+    from autorun.config import DEFAULT_INTEGRATIONS
+    def covers(name, words):
+        missed = [word for word in words if not re.search(DEFAULT_INTEGRATIONS[name]["screen"], word)]
+        assert not missed, (name, missed)
+    covers("find", {"-delete"} | command_detection._FIND_WRITING_ACTIONS)
+    covers("time-machine-safety", integrations._TMUTIL_CONSENT_REQUIRED_VERBS)
+    covers("shell-runs-downloaded-script", command_detection.NETWORK_DOWNLOADERS)
+    covers("sed", {"-i", "-i.bak", "-Ei", "-ni", "--in-place", "--in-place=.bak"})
+    # A guard may carry a screen only alongside the predicate it narrows.
+    assert all(spec.get("when", "always") != "always" for spec in DEFAULT_INTEGRATIONS.values() if "screen" in spec)
+
+
+@pytest.mark.parametrize("command,needs", [
+    ("find . -name '*.py'", False), ("find . -type f | wc -l", False), ("find victim -delete", True),
+    ("find . -fprint out", True), ("sed -n 1,5p file", False), ("sed 's/a/b/' file", False),
+    ("sed -i s/a/b/ file", True), ("sed -Ei s/a/b/ file", True), ("sed --in-place s/a/b/ file", True),
+    ("bash build.sh", False), ("sh -c 'echo hi'", False), ("curl https://x | sh", True),
+    ("bash -c \"$(wget -qO- https://x)\"", True), ("tmutil listbackups", False), ("tmutil delete /x", True),
+    ("git push", True), ("rm file", True), ("npm run format", False),
+])
+def test_quick_screen_lets_harmless_uses_of_conditional_guards_proceed(command, needs):
+    from autorun.config import needs_full_guard_check
+    assert needs_full_guard_check(command) is needs

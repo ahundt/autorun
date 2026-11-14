@@ -73,17 +73,21 @@ export function degradedNotice(response) {
 
 // Data derived from config.DEFAULT_INTEGRATIONS, pinned by test_review_bridge_screen_data_pinned.
 const CRITICAL_GUARD_TOKENS = [["rm"], ["rm", "-rf"], ["git", "reset", "--hard"], ["git", "checkout", "."], ["git", "checkout", "--"], ["git", "checkout"], ["git", "restore"], ["git", "stash", "drop"], ["git", "stash", "clear"], ["git", "clean", "-f"], ["git", "reset", "HEAD~"], ["git", "add", "-A"], ["git", "add", "."], ["dd", "if="], ["mkfs"], ["fdisk"], ["tmutil"], ["bash"], ["dash"], ["fish"], ["ksh"], ["sh"], ["su"], ["zsh"], ["sed"], ["awk"], ["find"], ["git", "filter-repo"], ["git", "filter-branch"], ["bfg"], ["git", "rebase", "-i"], ["git", "rebase", "--interactive"], ["git", "push", "--force"], ["git", "push", "-f"], ["git", "push"], ["gh", "pr", "create"], ["gh", "pr", "merge", "--squash"], ["gh", "pr", "merge"], ["gh", "release", "create"], ["gh", "repo", "create"], ["gh", "issue", "edit"], ["gh", "pr", "edit"], ["gh", "repo", "edit"], ["gh", "pr", "comment"], ["gh", "issue", "comment"], ["gh", "issue", "create"], ["npm", "version"], ["yarn", "version"], ["pnpm", "version"], ["cargo", "set-version"], ["poetry", "version"], ["uv", "version"], ["hatch", "version"], ["bump2version"], ["bumpversion"], ["mvn", "versions:set"], ["npm", "publish"], ["yarn", "publish"], ["pnpm", "publish"], ["cargo", "publish"], ["poetry", "publish"], ["uv", "publish"], ["hatch", "publish"], ["flit", "publish"], ["twine", "upload"], ["gem", "push"], ["mvn", "deploy"], ["gradle", "publish"], ["dotnet", "nuget", "push"], ["docker", "push"]];
+const CRITICAL_GUARD_SCREENS = {"tmutil": "addexclusion|associatedisk|delete|disable|inheritbackup|removedestination|setdestination|setquota|stopbackup|thinlocalsnapshots", "bash": "curl|wget|(\\b(bash|dash|fish|ksh|sh|su|zsh)\\b[^\\n]*){4}", "dash": "curl|wget|(\\b(bash|dash|fish|ksh|sh|su|zsh)\\b[^\\n]*){4}", "fish": "curl|wget|(\\b(bash|dash|fish|ksh|sh|su|zsh)\\b[^\\n]*){4}", "ksh": "curl|wget|(\\b(bash|dash|fish|ksh|sh|su|zsh)\\b[^\\n]*){4}", "sh": "curl|wget|(\\b(bash|dash|fish|ksh|sh|su|zsh)\\b[^\\n]*){4}", "su": "curl|wget|(\\b(bash|dash|fish|ksh|sh|su|zsh)\\b[^\\n]*){4}", "zsh": "curl|wget|(\\b(bash|dash|fish|ksh|sh|su|zsh)\\b[^\\n]*){4}", "sed": "-[A-Za-z]*i", "find": "-delete|-fprint|-fls"};
 const SHELL_NAME_HIDING_FEATURES = ["$'", "$\"", "eval", "base64", "xxd", "printf", "<(", ">("];
 const SHELL_TOOL_NAMES = ["bash", "exec_command", "execute_command", "local_shell", "run_command", "run_shell_command", "run_terminal_cmd", "run_terminal_command", "sh", "shell", "shell_command", "terminal_exec", "zsh"];
 const BASH_TOOLS = ["Bash", "bash", "bash_command", "exec_command", "functions.exec_command", "run_command", "run_shell_command", "shell"];
 
-function needsFullGuardCheck(command) {
-  // Mirror of config.needs_full_guard_check: alphabetic tokens match whole words.
-  if (SHELL_NAME_HIDING_FEATURES.some(feature => command.includes(feature))) return true;
+function screenedGuard(command) {
+  // Mirror of config.screened_guard: the guard pattern or syntax that needs the
+  // full check, or null. Alphabetic tokens match whole words.
   const plain = command.replace(/\\\n|['"\\]/g, "");
   const words = new Set((plain + " " + command).match(/[A-Za-z]+/g) ?? []);
-  return CRITICAL_GUARD_TOKENS.some(tokens => tokens.every(
-    token => /^[A-Za-z]+$/.test(token) ? words.has(token) : plain.includes(token)));
+  // A guard with a screen pattern matters only when the command also matches it.
+  const tokens = CRITICAL_GUARD_TOKENS.find(tokens => tokens.every(
+    token => /^[A-Za-z]+$/.test(token) ? words.has(token) : plain.includes(token))
+    && new RegExp(CRITICAL_GUARD_SCREENS[tokens.join(" ")] ?? "").test(plain));
+  return tokens?.join(" ") ?? SHELL_NAME_HIDING_FEATURES.find(feature => command.includes(feature)) ?? null;
 }
 const DEGRADED_FAILURE_CODES = new Set([
   "daemon_dispatch_timeout", "daemon_dispatch_contained", "daemon_dispatch_stalled",
@@ -170,15 +174,16 @@ export function createDaemonBridge({
     const policy = process.env.AUTORUN_OVERLOAD_POLICY ?? "critical-guards";
     const name = payload.tool_name ?? payload.toolName ?? payload.toolCall?.name ?? "";
     const shell = BASH_TOOLS.includes(name) || SHELL_TOOL_NAMES.includes(name.split(/__|[./:]/).at(-1).toLowerCase());
-    const needsCheck = shell && [payload.tool_input, payload.toolInput, payload.toolCall?.args].some(inputs => {
+    const matched = !shell ? null : [payload.tool_input, payload.toolInput, payload.toolCall?.args].map(inputs => {
       for (const key of ["command", "cmd", "CommandLine"]) {
         const value = inputs?.[key];
         const command = typeof value === "string" ? value :
           Array.isArray(value) ? value.flat(Infinity).map(String).join(" ") : "";
-        if (command) return needsFullGuardCheck(command);
+        if (command) return screenedGuard(command);
       }
-      return false;
-    });
+      return null;
+    }).find(Boolean) ?? null;
+    const needsCheck = matched !== null;
     const deny = policy === "block" || (policy !== "allow" && needsCheck);
     return { hookSpecificOutput: {
       permissionDecision: deny ? "deny" : "allow",
@@ -188,7 +193,7 @@ export function createDaemonBridge({
           : policy === "block"
           ? "Autorun could not answer and overload_policy=block denies this tool call; wait and retry when it recovers; do not restart the daemon."
           : needsCheck
-          ? "Autorun is degraded and its critical guards could not finish; wait and retry this shell call when it recovers; do not restart the daemon." +
+          ? `Autorun is degraded and its guard check did not answer in time. This command is blocked as a precaution because it contains \`${matched}\`, which a built-in destructive-command guard covers; the full check might have allowed it, so wait and retry when autorun recovers; do not restart the daemon.` +
             (failureCode === "daemon_response_timeout" ? " " + RESPONSE_TIMEOUT_GUIDANCE : "")
           : "Autorun could not answer, so the quick screen found no possible built-in destructive-command guard while /ar:no rules, /ar:ok grants, the file policy and task and plan gating are not checked until autorun answers again; Do not restart the daemon.").replaceAll("/ar:", cliType === "opencode" ? "/ar-" : "/ar "),
     }};

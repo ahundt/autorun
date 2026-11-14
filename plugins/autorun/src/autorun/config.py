@@ -78,6 +78,10 @@ PATTERN_DISPLAY_MAX_LEN = 50  # regex/command patterns in error messages (securi
 #   enabled: Enable/disable integration (defaults to true)
 #   name: Debug identifier (defaults to pattern)
 #   platform_overrides: Per-cli replacements for action, suggestion, redirect
+#   screen: Regex (syntax shared by Python and JavaScript) that every command the
+#           `when` predicate can block must match. Used only by the degraded-mode
+#           quick screen (screened_guard): a command naming this guard but not
+#           matching proceeds without the full check, e.g. `find . -name x`.
 # =============================================================================
 def _codex_suggestion(command: str, body: str) -> str:
     """Codex block text: what to do instead, then the allow/block commands.
@@ -317,6 +321,9 @@ DEFAULT_INTEGRATIONS = {
         "patterns": ["tmutil"],
         "action": "block",
         "when": "_tmutil_mutates_backup_safety",
+        # integrations._TMUTIL_CONSENT_REQUIRED_VERBS; `delete` covers its three verbs.
+        "screen": ("addexclusion|associatedisk|delete|disable|inheritbackup|removedestination|"
+                   "setdestination|setquota|stopbackup|thinlocalsnapshots"),
         "suggestion": (
             "Time Machine history and protection changes require explicit user permission. "
             "This command can permanently remove backup history or weaken backup protection; "
@@ -341,6 +348,8 @@ DEFAULT_INTEGRATIONS = {
         "patterns": ["bash", "dash", "fish", "ksh", "sh", "su", "zsh"],
         "action": "block",
         "when": "_shell_runs_downloaded_script",
+        # command_detection.NETWORK_DOWNLOADERS, or four shell names (nesting past 3).
+        "screen": r"curl|wget|(\b(bash|dash|fish|ksh|sh|su|zsh)\b[^\n]*){4}",
         "suggestion": (
             "Blocked: this shell would run a script autorun cannot read: one straight "
             "from a network download (curl or wget), or a shell nested more than 3 "
@@ -377,6 +386,7 @@ DEFAULT_INTEGRATIONS = {
         "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["sed"]}},
         "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:no --global sed",
         "when": "_sed_modifies_files",
+        "screen": "-[A-Za-z]*i",  # -i, a cluster holding i (-Ei), and --in-place
     },
     "awk": {
         "action": "block",
@@ -392,6 +402,7 @@ DEFAULT_INTEGRATIONS = {
     "find": {
         "action": "block",
         "when": "_find_deletes_or_overwrites",
+        "screen": "-delete|-fprint|-fls",  # -fprint also covers -fprint0 and -fprintf
         "suggestion": (
             "Blocked: this find deletes files (-delete) or overwrites the file it names "
             "(-fprint, -fprint0, -fprintf, -fls), and neither can be undone.\n\n"
@@ -635,40 +646,62 @@ for _key in guards_disabled_by_env():
 # removed; these keep the full parser. A name produced by $(..), ${..} or
 # backticks is a documented limit of the guards themselves.
 SHELL_NAME_HIDING_FEATURES = ("$'", '$"', "eval", "base64", "xxd", "printf", "<(", ">(")
-_critical_guard_tokens = None
+_critical_guards = None
 
 
-def critical_guard_tokens() -> tuple[tuple[str, ...], ...]:
-    """Literal tokens for every shipped shell block pattern, computed once."""
-    global _critical_guard_tokens
-    if _critical_guard_tokens is None:
-        _critical_guard_tokens = tuple(
-            tuple(pattern.split())
+def _critical_guards_by_name() -> tuple[tuple[str, tuple[str, ...], str | None], ...]:
+    """(DEFAULT_INTEGRATIONS key, literal tokens, screen regex) per shipped shell block pattern."""
+    global _critical_guards
+    if _critical_guards is None:
+        _critical_guards = tuple(
+            (name, tuple(pattern.split()), spec.get("screen"))
             for name, spec in DEFAULT_INTEGRATIONS.items()
             if spec.get("event", "bash") in {"bash", "all"}
             and (spec.get("action", "block") == "block"
                  or any(o.get("action") == "block" for o in spec.get("platform_overrides", {}).values()))
             for pattern in (spec.get("patterns") or [name])
         )
-    return _critical_guard_tokens
+    return _critical_guards
+
+
+def critical_guard_tokens() -> tuple[tuple[str, ...], ...]:
+    """Literal tokens for every shipped shell block pattern, computed once."""
+    return tuple(tokens for _, tokens, _ in _critical_guards_by_name())
+
+
+def critical_guard_screens() -> dict[str, str]:
+    """Pattern -> `screen` regex, for the guards that have one."""
+    return {" ".join(tokens): screen for _, tokens, screen in _critical_guards_by_name() if screen}
 
 
 def needs_full_guard_check(command: str) -> bool:
-    """Conservative literal screen; no command parser or integration imports.
+    """Whether the quick screen sends this command to the full guard check."""
+    return screened_guard(command) is not None
+
+
+def screened_guard(command: str) -> tuple[str, str] | None:
+    """What sends a command to the full check: ("guard", DEFAULT_INTEGRATIONS key)
+    for the first shipped guard it names, else ("syntax", feature); None lets it proceed.
+
+    Conservative literal screen; no command parser or integration imports.
 
     Quotes, backslashes and line continuations are dropped first, so "r"m and
     r\\m read as rm. A purely alphabetic guard token must then appear as a whole
     word (`npm run format` does not contain the word rm); any other token
     (`-rf`, `HEAD~`, `if=`) is matched as a substring.
     """
-    if any(feature in command for feature in SHELL_NAME_HIDING_FEATURES):
-        return True
     import re
     plain = re.sub(r"\\\n|['\"\\]", "", command)
     # Also split at each quote, so a name glued to an option (-S'find x') is a word.
     words = set(re.findall(r"[A-Za-z]+", plain + " " + command))
-    return any(all(token in words if token.isalpha() else token in plain for token in tokens)
-               for tokens in critical_guard_tokens())
+    for name, tokens, screen in _critical_guards_by_name():
+        if (all(token in words if token.isalpha() else token in plain for token in tokens)
+                and (screen is None or re.search(screen, plain))):
+            return "guard", name
+    for feature in SHELL_NAME_HIDING_FEATURES:
+        if feature in command:
+            return "syntax", feature
+    return None
 
 
 # Configuration - Three-stage completion system with clear instruction/confirmation naming
