@@ -37,6 +37,7 @@ import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
+from itertools import chain
 from typing import Final
 
 __all__ = [
@@ -107,11 +108,19 @@ _WINDOWS_EXECUTABLE_SUFFIXES: Final[frozenset[str]] = frozenset({
 })
 
 _SHELL_OPERATORS: Final[re.Pattern[str]] = re.compile(r"\s*(?:&&|\|\||[|;&\n])\s*")
-# The same split, keeping each operator, so the fallback can see a pipe.
-_SHELL_OPERATORS_KEPT: Final[re.Pattern[str]] = re.compile(f"({_SHELL_OPERATORS.pattern})")
 # Consume quoted/escaped text before recognizing an unquoted separator.
 _QUOTED_SHELL_OPERATORS: Final[re.Pattern[str]] = re.compile(
     r"""'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|(?P<separator>&&|\|\||[|;&\n])"""
+)
+# Keep quote provenance until shell syntax is removed; quoted words are data.
+_FALLBACK_WORD = r"""(?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[^\s'"\\()])+"""
+_FALLBACK_PREFIX = re.compile(
+    r"(?:do|then|else|elif|if|while|until|coproc)(?=\s|[({!]|$)\s*"
+    r"|time(?:\s+-p)?(?=\s|[({!]|$)(?!\s+-)\s*"
+    r"|\(|(?:\{|!)(?=\s|$)\s*"
+    r"|function\s+\w+(?:\s*\(\s*\))?\s*"
+    rf"|case\s+{_FALLBACK_WORD}\s+in\s+"
+    rf"|{_FALLBACK_WORD}\)\s*"
 )
 _CMD_CACHE_SIZE: Final[int] = 512   # v8: Increased for hot path
 _PATTERN_CACHE_SIZE: Final[int] = 64
@@ -238,6 +247,8 @@ class ExtractedCommands:
     # heredocs and echo piped to a shell, find -exec), nested ones included,
     # in the order found.
     scripts: tuple[str, ...] = ()
+    # None marks a fallback parse; otherwise source slices, then child scripts.
+    segments: tuple[str, ...] | None = None
 
     def matches_single_word(self, pattern: str) -> bool:
         """O(1) lookup in all potential commands."""
@@ -842,6 +853,77 @@ def _extract_from_tokens(tokens: list[str]) -> tuple[str | None, str | None, set
 
 # ─── Recursive Extraction ─────────────────────────────────────────────────────
 
+def _substitution_scripts(cmd: str):
+    """Find executable substitutions in one O(n) pass, with O(n) stack space.
+
+    Yield outer bodies only; the fallback scans their nested scripts within
+    its existing recursion limit. Arithmetic frames balance but are not scripts.
+    """
+    # Each frame keeps its own quoting and parenthesis balance.
+    stack = [["root", 0, "", 0]]
+    commands = 0
+    i = 0
+    while i < len(cmd):
+        kind, start, quote, balance = stack[-1]
+        char = cmd[i]
+        if quote == "'":
+            if char == "'":
+                stack[-1][2] = ""
+        elif char == "\\":
+            i += 1
+        elif char == "`" and kind == "backtick":
+            stack.pop()
+            commands -= 1
+            if not commands:
+                yield cmd[start:i]
+        elif char == "`" or cmd.startswith("$(", i):
+            arithmetic = cmd.startswith("$((", i)
+            offset = 1 if char == "`" else 3 if arithmetic else 2
+            stack.append([
+                "arithmetic" if arithmetic else "backtick" if char == "`" else "command",
+                i + offset, "", 2 if arithmetic else 1,
+            ])
+            commands += not arithmetic
+            i += offset - 1
+        elif char in "\"'" and (not quote or char == quote):
+            stack[-1][2] = "" if quote else char
+        elif not quote and kind in ("command", "arithmetic") and char in "()":
+            stack[-1][3] += 1 if char == "(" else -1
+            if not stack[-1][3]:
+                stack.pop()
+                if kind == "command":
+                    commands -= 1
+                    if not commands:
+                        yield cmd[start:i]
+        i += 1
+
+
+def _fallback_segments(cmd: str, depth: int = 0):
+    """Yield simple commands and their preceding operator after a parse failure."""
+    if depth >= _MAX_RECURSION_DEPTH:
+        return
+    start, separator = 0, ""
+    boundaries = (
+        (match.start(), match.end(), match.group("separator"))
+        for match in _QUOTED_SHELL_OPERATORS.finditer(cmd)
+        if match.group("separator")
+    )
+    for end, next_start, following in chain(boundaries, [(len(cmd), len(cmd), "")]):
+        segment = cmd[start:end].strip()
+        start = next_start
+        pos = 0
+        while prefix := _FALLBACK_PREFIX.match(segment, pos):
+            pos = prefix.end()
+            while pos < len(segment) and segment[pos].isspace():
+                pos += 1
+        segment = segment[pos:]
+        if segment and (tokens := _shlex_split_safe(segment)):
+            yield segment, tokens, separator
+        separator = following
+    for script in _substitution_scripts(cmd):
+        yield from _fallback_segments(script, depth + 1)
+
+
 def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
     """Recursively extract commands, including from 'sh -c' patterns."""
     if depth >= _MAX_RECURSION_DEPTH:
@@ -850,18 +932,11 @@ def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
     names, strings, potential, fetched = set(), set(), set(), set()
     nested: list[str] = []
 
-    pieces = _SHELL_OPERATORS_KEPT.split(cmd)
     previous: list[str] = []
     downloading = False  # an earlier stage of this pipeline is curl/wget
-    for i in range(0, len(pieces), 2):
-        piped = i > 0 and pieces[i - 1].strip() == "|"
+    for segment, tokens, separator in _fallback_segments(cmd, depth):
+        piped = separator == "|"
         downloading = downloading and piped
-        if not (segment := pieces[i].strip()):
-            continue
-
-        tokens = _shlex_split_safe(segment)
-        if not tokens:
-            continue
 
         name, string, pot = _extract_from_tokens(tokens)
         if name:
@@ -902,35 +977,15 @@ def shell_segments(cmd: str):
     split at shell operators. Quoting survives in the argv, unlike the
     strings `extract_commands` returns.
     """
-    for script in (cmd, *nested_scripts(cmd)):
-        loaded = _bashlex() if BASHLEX_AVAILABLE else None
-        if loaded is not None:
-            bashlex, _visitor = loaded
-            segments = []
-
-            class SegmentVisitor(bashlex.ast.nodevisitor):
-                def visitcommand(self, node, parts):
-                    segments.append(script[node.pos[0]:node.pos[1]])
-                    return True
-
-            try:
-                visitor = SegmentVisitor()
-                for part in bashlex.parse(script):
-                    visitor.visit(part)
-            except Exception:
-                pass  # Unsupported shell syntax still gets the shlex path.
-            else:
-                for segment in segments:
-                    if tokens := _shlex_split_safe(segment):
-                        yield segment, tokens
-                continue
-        start = 0
-        ends = [match.span() for match in _QUOTED_SHELL_OPERATORS.finditer(script) if match.group("separator")]
-        for end, next_start in [*ends, (len(script), len(script))]:
-            segment = script[start:end]
-            start = next_start
-            if (segment := segment.strip()) and (tokens := _shlex_split_safe(segment)):
+    extracted = _extract_cached(cmd)
+    if extracted.segments is not None:
+        for segment in extracted.segments:
+            if tokens := _shlex_split_safe(segment):
                 yield segment, tokens
+        return
+    for script in (cmd, *extracted.scripts):
+        for segment, tokens, _separator in _fallback_segments(script):
+            yield segment, tokens
 
 
 def command_tokens_for(
@@ -995,17 +1050,24 @@ def _bashlex():
 
     class CommandVisitor(base):
         """AST visitor with wrapper-aware and recursive shell -c parsing."""
-        __slots__ = ("names", "strings", "potential", "fetched", "scripts", "depth")
+        __slots__ = (
+            "names", "strings", "potential", "fetched", "scripts", "depth",
+            "source", "segments", "child_segments",
+        )
 
-        def __init__(self, depth: int = 0) -> None:
+        def __init__(self, source: str, depth: int = 0) -> None:
             self.names: set[str] = set()
             self.strings: set[str] = set()
             self.potential: set[str] = set()
             self.fetched: set[str] = set()
             self.scripts: list[str] = []
             self.depth = depth
+            self.source = source
+            self.segments: list[str] = []
+            self.child_segments: list[str] = []
 
         def visitcommand(self, node, parts) -> bool:
+            self.segments.append(self.source[node.pos[0]:node.pos[1]])
             all_words = [p.word for p in parts if p.kind == "word"]
             # Filter out words containing newlines — these are heredoc bodies
             # or command substitutions with embedded content, not real arguments.
@@ -1080,6 +1142,11 @@ def _bashlex():
             self.potential.update(inner.all_potential)
             self.fetched.update(inner.fetched_shells)
             self.scripts += [script, *inner.scripts]
+            if inner.segments is not None:
+                self.child_segments.extend(inner.segments)
+            else:
+                for source in (script, *inner.scripts):
+                    self.child_segments.extend(s for s, _, _ in _fallback_segments(source))
 
     def _words(node) -> list[str]:
         return [p.word for p in node.parts if p.kind == "word"]
@@ -1170,7 +1237,7 @@ def _extract_bashlex(cmd: str, depth: int) -> ExtractedCommands:
     except Exception:
         return ExtractedCommands(frozenset(), frozenset(), frozenset())
 
-    visitor = CommandVisitor(depth)
+    visitor = CommandVisitor(normalized_cmd, depth)
     for part in parts:
         visitor.visit(part)
 
@@ -1180,6 +1247,7 @@ def _extract_bashlex(cmd: str, depth: int) -> ExtractedCommands:
         frozenset(visitor.potential),
         frozenset(visitor.fetched),
         tuple(dict.fromkeys(visitor.scripts)),
+        tuple(visitor.segments + visitor.child_segments),
     )
 
 
@@ -1192,6 +1260,7 @@ def _extract_impl(cmd: str, depth: int = 0) -> ExtractedCommands:
     """Internal extraction dispatcher."""
     if BASHLEX_AVAILABLE:
         result = _extract_bashlex(cmd, depth)
+        # A parse that found no command still gets the fallback's second look.
         if result.names or result.strings:
             return result
     return _extract_fallback(cmd, depth)
