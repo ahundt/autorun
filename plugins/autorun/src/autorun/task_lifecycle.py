@@ -3302,10 +3302,7 @@ class TaskLifecycle:
 
         def clear_index(metadata: Dict) -> None:
             _reset_stop_block_sequence(metadata)
-            if expected_waits is None:
-                metadata.pop(_AWAITING_USER_INDEX, None)
-            else:
-                metadata[_AWAITING_USER_INDEX] = [task_id for task_id in metadata.get(_AWAITING_USER_INDEX, []) if str(task_id) not in applied]
+            metadata[_AWAITING_USER_INDEX] = [task_id for task_id in metadata.get(_AWAITING_USER_INDEX, []) if str(task_id) not in applied]
 
         changed = self._update_task_rows({task_id: restored for task_id in waiting}, clear_index)
         for task_id in changed:

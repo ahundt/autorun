@@ -810,6 +810,20 @@ enforce those policies.
      guards now find the command after the shell keyword or case pattern, and
      inside `$(...)` and backticks there. Text in single quotes is still
      treated as data.
+135. Three more places a guarded command could hide. A `$(...)` or backtick
+     substitution in the body of a heredoc with an unquoted delimiter runs,
+     and was not checked; it is now, and a heredoc with a quoted delimiter is
+     still treated as text. A shell nested more than 3 levels deep
+     (`sh -c 'sh -c "..."'` and so on) was allowed without being read; it is
+     now blocked, with a message to run the inner command directly.
+     `sed -e 's/a/b/;d' -i file` was allowed because the `;` inside the
+     script hid `-i`; the guard now reads the arguments as the shell passes
+     them.
+136. If autorun could not read or write its session state while checking a
+     tool call, for example on a state lock timeout, the call could go
+     through with only a notice. A tool call whose check did not finish is
+     now blocked, and a notice added to a finished decision no longer
+     replaces the decision's other fields.
 
 ### For contributors
 

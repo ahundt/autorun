@@ -782,7 +782,10 @@ def _attach_state_failure_notice(response, ctx, message: str) -> dict:
 
     for field_name in ("systemMessage", "hookSpecificOutput"):
         if field_name in shaped:
-            result[field_name] = shaped[field_name]
+            if field_name == "hookSpecificOutput":
+                result[field_name] = {**(result.get(field_name) or {}), **shaped[field_name]}
+            else:
+                result[field_name] = shaped[field_name]
     return validate_hook_response(ctx.event, result, ctx.cli_type)
 
 
@@ -3273,6 +3276,7 @@ class AutorunApp:
             return self._dispatch_unbatched(ctx)
 
         response = None
+        handlers_finished = False
         try:
             batch = (
                 store.batch_writes(
@@ -3283,11 +3287,19 @@ class AutorunApp:
             )
             with batch:
                 response = self._dispatch_unbatched(ctx)
-        except SessionPersistenceError as exc:
-            # The handlers finished and produced a response; only the flush
-            # that follows them failed. Losing the response as well would turn
-            # a bookkeeping failure into a broken hook, so the response is
-            # returned with the failure attached to it.
+                handlers_finished = True
+        except SessionStateError as exc:
+            from .client import is_tool_gate_event
+
+            # A failed handler has not evaluated the remaining guards.
+            if not handlers_finished and is_tool_gate_event(ctx.event):
+                logger.error("Permission gate state evaluation failed: %s", exc)
+                return daemon_failure_response(
+                    ctx.event, ctx.cli_type,
+                    f"autorun could not evaluate session state: {exc}",
+                    event_code="state_evaluation_failed",
+                )
+            # A finished decision survives a failed flush, with a notice.
             logger.error("State batch was not saved: %s", exc)
             if state_failure_is_contention(exc):
                 detail = (
