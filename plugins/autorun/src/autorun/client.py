@@ -125,15 +125,6 @@ def daemon_response_timeout_for_cli(cli_type: str) -> float:
 #: not exactly when it does.
 CLIENT_BUDGET_MARGIN_SECONDS = 0.2
 
-#: The shortest budget worth handing to an attempt. A warm daemon answers over
-#: its socket in about a millisecond, so anything above zero is worth spending;
-#: what is not worth having is a deadline already past, which `forward()` reads
-#: as "budget exhausted" and turns into a startup failure it never tested for.
-#: Both the deadline floor and `forward()`'s read timeout use this, so the two
-#: cannot drift into disagreeing about whether one attempt fits.
-MINIMUM_ATTEMPT_SECONDS = 0.05
-
-
 def client_total_budget(cli_type: str) -> float:
     """Total wall-clock the client may spend, cold start and response together.
 
@@ -163,6 +154,7 @@ def client_total_budget(cli_type: str) -> float:
 from .config import HOOK_DEADLINE_ENV_VAR as DEADLINE_ENV_VAR  # noqa: E402
 from .config import HOOK_DEADLINE_PAYLOAD_KEY as DEADLINE_PAYLOAD_KEY  # noqa: E402
 from .config import monotonic_deadline  # noqa: E402
+from .config import DEGRADED_CHECK_RESERVE_SECONDS  # noqa: E402
 
 #: How many attempts to allow a pid that is alive but holds no daemon flock.
 #: The gap between a daemon starting and taking its flock is short; anything
@@ -197,38 +189,10 @@ def daemon_record_is_live(lock_path) -> bool:
 
 
 def client_deadline(cli_type: str) -> float:
-    """The monotonic instant this client must stop by.
-
-    Prefer the wrapper's own deadline when it supplied one. Budgeting from the
-    wrapper timeout alone assumes the clock starts when this function runs, but
-    the wrapper started counting before spawning this process, and interpreter
-    startup -- plus a ``uv run`` resolve, which is not cheap on Windows -- comes
-    out of the same allowance. Deriving locally therefore overruns by exactly
-    the startup cost, and the wrapper kills the client before it can write the
-    failure response that explains itself. That is the difference between the
-    client reporting why the daemon did not answer and the harness reporting
-    only "autorun CLI timed out".
-
-    The wrapper sends epoch seconds, converted here by
-    ``config.monotonic_deadline``. A value that is absent, unparseable,
-    already past, or improbably far either way falls back to the local
-    budget: a stale variable inherited from an unrelated process must not make
-    every hook fail instantly.
-
-    A deadline nearer than the margin is the remaining case, and subtracting
-    the margin from it put the answer in the past. ``forward()`` opens by
-    raising on a non-positive remainder, so the client gave up without opening
-    a socket and blamed a daemon it never contacted — with tenths of a second
-    still to ask in. Floored, that request gets its one attempt.
-    """
-    local = time.monotonic() + client_total_budget(cli_type)
+    """Full hook deadline, preserving the wrapper's clock even when expired."""
+    local = time.monotonic() + client_total_budget(cli_type) + CLIENT_BUDGET_MARGIN_SECONDS
     supplied = monotonic_deadline(os.environ.get(DEADLINE_ENV_VAR))
-    if supplied is None or supplied <= time.monotonic():
-        return local
-    return max(
-        supplied - CLIENT_BUDGET_MARGIN_SECONDS,
-        time.monotonic() + MINIMUM_ATTEMPT_SECONDS,
-    )
+    return local if supplied is None else supplied
 
 
 def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
@@ -356,7 +320,7 @@ DEGRADED_ALLOW_NOTICE = (
 )
 
 
-_FAILURE_TAG = re.compile(r"\[autorun\] \[AR_EVENT_V1:([a-z_]+)\]")
+_FAILURE_TAG = re.compile(r"^\[autorun\] \[AR_EVENT_V1:([a-z_]+)\]")
 
 
 def degraded_failure_code(response: dict) -> str | None:
@@ -377,10 +341,11 @@ def _critical_guard_reason(payload: dict, cli_type: str) -> str | None:
     from .config import DEFAULT_INTEGRATIONS
     from .command_detection import command_matches_pattern, shell_command_from_tool_input
     from .integrations import Integration, check_when_predicate
+    from .platforms import hook_payload_cwd
 
     inputs = payload.get("tool_input") or {}
     ctx = SimpleNamespace(tool_input=inputs, cli_type=cli_type,
-                          cwd=payload.get("cwd") or payload.get("_cwd") or os.getcwd())
+                          cwd=hook_payload_cwd(payload) or os.getcwd())
     command = shell_command_from_tool_input(inputs)
     for name, spec in DEFAULT_INTEGRATIONS.items():
         guard = Integration.from_dict(name, spec)
@@ -402,10 +367,10 @@ def degraded_tool_response(payload: dict, cli_type: str, event_code: str,
     A daemonized thread inside this hook bounds guard imports, parsing and git
     probes on all OSes; the hook stops waiting at its remaining deadline.
     """
-    from .config import BASH_TOOLS, overload_policy
-    from .platforms import platform_for
+    from .config import overload_policy
+    from .platforms import format_commands_for_cli, is_shell_tool, normalize_tool_payload, platform_for
 
-    event = payload.get("hook_event_name", "PreToolUse")
+    event = payload.get("hook_event_name") or payload.get("type") or "PreToolUse"
     if not is_tool_gate_event(event):
         return build_daemon_failure_response(event, cli_type, message, event_code)
     policy = overload_policy()
@@ -414,7 +379,9 @@ def degraded_tool_response(payload: dict, cli_type: str, event_code: str,
     decision = "allow"
     reason = DEGRADED_ALLOW_NOTICE if policy == "allow" else DEGRADED_NOTICE
     platform = platform_for(cli_type)
-    is_shell = payload.get("tool_name") in BASH_TOOLS or payload.get("tool_name") == platform.tool_names.get("bash")
+    tool_name, tool_input = normalize_tool_payload(payload, cli_type)
+    payload = {**payload, "tool_name": tool_name, "tool_input": tool_input}
+    is_shell = is_shell_tool(tool_name, tool_input, cli_type)
     if policy == "critical-guards" and is_shell:
         import queue
         import threading
@@ -429,8 +396,7 @@ def degraded_tool_response(payload: dict, cli_type: str, event_code: str,
         deadline = monotonic_deadline(payload.get(DEADLINE_PAYLOAD_KEY))
         if deadline is None:
             deadline = client_deadline(cli_type)
-        # The wrapper margin remains after the IPC deadline; keep 25ms to emit.
-        budget = max(0.0, deadline + CLIENT_BUDGET_MARGIN_SECONDS - time.monotonic() - 0.025)
+        budget = max(0.0, deadline - time.monotonic() - 0.025)
         try:
             if budget <= 0:
                 raise TimeoutError("no guard budget remains")
@@ -447,7 +413,8 @@ def degraded_tool_response(payload: dict, cli_type: str, event_code: str,
             decision = "deny"
             reason = ("Autorun is degraded and its critical guards could not finish; "
                       "wait and retry this shell call when it recovers; do not restart the daemon.")
-    tagged = f"[autorun] [AR_EVENT_V1:{event_code}] [AR_EVENT_V1:{DEGRADED_EVENT_CODE}] {reason}"
+    tagged = format_commands_for_cli(
+        f"[autorun] [AR_EVENT_V1:{event_code}] [AR_EVENT_V1:{DEGRADED_EVENT_CODE}] {reason}", cli_type)
     return platform.hook_protocol.degraded_tool_response(
         decision, tagged, _hook_specific_harness_cli_event_name(event, cli_type))
 
@@ -521,8 +488,8 @@ def output_hook_response(response: dict, event: str = "unknown", cli_type: str =
     - Path 3: Buffer overflow error (local gate policy, others fail open)
     - Path 4: Exception (local gate policy, others fail open)
 
-    Healthy replies retain the configured workaround; degraded decisions use
-    native JSON without stderr. The two output pathways are:
+    Healthy and degraded denials use the same configured workaround.
+    The two output pathways are:
     - Pathway A (Bug #4669 Workaround): JSON + stderr + exit 2
     - Pathway B (Standard): JSON + exit 0
 
@@ -585,13 +552,13 @@ def output_hook_response(response: dict, event: str = "unknown", cli_type: str =
     print(json.dumps(response))
 
     # Lifecycle logging before exit (DRY)
-    exit_code = 2 if (source != "degraded" and decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type})) else 0
+    exit_code = 2 if (decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type})) else 0
     _log_hook_lifecycle("DAEMON→CLIENT RESPONSE", Source=source, Decision=decision, ExitCode=exit_code)
 
     # ═══════════════════════════════════════════════════════════════
     # SINGLE FLAG CHECK: Select pathway
     # ═══════════════════════════════════════════════════════════════
-    if source != "degraded" and decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type}):
+    if exit_code == 2:
         # ╔═══════════════════════════════════════════════════════════╗
         # ║ PATHWAY A: Bug #4669 Workaround (Claude Code)           ║
         # ║ - Print reason to stderr (AI sees this)                 ║
@@ -739,6 +706,14 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
     channel. Persist the resolved cli_type into the JSON payload before sending.
     """
     payload = dict(payload or {})
+    from .config import detect_cli_type
+
+    cli_type = detect_cli_type(payload)
+    # Stamp before process discovery; an upstream deadline is never refreshed.
+    deadline = monotonic_deadline(payload.get(DEADLINE_PAYLOAD_KEY))
+    if deadline is None:
+        deadline = client_deadline(cli_type)
+    payload[DEADLINE_PAYLOAD_KEY] = time.time() + deadline - time.monotonic()
 
     # Inject context for daemon lifecycle management. A _pid already present
     # came from hooks/hook_entry.py (os.getppid(), on both of its paths) or a
@@ -755,14 +730,10 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
         # worktree, or from a harness launched elsewhere — and plan_export.py's
         # project_dir uses this value to choose which project's notes/ directory
         # receives the archived plan.
-        payload["_cwd"] = payload.get("cwd") or os.getcwd()
+        from .platforms import hook_payload_cwd
+        payload["_cwd"] = hook_payload_cwd(payload) or os.getcwd()
 
-    from .config import detect_cli_type
-
-    cli_type = detect_cli_type(payload)
     payload["cli_type"] = cli_type
-    # Epoch seconds on the wire; forward() and the daemon convert on arrival.
-    payload[DEADLINE_PAYLOAD_KEY] = time.time() + (client_deadline(cli_type) - time.monotonic())
 
     return payload, cli_type
 
@@ -786,9 +757,12 @@ def run_client() -> int:
 
 
 async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
-    """Forward parsed hook input using the client's bounded retry/error path."""
+    """Use one absolute hook deadline stamped before setup: every daemon wait
+    ends at deadline - reserve, leaving local guards their reserved time; if
+    that instant has passed, skip daemon contact and check locally immediately.
+    """
     # Lifecycle logging (DRY)
-    hook_event = payload.get("hook_event_name", "unknown")
+    hook_event = payload.get("hook_event_name") or payload.get("type") or "unknown"
     hook_source = payload.get("source", "")
     tool_name = payload.get("tool_name", "")
 
@@ -812,7 +786,14 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
     waited_for_daemon = False
     deadline = monotonic_deadline(payload[DEADLINE_PAYLOAD_KEY])
     if deadline is None:  # prepare_payload_for_daemon set it; never fail open on a bad value
-        deadline = time.monotonic() + client_total_budget(payload.get("cli_type", "claude"))
+        deadline = client_deadline(cli_type)
+    deadline -= DEGRADED_CHECK_RESERVE_SECONDS if is_tool_gate_event(hook_event) else CLIENT_BUDGET_MARGIN_SECONDS
+
+    def remaining_wait() -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError("daemon budget exhausted; local check reserve remains")
+        return remaining
 
     def _spawn_outcome() -> str:
         if not spawned:
@@ -848,18 +829,22 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
         try:
             from .ipc import READ_BUFFER_LIMIT
 
+            wait = remaining_wait()
             reader, writer = await asyncio.wait_for(
                 ipc.connect(limit=READ_BUFFER_LIMIT),
-                timeout=max(deadline - time.monotonic(), MINIMUM_ATTEMPT_SECONDS),
+                timeout=wait,
             )
             try:
+                remaining_wait()
                 sent = True
                 writer.write(json.dumps(payload).encode() + b"\n")
+                wait = remaining_wait()
                 await asyncio.wait_for(
                     writer.drain(),
-                    timeout=max(deadline - time.monotonic(), MINIMUM_ATTEMPT_SECONDS),
+                    timeout=wait,
                 )
 
+                wait = min(daemon_response_timeout_for_cli(cli_type), remaining_wait())
                 resp = await asyncio.wait_for(
                     reader.readuntil(b"\n"),
                     # Whichever is smaller: the configured per-harness wait, or
@@ -867,10 +852,7 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
                     # already spent part of the budget must not then start a
                     # full-length response wait and push the total past the
                     # wrapper timeout.
-                    timeout=min(
-                        daemon_response_timeout_for_cli(cli_type),
-                        max(deadline - time.monotonic(), MINIMUM_ATTEMPT_SECONDS),
-                    ),
+                    timeout=wait,
                 )
                 resp_text = resp.decode().strip()
 
@@ -901,10 +883,9 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
             finally:
                 writer.close()
                 try:
-                    await asyncio.wait_for(
-                        writer.wait_closed(),
-                        timeout=max(deadline - time.monotonic(), MINIMUM_ATTEMPT_SECONDS),
-                    )
+                    wait = deadline - time.monotonic()
+                    if wait > 0:
+                        await asyncio.wait_for(writer.wait_closed(), timeout=wait)
                 except (ConnectionError, OSError, asyncio.TimeoutError):
                     pass
 
@@ -927,6 +908,8 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
                 raise DaemonDidNotAnswer(
                     f"Daemon accepted the request but did not answer: {e!r}"
                 ) from e
+
+            remaining_wait()  # Do not start/retry a daemon using the guard reserve.
 
             last_connect_error[:] = [e]
             should_spawn = False

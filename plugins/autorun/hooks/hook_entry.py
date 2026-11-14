@@ -42,8 +42,11 @@ import socket
 import subprocess
 import sys
 import time
+import math
 from pathlib import Path
 from typing import NoReturn
+
+_HOOK_STARTED_EPOCH = time.time()
 
 # =============================================================================
 # Constants
@@ -141,7 +144,7 @@ _VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgeco
 # Stdlib copies of registry data (this file must run when autorun cannot be
 # imported). test_hook_entry.py::test_event_sets_are_pinned_to_the_registry
 # holds them to client._TOOL_GATE_EVENTS and the native/canonical registry events.
-_TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
+_TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest", "tool_call", "tool.execute.before"}
 #: The `--event` values each harness's installed commands may carry. Keyed by
 #: harness so one harness cannot be handed another's event: Antigravity has no
 #: prompt hook, and `--event UserPromptSubmit` must not give it one.
@@ -274,6 +277,8 @@ def prepare_hook_payload(payload: dict, cli_type: str) -> dict:
         # The installed command is trusted registry data. It is authoritative
         # when stdin omits the event and when payload text disagrees with it.
         prepared["hook_event_name"] = event_name
+    elif prepared.get("type") and not prepared.get("hook_event_name"):
+        prepared["hook_event_name"] = prepared["type"]
     if cli_type == "antigravity":
         transcript_path = prepared.get("transcriptPath")
         if transcript_path and not prepared.get("transcript_path"):
@@ -334,11 +339,28 @@ HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_epoch"
 #: tests/test_overload_policy.py pins that every harness's daemon wait minus
 #: this reserve still exceeds the daemon's own dispatch budget.
 DEGRADED_CHECK_RESERVE_SECONDS = 0.3
-#: Time kept to write the response and exit after any local decision.
-HOOK_EMIT_MARGIN_SECONDS = 0.2
 
 
-def cli_env_with_deadline(cli_type: str) -> dict:
+def _hook_deadline(cli_type: str, payload: dict | None = None) -> float:
+    """Full process-start deadline; upstream clocks may shorten, never renew it."""
+    local = _HOOK_STARTED_EPOCH + hook_timeout_for_cli(cli_type)
+    supplied = (payload or {}).get(HOOK_DEADLINE_PAYLOAD_KEY, os.environ.get(DEADLINE_ENV_VAR))
+    try:
+        value = float(supplied)
+        if not isinstance(supplied, bool) and math.isfinite(value) and abs(value - time.time()) <= 60:
+            local = min(local, value)
+    except (TypeError, ValueError):
+        pass
+    return local
+
+
+def _daemon_wait_seconds(deadline: float, event_name: str) -> float:
+    """Stdlib transport mirror of the client's absolute-deadline arithmetic."""
+    reserve = DEGRADED_CHECK_RESERVE_SECONDS if is_tool_gate_event(event_name) else 0
+    return max(0.0, deadline - reserve - time.time())
+
+
+def cli_env_with_deadline(cli_type: str, deadline: float | None = None) -> dict:
     """Environment for the CLI child carrying this wrapper's actual deadline.
 
     The child cannot derive its own budget from the wrapper timeout alone,
@@ -355,7 +377,7 @@ def cli_env_with_deadline(cli_type: str) -> dict:
     child converts it to its own monotonic clock on arrival.
     """
     env = dict(os.environ)
-    env[DEADLINE_ENV_VAR] = repr(time.time() + hook_timeout_for_cli(cli_type))
+    env[DEADLINE_ENV_VAR] = repr(_hook_deadline(cli_type) if deadline is None else deadline)
     # The pipe to the child is UTF-8 on both ends (try_cli decodes it so).
     env["PYTHONIOENCODING"] = "utf-8"
     return env
@@ -593,7 +615,7 @@ def _peek_event_name(default: str = "unknown") -> str:
     payload = _peek_payload()
     if payload is None:
         return default
-    return payload.get("hook_event_name") or default
+    return payload.get("hook_event_name") or payload.get("type") or default
 
 
 # The fail-closed reason below names the commands that repair a broken runtime.
@@ -747,7 +769,8 @@ def fail_after_cli_timeout(cli_type: str, event_name: str) -> NoReturn:
             sys.stdin.seek(position)
         except (OSError, ValueError):
             payload = {}
-        if isinstance(payload, dict) and payload.get("tool_name"):
+        if isinstance(payload, dict):
+            payload.setdefault("hook_event_name", event_name)
             code = _try_degraded_tool(payload, cli_type, "daemon_response_timeout")
             if code is not None:
                 sys.exit(code)
@@ -1079,6 +1102,8 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     if not isinstance(payload, dict):
         return False, 0
 
+    payload = prepare_hook_payload(payload, cli_type)
+
     payload.setdefault("_pid", os.getppid())  # same rule as prepare_hook_payload
     # Every supported harness reports the project directory as "cwd". Prefer it
     # over this process's own directory: plan_export.py's project_dir uses this
@@ -1088,19 +1113,39 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     payload.setdefault("_cwd", payload.get("cwd") or os.getcwd())
     payload["cli_type"] = cli_type
     timeout = hook_timeout_for_cli(cli_type)
-    # Preserve the local emit margin without changing healthy daemon frames.
-    guard_deadline = payload.get(HOOK_DEADLINE_PAYLOAD_KEY, time.time() + timeout - HOOK_EMIT_MARGIN_SECONDS)
-    payload[HOOK_DEADLINE_PAYLOAD_KEY] = time.time() + timeout
+    guard_deadline = _hook_deadline(cli_type, payload)
+    payload[HOOK_DEADLINE_PAYLOAD_KEY] = guard_deadline
     event_name = payload.get("hook_event_name", "unknown")
+    if _daemon_wait_seconds(guard_deadline, event_name) <= 0:
+        if is_tool_gate_event(event_name):
+            code = _try_degraded_tool(payload, cli_type, "daemon_response_timeout")
+            if code is not None:
+                return True, code
+        fail_after_cli_timeout(cli_type, event_name)
     connected = False
     try:
         with socket.socket(family, socket.SOCK_STREAM) as daemon_socket:
-            daemon_socket.settimeout(max(0.01, timeout - (DEGRADED_CHECK_RESERVE_SECONDS if is_tool_gate_event(event_name) else 0)))
+            daemon_socket.settimeout(_daemon_wait_seconds(guard_deadline, event_name))
             daemon_socket.connect(address)
             connected = True
+            remaining = _daemon_wait_seconds(guard_deadline, event_name)
+            if remaining <= 0:
+                raise socket.timeout()
+            daemon_socket.settimeout(remaining)
             daemon_socket.sendall(preamble + json.dumps(payload).encode("utf-8") + b"\n")
-            with daemon_socket.makefile("r", encoding="utf-8") as response_stream:
-                response_line = response_stream.readline()
+            frame = bytearray()
+            while True:
+                remaining = _daemon_wait_seconds(guard_deadline, event_name)
+                if remaining <= 0:
+                    raise socket.timeout()
+                daemon_socket.settimeout(remaining)
+                chunk = daemon_socket.recv(65536)
+                if not chunk:
+                    break
+                frame.extend(chunk)
+                if b"\n" in chunk:
+                    break
+            response_line = bytes(frame).split(b"\n", 1)[0].decode("utf-8")
         if not response_line:
             raise ConnectionError("daemon closed without a response")
         response = json.loads(response_line)
@@ -1156,6 +1201,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
 def _try_degraded_tool(payload: dict, cli_type: str, event_code: str = "daemon_failure",
                        *, response: dict | None = None) -> int | None:
     """Use the one Python policy owner; missing package keeps the stdlib denial."""
+    payload = {**payload, HOOK_DEADLINE_PAYLOAD_KEY: _hook_deadline(cli_type, payload)}
     plugin_root = get_plugin_root()
     src_dir = Path(plugin_root) / "src" if plugin_root else get_src_dir()
     if src_dir and str(src_dir) not in sys.path:
@@ -1170,7 +1216,7 @@ def _try_degraded_tool(payload: dict, cli_type: str, event_code: str = "daemon_f
             return None
     return output_hook_response(
         degraded_tool_response(payload, cli_type, event_code),
-        event=payload.get("hook_event_name", "PreToolUse"), cli_type=cli_type, source="degraded")
+        event=payload.get("hook_event_name") or payload.get("type") or "PreToolUse", cli_type=cli_type, source="degraded")
 
 
 def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, event_name: str = "unknown") -> bool:
@@ -1216,6 +1262,19 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, e
           CLI's whole stdout and stderr and was the only one production ran.
     """
     cli_type = cli_type or detect_cli_type()
+    try:
+        payload = json.loads(stdin_data or "{}")
+    except (ValueError, TypeError):
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    deadline = _hook_deadline(cli_type, payload)
+    payload[HOOK_DEADLINE_PAYLOAD_KEY] = deadline
+    if _daemon_wait_seconds(deadline, event_name) <= 0:
+        if is_tool_gate_event(event_name):
+            code = _try_degraded_tool(payload, cli_type, "daemon_response_timeout")
+            if code is not None:
+                sys.exit(code)
+        fail_after_cli_timeout(cli_type, event_name)
     # Skip the console-script shim: run the venv's own python as a module.
     cmd = [str(bin_path)]
     # Either venv layout: the substring ".venv/bin/autorun" never matched a
@@ -1235,8 +1294,8 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, e
             # locale: cli_env_with_deadline sets the child's PYTHONIOENCODING.
             encoding="utf-8",
             errors="replace",
-            timeout=max(0.1, hook_timeout_for_cli(cli_type) - (DEGRADED_CHECK_RESERVE_SECONDS if is_tool_gate_event(event_name) else 0)),
-            env=cli_env_with_deadline(cli_type),
+            timeout=_daemon_wait_seconds(deadline, event_name),
+            env=cli_env_with_deadline(cli_type, deadline),
         )
 
         # Debug logging (ALWAYS enabled to diagnose hook issues)
@@ -1823,7 +1882,7 @@ def main() -> None:
     if stdin_data:
         try:
             payload_for_detection = json.loads(stdin_data)
-            event_name = payload_for_detection.get('hook_event_name') or event_name
+            event_name = payload_for_detection.get('hook_event_name') or payload_for_detection.get('type') or event_name
         except json.JSONDecodeError:
             pass
     
@@ -1831,7 +1890,10 @@ def main() -> None:
     log_debug(f"Hook entry stdin ({len(stdin_data)} bytes)")
 
     cli_type = detect_cli_type(payload_for_detection)
-    wrapper_deadline = time.time() + hook_timeout_for_cli(cli_type) - HOOK_EMIT_MARGIN_SECONDS
+    wrapper_deadline = _hook_deadline(cli_type, payload_for_detection)
+    if isinstance(payload_for_detection, dict):
+        payload_for_detection = prepare_hook_payload(payload_for_detection, cli_type)
+        event_name = payload_for_detection.get("hook_event_name", event_name)
     if isinstance(payload_for_detection, dict) and payload_for_detection.get("_autorun_degraded_check") is True:
         payload = payload_for_detection if isinstance(payload_for_detection, dict) else {}
         payload.setdefault(HOOK_DEADLINE_PAYLOAD_KEY, wrapper_deadline)
@@ -1839,9 +1901,6 @@ def main() -> None:
         if code is not None:
             sys.exit(code)
         fail_closed_tool_gate("Cannot import autorun for critical guards", cli_type, event_name)
-    if isinstance(payload_for_detection, dict):
-        payload_for_detection = prepare_hook_payload(payload_for_detection, cli_type)
-        event_name = payload_for_detection.get("hook_event_name", event_name)
     log_debug(f"Detected CLI: {cli_type} (from --cli arg: {'--cli' in sys.argv})")
     log_debug(f"Env GEMINI_SESSION_ID: {os.environ.get('GEMINI_SESSION_ID')}")
     log_debug(f"Env GEMINI_PROJECT_DIR: {os.environ.get('GEMINI_PROJECT_DIR')}")

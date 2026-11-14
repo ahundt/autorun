@@ -858,6 +858,12 @@ enforce those policies.
      and plan gating are not checked. A guarded command stays blocked even
      with a session grant. Wait for autorun to answer again; do not restart
      the daemon under load.
+140. The command guards read only a command given as one string to a tool
+     registered as a shell. A command given as a list of arguments
+     (`["bash", "-lc", "rm -rf dir"]`) was read as empty, and a shell tool
+     under another name was not checked at all. A list is now read as the
+     argument vector it is, and any tool whose input carries `command`,
+     `cmd` or `CommandLine` is checked.
 
 ### For contributors
 

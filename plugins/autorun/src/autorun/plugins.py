@@ -94,6 +94,7 @@ from .integrations import (
     invalidate_caches,
     load_all_integrations,
 )
+from .platforms import is_shell_tool
 from .message_delivery import MessageDelivery, claim_message_delivery
 from .task_pause import (
     TaskPauseIdentityError,
@@ -1302,7 +1303,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     Supports: Bash commands (event: bash), Write/Edit operations (event: file)
     """
     # Determine event type and command/path
-    if ctx.tool_name in BASH_TOOLS:
+    if is_shell_tool(ctx.tool_name, ctx.tool_input, ctx.cli_type):
         event_type = "bash"
         cmd = shell_command_from_tool_input(ctx.tool_input)
     elif ctx.tool_name in FILE_TOOLS:
@@ -1429,7 +1430,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                             break
                     else:
                         expanded.add(tool)
-                if ctx.tool_name not in expanded:
+                if ctx.tool_name not in expanded and not (event_type == "bash" and expanded & BASH_TOOLS):
                     continue
 
             # Check hookify conditions (AND-ed)

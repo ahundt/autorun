@@ -180,6 +180,7 @@ HOOK_DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_EPOCH"
 #: epoch seconds. Senders are Python (hook_entry.py, client.py) and Node (the
 #: JS bridge); see monotonic_deadline for why the wire is not monotonic.
 HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_epoch"
+DEGRADED_CHECK_RESERVE_SECONDS = 0.3
 
 #: Beyond this, a deadline is a stale value inherited from an unrelated process
 #: rather than ours. The largest configured wrapper timeout is 5s.

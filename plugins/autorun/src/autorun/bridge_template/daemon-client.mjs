@@ -71,10 +71,17 @@ export function degradedNotice(response) {
   return !denialReason(response) && message.includes("[AR_EVENT_V1:degraded_decision]") ? message : "";
 }
 
+const FAILURE_TAG = /^\[autorun\] \[AR_EVENT_V1:([a-z_]+)\]/;
+const DEGRADED_FAILURE_CODES = new Set([
+  "daemon_dispatch_timeout", "daemon_dispatch_contained", "daemon_dispatch_stalled",
+  "state_lock_contended", "state_evaluation_failed", "daemon_failure",
+  "daemon_response_timeout", "daemon_unavailable_or_timeout",
+]);
+
 function failureCode(response) {
   const message = denialReason(response) ?? "";
-  const match = message.match(/\[AR_EVENT_V1:(daemon_dispatch_timeout|daemon_dispatch_contained|daemon_dispatch_stalled|state_lock_contended|state_evaluation_failed|daemon_failure|daemon_response_timeout|daemon_unavailable_or_timeout)\]/);
-  return match?.[1] ?? null;
+  const match = message.match(FAILURE_TAG);
+  return match && DEGRADED_FAILURE_CODES.has(match[1]) ? match[1] : null;
 }
 
 export function createDaemonBridge({
@@ -143,12 +150,21 @@ export function createDaemonBridge({
 
   function lastResort(payload, failureCode) {
     // All three bridge harnesses call their shell tool "bash". Python owns
-    // the guards; without it we can only deny shells and permit other tools.
-    const shell = payload.tool_name === "bash";
+    // the guards; without it critical-guards can only deny shell calls.
+    // No config-file reader lives in this bridge: this last resort follows
+    // AUTORUN_OVERLOAD_POLICY only; the Python route also reads the config file.
+    const policy = process.env.AUTORUN_OVERLOAD_POLICY ?? "critical-guards";
+    const shell = payload.tool_name === "bash" ||
+      ["command", "cmd", "CommandLine"].some(key => Object.hasOwn(payload.tool_input ?? {}, key));
+    const deny = policy === "block" || (policy !== "allow" && shell);
     return { hookSpecificOutput: {
-      permissionDecision: shell ? "deny" : "allow",
+      permissionDecision: deny ? "deny" : "allow",
       permissionDecisionReason: `[autorun] [AR_EVENT_V1:${failureCode}] [AR_EVENT_V1:degraded_decision] ` +
-        (shell
+        (policy === "allow"
+          ? "Autorun could not answer and overload_policy=allow permits this call without built-in destructive-command guards, /ar:no rules, /ar:ok grants, the file policy or task and plan gating until autorun answers again; Do not restart the daemon."
+          : policy === "block"
+          ? "Autorun could not answer and overload_policy=block denies this tool call; wait and retry when it recovers; do not restart the daemon."
+          : shell
           ? "Autorun is degraded and its critical guards could not finish; wait and retry this shell call when it recovers; do not restart the daemon." +
             (failureCode === "daemon_response_timeout" ? " " + RESPONSE_TIMEOUT_GUIDANCE : "")
           : "Autorun could not answer, so built-in destructive-command guards are still enforced by denying shell calls while /ar:no rules, /ar:ok grants, the file policy and task and plan gating are not checked until autorun answers again; Do not restart the daemon."),
@@ -218,7 +234,7 @@ export function createDaemonBridge({
       child.stdin.end(JSON.stringify({ ...payload, cli_type: cliType,
         _autorun_degraded_check: true,
         _autorun_failure_code: failureCode,
-        [HOOK_DEADLINE_PAYLOAD_KEY]: deadline / 1000 - 0.2,
+        [HOOK_DEADLINE_PAYLOAD_KEY]: deadline / 1000,
       }) + "\n");
     });
   }

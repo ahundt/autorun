@@ -31,7 +31,6 @@ Features:
 
 from __future__ import annotations
 
-import logging
 import math
 import os
 import re
@@ -67,7 +66,9 @@ __all__ = [
     "check_conditions",
 ]
 
-logger = logging.getLogger(__name__)
+from .logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 # A user `when:` command runs inside a hook; past this it counts as not matching.
 WHEN_PREDICATE_TIMEOUT_SECONDS = 2

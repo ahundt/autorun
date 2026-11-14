@@ -539,31 +539,10 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
             transcript = truncated
             logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → {len(truncated)} messages ({size_estimate // 1024}KB)")
 
-    tool_call = payload.get("toolCall")
-    tool_call = tool_call if isinstance(tool_call, dict) else {}
-    raw_tool_input = (
-        payload.get("tool_input")
-        or payload.get("toolInput")
-        or tool_call.get("args")
-        or {}
-    )
-    tool_input = dict(raw_tool_input) if isinstance(raw_tool_input, dict) else {}
-    # A harness's own argument names (Antigravity's are PascalCase) stay for
-    # diagnostics; the canonical names existing policies read are added.
-    for native, canonical in platform.tool_input_aliases.items():
-        value = tool_input.get(native)
-        if canonical not in tool_input and value is not None:
-            tool_input[canonical] = value
+    from .platforms import hook_payload_cwd, normalize_tool_payload
+    tool_name, tool_input = normalize_tool_payload(payload, cli_type)
 
     transcript_path = payload.get("transcript_path") or payload.get("transcriptPath")
-    workspace_paths = payload.get("workspacePaths")
-    workspace_path = (
-        workspace_paths[0]
-        if isinstance(workspace_paths, list)
-        and workspace_paths
-        and isinstance(workspace_paths[0], str)
-        else None
-    )
 
     raw_active_tools = payload.get("active_tools")
     active_tools = None
@@ -595,7 +574,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
             payload.get(platform.prompt_payload_field)
             or payload.get("prompt", "")
         ),
-        "tool_name": payload.get("tool_name") or payload.get("toolName") or tool_call.get("name", ""),
+        "tool_name": tool_name,
         "tool_input": tool_input,
         "tool_result": payload.get("tool_response") or payload.get("tool_result") or payload.get("toolResult"),
         "session_transcript": transcript,
@@ -622,7 +601,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "fully_idle": payload.get("fullyIdle"),
         # Expanded at normalise time so downstream consumers can read a filesystem-ready path.
         "transcript_path": os.path.expanduser(transcript_path) if transcript_path else None,
-        "cwd": payload.get("_cwd") or payload.get("cwd") or workspace_path,
+        "cwd": hook_payload_cwd(payload),
         # Codex SubagentStop keeps the parent's transcript in transcript_path
         # and identifies the child transcript separately. Preserve both: the
         # task lifecycle uses the child path as a legacy identity fallback

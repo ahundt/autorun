@@ -31,7 +31,11 @@ __email__ = "ATHundt@gmail.com"
 
 # Load automated metadata (commit, build_time) if available
 import json
+import logging
 from pathlib import Path
+
+# Cover descendants even before logging_utils can import config/ipc safely.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __commit__ = "unknown"
 __build_time__ = "unknown"

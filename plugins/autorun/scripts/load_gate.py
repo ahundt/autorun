@@ -141,13 +141,15 @@ def classify(stdout, stderr, returncode, expected_denial):
                       or specific.get("decision", {}).get("behavior") == "deny")
         except (ValueError, AttributeError, TypeError):
             return "invalid_response"
+        if denied and returncode == 2:
+            return "intended_denial" if expected_denial else "unexpected_denial"
         if stderr:
             return "hook_stderr"
         if returncode:
             return "nonzero_exit"
         if denied:
             return "intended_denial" if expected_denial else "unexpected_denial"
-        return "degraded_allow"
+        return "missed_guard" if expected_denial else "degraded_allow"
     # Infrastructure failure takes precedence over a denial and its exit-2 stderr.
     if any(token in text for token in LOAD_TEXT):
         return "refused_or_overloaded"

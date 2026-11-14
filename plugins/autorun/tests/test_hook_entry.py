@@ -265,6 +265,8 @@ class TestHookEntryExecutionPriority:
     ):
         """Fast IPC preserves daemon routing metadata and Codex denial JSON."""
         hook_entry = load_hook_entry_module()
+        monkeypatch.setattr(hook_entry.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(hook_entry, "_HOOK_STARTED_EPOCH", 1000.0)
         expected_address = stage_daemon_endpoint(tmp_path)
         sent = bytearray()
 
@@ -276,7 +278,7 @@ class TestHookEntryExecutionPriority:
                 return False
 
             def settimeout(self, timeout):
-                assert timeout == hook_entry.hook_timeout_for_cli("codex") - 0.3
+                assert timeout == pytest.approx(hook_entry.hook_timeout_for_cli("codex") - 0.3, abs=0.001)
 
             def connect(self, address):
                 assert address == expected_address
@@ -284,7 +286,7 @@ class TestHookEntryExecutionPriority:
             def sendall(self, data):
                 sent.extend(data)
 
-            def makefile(self, *_args, **_kwargs):
+            def recv(self, _size):
                 response = {
                     "decision": "block",
                     "hookSpecificOutput": {
@@ -292,7 +294,7 @@ class TestHookEntryExecutionPriority:
                         "permissionDecisionReason": "blocked by test",
                     },
                 }
-                return io.StringIO(json.dumps(response) + "\n")
+                return (json.dumps(response) + "\n").encode()
 
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
         monkeypatch.setattr(hook_entry.socket, "socket", lambda *_args: FakeSocket())
@@ -326,6 +328,7 @@ class TestHookEntryExecutionPriority:
         stage_daemon_endpoint(tmp_path)
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
         monkeypatch.setattr(hook_entry.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(hook_entry, "_HOOK_STARTED_EPOCH", 1000.0)
         monkeypatch.setattr(hook_entry, "hook_timeout_for_cli", lambda cli: 1.0)
         observed = []
         def local(payload, *args, **kwargs):
@@ -338,14 +341,14 @@ class TestHookEntryExecutionPriority:
             def settimeout(self, timeout): pass
             def connect(self, address): pass
             def sendall(self, data): pass
-            def makefile(self, *args, **kwargs):
-                return io.StringIO(json.dumps({"reason": "[AR_EVENT_V1:daemon_dispatch_timeout] busy"}) + "\n")
+            def recv(self, _size):
+                return (json.dumps({"reason": "[AR_EVENT_V1:daemon_dispatch_timeout] busy"}) + "\n").encode()
         monkeypatch.setattr(hook_entry.socket, "socket", lambda *args: Socket())
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash"}
         if supplied is not None:
             payload[hook_entry.HOOK_DEADLINE_PAYLOAD_KEY] = supplied
         assert hook_entry.try_daemon(json.dumps(payload), "claude") == (True, 0)
-        assert observed == [1000.8 if supplied is None else supplied]
+        assert observed == [1001.0 if supplied is None else supplied]
 
     def test_direct_daemon_unavailable_uses_existing_cli_fallback(
         self, tmp_path, monkeypatch
@@ -379,7 +382,7 @@ class TestHookEntryExecutionPriority:
             def sendall(self, _data):
                 return None
 
-            def makefile(self, *_args, **_kwargs):
+            def recv(self, _size):
                 raise socket.timeout
 
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
@@ -391,9 +394,10 @@ class TestHookEntryExecutionPriority:
         assert response["decision"] == "block"
         # Busy or stuck: the client's own wording, so the agent gets one
         # answer however the hook reached the daemon.
-        assert "[AR_EVENT_V1:daemon_response_timeout]" in response["reason"]
-        assert "trash" in response["reason"]
-        assert "degraded_decision" in response["reason"]
+        reason = response["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "[AR_EVENT_V1:daemon_response_timeout]" in reason
+        assert "trash" in reason
+        assert "degraded_decision" in reason
 
     def test_daemon_closing_without_an_answer_says_retry(self, tmp_path, monkeypatch, capsys):
         """A daemon that closes the connection unanswered is restarting or
@@ -418,8 +422,8 @@ class TestHookEntryExecutionPriority:
             def sendall(self, _data):
                 return None
 
-            def makefile(self, *_args, **_kwargs):
-                return io.StringIO("")
+            def recv(self, _size):
+                return b""
 
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
         monkeypatch.setattr(hook_entry.socket, "socket", lambda *_args: ClosedSocket())
@@ -427,7 +431,7 @@ class TestHookEntryExecutionPriority:
 
         assert hook_entry.try_daemon(payload, "codex") == (True, 0)
 
-        reason = json.loads(capsys.readouterr().out)["reason"]
+        reason = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecisionReason"]
         assert "retry when it recovers" in reason
         assert "trash" in reason
         assert hook_entry._INTERVENTION_GUIDANCE not in reason
@@ -453,8 +457,8 @@ class TestHookEntryExecutionPriority:
             def sendall(self, _data):
                 return None
 
-            def makefile(self, *_args, **_kwargs):
-                return io.StringIO("not-json\n")
+            def recv(self, _size):
+                return b"not-json\n"
 
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
         monkeypatch.setattr(
@@ -465,8 +469,9 @@ class TestHookEntryExecutionPriority:
         assert hook_entry.try_daemon(payload, "codex") == (True, 0)
         response = json.loads(capsys.readouterr().out)
         assert response["decision"] == "block"
-        assert "degraded_decision" in response["reason"]
-        assert "trash" in response["reason"]
+        reason = response["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "degraded_decision" in reason
+        assert "trash" in reason
 
     @pytest.mark.parametrize("cli_type", sorted(p.name for p in _hook_platforms()))
     def test_connected_daemon_invalid_lifecycle_response_uses_native_noop(
@@ -506,8 +511,8 @@ class TestHookEntryExecutionPriority:
             def sendall(self, _data):
                 return None
 
-            def makefile(self, *_args, **_kwargs):
-                return io.StringIO("not-json\n")
+            def recv(self, _size):
+                return b"not-json\n"
 
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
         monkeypatch.setattr(

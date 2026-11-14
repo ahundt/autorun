@@ -33,6 +33,37 @@ from functools import lru_cache
 from typing import Callable, Mapping
 
 DEGRADED_EVENT_CODE = "degraded_decision"
+SHELL_COMMAND_KEYS = ("command", "cmd", "CommandLine")
+
+
+def is_shell_tool(tool_name: str, tool_input: object, cli_type: str) -> bool:
+    """Check registered shells and command-bearing inputs, never file content."""
+    from .config import BASH_TOOLS
+
+    return (tool_name in BASH_TOOLS
+            or tool_name == platform_for(cli_type).tool_names.get("bash")
+            or (isinstance(tool_input, dict)
+                and any(key in tool_input for key in SHELL_COMMAND_KEYS)))
+
+
+def normalize_tool_payload(payload: dict, cli_type: str) -> tuple[str, dict]:
+    """Canonical tool identity and inputs shared by healthy and degraded gates."""
+    tool_call = payload.get("toolCall")
+    tool_call = tool_call if isinstance(tool_call, dict) else {}
+    raw = payload.get("tool_input") or payload.get("toolInput") or tool_call.get("args") or {}
+    inputs = dict(raw) if isinstance(raw, dict) else {}
+    for native, canonical in platform_for(cli_type).tool_input_aliases.items():
+        value = inputs.get(native)
+        if canonical not in inputs and value is not None:
+            inputs[canonical] = value
+    return (payload.get("tool_name") or payload.get("toolName") or tool_call.get("name", ""), inputs)
+
+
+def hook_payload_cwd(payload: dict) -> str | None:
+    """Session directory for both healthy dispatch and stateless git probes."""
+    paths = payload.get("workspacePaths")
+    workspace = paths[0] if isinstance(paths, list) and paths and isinstance(paths[0], str) else None
+    return payload.get("_cwd") or payload.get("cwd") or workspace
 
 
 def process_home() -> Path:
@@ -527,12 +558,12 @@ class HookProtocol:
             }}
         if self.name == "codex":
             if decision == "deny":
-                return {"decision": "block", "reason": reason}
+                return {"decision": "block", "hookSpecificOutput": {
+                    "hookEventName": event_name, "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }}
             return {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": reason}}
         response = self.pretool_response(decision, reason, event_name)
-        if decision == "allow" and self.name in {"claude", "qwen"}:
-            response["hookSpecificOutput"]["additionalContext"] = reason
-            response["systemMessage"] = reason
         filtered = self.filter_response_to_harness_schema("PreToolUse", response)
         if filtered is not None:
             return filtered
@@ -640,6 +671,8 @@ class ClaudeHookProtocol(HookProtocol):
         if response.get("permissionDecision") == "deny":
             response["reason"] = ""
             response["systemMessage"] = ""
+        elif decision == "allow" and f"[AR_EVENT_V1:{DEGRADED_EVENT_CODE}]" in reason:
+            response["hookSpecificOutput"]["additionalContext"] = reason
         return response
 
 
@@ -2097,6 +2130,7 @@ PI = register(
         command_display_prefix="/ar ",
         command_invocation_hint="Type /ar <command>; the installed extension dispatches it directly.",
         skill_invocation_format="/skill:{name}",
+        harness_cli_to_autorun_events={"tool_call": "PreToolUse"},
         supports_additional_context_events=frozenset(
             {"SessionStart", "UserPromptSubmit", "PostToolUse"}
         ),
@@ -2333,6 +2367,7 @@ OPENCODE = register(
             "PreCompact": "experimental.session.compacting",
             "PostCompact": "event:session.compacted",
         },
+        harness_cli_to_autorun_events={"tool.execute.before": "PreToolUse"},
     )
 )
 

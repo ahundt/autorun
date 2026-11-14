@@ -27,9 +27,24 @@ def test_degraded_allow_is_not_a_load_failure():
                      {"decision": "allow", "reason": notice},
                      {"hookSpecificOutput": {"additionalContext": notice}}):
         assert gate.classify(json.dumps(response), "", 0, False) == "degraded_allow"
-        assert gate.classify(json.dumps(response), "", 0, True) == "degraded_allow"
+        assert gate.classify(json.dumps(response), "", 0, True) == "missed_guard"
     assert "degraded_allow" in gate.OUTCOMES
     assert "degraded_allow" not in gate.BAD_OUTCOMES
+
+
+def test_degraded_exit2_denial_is_intended_not_hook_stderr():
+    import json
+    reason = "[autorun] [AR_EVENT_V1:daemon_response_timeout] [AR_EVENT_V1:degraded_decision] guarded"
+    response = {"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": reason}}
+    assert gate.classify(json.dumps(response), reason + "\n", 2, True) == "intended_denial"
+    assert gate.classify(json.dumps(response), reason + "\n", 2, False) == "unexpected_denial"
+
+
+def test_degraded_exit_zero_denial_cannot_hide_accidental_stderr():
+    import json
+    response = {"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason":
+        "[autorun] [AR_EVENT_V1:daemon_response_timeout] [AR_EVENT_V1:degraded_decision] guarded"}}
+    assert gate.classify(json.dumps(response), "unexpected hook warning", 0, True) == "hook_stderr"
 
 
 @pytest.mark.parametrize("platform", ["nt", "posix"])
@@ -115,6 +130,21 @@ def test_windows_cleanup_refuses_a_recorded_pid_from_another_runtime(tmp_path, m
         children=lambda recursive: [], cmdline=lambda: ["daemon"],
         environ=lambda: {"AUTORUN_HOME": str(tmp_path / "foreign")}, terminate=unexpected))
     assert gate.stop_owned(tmp_path, None)[1] == []
+
+
+@pytest.fixture(autouse=True)
+def isolated_trash(tmp_path, monkeypatch):
+    """Keep benchmark cleanup in the test sandbox instead of the desktop Trash."""
+    checked = gate.checked
+    def run(argv, **kwargs):
+        if Path(argv[0]).name == "trash":
+            destination = tmp_path / "trash"
+            destination.mkdir(exist_ok=True)
+            for path in argv[1:]:
+                gate.shutil.move(str(path), str(destination))
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        return checked(argv, **kwargs)
+    monkeypatch.setattr(gate, "checked", run)
 
 
 def test_load_gate_protects_the_configured_outer_daemon(tmp_path, monkeypatch):

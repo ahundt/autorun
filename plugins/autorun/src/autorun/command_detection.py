@@ -31,7 +31,6 @@ References:
 from __future__ import annotations
 
 import importlib.util
-import logging
 import os
 import re
 import shlex
@@ -55,7 +54,10 @@ __all__ = [
     "strip_transparent_command_wrappers",
 ]
 
-logger = logging.getLogger(__name__)
+from .logging_utils import get_logger
+from .platforms import SHELL_COMMAND_KEYS
+
+logger = get_logger(__name__)
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -885,13 +887,15 @@ def strip_transparent_command_wrappers(
 
 
 def shell_command_from_tool_input(tool_input: object) -> str:
-    """Return the shell command string from Claude/Gemini/Codex-style inputs."""
+    """Return command text, quoting a string argv as one invocation."""
     if not isinstance(tool_input, dict):
         return ""
-    for key in ("command", "cmd", "CommandLine"):
+    for key in SHELL_COMMAND_KEYS:
         value = tool_input.get(key)
         if isinstance(value, str):
             return value
+        if isinstance(value, list) and all(isinstance(arg, str) for arg in value):
+            return shlex.join(value)
     return ""
 
 

@@ -207,9 +207,10 @@ class TestDaemonSocketFrames:
         output = json.loads(result.stdout)
         assert output["output"].startswith("contents")
         if degraded:
-            assert client.DEGRADED_NOTICE in output["output"]
+            from autorun.platforms import format_commands_for_cli
+            assert format_commands_for_cli(client.DEGRADED_NOTICE, "opencode") in output["output"]
             assert len(output["toasts"]) == 1
-            assert client.DEGRADED_NOTICE in output["toasts"][0]["body"]["message"]
+            assert format_commands_for_cli(client.DEGRADED_NOTICE, "opencode") in output["toasts"][0]["body"]["message"]
         else:
             assert output == {"output": "contents", "toasts": []}
         assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "PreToolUse", "PostToolUse"]

@@ -181,7 +181,7 @@ def test_client_forwards_its_effective_deadline_to_the_daemon(monkeypatch):
     payload, _ = prepare_payload_for_daemon({"hook_event_name": "PreToolUse"})
 
     # Epoch seconds on the wire, so a Node or Python reader can convert it.
-    assert payload[HOOK_DEADLINE_PAYLOAD_KEY] == pytest.approx(wrapper_deadline - 0.2, abs=0.05)
+    assert payload[HOOK_DEADLINE_PAYLOAD_KEY] == pytest.approx(wrapper_deadline, abs=0.001)
 
 
 def test_client_preserves_identity_already_supplied_by_the_hook_wrapper(monkeypatch):
@@ -273,13 +273,15 @@ def test_the_client_deadline_comes_from_the_wrapper_when_it_supplies_one(monkeyp
     )
 
     monkeypatch.setenv(DEADLINE_ENV_VAR, repr(_time.time() + 2.0))
-    expected = _time.monotonic() + 2.0 - CLIENT_BUDGET_MARGIN_SECONDS
+    expected = _time.monotonic() + 2.0
     assert client_deadline("claude") == pytest.approx(expected, abs=0.05)
 
-    # A deadline that already passed, is unparseable, or is implausibly distant
-    # is a stale or foreign value; falling back beats failing every hook.
+    # A recent expired deadline is still this hook's clock, never a fresh budget.
+    monkeypatch.setenv(DEADLINE_ENV_VAR, repr(_time.time() - 5.0))
+    assert client_deadline("claude") == pytest.approx(_time.monotonic() - 5.0, abs=0.001)
+    # Unparseable or implausibly distant values are stale/foreign.
     local_budget = client_total_budget("claude")
-    for value in (repr(_time.time() - 5.0), "not-a-float", repr(_time.time() + 3600),
+    for value in ("not-a-float", repr(_time.time() + 3600),
                   repr(_time.monotonic() + 2.0)):  # a monotonic value from an older wrapper
         monkeypatch.setenv(DEADLINE_ENV_VAR, value)
         assert client_deadline("claude") > _time.monotonic() + local_budget - 1.0
@@ -288,26 +290,12 @@ def test_the_client_deadline_comes_from_the_wrapper_when_it_supplies_one(monkeyp
     assert client_deadline("claude") > _time.monotonic()
 
 
-def test_a_deadline_squeezed_below_the_margin_still_buys_one_attempt(monkeypatch):
-    """Subtracting the margin must not hand back an instant already past.
-
-    The margin is slack for the client to write its own response, and it was
-    subtracted unconditionally. A wrapper deadline closer than the margin —
-    a slow cold start, a `uv run` resolve on Windows — therefore produced a
-    deadline in the past, and `forward()` opens with `if remaining <= 0: raise`.
-    So the client gave up *without opening a socket* and reported "Daemon failed
-    to start after budget exhausted", which is not what happened: a warm daemon
-    answers over a unix socket in about a millisecond, and there were still
-    tenths of a second left to ask it in.
-
-    The floor is the one `forward()` already uses for its own read timeout, so
-    the two agree instead of one guaranteeing the other can never run.
-    """
+def test_a_deadline_below_the_reserve_is_preserved_for_local_guards(monkeypatch):
+    """A nearly spent hook checks locally rather than forcing another IPC wait."""
     import time as _time
 
     from autorun.client import (
         DEADLINE_ENV_VAR,
-        MINIMUM_ATTEMPT_SECONDS,
         client_deadline,
     )
 
@@ -319,7 +307,7 @@ def test_a_deadline_squeezed_below_the_margin_still_buys_one_attempt(monkeypatch
             f"{remaining}s left produced an expired deadline; the client would "
             f"report a startup failure without ever connecting"
         )
-        assert deadline <= _time.monotonic() + MINIMUM_ATTEMPT_SECONDS + 0.05
+        assert deadline == pytest.approx(_time.monotonic() + remaining, abs=0.001)
 
 
 def test_the_wrapper_and_the_client_agree_on_the_deadline_variable():

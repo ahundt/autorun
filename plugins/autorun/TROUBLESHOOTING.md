@@ -75,6 +75,14 @@ change Stop or non-gate events. If the Python package itself cannot import,
 the stdlib hook still denies tool calls and gives the repair guidance above:
 there are no guard predicates to run.
 
+Pi, Prime and OpenCode ask the Python client for degraded decisions. If that
+child is unavailable, silent, invalid or late, the bridge's last resort follows
+`AUTORUN_OVERLOAD_POLICY` only: `block` denies every tool-gate call, `allow`
+permits every call, and `critical-guards` (including an unknown value) denies
+shell calls and permits other tools. The bridge has no config-file reader;
+set the environment variable to cover this last resort as well as the Python
+route. It does not implement destructive-command predicates in JavaScript.
+
 1. `autorun --status` checks every detected agent and runs the hook command
    once; a working hook reports `ok hook command`.
 2. Restart the agent session. Each agent reads its hooks when the session
