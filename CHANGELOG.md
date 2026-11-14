@@ -860,8 +860,7 @@ enforce those policies.
      `sed`, `tmutil` and a shell running a script count only with the option
      that makes them destructive (`-delete`, `-i`, a `curl` or `wget`), so
      `find . -name x` and `bash build.sh` proceed; `git clean`, `git add` and
-     `git rebase` count with their blocked option in any spelling the full
-     check reads (`-df`, `--force`, `-uA`, `-qi`). A denial without a finished
+     `git rebase` count with their blocked option alone or in a cluster (`-df`, `--force`, `-uA`, `-qi`). A denial without a finished
      check says which guard the command names and gives that guard's own
      guidance, on the Pi, Prime and OpenCode bridges too.
      `/ar:no` rules, `/ar:ok` grants, the file policy, and task and plan gating
