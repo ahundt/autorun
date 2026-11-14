@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import re
 import shlex
 from collections.abc import Mapping
@@ -100,6 +101,38 @@ _SUBSTITUTED_DOWNLOAD: Final[re.Pattern[str]] = re.compile(
 
 # find actions whose following words, up to `;` or `{} +`, are a command.
 _FIND_EXEC_ACTIONS: Final[frozenset[str]] = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_FIND_WRITING_ACTIONS: Final = frozenset({"-fprint", "-fprint0", "-fprintf", "-fls"})
+_FIND_OPERAND_PREDICATES: Final = frozenset({
+    "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename",
+    "-lname", "-ilname", "-regex", "-iregex", "-type", "-xtype", "-fstype",
+    "-user", "-group", "-uid", "-gid", "-perm", "-size", "-links", "-inum",
+    "-amin", "-atime", "-cmin", "-ctime", "-mmin", "-mtime", "-Bmin", "-Btime",
+    "-newer", "-anewer", "-cnewer", "-Bnewer", "-samefile", "-since", "-used", "-context",
+    "-maxdepth", "-mindepth", "-regextype", "-files0-from", "-f",
+    "-printf", "-xattrname", "-D", "-O",
+}) | _FIND_WRITING_ACTIONS
+
+
+def find_expression(tokens):
+    """Yield (primary, operands), skipping child argv and predicate operands once.
+
+    Linear in argv length, with only each primary's operands retained at a time.
+    """
+    i = 1
+    while i < len(tokens):
+        primary = tokens[i]
+        start = i = i + 1
+        if primary in _FIND_EXEC_ACTIONS:
+            while i < len(tokens) and tokens[i] not in {";", "+"}:
+                i += 1
+            yield primary, tokens[start:i]
+            i += 1
+        else:
+            if primary == "-fprintf":
+                i += 2
+            elif primary in _FIND_OPERAND_PREDICATES or re.fullmatch(r"-newer[acmBt][acmBt]", primary):
+                i += 1
+            yield primary, tokens[start:i]
 
 # What Windows will run when the name is typed without one. `.ps1` is absent:
 # PowerShell will not run it as a bare command name.
@@ -110,7 +143,7 @@ _WINDOWS_EXECUTABLE_SUFFIXES: Final[frozenset[str]] = frozenset({
 _SHELL_OPERATORS: Final[re.Pattern[str]] = re.compile(r"\s*(?:&&|\|\||[|;&\n])\s*")
 # Consume quoted/escaped text before recognizing an unquoted separator.
 _QUOTED_SHELL_OPERATORS: Final[re.Pattern[str]] = re.compile(
-    r"""'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[<>]&|&>>?|(?P<separator>&&|\|\||[|;&\n])"""
+    r"""'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[<>]&|>\||&>>?|(?P<separator>&&|\|\||[|;&\n])"""
 )
 # Keep quote provenance until shell syntax is removed; quoted words are data.
 _FALLBACK_WORD = r"""(?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[^\s'"\\()])+"""
@@ -125,16 +158,18 @@ _FALLBACK_PREFIX = re.compile(
 _CMD_CACHE_SIZE: Final[int] = 512   # v8: Increased for hot path
 _PATTERN_CACHE_SIZE: Final[int] = 64
 _MAX_RECURSION_DEPTH: Final[int] = 3
+_REDIRECT_WORD = r"""(?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[^\s'"\\()<>&])+"""
 _LEADING_REDIRECT = re.compile(
-    rf"\s*(?:\d+)?(?:<<<|<<-?|>>|<>|>&|<&|>\||&>>?|[<>])\s*{_FALLBACK_WORD}"
+    rf"\s*(?:\d+|\{{[A-Za-z_][A-Za-z0-9_]*\}})?"
+    rf"(?:<<<|<<-?|>>|<>|>&|<&|>\||&>>?|[<>])\s*{_REDIRECT_WORD}"
 )
-_FALLBACK_ARGV = re.compile(rf"(?P<redirect>{_LEADING_REDIRECT.pattern})|{_FALLBACK_WORD}")
+_FALLBACK_ARGV = re.compile(rf"(?P<redirect>{_LEADING_REDIRECT.pattern})|{_REDIRECT_WORD}")
 _NAMED_DESCRIPTOR = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
 _SHELL_QUOTES = re.compile(
     r"""\$'(?:\\[\s\S]|[^'\\])*'|\$?"(?:\\[\s\S]|[^"\\])*"|'[^']*'|\\[\s\S]"""
     r"|(?<!\S)\{[A-Za-z0-9_./+-]+(?:,[A-Za-z0-9_./+-]+)+\}(?!\S)"
 )
-_ANSI_ESCAPE = re.compile(r"\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|[\s\S])")
+_ANSI_ESCAPE = re.compile(r"\\(c[\s\S]|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|[\s\S])")
 
 
 class _UninspectableScript(ValueError):
@@ -467,6 +502,18 @@ _BWRAP_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
     stop_flags=_HELP_VERSION,
 )
 
+_PARALLEL_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "-j", "--jobs", "-S", "--sshlogin", "--slf", "--sshloginfile", "-a", "--arg-file",
+        "-I", "-i", "--rpl", "-N", "-n", "--max-args", "-L", "-l", "--max-lines",
+        "-s", "--max-chars", "--colsep", "-C", "-d", "--delimiter", "-E", "--eof",
+        "--results", "--res", "--joblog", "--tmpdir", "--workdir", "--wd", "--timeout",
+        "--delay", "--retries", "--memfree", "--load", "--nice", "--tagstring", "--header", "--shuf-less",
+    }),
+    stop_flags=_HELP_VERSION | {"--dry-run", "--dryrun"},
+    args_are_script=True,
+)
+
 _TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
     # RTK wraps command output for token savings while preserving child command
     # semantics from autorun's safety perspective.
@@ -479,6 +526,13 @@ _TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
     "timeout": _TIMEOUT_WRAPPER_SPEC,
     "nice": _NICE_WRAPPER_SPEC,
     "ionice": _IONICE_WRAPPER_SPEC,
+    "chrt": CommandWrapperSpec(
+        flags_with_arg=frozenset({"-T", "--sched-runtime", "-P", "--sched-period", "-D", "--sched-deadline"}),
+        leading_positional_count=1, stop_flags=frozenset({"-p", "--pid", "-m", "--max"}) | _HELP_VERSION,
+    ),
+    "taskset": CommandWrapperSpec(
+        leading_positional_count=1, stop_flags=frozenset({"-p", "--pid"}) | _HELP_VERSION,
+    ),
     "chroot": _CHROOT_WRAPPER_SPEC,
     # Privilege, process and sandbox wrappers. Each still runs its child.
     "doas": CommandWrapperSpec(flags_with_arg=frozenset({"-a", "-C", "-u"})),
@@ -540,9 +594,12 @@ _TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
     "xargs": _XARGS_WRAPPER_SPEC,
     # These join their operands and hand them to a shell.
     "eval": CommandWrapperSpec(args_are_script=True),
-    "parallel": CommandWrapperSpec(args_are_script=True),
-    "script": CommandWrapperSpec(script_flags=frozenset({"-c", "--command"})),
+    "parallel": _PARALLEL_WRAPPER_SPEC,
+    "script": CommandWrapperSpec(
+        leading_positional_count=1, script_flags=frozenset({"-c", "--command"}),
+    ),
     "flock": CommandWrapperSpec(
+        flags_with_arg=frozenset({"-w", "--wait", "--timeout", "-E", "--conflict-exit-code", "--start", "--length"}),
         leading_positional_count=1, script_flags=frozenset({"-c", "--command"}),
     ),
     "watch": CommandWrapperSpec(
@@ -658,6 +715,63 @@ def _is_env_assignment(token: str) -> bool:
     return bool(sep) and bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
 
 
+def _env_split_string(value: str) -> list[str]:
+    """GNU env -S quoting and escapes, without evaluating shell syntax."""
+    words, word = [], []
+    quote, started, i = "", False, 0
+    escapes = {"f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+               "\\": "\\", '"': '"', "'": "'", "$": "$", "#": "#"}
+    while i < len(value):
+        char = value[i]
+        if char == "\\" and i + 1 < len(value):
+            char = value[i + 1]
+            i += 2
+            if quote == "'" and char not in ("'", "\\"):
+                word.extend(("\\", char))
+            elif char == "c":
+                quote = ""
+                break
+            elif char == "_":
+                if quote:
+                    word.append(" ")
+                else:
+                    if started:
+                        words.append("".join(word))
+                    word, started = [], False
+                    continue
+            elif char in escapes:
+                word.append(escapes[char])
+            else:
+                raise _UninspectableScript("invalid env -S escape")
+            started = True
+            continue
+        if char == "$" and quote != "'" and value.startswith("${", i):
+            end = value.find("}", i + 2)
+            if end != -1:
+                name = value[i + 2:end]
+                word.append(os.environ.get(name, "${" + name + "}"))
+                started, i = True, end + 1
+                continue
+        if char in "\"'" and (not quote or char == quote):
+            quote = "" if quote else char
+            started = True
+        elif not quote and char.isspace():
+            if started:
+                words.append("".join(word))
+            word, started = [], False
+        elif char == "#" and not quote and not started:
+            break
+        else:
+            word.append(char)
+            started = True
+        i += 1
+    if quote:
+        raise _UninspectableScript("unclosed env -S quote")
+    if started:
+        words.append("".join(word))
+    return words
+
+
 def _strip_wrapper_once(tokens: list[str], spec: CommandWrapperSpec) -> list[str]:
     """Strip one leading wrapper invocation according to its explicit grammar."""
     rest = tokens[1:]
@@ -682,7 +796,7 @@ def _strip_wrapper_once(tokens: list[str], spec: CommandWrapperSpec) -> list[str
             else:
                 value = token[2:] if token.startswith("-S") else token.partition("=")[2]
                 consumed = 1
-            rest[i:i + consumed] = _shlex_split_safe(value)
+            rest[i:i + consumed] = _env_split_string(value)
             continue
 
         if token == "--":
@@ -715,7 +829,19 @@ def _strip_wrapper_once(tokens: list[str], spec: CommandWrapperSpec) -> list[str
             i += 1
             continue
 
-        return rest[i:]
+        child = rest[i:]
+        if spec is _PARALLEL_WRAPPER_SPEC:
+            # ::: supplies argv; :::: names files whose contents we cannot inspect.
+            template, arguments, mode = [], [], "template"
+            for word in child:
+                if word in {":::", ":::+", "::::", "::::+"}:
+                    mode = "arguments" if word in {":::", ":::+"} else "files"
+                elif mode == "template":
+                    template.append(word)
+                elif mode == "arguments":
+                    arguments.append(word)
+            return template + arguments
+        return child
 
     return []
 
@@ -765,43 +891,51 @@ def shell_command_from_tool_input(tool_input: object) -> str:
     return ""
 
 
-def _find_shell_exec_arg(tokens: list[str]) -> str | None:
-    """Return the script a shell runs from `-c`, `-lc`, `-c --`, `--command`.
-
-    `tokens` must already be wrapper-stripped: `ionice -c 3 bash -c x` gave
-    ionice's `-c` to bash when the raw argv was searched.
-    """
+def _shell_script_word(tokens: list[str]) -> tuple[str, str] | None:
+    """The role and word supplying script text, after wrapper normalization."""
+    if tokens and tokens[0] in (".", "source"):
+        return ("file", tokens[1]) if len(tokens) > 1 else None
     if not tokens or _get_basename(tokens[0]) not in SHELL_EXEC_COMMANDS:
         return None
-    for i, token in enumerate(tokens[1:], start=1):
-        if token.startswith("--command="):
-            return token.partition("=")[2]
-        if token == "--command" or _SHELL_C_OPTION.fullmatch(token):
-            rest = tokens[i + 1:]
-            if rest[:1] == ["--"]:
-                rest = rest[1:]
-            return rest[0] if rest else None
-    return None
-
-
-def _reads_stdin_script(tokens: list[str]) -> bool:
-    """Whether wrapper-stripped `tokens` reads script text, rather than data, on stdin."""
-    if _sources_stdin(tokens):
-        return True
-    if not tokens or _get_basename(tokens[0]) not in SHELL_EXEC_COMMANDS or _find_shell_exec_arg(tokens) is not None:
-        return False
+    is_su = _get_basename(tokens[0]) == "su"
     args = iter(tokens[1:])
     for token in args:
+        if token.startswith("--command="):
+            return "command", token.partition("=")[2]
+        if token == "--command" or _SHELL_C_OPTION.fullmatch(token):
+            word = next(args, None)
+            if word == "--":
+                word = next(args, None)
+            return ("command", word) if word is not None else None
         if token == "--":
-            return next(args, "/dev/stdin") in ("-", "/dev/stdin")
+            if is_su:
+                continue
+            return "file", next(args, "/dev/stdin")
+        if is_su:
+            # su's positional word is a user, and -s selects a shell, not stdin.
+            if token in ("-s", "--shell", "-g", "--group", "-G", "--supp-group", "-w", "--whitelist-environment"):
+                next(args, None)
+            continue
         if token in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
             next(args, None)
         elif token.startswith(("-", "+")) and token != "-":
             if not token.startswith("--") and "s" in token[1:]:
-                return True
+                return "stdin", ""
         else:
-            return token in ("-", "/dev/stdin")
-    return True
+            return "file", token
+    return "stdin", ""
+
+
+def _find_shell_exec_arg(tokens: list[str]) -> str | None:
+    """Return the script supplied to a shell's -c option, if any."""
+    word = _shell_script_word(tokens)
+    return word[1] if word and word[0] == "command" else None
+
+
+def _reads_stdin_script(tokens: list[str]) -> bool:
+    """Whether wrapper-stripped `tokens` reads script text, rather than data, on stdin."""
+    word = _shell_script_word(tokens)
+    return bool(word and (word[0] == "stdin" or (word[0] == "file" and word[1] in ("-", "/dev/stdin"))))
 
 
 def _sources_stdin(tokens: list[str]) -> bool:
@@ -841,22 +975,24 @@ def _child_scripts(tokens: list[str]) -> list[str]:
     script = _find_shell_exec_arg(tokens)
     if script is not None:
         return [script]
+    if tokens and tokens[0] in (".", "source") and len(tokens) > 1 and _SUBSTITUTED_DOWNLOAD.search(tokens[1]):
+        # Reuse the shell download guard for process-substituted source text.
+        return ["sh -c " + shlex.quote(tokens[1])]
+    if tokens and _get_basename(tokens[0]) == "git":
+        sub = git_subcommand_index(tokens)
+        if sub < len(tokens):
+            alias = None
+            for i in range(1, sub - 1):
+                if tokens[i] == "-c":
+                    key, sep, value = tokens[i + 1].partition("=")
+                    if sep and key == "alias." + tokens[sub]:
+                        alias = value
+            if alias and alias.startswith("!"):
+                return [alias[1:]]
     if not tokens or _get_basename(tokens[0]) != "find":
         return []
-    children: list[list[str]] = []
-    child: list[str] | None = None
-    for token in tokens[1:]:
-        if child is None:
-            if token in _FIND_EXEC_ACTIONS:
-                child = []
-        elif token == ";" or (token == "+" and child[-1:] == ["{}"]):
-            children.append(child)
-            child = None
-        else:
-            child.append(token)
-    if child:
-        children.append(child)
-    return [shlex.join(c) for c in children if c]
+    return [shlex.join(operands) for primary, operands in find_expression(tokens)
+            if primary in _FIND_EXEC_ACTIONS and operands]
 
 
 def _shell_quote_fragment(match: re.Match) -> str:
@@ -878,8 +1014,8 @@ def _shell_quote_fragment(match: re.Match) -> str:
                 return chr(int(value, 8) % 256)
             escapes = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f",
                        "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
-            if value == "c":
-                raise _UninspectableScript("unsupported ANSI-C control escape")
+            if value.startswith("c") and len(value) == 2:
+                return chr(127 if value[1] == "?" else ord(value[1].upper()) & 31)
             return escapes.get(value, "\\" + value)
         return shlex.quote(_ANSI_ESCAPE.sub(unescape, text[2:-1]).split("\0", 1)[0])
     if text.startswith('$"'):
@@ -1065,7 +1201,11 @@ def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
         if _reads_stdin_script(stripped):
             scripts += [_herestring(_shlex_split_safe(segment)), _printed_text(previous) if piped else None]
         if stripped and _get_basename(stripped[0]) in SHELL_EXEC_COMMANDS and (
-            (downloading and _reads_stdin_script(stripped)) or _SUBSTITUTED_DOWNLOAD.search(segment)
+            (downloading and _reads_stdin_script(stripped))
+            or _SUBSTITUTED_DOWNLOAD.search(_find_shell_exec_arg(stripped) or "")
+            or (bool(word := _shell_script_word(stripped)) and word[0] == "file"
+                and word[1].startswith("<(") and _SUBSTITUTED_DOWNLOAD.search(word[1]))
+            or (_reads_stdin_script(stripped) and _SUBSTITUTED_DOWNLOAD.search(_herestring(_shlex_split_safe(segment)) or ""))
         ):
             fetched.add(_get_basename(stripped[0]))
             scripts = []  # Downloaded script text is unavailable to inspection.
@@ -1221,13 +1361,21 @@ def _bashlex():
             if _reads_stdin_script(stripped):
                 script = _stdin_text(parts, self.original_source)
                 self._scan(script)
-            # `bash <(curl ...)`, `bash -c "$(curl ...)"`, `sh <<< "$(curl ...)"`.
-            # ponytail: any download in the shell's words counts, so
-            # `bash local.sh "$(curl ...)"` is read as one too; fails closed.
+            role = _shell_script_word(stripped)
+            # Inspect only the script word or its stdin source; other argv is data.
             if (
                 stripped
                 and _get_basename(stripped[0]) in SHELL_EXEC_COMMANDS
-                and any(_downloads(p, self.source) for p in parts)
+                and role
+                and (
+                    ((role[0] == "command" or (role[0] == "file" and role[1].startswith("<(")))
+                     and (_SUBSTITUTED_DOWNLOAD.search(role[1]) or any(
+                         _downloads(p, self.source)
+                         and role[1] in _shlex_split_safe(self.original_source[p.pos[0]:p.pos[1]])
+                         for p in word_parts
+                     )))
+                    or (_reads_stdin_script(stripped) and _SUBSTITUTED_DOWNLOAD.search(_stdin_text(parts, self.original_source) or ""))
+                )
             ):
                 self.fetched.add(_get_basename(stripped[0]))
             else:
@@ -1307,17 +1455,27 @@ def _bashlex():
 
     def _stdin_text(parts, original_source: str) -> str | None:
         """The here-string or heredoc body a command reads as stdin, or None."""
-        for p in reversed(parts):
-            if p.kind != "redirect" or p.input not in (None, 0):
+        descriptors: dict[int, str | None] = {}
+        for p in parts:
+            if p.kind != "redirect":
+                continue
+            fd = p.input if p.input is not None else (0 if p.type.startswith("<") else 1)
+            if p.type in ("<&", ">&"):
+                target = p.output
+                if isinstance(target, int):
+                    descriptors[fd] = descriptors.get(target)
+                else:
+                    descriptors[fd] = None
                 continue
             if p.type == "<<<":
-                return _shlex_split_safe(original_source[p.output.pos[0]:p.output.pos[1]])[0]
+                descriptors[fd] = _shlex_split_safe(original_source[p.output.pos[0]:p.output.pos[1]])[0]
+                continue
             heredoc = getattr(p, "heredoc", None)
             if heredoc is not None:
-                return _heredoc_text(heredoc, original_source)
-            if p.type in ("<", "<&", "<>"):
-                return None
-        return None
+                descriptors[fd] = _heredoc_text(heredoc, original_source)
+            else:
+                descriptors[fd] = None
+        return descriptors.get(0)
 
     def _heredoc_text(heredoc, source: str) -> str:
         # bashlex keeps the closing delimiter as the body's last line.

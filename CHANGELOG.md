@@ -837,6 +837,14 @@ enforce those policies.
      A command whose name comes from a variable or substitution
      (`"$PYTHON" x.py`, `x=rm; $x -rf dir`) is still not checked by name:
      autorun cannot know the value.
+138. Further forms now blocked: a shell whose heredoc is followed by a
+     descriptor copy (`sh <<'EOF' <&0`); `env -S` with env's own `\_`
+     separator; a redirection glued to the name in a command bash cannot
+     parse statically (`env rm>/dev/null -rf dir`); a guarded command after
+     `parallel -j 2`, `chrt -r 5`, `taskset -c 0`, `flock -w 1 FILE` or
+     `script -a FILE`, where the option's value was taken for the command;
+     and `git -c alias.x='!cmd' x`. `parallel --dry-run` only prints and is
+     allowed.
 
 ### For contributors
 

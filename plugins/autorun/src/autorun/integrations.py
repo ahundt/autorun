@@ -44,7 +44,9 @@ from typing import Final
 from .command_detection import (
     COMMAND_PREFIXES,
     _get_basename,
+    _FIND_WRITING_ACTIONS,
     command_matches_pattern,
+    find_expression,
     git_subcommand_index,
     nested_scripts,
     shell_command_from_tool_input,
@@ -1278,21 +1280,6 @@ def _sed_modifies_files(ctx: any) -> bool:
         return True
 
 
-#: find actions that truncate the file named right after them.
-_FIND_WRITING_ACTIONS: Final = frozenset({"-fprint", "-fprint0", "-fprintf", "-fls"})
-#: find actions whose arguments, up to `;` or `+`, belong to the command they run.
-_FIND_EXEC_ACTIONS: Final = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
-_FIND_OPERAND_PREDICATES: Final = frozenset({
-    "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename",
-    "-lname", "-ilname", "-regex", "-iregex", "-type", "-xtype", "-fstype",
-    "-user", "-group", "-uid", "-gid", "-perm", "-size", "-links", "-inum",
-    "-amin", "-atime", "-cmin", "-ctime", "-mmin", "-mtime", "-Bmin", "-Btime",
-    "-newer", "-anewer", "-cnewer", "-Bnewer", "-samefile", "-since",
-    "-maxdepth", "-mindepth", "-regextype", "-files0-from", "-f",
-    "-printf", "-xattrname", "-D",
-})
-
-
 def _find_tokens_destroy(tokens: tuple[str, ...] | list[str]) -> bool:
     """Return whether one find invocation's argv deletes or overwrites a file.
 
@@ -1300,20 +1287,8 @@ def _find_tokens_destroy(tokens: tuple[str, ...] | list[str]) -> bool:
     `-fls` truncate the file they name. Words handed to `-exec ... ;` are
     that command's arguments, judged by its own guard (`-exec rm` by `rm`).
     """
-    in_exec = False
-    skip_operand = False
-    for i, token in enumerate(tokens[1:], start=1):
-        if in_exec:
-            in_exec = token not in {";", "+"}
-        elif skip_operand:
-            skip_operand = False
-        elif token in _FIND_EXEC_ACTIONS:
-            in_exec = True
-        elif token in _FIND_OPERAND_PREDICATES or re.fullmatch(r"-newer[acmBt][acmBt]", token):
-            skip_operand = True
-        elif token == "-delete" or (token in _FIND_WRITING_ACTIONS and i + 1 < len(tokens)):
-            return True
-    return False
+    return any(primary == "-delete" or (primary in _FIND_WRITING_ACTIONS and operands)
+               for primary, operands in find_expression(tokens))
 
 
 def _find_deletes_or_overwrites(ctx: any) -> bool:
