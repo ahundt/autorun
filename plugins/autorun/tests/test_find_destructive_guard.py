@@ -18,6 +18,13 @@ from autorun.platforms import PLATFORMS, hook_platforms
 HOOK_PLATFORMS = [p.name for p in hook_platforms()]
 
 DESTRUCTIVE_FIND = [
+    "find . -name -exec -delete",
+    "find . -name 'a|b' -delete",
+    "find . -name 'a;b' -delete",
+    "find . -name 'a b' -delete",
+    "if find . -delete; then echo done; fi",
+    "(find . -delete)",
+    'echo "$(find . -delete)"',
     "find . -delete",
     "find . -name x -delete",
     "find . -type f -name '*.tmp' -delete",
@@ -34,6 +41,9 @@ DESTRUCTIVE_FIND = [
 ]
 
 ALLOWED_FIND = [
+    "find . -name -delete",
+    "find . -path -delete",
+    "find . -name 'x -delete' -print",
     "find . -name x",
     "find . -type f -print",
     "find . -name x | xargs wc -l",
@@ -87,6 +97,18 @@ def test_find_that_only_lists_is_allowed(cli_type, command):
 @pytest.mark.parametrize("command", RM_GUARDED)
 def test_find_exec_rm_and_xargs_rm_stay_denied(cli_type, command):
     assert _decision(_check(cli_type, command)) == "deny"
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("find . -name -exec -delete", "deny"),
+    ("find . -name 'a|b' -delete", "deny"),
+    ("find . -name -delete", "allow"),
+])
+def test_find_argument_boundaries_without_bashlex(monkeypatch, command, expected):
+    from autorun import command_detection
+
+    monkeypatch.setattr(command_detection, "BASHLEX_AVAILABLE", False)
+    assert _decision(_check("claude", command)) == expected
 
 
 @pytest.mark.parametrize("cli_type", HOOK_PLATFORMS)

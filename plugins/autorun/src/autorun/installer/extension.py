@@ -472,7 +472,7 @@ def translated_hooks(
     if isinstance(events, dict):
         for event, model in getattr(platform, "cloned_hook_events", {}).items():
             if event not in events and model in events:
-                events[event] = json.loads(json.dumps(events[model]))
+                events[event] = platform.hook_protocol._with_installed_event(events[model], event)
     installed_events = getattr(platform, "installed_hook_events", frozenset())
     container_key = getattr(
         getattr(platform, "hook_protocol"),

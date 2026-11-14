@@ -809,8 +809,8 @@ class TestHookEntryExecutionPriority:
 
     def test_event_sets_are_pinned_to_the_registry(self):
         """Two more stdlib hand copies: which events fail closed, and which
-        `--event` values an installed command may carry (only Antigravity's
-        manifest translation appends `--event`, one per native event)."""
+        `--event` values an installed command may carry, including native and
+        canonical names from the event translation maps."""
         from autorun.client import _TOOL_GATE_EVENTS
         from autorun.platforms import PLATFORMS
 
@@ -819,7 +819,14 @@ class TestHookEntryExecutionPriority:
         assert hook_entry._VALID_EXPLICIT_EVENTS == {
             event
             for platform in PLATFORMS.values()
-            for event in platform.native_hook_events
+            for event in (
+                *platform.native_hook_events,
+                *platform.installed_hook_events,
+                *platform.harness_cli_to_autorun_events,
+                *platform.harness_cli_to_autorun_events.values(),
+                *platform.autorun_to_harness_cli_events,
+                *platform.autorun_to_harness_cli_events.values(),
+            )
         }
 
     @pytest.mark.parametrize("cli_type", sorted(p.name for p in _hook_platforms()))
@@ -2348,6 +2355,22 @@ def test_the_stdlib_fail_closed_permission_request_deny_is_the_registrys(cli_typ
         reason, "PermissionRequest"
     )
     assert "daemon unavailable" in reason
+
+
+@pytest.mark.parametrize("cli_type", ["claude", "codex", "qwen"])
+def test_installed_permission_event_survives_bootstrap_failure(monkeypatch, capsys, cli_type):
+    hook_entry = load_hook_entry_module()
+    monkeypatch.setattr(hook_entry.sys, "argv", ["hook_entry.py", "--cli", cli_type, "--event", "PermissionRequest"])
+    monkeypatch.setattr(hook_entry.sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "FutureUnknownEvent"})))
+    monkeypatch.setattr(hook_entry, "get_autorun_bin", lambda: None)
+    monkeypatch.setattr(hook_entry, "run_fallback", lambda: hook_entry.fail_after_fallback_error("runtime unavailable"))
+    with pytest.raises(SystemExit) as exc:
+        hook_entry.main()
+    captured = capsys.readouterr()
+    response = json.loads(captured.out)
+    assert response["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+    assert exc.value.code == 0
+    assert captured.err == ""
 
 
 class TestFallbacksUseThePayloadHarness:

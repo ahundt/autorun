@@ -200,7 +200,7 @@ export function createDaemonBridge({
         finish(blockedBecause("autorun daemon and hook entry both unreachable")),
       );
       child.on("close", (code) => {
-        // Silence is consent. hook_entry.py exits 0 and writes nothing when a
+        // Silence after exit 0 is consent. hook_entry.py writes nothing when a
         // tool is allowed; only a decision puts JSON on stdout. Handing "" to
         // JSON.parse throws, and treating that throw as a malfunction turned
         // every allow routed through this fallback into a deny reading
@@ -215,9 +215,11 @@ export function createDaemonBridge({
           // workaround), and stderr is not captured here, so a silent exit 2
           // is a decision we cannot read rather than an absent one.
           finish(
-            code === 2
-              ? blockedBecause("hook entry denied without a readable reason")
-              : null,
+            code === 0
+              ? null
+              : blockedBecause(code === 2
+                ? "hook entry denied without a readable reason"
+                : "hook entry failed without a readable response"),
           );
           return;
         }

@@ -109,6 +109,10 @@ _WINDOWS_EXECUTABLE_SUFFIXES: Final[frozenset[str]] = frozenset({
 _SHELL_OPERATORS: Final[re.Pattern[str]] = re.compile(r"\s*(?:&&|\|\||[|;&\n])\s*")
 # The same split, keeping each operator, so the fallback can see a pipe.
 _SHELL_OPERATORS_KEPT: Final[re.Pattern[str]] = re.compile(f"({_SHELL_OPERATORS.pattern})")
+# Consume quoted/escaped text before recognizing an unquoted separator.
+_QUOTED_SHELL_OPERATORS: Final[re.Pattern[str]] = re.compile(
+    r"""'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|(?P<separator>&&|\|\||[|;&\n])"""
+)
 _CMD_CACHE_SIZE: Final[int] = 512   # v8: Increased for hot path
 _PATTERN_CACHE_SIZE: Final[int] = 64
 _MAX_RECURSION_DEPTH: Final[int] = 3
@@ -899,7 +903,32 @@ def shell_segments(cmd: str):
     strings `extract_commands` returns.
     """
     for script in (cmd, *nested_scripts(cmd)):
-        for segment in _SHELL_OPERATORS.split(script):
+        loaded = _bashlex() if BASHLEX_AVAILABLE else None
+        if loaded is not None:
+            bashlex, _visitor = loaded
+            segments = []
+
+            class SegmentVisitor(bashlex.ast.nodevisitor):
+                def visitcommand(self, node, parts):
+                    segments.append(script[node.pos[0]:node.pos[1]])
+                    return True
+
+            try:
+                visitor = SegmentVisitor()
+                for part in bashlex.parse(script):
+                    visitor.visit(part)
+            except Exception:
+                pass  # Unsupported shell syntax still gets the shlex path.
+            else:
+                for segment in segments:
+                    if tokens := _shlex_split_safe(segment):
+                        yield segment, tokens
+                continue
+        start = 0
+        ends = [match.span() for match in _QUOTED_SHELL_OPERATORS.finditer(script) if match.group("separator")]
+        for end, next_start in [*ends, (len(script), len(script))]:
+            segment = script[start:end]
+            start = next_start
             if (segment := segment.strip()) and (tokens := _shlex_split_safe(segment)):
                 yield segment, tokens
 

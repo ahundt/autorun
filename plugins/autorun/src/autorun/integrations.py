@@ -50,6 +50,7 @@ from .command_detection import (
     git_subcommand_index,
     nested_scripts,
     shell_command_from_tool_input,
+    shell_segments,
     shell_words,
     shells_running_downloads,
     strip_transparent_command_wrappers,
@@ -1297,6 +1298,15 @@ def _sed_modifies_files(ctx: any) -> bool:
 _FIND_WRITING_ACTIONS: Final = frozenset({"-fprint", "-fprint0", "-fprintf", "-fls"})
 #: find actions whose arguments, up to `;` or `+`, belong to the command they run.
 _FIND_EXEC_ACTIONS: Final = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_FIND_OPERAND_PREDICATES: Final = frozenset({
+    "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename",
+    "-lname", "-ilname", "-regex", "-iregex", "-type", "-xtype", "-fstype",
+    "-user", "-group", "-uid", "-gid", "-perm", "-size", "-links", "-inum",
+    "-amin", "-atime", "-cmin", "-ctime", "-mmin", "-mtime", "-Bmin", "-Btime",
+    "-newer", "-anewer", "-cnewer", "-Bnewer", "-samefile", "-since",
+    "-maxdepth", "-mindepth", "-regextype", "-files0-from", "-f",
+    "-printf", "-xattrname", "-D",
+})
 
 
 def _find_tokens_destroy(tokens: tuple[str, ...] | list[str]) -> bool:
@@ -1307,11 +1317,16 @@ def _find_tokens_destroy(tokens: tuple[str, ...] | list[str]) -> bool:
     that command's arguments, judged by its own guard (`-exec rm` by `rm`).
     """
     in_exec = False
+    skip_operand = False
     for i, token in enumerate(tokens[1:], start=1):
         if in_exec:
             in_exec = token not in {";", "+"}
+        elif skip_operand:
+            skip_operand = False
         elif token in _FIND_EXEC_ACTIONS:
             in_exec = True
+        elif token in _FIND_OPERAND_PREDICATES or re.fullmatch(r"-newer[acmBt][acmBt]", token):
+            skip_operand = True
         elif token == "-delete" or (token in _FIND_WRITING_ACTIONS and i + 1 < len(tokens)):
             return True
     return False
@@ -1327,8 +1342,11 @@ def _find_deletes_or_overwrites(ctx: any) -> bool:
         cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
         if not cmd:
             return False
-        _names, command_strings = extract_commands(cmd)
-        return any(_find_tokens_destroy(command_tokens_for(one, "find")) for one in command_strings)
+        for _segment, tokens in shell_segments(cmd):
+            tokens = strip_transparent_command_wrappers(tokens)
+            if tokens and _get_basename(tokens[0]) == "find" and _find_tokens_destroy(tokens):
+                return True
+        return False
     except Exception as e:
         # The pattern matched a find; a parse failure must not let -delete through.
         logger.warning("_find_deletes_or_overwrites fail-safe block: %s", e)

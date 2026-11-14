@@ -232,6 +232,16 @@ export const AutorunPlugin = async ({ serverUrl, directory, client }) => {
       if (reason) throw new Error(reason)
     },
 
+    "tool.execute.after": async (input) => {
+      // Activity resets the Stop loop; todo.updated owns task-result capture.
+      await bridge.askDaemon({
+        hook_event_name: "PostToolUse",
+        session_id: input.sessionID,
+        tool_name: input.tool,
+        cwd: String(directory ?? ""),
+      })
+    },
+
     "experimental.session.compacting": async (input, output) => {
       const response = await bridge.askDaemon({
         hook_event_name: "PreCompact",

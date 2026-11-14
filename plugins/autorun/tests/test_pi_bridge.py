@@ -1993,6 +1993,32 @@ console.log(JSON.stringify({{ denial: denialReason(response) }}));
 # --- spec guard: silence from a spawned hook is consent, in every bridge -----
 
 
+@pytest.mark.parametrize("cli_type", ["pi", "prime", "opencode"])
+@pytest.mark.parametrize("failure", ["process.exit(1)", "process.kill(process.pid, 'SIGTERM')"])
+def test_silent_failed_fallback_denies(tmp_path, cli_type, failure):
+    driver = tmp_path / "failed-fallback.mjs"
+    driver.write_text(
+        f'''import {{ createDaemonBridge, denialReason }} from {json.dumps(BRIDGE_SOURCE.as_uri())};
+const bridge = createDaemonBridge({{
+  cliType: {json.dumps(cli_type)},
+  socketPath: {json.dumps(str(tmp_path / "absent.sock"))},
+  portFile: {json.dumps(str(tmp_path / "absent.port"))},
+  hookEntryCommand: [process.execPath, "-e", {json.dumps(failure)}],
+  timeoutMs: 5000,
+}});
+console.log(JSON.stringify({{ denial: denialReason(await bridge.askToolGate({{
+  hook_event_name: "PreToolUse", session_id: "failed-fallback", tool_name: "bash",
+  tool_input: {{ command: "rm x" }},
+}})) }}));
+''', encoding="utf-8")
+    result = subprocess.run(_javascript_command(driver), capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    denial = json.loads(result.stdout)["denial"]
+    assert denial is not None, "a crashed fallback must not allow tool use"
+    from autorun.client import UNRECOVERABLE_GUIDANCE
+    assert denial.endswith(UNRECOVERABLE_GUIDANCE)
+
+
 def _close_handler_bodies(source: str) -> list[str]:
     """Every `child.on("close", ...)` callback body, by paren balance.
 

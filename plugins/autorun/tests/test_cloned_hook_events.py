@@ -24,10 +24,17 @@ def _events(platform):
     return manifest[platform.hook_protocol.hook_manifest_container_key]
 
 
-def test_qwen_subscribes_to_subagent_stop_with_the_stop_handler():
+def test_qwen_subscribes_to_subagent_stop_with_the_stop_handler(monkeypatch):
+    import shlex
+    from test_hook_entry import load_hook_entry_module
+
     events = _events(PLATFORMS["qwen"])
     assert "SubagentStop" in events
-    assert events["SubagentStop"] == events["Stop"]
+    hook_entry = load_hook_entry_module()
+    command = events["SubagentStop"][0]["hooks"][0]["command"]
+    monkeypatch.setattr(hook_entry.sys, "argv", shlex.split(command))
+    payload = hook_entry.prepare_hook_payload({"hook_event_name": "SubagentStop"}, "qwen")
+    assert payload["hook_event_name"] == "SubagentStop"
 
 
 @pytest.mark.parametrize("platform", [p for p in hook_platforms() if p.cloned_hook_events], ids=lambda p: p.name)
@@ -39,7 +46,7 @@ def test_every_cloned_event_is_native_to_its_harness_and_reaches_its_manifest(pl
     for event, model in platform.cloned_hook_events.items():
         assert event in native, f"{platform.name} does not fire {event}"
         assert event in events, f"{event} missing from {platform.name}'s manifest"
-        assert events[event] == events[model]
+        assert events[event] == platform.hook_protocol._with_installed_event(events[model], event)
 
 
 def test_a_qwen_subagent_stop_block_is_answered_in_qwens_shape(monkeypatch):

@@ -726,6 +726,29 @@ class TestDaemonSocketFrames:
             "OpenCodeAttach", "PreCompact", "PostCompact"
         ]
 
+    def test_ordinary_tool_completion_resets_the_stop_loop(self, tmp_path, gate_env):
+        session = Session("tool-session", "opencode")
+        session.seed("7", "Finish work")
+        for _ in range(3):
+            assert blocks(session.stop("Work remains."), "opencode")
+        frames, thread, port = self._serve_tcp({"OpenCodeAttach": {}, "PostToolUse": {}})
+        port_file = tmp_path / "daemon.port"
+        port_file.write_text(str(port), encoding="utf-8")
+        (tmp_path / "daemon.token").write_text(self._TCP_TOKEN, encoding="utf-8")
+        result = _run_shim(tmp_path, tmp_path / "absent.sock", "tool-after", port_file=port_file)
+        thread.join(timeout=25)
+        assert result.stderr == ""
+        for frame in frames[1:]:
+            assert frame["session_id"] == session.session_id
+            assert frame["tool_name"] == "read"
+            assert "tool_input" not in frame and "tool_result" not in frame
+            session.tool(frame["tool_name"], frame.get("tool_input"), frame.get("tool_result", ""))
+        assert blocks(session.stop("Still unfinished."), "opencode")
+        assert [frame["hook_event_name"] for frame in frames] == ["OpenCodeAttach", "PostToolUse"]
+        for _ in range(2):
+            assert blocks(session.stop("No more tools."), "opencode")
+        assert not blocks(session.stop("No more tools."), "opencode")
+
     @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
     @unix_only
     def test_todo_updated_event_reaches_post_tool_use(self, tmp_path, short_socket_dir):
@@ -1019,6 +1042,12 @@ if (process.argv[2] === "compact") {
   await hooks["experimental.session.compacting"]({ sessionID: "compact-session" }, output)
   console.log(JSON.stringify(output.context))
   await hooks.event({ event: { type: "session.compacted", properties: { sessionID: "compact-session" } } })
+  process.exit(0)
+}
+
+if (process.argv[2] === "tool-after") {
+  const hooks = await AutorunPlugin({ directory: process.cwd(), client })
+  await hooks["tool.execute.after"]?.({ tool: "read", sessionID: "tool-session", callID: "c1", args: { filePath: "a.txt" } }, { title: "a.txt", output: "contents", metadata: {} })
   process.exit(0)
 }
 

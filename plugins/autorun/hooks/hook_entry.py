@@ -140,9 +140,12 @@ def _append_debug_log(message: str) -> None:
 _VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode", "pi", "prime")
 # Stdlib copies of registry data (this file must run when autorun cannot be
 # imported). test_hook_entry.py::test_event_sets_are_pinned_to_the_registry
-# holds them to client._TOOL_GATE_EVENTS and every registry-native event.
+# holds them to client._TOOL_GATE_EVENTS and the native/canonical registry events.
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _VALID_EXPLICIT_EVENTS = {
+    "AfterAgent", "AfterModel", "AfterTool", "BeforeAgent", "BeforeModel", "BeforeTool",
+    "PermissionRequest", "PostCompact", "PreCompact", "PreCompress", "SessionEnd",
+    "SubagentStop", "UserPromptSubmit",
     "PostInvocation", "PostToolUse", "PreInvocation", "PreToolUse", "SessionStart", "Stop",
     "agent_settled", "agent_start", "before_agent_start", "chat.message",
     "event:session.compacted", "event:session.idle", "event:todo.updated",
