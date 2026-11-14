@@ -335,6 +335,30 @@ def test_prompt_restore_keeps_concurrently_indexed_wait(gate_env, monkeypatch):
     assert not session.manager.session_metadata.get("awaiting_user_task_ids")
 
 
+def test_overlapping_stops_leave_the_recorded_question_answerable(gate_env, monkeypatch):
+    """A Stop that loses the race to record a wait must not re-label the index."""
+    session = Session("review-overlapping-stops", "claude")
+    session.seed("A", "First decision")
+    real_update = TaskLifecycle._update_task_rows
+    nested = []
+
+    def overlap(self, updaters, metadata_update=None):
+        if "A" in updaters and not nested:
+            nested.append(None)
+            session.stop(awaiting("A", "approve first decision"))
+            assert session.status("A") == "awaiting-user"
+        return real_update(self, updaters, metadata_update)
+
+    monkeypatch.setattr(TaskLifecycle, "_update_task_rows", overlap)
+    session.stop(awaiting("A", "approve first decision"))
+    assert nested, "the second Stop never overlapped the first"
+    wait = session.task("A")["metadata"]["awaiting_user"]
+    assert session.manager.session_metadata["awaiting_user_generations"] == {"A": wait["generation"]}
+    session.prompt("approved", prompt_author="user")
+    assert session.status("A") == "in_progress"
+    assert not session.manager.session_metadata.get("awaiting_user_task_ids")
+
+
 @pytest.mark.parametrize("decision", ["approve newer decision", "approve first decision"])
 def test_prompt_restore_keeps_newer_wait_on_same_task(gate_env, monkeypatch, decision):
     session = Session("review-newer-wait", "claude")

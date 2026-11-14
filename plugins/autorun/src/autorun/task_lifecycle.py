@@ -3242,6 +3242,7 @@ class TaskLifecycle:
         # One id per recording. The index carries it too, so a prompt can tell
         # which question it is answering from a read that takes no lock.
         generation = uuid.uuid4().hex
+        recorded: list[str] = []  # rows this call changed; another Stop may have won the rest
 
         def entering(decision: str) -> Callable[[Dict], bool]:
             def update(task: Dict) -> bool:
@@ -3253,17 +3254,18 @@ class TaskLifecycle:
                     task["metadata"]["awaiting_user"]["transcript_prompt_marker"] = prompt_marker
                 task["status"] = AWAITING_USER_STATUS
                 task.setdefault("tool_outputs", []).append(f"Waiting on the user: {decision}")
+                recorded.append(str(task["id"]))
                 return True
 
             return update
 
         def index(metadata: Dict) -> None:
             waiting = list(metadata.get(_AWAITING_USER_INDEX, []))
-            waiting.extend(task_id for task_id in decisions if task_id not in waiting)
+            waiting.extend(task_id for task_id in recorded if task_id not in waiting)
             metadata[_AWAITING_USER_INDEX] = waiting
             generations = metadata.get(_AWAITING_USER_GENERATIONS)
             generations = dict(generations) if isinstance(generations, dict) else {}
-            generations.update({str(task_id): generation for task_id in decisions})
+            generations.update({task_id: generation for task_id in recorded})
             metadata[_AWAITING_USER_GENERATIONS] = generations
             _reset_stop_block_sequence(metadata)
 
