@@ -2986,10 +2986,12 @@ class StateRetention:
                     if cursor.rowcount:
                         deleted.append(session_id)
                         conn.executemany(
-                            "DELETE FROM sessions WHERE session = ?",
+                            "DELETE FROM sessions WHERE session = ? AND EXISTS ("
+                            "SELECT 1 FROM state WHERE session = ? AND field = 'receipt' "
+                            "AND value_json = ?)",
                             (
-                                (receipt_session,)
-                                for receipt_session in receipt_sessions_by_parent.get(
+                                (receipt_session, receipt_session, raw)
+                                for receipt_session, raw in receipt_sessions_by_parent.get(
                                     session_id, ()
                                 )
                             ),
@@ -3050,7 +3052,7 @@ class StateRetention:
             receipt = _decode_state_value(receipt_session, "receipt", raw)
             parent = receipt.get("parent_global_key") if isinstance(receipt, dict) else None
             if parent in wanted:
-                grouped.setdefault(parent, []).append(receipt_session)
+                grouped.setdefault(parent, []).append((receipt_session, raw))
         return grouped
 
     def _classify_sessions(self):

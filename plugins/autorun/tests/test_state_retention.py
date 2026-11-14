@@ -107,6 +107,31 @@ def retention(store, archive_dir):
     )
 
 
+def test_gc_preserves_a_replacement_receipt(store, archive_dir, monkeypatch):
+    old_parent, active_parent = "expired-parent", "active-parent"
+    receipt_root = "__task_delegation_receipt__reused-child"
+    _seed(store, old_parent, seconds_ago=30 * DAY)
+    _seed(store, active_parent)
+    with store.session(receipt_root) as state:
+        state["receipt"] = {"parent_global_key": old_parent}
+    retention = StateRetention(store, RetentionPolicy(
+        delete=True, session_max_age_seconds=7 * DAY, archive_dir=archive_dir))
+    real = retention._delegation_receipt_sessions_by_parent
+
+    def replace_after_listing(parents):
+        listed = real(parents)
+        with store.session(receipt_root) as state:
+            state["receipt"] = {"parent_global_key": active_parent}
+        return listed
+
+    monkeypatch.setattr(retention, "_delegation_receipt_sessions_by_parent", replace_after_listing)
+    assert retention.sweep_sessions()["deleted"] == [old_parent]
+    with store.session(receipt_root) as state:
+        assert state["receipt"] == {"parent_global_key": active_parent}
+    with store.session(active_parent) as state:
+        assert state["marker"] == active_parent
+
+
 class TestNothingIsDeletedByDefault:
     def test_a_sweep_reports_instead_of_deleting(self, store, retention):
         _seed(store, "ancient-session", seconds_ago=30 * DAY)

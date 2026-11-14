@@ -15,7 +15,7 @@ from .config import (
 )
 from .core import EventContext, logger
 from .scoped_allow import ScopeSpec, ScopedGrant, fingerprint_call
-from .session_manager import SessionPersistenceError, SessionStateError
+from .session_manager import SessionStateError
 
 
 _STATE_KEY = "task_enforcement_pause"
@@ -258,8 +258,10 @@ def task_pause_allows_stop(
         return replace(pause, grant=claim.grant).to_dict()
 
     try:
+        if ctx.state_get_stored(_STATE_KEY) is None:
+            return False
         _update_pause_state(ctx, decide)
-    except SessionPersistenceError as exc:
+    except SessionStateError as exc:
         logger.warning(
             "Task-pause Stop claim failed; enforcing tasks normally: %s",
             exc,

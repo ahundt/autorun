@@ -2447,6 +2447,9 @@ class EventContext:
 
     def pop_deferred_stop_notice(self) -> str | None:
         """Atomically consume one queued notice, so concurrent hooks cannot repeat it."""
+        queued = self.state_get_stored(_DEFERRED_STOP_NOTICES, [])
+        if not isinstance(queued, list) or not queued:
+            return None
         consumed: list[str] = []
 
         def pop_first(queued):
@@ -4165,16 +4168,16 @@ class AutorunDaemon:
         self._register_atexit_cleanup()
         self._setup_signal_handlers()
 
+        # Only the singleton winner builds the parser, before any hook can
+        # spend its dispatch budget waiting for grammar construction.
+        from .command_detection import warm_parser
+
+        warm_parser()
+
         # Start server with large buffer to accept full payloads before truncation
         # Default 64KB too small - client sends full transcript, we truncate after reading
         self._server = await ipc.start_server(self.handle_client, limit=READ_BUFFER_LIMIT)
         self.running = True
-
-        # The bash grammar takes ~50 ms to build; build it now, off the event
-        # loop, rather than inside the first shell command's hook.
-        from .command_detection import warm_parser
-
-        asyncio.get_running_loop().run_in_executor(None, warm_parser)
 
         # Start watchdog as tracked task
         self._watchdog_task = asyncio.create_task(self.watchdog())

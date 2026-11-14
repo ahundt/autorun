@@ -7,8 +7,7 @@ Verifies:
 4. First-run case (no config dir) correctly falls through to spawn
 5. All existing tests remain unaffected (no timeout change to core.py)
 
-All tests use mocking — no real daemon, socket, or lock files touched.
-Safe to run alongside live daemons.
+Real daemon coverage uses a private test runtime and reaps every starter.
 """
 
 import multiprocessing
@@ -700,3 +699,86 @@ class TestColdStartReachability:
             except subprocess.TimeoutExpired:  # pragma: no cover - stubborn child
                 child.kill()
             shutil.rmtree(root, ignore_errors=True)
+
+
+def test_concurrent_starters_build_only_the_winners_parser():
+    """Exercise main(), singleton election, warmup and cleanup in real processes."""
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+    import tempfile
+    import time
+
+    import psutil
+
+    with tempfile.TemporaryDirectory(prefix="cold-", dir=os.environ["AUTORUN_TEST_RUNTIME_DIR"]) as directory:
+        home = Path(directory)
+        env = dict(os.environ, HOME=directory, USERPROFILE=directory,
+                   AUTORUN_HOME=directory, AUTORUN_TEST_STATE_DIR=str(home / "state"))
+        code = '''
+import os, time
+from pathlib import Path
+from autorun import command_detection
+home = Path(os.environ["AUTORUN_HOME"])
+real = command_detection._bashlex
+def counted():
+    if real.cache_info().currsize == 0:
+        with (home / "builds").open("a") as output:
+            output.write(str(os.getpid()) + "\\n")
+        time.sleep(0.3)
+    return real()
+command_detection._bashlex = counted
+(home / ("ready-" + str(os.getpid()))).touch()
+while not (home / "go").exists():
+    time.sleep(0.01)
+from autorun.daemon import main
+main()
+'''
+        processes = []
+        with (home / "output").open("w") as output:
+            try:
+                for _ in range(8):
+                    processes.append(subprocess.Popen([sys.executable, "-c", code],
+                                     env=env, cwd=home, stdout=output, stderr=output))
+                deadline = time.monotonic() + 30
+                while len(list(home.glob("ready-*"))) != 8:
+                    assert time.monotonic() < deadline, (home / "output").read_text()
+                    time.sleep(0.02)
+                (home / "go").touch()
+                while (sum(p.poll() is None for p in processes) != 1
+                       or not ((home / "daemon.sock").exists() or (home / "daemon.port").exists())):
+                    assert time.monotonic() < deadline, (home / "output").read_text()
+                    time.sleep(0.02)
+                assert len((home / "builds").read_text().splitlines()) == 1
+                survivor = next(p for p in processes if p.poll() is None)
+                # Windows venv launchers can retain a separate interpreter child.
+                owned = {survivor.pid, *(p.pid for p in psutil.Process(survivor.pid).children(recursive=True))}
+                assert int((home / "daemon.lock").read_text().split()[0]) in owned
+            finally:
+                children = []
+                for process in processes:
+                    try:
+                        children.extend(psutil.Process(process.pid).children(recursive=True))
+                    except psutil.NoSuchProcess:
+                        pass
+                for child in children:
+                    try:
+                        child.terminate()
+                    except psutil.NoSuchProcess:
+                        pass
+                for process in processes:
+                    if process.poll() is None:
+                        process.terminate()
+                for process in processes:
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=10)
+                _, alive = psutil.wait_procs(children, timeout=10)
+                for child in alive:
+                    child.kill()
+                _, alive = psutil.wait_procs(alive, timeout=10)
+                assert not alive
+                assert all(p.poll() is not None for p in processes)

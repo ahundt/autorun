@@ -68,6 +68,57 @@ def _ctx(store: ThreadSafeDB, session_id: str) -> EventContext:
     )
 
 
+def test_empty_antigravity_notice_check_takes_no_write(backend, transactions):
+    from autorun import plugins  # noqa: F401
+
+    store = ThreadSafeDB()
+    ctx = EventContext(session_id="agy-empty", event="BeforeModel",
+                       cli_type="antigravity", store=store)
+    assert core.app.dispatch(ctx) is None
+    assert transactions == []
+    # A fresh read must also notice a queue written outside the daemon cache.
+    other = EventContext(session_id="agy-empty", event="Stop", cli_type="antigravity")
+    other.queue_deferred_stop_notice("pending notice")
+    transactions.clear()
+    assert "pending notice" in str(core.app.dispatch(ctx))
+    assert transactions == ["agy-empty"]
+    transactions.clear()
+    assert core.app.dispatch(ctx) is None
+    assert transactions == []
+
+
+def test_stop_without_a_pause_takes_no_write(backend, transactions):
+    from autorun.task_pause import task_pause_allows_stop
+
+    ctx = EventContext(session_id="unpaused-stop", event="Stop", cli_type="codex",
+                       store=ThreadSafeDB(), last_assistant_message="Work completed.")
+    assert not task_pause_allows_stop(ctx)
+    assert transactions == []
+
+
+def test_concurrent_notice_checks_consume_once(backend, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    store = ThreadSafeDB()
+    contexts = [EventContext(session_id="notice-race", event="BeforeModel",
+                             cli_type="antigravity", store=store) for _ in range(2)]
+    contexts[0].queue_deferred_stop_notice("once")
+    barrier = threading.Barrier(2)
+    real = EventContext.state_get_stored
+
+    def read_before_either_pop(self, *args, **kwargs):
+        result = real(self, *args, **kwargs)
+        barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(EventContext, "state_get_stored", read_before_either_pop)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda ctx: ctx.pop_deferred_stop_notice(), contexts))
+    assert results.count("once") == 1
+    assert results.count(None) == 1
+
+
 def test_get_returns_a_stored_field_after_update_touched_a_sibling(backend):
     """update() may mark a session loaded only once every field is cached.
 
@@ -297,9 +348,14 @@ def test_daemon_startup_builds_the_bash_parser_before_serving(monkeypatch):
     from autorun import command_detection, daemon
 
     command_detection._bashlex.cache_clear()
-    monkeypatch.setattr(daemon.asyncio, "run", lambda coroutine: coroutine.close())
+    async def before_serving(*args, **kwargs):
+        assert command_detection._bashlex.cache_info().currsize == 1
+        raise RuntimeError("warmup checked before serving")
+
+    monkeypatch.setattr(ipc, "start_server", before_serving)
     monkeypatch.setattr(daemon, "configure_file_logging", lambda name: None)
-    daemon.main()
+    with pytest.raises(SystemExit):
+        daemon.main()
     assert command_detection._bashlex.cache_info().currsize == 1
 
 
