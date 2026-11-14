@@ -329,7 +329,7 @@ def handle_execute_mode(data: Dict = None) -> int:
 
     data (read from stdin as JSON when None):
     {
-        "selections": "A,B" | "all" | "awaiting-input" | "A:cmd",
+        "selections": "%3,%7" | "A,B" | "all" | "awaiting-input" | "A:cmd",
         "command": "text to type",
         "sessions": [{"tmux_target": "...", "actions": [...], "awaiting": bool}, ...]
     }
@@ -350,7 +350,7 @@ def handle_execute_mode(data: Dict = None) -> int:
         print(json.dumps({'error': 'No sessions provided', 'success': False}))
         return 1
 
-    # The command replaces the default action of the letter selections; the
+    # The command replaces the selected panes' default action; the
     # parser validates the letters and turns a bare 'all'/'awaiting' into 'all:<command>'.
     results = execute_session_selections(selections, sessions, command=command or None,
                                          announce=announce_targets)
@@ -375,22 +375,6 @@ def list_sessions(as_json: bool = False) -> int:
     return 0
 
 
-def _letters_for_pane_ids(to: str, sessions: List[Dict]) -> str:
-    """The letters, in this discovery, of the pane ids `to` names ('%3,%7'),
-    or '' when any entry is not a pane id this discovery found.
-
-    Letters are not accepted here: `send` discovers the panes again, so a
-    window opened or closed since `list` would shift every letter after it
-    onto another pane. A pane id ('%N') names one pane for the life of the
-    tmux server and is never reused, so the pane named is the pane listed.
-    """
-    letters = {s.get('pane_id'): chr(65 + i) for i, s in enumerate(sessions) if s.get('pane_id')}
-    wanted = [part.strip() for part in to.split(',') if part.strip()]
-    if not wanted or any(part not in letters for part in wanted):
-        return ''
-    return ','.join(letters[part] for part in wanted)
-
-
 def send_text(to: str, text: str) -> int:
     """`autorun tmux send --to <targets> -- <text>`: type text, then Enter, into the targets.
 
@@ -401,7 +385,7 @@ def send_text(to: str, text: str) -> int:
     """
     if not to:
         print(f'Nothing sent: name the panes with {SEND_TARGETS}. '
-              'Run `autorun tmux list` to see the letters.')
+              'Run `autorun tmux list` to see the pane ids.')
         return 1
     if not text.strip():
         print('Nothing sent: give the text to type after --, e.g. '
@@ -414,8 +398,9 @@ def send_text(to: str, text: str) -> int:
     sessions = analyze_sessions(sessions)
     selection = to.strip()
     if selection.lower() not in ('all', 'awaiting', 'awaiting-input'):
-        selection = _letters_for_pane_ids(to, sessions)
-        if not selection:
+        pane_ids = {s.get('pane_id') for s in sessions if s.get('pane_id')}
+        wanted = [part.strip() for part in to.split(',') if part.strip()]
+        if not wanted or any(part not in pane_ids for part in wanted):
             print(f"Nothing sent: '{to}' is not a pane id in the current listing. Name panes "
                   f"by pane id, the Pane column (--to %3,%7): letters shift when a window "
                   f"opens or closes, a pane id does not. Current listing:")

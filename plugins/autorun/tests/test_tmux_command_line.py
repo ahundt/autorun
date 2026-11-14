@@ -96,7 +96,7 @@ def test_send_reaches_the_one_sender_with_that_selection(discovered, capsys):
         main(['tmux', 'send', '--to', '%3', '--', 'x'])
 
     selection, sessions = sender.call_args.args[:2]
-    assert selection == 'A'
+    assert selection == '%3'
     assert sender.call_args.kwargs['command'] == 'x'
     assert [s['tmux_target'] for s in sessions] == ['work:1.0', 'work:2.1']
 
@@ -117,6 +117,19 @@ def test_send_types_into_the_named_pane_only_after_naming_it(discovered, tmux, c
     assert 'session work' in before and 'window 2' in before and 'pane 1' in before
     assert '~/src/two' in before and 'codex' in before
     assert 'work:1.0' not in before, 'named a pane it is not going to type into'
+
+
+@pytest.mark.parametrize('count', [27, 33, 60])
+def test_send_large_discovery_keeps_the_named_pane_identity(count, tmux):
+    sessions = [dict(SESSIONS[0], pane_id=f'%{i}', tmux_target=f'work:{i}.0')
+                for i in range(count)]
+    with patch.object(status, 'discover_claude_sessions', return_value=sessions), \
+            patch.object(status, 'get_tmux_utilities', return_value=tmux):
+        result = main(['tmux', 'send', '--to', f'%{count - 1}', '--', 'hello'])
+
+    assert [(c.args[0], c.args[1]) for c in tmux.send_literal.call_args_list] == [
+        ('hello', f'%{count - 1}')]
+    assert result == 0
 
 
 @pytest.mark.parametrize('argv', [

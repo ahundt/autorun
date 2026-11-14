@@ -2546,6 +2546,8 @@ class TaskLifecycle:
                     status = "pending"
                 metadata = {"source": task_source}
                 prior = previous.get(task_id) or {}
+                if not todo.get("id") and prior.get("subject") != subject:
+                    prior = {}
                 if prior.get("status") in AUTORUN_OWNED_TASK_STATUSES and status not in COMPLETED_TASK_STATUSES:
                     status = prior["status"]
                     metadata = {**prior.get("metadata", {}), "source": task_source}
@@ -2615,6 +2617,12 @@ class TaskLifecycle:
                 task_id = f"plan-{i}"
                 current_ids.add(task_id)
                 existing = tasks.get(task_id, {})
+                if (
+                    existing.get("subject") != subject
+                    or existing.get("session_id") != self.session_id
+                    or existing.get("metadata", {}).get("source") != "plan_checklist"
+                ):
+                    existing = {}
                 if existing.get("status") in AUTORUN_OWNED_TASK_STATUSES and status not in COMPLETED_TASK_STATUSES:
                     status = existing["status"]
                 metadata = dict(existing.get("metadata", {}))
@@ -3709,7 +3717,7 @@ class TaskLifecycle:
             delegated = list(dict.fromkeys(delegated))
             if delegated:
                 ctx.add_chain_notification(
-                    f"Marked delegated (non-blocking until it reports back): {', '.join(f'#{d}' for d in delegated)}",
+                    f"Delegation recorded: {', '.join(f'#{d}' for d in delegated)}. Returned work requires verification.",
                     channel="both",
                 )
             return delegated
@@ -3826,7 +3834,7 @@ class TaskLifecycle:
             ledger = list(metadata.get("agent_spawns", []))
             claimed_entry = None
             if session is None:
-                unclaimed = [entry for entry in ledger if not entry.get("claimed") and not entry.get("returned")]
+                unclaimed = [entry for entry in ledger if not entry.get("claimed")]
                 if unclaimed:
                     claimed_entry = unclaimed[-1]
                     claimed_entry["claimed"] = True
@@ -3864,7 +3872,7 @@ class TaskLifecycle:
                     continue
                 if not task_status_policy(task.get("status", "pending")).blocks_stop:
                     continue
-                task["status"] = "delegated"
+                task["status"] = "delegation-returned" if claimed_entry and claimed_entry.get("returned") else "delegated"
                 task["updated_at"] = now
                 task_metadata = task.setdefault("metadata", {})
                 task_metadata["delegation"] = dict(delegation)

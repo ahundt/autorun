@@ -48,8 +48,8 @@ enforce those policies.
    `stage1_completion`, `stage2_completion`, `stage3_completion`,
    `recheck_template`, `plan_accepted_marker`, `monitor_stop_delay_seconds`,
    `task_staleness_no_tasks_threshold`, `task_staleness_threshold`,
-   `shared_agents_plugins_subdir`, `delegation_ttl_seconds`,
-   `ghost_clear_reason`, and `ghost_clear_injection_template`. Also remove
+   `shared_agents_plugins_subdir`, `delegation_ttl_seconds`, and
+   `ghost_clear_injection_template`. Also remove
    `ghost_clear_min_consecutive_blocks` and `ghost_clear_hash_length` from
    `$AUTORUN_HOME/task-lifecycle.config.json`.
 4. Update skill references. Eleven general skills now belong to the
@@ -194,7 +194,7 @@ enforce those policies.
    `stage3_completion`, `recheck_template`, `plan_accepted_marker`,
    `monitor_stop_delay_seconds`, `task_staleness_no_tasks_threshold`,
    `task_staleness_threshold`, `shared_agents_plugins_subdir`,
-   `delegation_ttl_seconds`, `ghost_clear_reason`, and
+   `delegation_ttl_seconds`, and
    `ghost_clear_injection_template`. `ghost_clear_min_consecutive_blocks` and
    `ghost_clear_hash_length` were removed from
    `$AUTORUN_HOME/task-lifecycle.config.json`.
@@ -448,15 +448,11 @@ enforce those policies.
     its session, overload messages distinguish a busy daemon from an
     unreachable one, and restart refuses to replace a recently started daemon
     that answers its health probe.
-67. Codex blocked plain file reads behind a wrapper (`rtk cat f`,
-    `env LC_ALL=C head f`, `LC_ALL=C tail -n 40 log`) and told the agent to
-    use a "shell file inspection tool" with a `file_path=` parameter Codex
-    does not have. Those reads now run, and Codex's messages for `cat`,
-    `head`, `tail`, `awk`, `sed` and `echo >` name tools it has: `apply_patch`,
-    `rg -n` and `sed -n`. Still blocked: a line that runs `sudo`, `doas`,
-    `su`, `run0`, `runuser` or `setpriv`, however quoted and even after a `#`;
-    a read that also writes a file, `<>` included; and `tail -f` anywhere in
-    the line.
+67. Codex blocked plain file reads behind wrappers and suggested a "shell
+    file inspection tool" with a `file_path=` parameter it does not have.
+    The read redirects and their messages were removed: `cat`, `head`,
+    `tail` (including `tail -f`), `grep`, `find`, and `echo >` no longer
+    have redirect guards. Destructive-command guards remain active.
 68. `awk` filtering a pipe, such as `ls -l | awk '{print $5}'`, was blocked.
     Simple filters on a pipe are now allowed, as `cat`, `grep` and `find`
     are: printing fields and strings, an `NR` or field condition, a column

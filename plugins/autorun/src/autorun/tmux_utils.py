@@ -2570,6 +2570,7 @@ def execute_session_selections(selection_str: str, sessions: list,
     """Execute commands on selected AI sessions; the selection behind `autorun tmux send --to`.
 
     Selection syntax:
+      '%3,%7'               Execute on the named pane ids without letter conversion
       'A,C' or 'AC'          Execute each session's default action (sessions[i]['actions'][0]);
                              only 'continue' and 'interrupt' (Escape) are sent, other
                              labels are refused per session
@@ -2633,13 +2634,18 @@ def execute_session_selections(selection_str: str, sessions: list,
 
     plan = []  # (letter, session, command or None for the default action)
     errors = []
+    panes = {s.get('pane_id'): (i, s) for i, s in enumerate(sessions) if s.get('pane_id')}
     for part in selection_str.split(','):
         part = part.strip()
         if not part:
             continue
         letters, has_cmd, cmd = part.partition(':')
-        letters = letters.replace(' ', '').upper()
         cmd = cmd.strip() if has_cmd else command
+        if letters in panes and (cmd is None or cmd.strip()):
+            i, session = panes[letters]
+            plan.append((chr(65 + i), session, cmd))
+            continue
+        letters = letters.replace(' ', '').upper()
         valid = (
             letters
             and all(c.isalpha() and 0 <= ord(c) - 65 < len(sessions) for c in letters)

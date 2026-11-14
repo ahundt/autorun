@@ -67,6 +67,8 @@ class _Ctx:
         self.cli_type = "claude"
         self.tool_name = "ExitPlanMode"
         self.tool_input = {}
+        self.harness_pid = None
+        self.harness_started_at_units = None
 
 
 @pytest.fixture

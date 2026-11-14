@@ -64,6 +64,18 @@ def test_the_published_notes_are_the_changelog_section_rendered():
     )
 
 
+def test_rc4_notes_keep_the_active_ghost_clear_reason_setting():
+    _, rendered, _ = release_notes.build()
+    assert "`ghost_clear_reason`" not in rendered
+
+
+def test_rc4_notes_do_not_promise_retired_read_guards():
+    _, rendered, _ = release_notes.build()
+    fixed67 = rendered.split("67. ", 1)[1].split("68. ", 1)[0]
+    assert "Still blocked" not in fixed67
+    assert "Codex's messages for `cat`" not in fixed67
+
+
 def test_a_well_formed_section_passes():
     assert _problems(GOOD) == []
 

@@ -57,6 +57,7 @@ def _event(session_id, project, event, tool_name=None, file_path=None, **kwargs)
     tool_input = {"cwd": str(project)}
     if file_path is not None:
         tool_input["file_path"] = str(file_path)
+    kwargs.setdefault("harness_pid", 101)
     return EventContext(
         session_id=session_id,
         event=event,
@@ -131,35 +132,81 @@ class TestExitPlanModeUsesTheCallingSessionsPlan:
 class TestClearRecoversOnlyThePredecessorsPlans:
     """SessionStart(source=clear) must leave plans of other live sessions alone."""
 
-    def _write(self, session_id, project, plan):
+    def _write(self, session_id, project, plan, pid=101):
         pe.track_and_export_plans_early(
-            _event(session_id, project, "PreToolUse", "Write", plan)
+            _event(session_id, project, "PreToolUse", "Write", plan, harness_pid=pid)
         )
 
-    def _exit(self, session_id, project):
+    def _exit(self, session_id, project, pid=101):
         pe.track_and_export_plans_early(
-            _event(session_id, project, "PreToolUse", "ExitPlanMode", permission_mode="plan")
+            _event(session_id, project, "PreToolUse", "ExitPlanMode", permission_mode="plan", harness_pid=pid)
         )
 
     def _pending(self, project):
         return pe.PlanExport(_event("probe", project, "PreToolUse")).active_plans
 
+    def test_clear_without_identity_retains_even_a_single_dialog(self, project, plans_dir):
+        alpha = _plan(plans_dir, "alpha", "unaccepted dialog")
+        self._write("S1", project, alpha)
+        self._exit("S1", project)
+        response = pe.recover_unexported_plans(
+            _event("S2", project, "SessionStart", source="clear", harness_pid=None)
+        )
+        assert response is None
+        assert not _bodies(project / "notes")
+        assert str(alpha) in self._pending(project)
+
+    def test_clear_does_not_match_a_reused_pid(self, project, plans_dir):
+        alpha = _plan(plans_dir, "alpha", "previous process dialog")
+        for tool, path in [("Write", alpha), ("ExitPlanMode", None)]:
+            pe.track_and_export_plans_early(_event(
+                "S1", project, "PreToolUse", tool, path, permission_mode="plan",
+                harness_pid=101, harness_started_at_units=111,
+            ))
+        response = pe.recover_unexported_plans(_event(
+            "S2", project, "SessionStart", source="clear",
+            harness_pid=101, harness_started_at_units=222,
+        ))
+        assert response is None
+        assert not _bodies(project / "notes")
+        assert str(alpha) in self._pending(project)
+
+    @pytest.mark.parametrize("pid", [101, 303, None], ids=["older-dialog", "plain-clear", "unknown"])
+    def test_two_open_dialogs_require_matching_harness(self, project, plans_dir, pid):
+        alpha = _plan(plans_dir, "alpha", "older dialog accepted")
+        beta = _plan(plans_dir, "beta", "newer dialog unaccepted")
+        for sid, plan, owner in [("S1", alpha, 101), ("S2", beta, 202)]:
+            pe.track_and_export_plans_early(
+                _event(sid, project, "PreToolUse", "Write", plan, harness_pid=owner)
+            )
+            self._exit(sid, project, pid=owner)
+
+        pe.recover_unexported_plans(
+            _event("S3", project, "SessionStart", source="clear", harness_pid=pid)
+        )
+
+        accepted = _bodies(project / "notes")
+        assert "newer dialog unaccepted" not in accepted
+        assert ("older dialog accepted" in accepted) is (pid == 101)
+        pending = self._pending(project)
+        assert str(beta) in pending
+        assert (str(alpha) in pending) is (pid != 101)
+
     @pytest.mark.parametrize("s1_dialog_open", [False, True],
                              ids=["s1-still-writing", "s1-dialog-open"])
     def test_option1_in_s2_leaves_s1s_plan_pending(self, project, plans_dir, s1_dialog_open):
-        # Session ids sort opposite to their order in time, so only the
-        # exit_attempted_at stamp can pick S2 when both dialogs are open.
+        # Session ids sort opposite to time; the process identifies S2.
         s1, s2 = "S9-first", "S0-second"
         alpha = _plan(plans_dir, "alpha", "written by session one")
         beta = _plan(plans_dir, "beta", "written by session two")
-        self._write(s1, project, alpha)
+        self._write(s1, project, alpha, pid=101)
         if s1_dialog_open:
             self._exit(s1, project)
-        self._write(s2, project, beta)
-        self._exit(s2, project)
+        self._write(s2, project, beta, pid=202)
+        self._exit(s2, project, pid=202)
 
         # S2's user picks Option 1: S2 is replaced by S3 with source=clear.
-        pe.recover_unexported_plans(_event("S3", project, "SessionStart", source="clear"))
+        pe.recover_unexported_plans(_event("S3", project, "SessionStart", source="clear", harness_pid=202))
 
         assert "written by session two" in _bodies(project / "notes")
         assert "written by session one" not in _bodies(project / "notes"), (

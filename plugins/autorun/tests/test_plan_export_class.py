@@ -3242,6 +3242,7 @@ class TestAcceptedRejectedRouting:
         store1 = ThreadSafeDB()
         ctx1 = EventContext(
             session_id="s1-opt1-clear",
+            harness_pid=101,
             event="PreToolUse",
             tool_name="ExitPlanMode",
             tool_input={"cwd": str(project_dir)},
@@ -3259,6 +3260,7 @@ class TestAcceptedRejectedRouting:
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-opt1-clear",
+            harness_pid=101,
             event="SessionStart",
             tool_input={"cwd": str(project_dir)},
             store=store2,
@@ -3426,6 +3428,7 @@ class TestAcceptedRejectedRouting:
             ctx_exit = EventContext(
                 session_id="s1-multi",
                 event="PreToolUse",
+                harness_pid=101,
                 tool_name="ExitPlanMode",
                 tool_input={"cwd": str(project_dir)},
                 store=store1,
@@ -3438,6 +3441,7 @@ class TestAcceptedRejectedRouting:
             store2 = ThreadSafeDB()
             ctx2 = EventContext(
                 session_id="s2-multi",
+                harness_pid=101,
                 event="SessionStart",
                 tool_input={"cwd": str(project_dir)},
                 store=store2,
@@ -3509,6 +3513,7 @@ class TestAcceptedRejectedRouting:
         store1 = ThreadSafeDB()
         ctx_recovery = EventContext(
             session_id="s1-opt1-recovery",
+            harness_pid=101,
             event="SessionStart",
             tool_input={"cwd": str(project_dir)},
             store=store1,
@@ -3528,6 +3533,7 @@ class TestAcceptedRejectedRouting:
         ctx_exit = EventContext(
             session_id="s0-pre-opt1",
             event="PreToolUse",
+            harness_pid=101,
             tool_name="ExitPlanMode",
             tool_input={"cwd": str(project_dir)},
             store=store1,

@@ -350,6 +350,34 @@ def _set_status(manager, task_id, status):
 
 
 class TestHarnessResyncKeepsAutorunOwnedStatus:
+    @pytest.mark.parametrize("kind", ["plan", "todos"])
+    @pytest.mark.parametrize("replacement", [["B"], ["B", "A"], ["C", "B"]])
+    def test_positional_replacement_does_not_ignore_different_work(
+        self, isolated_config, isolated_session_manager, kind, replacement
+    ):
+        from autorun.core import AutorunApp
+        from autorun.task_lifecycle import register_hooks
+
+        app = AutorunApp()
+        register_hooks(app)
+        handler = next(h for h in app.chains["PostToolUse"] if h.__name__ == "track_task_operations")
+        session_id = f"replacement-{kind}-{replacement}"
+        manager = TaskLifecycle(session_id=session_id)
+
+        def sync(subjects):
+            if kind == "plan":
+                ctx = self._plan_ctx(session_id, [{"step": s, "status": "pending"} for s in subjects])
+            else:
+                ctx = self._todos_ctx(session_id, [{"description": s, "status": "pending"} for s in subjects])
+            handler(ctx)
+
+        sync(["A", "B"])
+        first = "plan-1" if kind == "plan" else "1"
+        assert manager.ignore_task(first, reason="ignore A only")
+        sync(replacement)
+        assert manager.tasks[first]["subject"] == replacement[0]
+        assert manager.tasks[first]["status"] == "pending"
+
     @staticmethod
     def _plan_ctx(session_id, plan):
         return EventContext(

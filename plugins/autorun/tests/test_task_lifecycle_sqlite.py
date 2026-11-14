@@ -370,6 +370,34 @@ def test_subagent_stop_returns_row_backed_delegation(sqlite_lifecycle):
     assert sqlite_lifecycle.tasks["delegated"]["status"] == "delegation-returned"
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_child_returns_before_parent_delegation_marker(sqlite_lifecycle, explicit):
+    import os
+
+    parent = sqlite_lifecycle
+    agent_id = "a1b2c3d4e5f6a7b8c"
+    parent.create_task("fast", {"subject": "Verify fast child"}, "created")
+    parent.record_agent_spawn(EventContext(
+        session_id=parent.session_id, event="PostToolUse", cli_type="claude",
+        tool_name="Agent", tool_result={"agentId": agent_id, "isAsync": True},
+    ))
+    child = _stop_context("SubagentStop", f"/tmp/agent-{agent_id}.jsonl")
+    assert TaskLifecycle(ctx=child, config=parent.config).handle_stop(child) is None
+    with session_state(parent.global_key) as state:
+        assert state["session_metadata"]["agent_spawns"][0]["returned"] is True
+
+    arguments = f"fast, session={agent_id}" if explicit else "fast"
+    marker = CONFIG["delegate_marker_template"].replace("{id}", arguments)
+    ctx = EventContext(
+        session_id=parent.session_id, event="Stop", cli_type="claude",
+        last_assistant_message=marker, harness_pid=os.getpid(),
+        active_tools=task_tool_evidence("claude"), store=ThreadSafeDB(),
+    )
+    result = TaskLifecycle(ctx=ctx, config=parent.config).handle_stop(ctx)
+    assert parent.tasks["fast"]["status"] == "delegation-returned"
+    assert result is not None and result["decision"] == "block"
+
+
 def test_codex_child_session_returns_parent_row_backed_delegation(
     sqlite_lifecycle,
 ):

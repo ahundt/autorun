@@ -904,6 +904,7 @@ class PlanExport:
                 "cwd": project_dir,
                 "session_id": self.ctx.session_id,
                 "harness_pid": self.ctx.harness_pid,
+                "harness_started_at_units": self.ctx.harness_started_at_units,
                 "recorded_at": datetime.now().isoformat(),
             }
         self.atomic_update_active_plans(updater)
@@ -950,33 +951,34 @@ class PlanExport:
     def clearing_session_id(self) -> Optional[str]:
         """Session that a SessionStart(source="clear") replaced, or None.
 
-        A clear payload names only the NEW session: its session_id,
-        transcript_path, cwd, source and permission_mode say nothing about the
-        session it replaced, and active_plans entries record their writer's
-        session_id but nothing the new session shares. What does link them is
-        the ExitPlanMode attempt: Option 1 is answered in the dialog that
-        attempt opened, and backup_to_rejected() stamps it exit_attempted_at.
-        So the predecessor is the session with the newest exit attempt in this
-        project. With no attempt here the clear was a plain /clear, and the
-        predecessor is unknown.
-
-        Known limit: two sessions in one project with dialogs open at once,
-        the OLDER one accepted with Option 1, picks the newer one. Telling them
-        apart needs the harness process, which survives a clear, and
-        EventContext does not carry it.
+        The harness process survives a clear. Match its identity rather than
+        the newest dialog in the project. Missing or ambiguous process
+        identity retains plans rather than deciding for another session.
         """
+        if self.ctx.harness_pid is None:
+            return None
         try:
             project_dir = str(self.project_dir)
         except ValueError:
             return None
         attempts = [
-            (info.get("exit_attempted_at", ""), info["session_id"])
+            info
             for info in self.active_plans.values()
             if info.get("exit_attempted")
             and info.get("cwd") == project_dir
             and info.get("session_id")
         ]
-        return max(attempts)[1] if attempts else None
+        attempts = [
+            info for info in attempts
+            if info.get("harness_pid") == self.ctx.harness_pid
+            and (
+                self.ctx.harness_started_at_units is None
+                or info.get("harness_started_at_units") is None
+                or info["harness_started_at_units"] == self.ctx.harness_started_at_units
+            )
+        ]
+        sessions = {info["session_id"] for info in attempts}
+        return next(iter(sessions)) if len(sessions) == 1 else None
 
     def get_plan_from_exit_message(self) -> Optional[Path]:
         """Extract plan file path from ExitPlanMode response message.
@@ -1428,6 +1430,9 @@ class PlanExport:
                 if "cwd" not in entry:
                     entry["cwd"] = str(self.ctx.cwd) if self.ctx.cwd else str(self.project_dir)
                 entry.setdefault("session_id", self.ctx.session_id)
+                if self.ctx.harness_pid is not None:
+                    entry["harness_pid"] = self.ctx.harness_pid
+                    entry["harness_started_at_units"] = self.ctx.harness_started_at_units
                 entry["exit_attempted"] = True
                 entry["exit_attempted_at"] = datetime.now().isoformat()
                 entry["mode_at_exit_attempt"] = permission_mode
