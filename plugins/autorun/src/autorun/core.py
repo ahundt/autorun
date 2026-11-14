@@ -2301,13 +2301,29 @@ class EventContext:
         store = object.__getattribute__(self, "_store")
         target_session = session_id or object.__getattribute__(self, "_session_id")
         if isinstance(store, ThreadSafeDB):
-            return store.get_stored(f"{target_session}:{name}", default)
+            try:
+                return store.get_stored(f"{target_session}:{name}", default)
+            except SessionStateError as exc:
+                self._raise_tool_gate_read_failure(exc)
+                raise
         return self.state_get(name, default, session_id=session_id)
+
+    def _raise_tool_gate_read_failure(self, exc: SessionStateError) -> None:
+        """An unreadable guard input cannot become an absent policy."""
+        from .client import is_tool_gate_event
+
+        if is_tool_gate_event(self.event):
+            cache = self.dispatch_cache
+            if cache is not None:
+                # Retain evidence even if a legacy guard catches the exception.
+                cache["state_read_failure"] = exc
+            raise exc
 
     def state_get(self, name: str, default=None, *, session_id: str | None = None):
         """Read a session-scoped field through the shared daemon cache.
 
-        Contention degrades to ``default`` and is reported. A read that lost
+        Tool gates propagate read failures rather than inventing an absent policy.
+        Other events report contention and return ``default``. A read that lost
         the race never began, so the honest answer is the one every caller
         already handles: the value it gets when the field is absent. Raising
         instead took whole hooks down with it. Eight spawned processes crossed
@@ -2334,6 +2350,7 @@ class EventContext:
             with session_state(target_session, timeout=state_lock_timeout(self)) as state:
                 return state.get(name, default)
         except SessionStateError as exc:
+            self._raise_tool_gate_read_failure(exc)
             if not state_failure_is_contention(exc):
                 raise
             report_state_persistence_failure(self, [name], target_session, exc)
@@ -2432,6 +2449,7 @@ class EventContext:
             if error is not exc:
                 error.__cause__ = exc
             report_state_persistence_failure(self, [name], target_session, error)
+            self._raise_tool_gate_read_failure(error)
             if error is exc:
                 raise
             raise error from exc
@@ -2593,7 +2611,11 @@ class EventContext:
         session_id = object.__getattribute__(self, "_session_id")
         if store:
             key = f"{session_id}:{name}"
-            value = store.get(key)
+            try:
+                value = store.get(key)
+            except SessionStateError as exc:
+                self._raise_tool_gate_read_failure(exc)
+                raise
             if value is not None:
                 state[name] = value
                 return value
@@ -3166,6 +3188,9 @@ class AutorunApp:
         """
         for handler in self.chains.get(chain_name, []):
             result = handler(ctx)
+            failure = (ctx.dispatch_cache or {}).get("state_read_failure")
+            if failure is not None:
+                raise failure
             if result is not None:
                 return result
         # Flush accumulated notifications if no handler returned a response
@@ -3263,6 +3288,22 @@ class AutorunApp:
             )
             with scope:
                 return self._dispatch_with_cache(ctx)
+        except SessionStateError as exc:
+            from .client import is_tool_gate_event
+
+            if not is_tool_gate_event(ctx.event):
+                raise
+            logger.error("Permission gate state evaluation failed: %s", exc)
+            # A lost lock race clears by itself; advising a restart for it is
+            # what turned load into a restart storm (see LOAD_EVENT_CODES).
+            return daemon_failure_response(
+                ctx.event, ctx.cli_type,
+                f"autorun could not evaluate session state: {exc}",
+                event_code=(
+                    "state_lock_contended" if state_failure_is_contention(exc)
+                    else "state_evaluation_failed"
+                ),
+            )
         finally:
             if previous is _DISPATCH_CACHE_MISSING:
                 state.pop(_DISPATCH_CACHE_KEY, None)
@@ -3293,12 +3334,7 @@ class AutorunApp:
 
             # A failed handler has not evaluated the remaining guards.
             if not handlers_finished and is_tool_gate_event(ctx.event):
-                logger.error("Permission gate state evaluation failed: %s", exc)
-                return daemon_failure_response(
-                    ctx.event, ctx.cli_type,
-                    f"autorun could not evaluate session state: {exc}",
-                    event_code="state_evaluation_failed",
-                )
+                raise
             # A finished decision survives a failed flush, with a notice.
             logger.error("State batch was not saved: %s", exc)
             if state_failure_is_contention(exc):

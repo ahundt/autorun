@@ -73,7 +73,7 @@ from .platforms import (
     task_progress_capability_available,
     writes_whole_task_list,
 )
-from .session_manager import SessionPersistenceError, get_session_manager, session_state, state_lock_timeout
+from .session_manager import SessionPersistenceError, SessionStateError, get_session_manager, session_state, state_lock_timeout
 from .scoped_allow import (
     ScopeSpec,
     ScopedAllow,
@@ -865,14 +865,21 @@ _TRANSCRIPT_POLICY_COMMAND_MARKER_LIMIT = 200
 
 def _claim_transcript_policy_command(ctx: EventContext, marker: str) -> bool:
     """Atomically mark one transcript command as processed for this session."""
+    claimed = False
+
+    def claim(current):
+        nonlocal claimed
+        markers = list(current or [])
+        if marker not in markers:
+            claimed = True
+            return [*markers, marker][-_TRANSCRIPT_POLICY_COMMAND_MARKER_LIMIT:]
+        return markers
+
     try:
-        with session_state(ctx.session_id) as st:
-            markers = list(st.get(_TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY, []))
-            if marker in markers:
-                return False
-            markers.append(marker)
-            st[_TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY] = markers[-_TRANSCRIPT_POLICY_COMMAND_MARKER_LIMIT:]
-            return True
+        ctx.state_update(_TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY, claim, [])
+        return claimed
+    except SessionStateError:
+        raise
     except Exception as exc:
         logger.warning(f"Transcript policy command marker failed closed: {exc}")
         return False
@@ -953,6 +960,13 @@ def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
     apply_command_match(fallback_ctx, match)
     try:
         result = match.handler(fallback_ctx)
+    except SessionStateError:
+        ctx.state_update(
+            _TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY,
+            lambda markers: [value for value in (markers or []) if value != command.marker],
+            [],
+        )
+        raise
     except Exception as exc:
         logger.warning(f"Transcript policy command handler failed closed: {exc}")
         return None
@@ -1359,6 +1373,8 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         result = CacheGuard.from_ctx(ctx).check(ctx)
         if result is not None:
             return result
+    except SessionStateError:
+        raise
     except Exception:
         # Fail-open: cache guard errors must never block legitimate tool use.
         pass
@@ -2037,6 +2053,8 @@ def _required_task_mutation_available(ctx: EventContext) -> bool:
             required_roles = _required_task_roles(
                 no_tasks=not manager.get_unfinished_tasks()
             )
+        except SessionStateError:
+            raise
         except Exception:  # noqa: BLE001 - unknown state preserves legacy behavior
             # Unknown task state preserves legacy progress-tool behavior.
             return task_enforcement_capability_available(

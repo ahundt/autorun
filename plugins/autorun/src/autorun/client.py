@@ -281,6 +281,8 @@ UNRECOVERABLE_GUIDANCE = (
 LOAD_EVENT_CODES = frozenset({
     "daemon_dispatch_timeout",
     "daemon_dispatch_contained",
+    # A tool call whose guard could not take the state lock in time.
+    "state_lock_contended",
 })
 
 #: A request the daemon never answered. From the client a loaded daemon and a

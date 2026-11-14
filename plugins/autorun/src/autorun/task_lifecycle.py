@@ -3243,7 +3243,7 @@ class TaskLifecycle:
                 status = task.get("status")
                 if status not in BLOCKING_TASK_STATUSES:
                     return False
-                task.setdefault("metadata", {})["awaiting_user"] = {"decision": decision, "previous_status": status}
+                task.setdefault("metadata", {})["awaiting_user"] = {"decision": decision, "previous_status": status, "generation": uuid.uuid4().hex}
                 if prompt_marker:
                     task["metadata"]["awaiting_user"]["transcript_prompt_marker"] = prompt_marker
                 task["status"] = AWAITING_USER_STATUS
@@ -3286,12 +3286,22 @@ class TaskLifecycle:
                 self.atomic_update_metadata(_reset_stop_block_sequence)
             return False
 
+        if expected_waits is None:
+            # Snapshot only indexed waits; the write must not clear a newer question.
+            expected_waits = {}
+            with self._session_state() as state:
+                repository = self._prepare_task_storage(state)
+                for task_id in waiting:
+                    task = state.get("tasks", {}).get(task_id) if repository is None else repository.get_task(self.global_key, task_id, self._state_lock_timeout)
+                    if isinstance(task, dict):
+                        expected_waits[task_id] = copy.deepcopy((task.get("metadata") or {}).get("awaiting_user"))
+
         applied: set = set()
 
         def restored(task: Dict) -> bool:
             if task.get("status") != AWAITING_USER_STATUS:
                 return False
-            if expected_waits is not None and (task.get("metadata") or {}).get("awaiting_user") != expected_waits.get(str(task["id"])):
+            if str(task["id"]) not in expected_waits or (task.get("metadata") or {}).get("awaiting_user") != expected_waits[str(task["id"])]:
                 return False
             record = (task.get("metadata") or {}).pop("awaiting_user", None) or {}
             previous = record.get("previous_status")

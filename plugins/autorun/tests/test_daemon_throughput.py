@@ -416,7 +416,9 @@ async def test_one_sessions_timeout_does_not_contain_other_sessions(monkeypatch)
         await asyncio.sleep(0)
 
 
-LOAD_EVENT_CODES = ("daemon_dispatch_timeout", "daemon_dispatch_contained")
+from autorun.client import LOAD_EVENT_CODES as _PRODUCT_LOAD_EVENT_CODES  # noqa: E402
+
+LOAD_EVENT_CODES = sorted(_PRODUCT_LOAD_EVENT_CODES)
 
 
 @pytest.mark.parametrize("event_code", LOAD_EVENT_CODES)
