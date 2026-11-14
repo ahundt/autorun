@@ -835,6 +835,72 @@ def test_pi_family_installs_one_package_with_extension_and_skills(
     assert not (base / "settings.json").exists()
 
 
+def test_pi_uninstall_keeps_settings_written_after_package_removal(sandbox, monkeypatch):
+    from contextlib import contextmanager
+
+    from autorun.installer.orchestrate import install, uninstall
+
+    common = dict(
+        marketplace_root=REPO, plugins=("ar",), settings={}, home=sandbox,
+        available=(), state_dir=sandbox / ".state",
+        harnesses=(PLATFORMS["pi"],), teardown_enabled=False,
+    )
+    assert install(**common).ok
+    path = sandbox / ".pi" / "agent" / "settings.json"
+    original = steps.settings_document
+    added = {"packages": ["npm:another-package"], "theme": "dark"}
+    interleaved = []
+
+    @contextmanager
+    def concurrent_write(target):
+        with original(target) as document:
+            yield document
+        if target == path:
+            # Deterministically schedule a second writer after the settings
+            # lock is released, before uninstall considers deleting the file.
+            with original(target) as document:
+                document.update(added)
+            interleaved.append(True)
+
+    monkeypatch.setattr(steps, "settings_document", concurrent_write)
+    assert uninstall(**common).ok
+    assert interleaved == [True]
+    assert path.is_file(), "uninstall deleted the concurrent installer's settings"
+    assert json.loads(path.read_text(encoding="utf-8")) == added
+
+
+@pytest.mark.parametrize("name,relative", [("pi", ".pi/agent"), ("prime", ".prime/agent")])
+@pytest.mark.parametrize("plugin", ["pdf-extractor", "autorun-skills"])
+@pytest.mark.parametrize("operation", ["install", "uninstall"])
+def test_pi_family_companion_selection_updates_registration(sandbox, name, relative, plugin, operation):
+    from autorun.installer.orchestrate import install, uninstall
+
+    common = dict(
+        marketplace_root=REPO, settings={}, home=sandbox, available=(),
+        state_dir=sandbox / ".state", harnesses=(PLATFORMS[name],),
+        teardown_enabled=False,
+    )
+    base = sandbox / relative
+    base.mkdir(parents=True)
+    path = base / "settings.json"
+    path.write_text('{"theme": "dark"}', encoding="utf-8")
+    package = base / "packages" / plugin
+    if operation == "install":
+        assert install(plugins=(plugin,), **common).ok
+        assert package.is_dir()
+        assert json.loads(path.read_text(encoding="utf-8")) == {
+            "theme": "dark", "packages": [str(package)],
+        }
+    else:
+        assert install(plugins=EVERY_PLUGIN, **common).ok
+        before = json.loads(path.read_text(encoding="utf-8"))
+        assert str(package) in before["packages"]
+        assert uninstall(plugins=(plugin,), **common).ok
+        assert not package.exists()
+        before["packages"].remove(str(package))
+        assert json.loads(path.read_text(encoding="utf-8")) == before
+
+
 def test_pi_reinstall_has_no_false_unowned_skill_warning(sandbox):
     from autorun.installer.orchestrate import install
 

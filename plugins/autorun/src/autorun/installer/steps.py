@@ -441,15 +441,13 @@ def switches_for(
     installer does not create a harness's home to hold one setting. An install
     asks again after registration, which is what first creates ~/.qwen.
     """
-    if "ar" not in _plugins(ctx):
-        return ()
     platform = getattr(harness, "platform", harness)
     switch = getattr(platform, "task_tool_switch", None)
     base = discovery.config_dir(platform, home=ctx.home)
     if base is None or not base.is_dir():
         return ()
     entries = []
-    if switch is not None:
+    if switch is not None and "ar" in _plugins(ctx):
         entries.append(Switch(
             base / switch.settings_file,
             tuple(switch.settings_path),
@@ -679,7 +677,10 @@ def _apply_list_item(entry: Switch, mode: Mode) -> str:
                 _remove(document, entry.key)
             emptied = not document
         if created_file and emptied and not entry.path.is_symlink():
-            entry.path.unlink(missing_ok=True)
+            # Another installer may have populated the file since the edit.
+            with FileLock(str(entry.path.parent / INSTALL_LOCK_NAME)):
+                if entry.path.is_file() and not read_settings(entry.path):
+                    entry.path.unlink()
         return f"removed {entry.describe()} {entry.shown_value}"
 
     entry.record.parent.mkdir(parents=True, exist_ok=True)
@@ -1074,8 +1075,11 @@ def prepared(
                     staged_codex[plugin] = codex.stage_plugin(
                         plugin_dir,
                         Path(tmp) / "_codex" / plugin,
-                        include_hooks=str(ctx.settings.get("codex_hook_source", "user"))
-                        in ("plugin", "both"),
+                        include_hooks=(
+                            str(ctx.settings.get("codex_hook_source", "user"))
+                            in ("plugin", "both")
+                            and (plugin_dir / "hooks" / "hook_entry.py").is_file()
+                        ),
                         skill_names=planned.native,
                         hook_command=(
                             ctx.settings.get("_codex_plugin_hook_command", "") or ""

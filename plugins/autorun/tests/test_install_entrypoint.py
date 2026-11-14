@@ -566,7 +566,8 @@ def test_custom_cli_specs_override_same_named_config_without_dropping_others(
     ]
 
 
-def test_install_all_for_codex_registers_only_the_codex_capable_plugins(monkeypatch, isolated):
+@pytest.mark.parametrize("hook_source", ["user", "plugin", "both"])
+def test_install_all_for_codex_registers_only_the_codex_capable_plugins(monkeypatch, isolated, hook_source):
     """Codex gets exactly the marketplace plugins that ship a Codex manifest."""
     from autorun.installer import entrypoint
 
@@ -587,12 +588,19 @@ def test_install_all_for_codex_registers_only_the_codex_capable_plugins(monkeypa
 
     monkeypatch.setattr(entrypoint, "_run", record)
     monkeypatch.setattr(entrypoint.shutil, "which", lambda name: f"/bin/{name}")
-    assert entrypoint.install_plugins("all", codex_only=True, conductor=False, tool=False) == 0
+    assert entrypoint.install_plugins(
+        "all", codex_only=True, codex_hook_source=hook_source, conductor=False, tool=False,
+    ) == 0
     for name in plugins:
         packaged = (isolated / "plugins" / name / ".codex-plugin" / "plugin.json").is_file()
         registered = ("codex", "plugin", "add", f"{name}@personal") in calls
         assert packaged is (name in capable), name
         assert registered is (name in capable), name
+        hooks = isolated / "plugins" / name / "hooks" / "hooks.json"
+        supplies_hooks = (plugin_dir(REPO, name) / "hooks" / "hook_entry.py").is_file()
+        assert hooks.is_file() is (name in capable and supplies_hooks and hook_source != "user"), name
+    # An upgrade with no flag must reuse the persisted hook source.
+    assert entrypoint.install_plugins("all", codex_only=True, conductor=False, tool=False) == 0
 
 
 def _marketplace_plugins() -> tuple[str, ...]:

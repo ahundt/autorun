@@ -26,6 +26,7 @@ recursive-include src/autorun/forgecode_template *
 recursive-include src/autorun/gemini_template *
 recursive-include src/autorun/opencode_template *
 recursive-include src/autorun/pi_template *
+recursive-include src/autorun/prime_rust_template *
 
 # pdf_extraction is a symlink into plugins/pdf-extractor, which the sdist copy
 # would otherwise skip because its target sits outside this project directory.

@@ -22,6 +22,8 @@ os.environ.setdefault("AUTORUN_TEST_STATE_DIR", "/tmp/autorun-test-state")
 
 from autorun.installer import claude, fs, runtime  # noqa: E402
 from autorun.installer.fs import OWNED_MARKER_NAME, read_marker  # noqa: E402
+from autorun.platforms import PLATFORMS  # noqa: E402
+from test_windows_hook_launch import _launch  # noqa: E402
 
 
 class Harness:
@@ -144,8 +146,8 @@ def _write_round_trip_hook(root: Path, answer: str) -> None:
         json.dumps({"hooks": {"PreToolUse": [{"hooks": [{
             "type": "command",
             "command": (
-                f"{cache_venv_python(Path('${CLAUDE_PLUGIN_ROOT}'))} "
-                "${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py "
+                f'"{cache_venv_python(Path("${CLAUDE_PLUGIN_ROOT}")).as_posix()}" '
+                '"${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py" '
                 "--cli claude --event PreToolUse"
             ),
         }]}]}}),
@@ -174,19 +176,26 @@ def _record_cache(root: Path) -> None:
 
 
 def _round_trip(root: Path) -> str:
-    import shlex
-
     document = json.loads((root / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-    command = document["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    command = command.replace("${CLAUDE_PLUGIN_ROOT}", str(root))
-    result = subprocess.run(
-        shlex.split(command),
-        input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash"}),
-        text=True,
-        capture_output=True,
-        check=True,
+    hook = document["hooks"]["PreToolUse"][0]["hooks"][0]
+    result = _launch(
+        PLATFORMS["claude"], hook,
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": str(root)},
+        {**os.environ, "CLAUDE_PLUGIN_ROOT": root.as_posix()},
     )
+    result.check_returncode()
     return json.loads(result.stdout)["answer"]
+
+
+def test_round_trip_uses_the_harness_shell(source):
+    _write_round_trip_hook(source, "shell-launch")
+    _make_cache_python(source)
+    path = source / "hooks" / "hooks.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    hook = document["hooks"]["PreToolUse"][0]["hooks"][0]
+    hook["command"] = ":; " + hook["command"]
+    path.write_text(json.dumps(document), encoding="utf-8")
+    assert _round_trip(source) == "shell-launch"
 
 
 def test_refresh_crash_after_each_file_keeps_hook_entry_manifest_and_venv_usable(
@@ -810,7 +819,6 @@ def test_a_cached_wheel_hook_runs_without_the_tool_directory_on_path(tmp_path):
 
 
 def test_pinned_commands_keep_each_manifest_event_for_bootstrap_failure(tmp_path):
-    import shlex
     import shutil
 
     cache = tmp_path / "cache"
@@ -830,7 +838,10 @@ def test_pinned_commands_keep_each_manifest_event_for_bootstrap_failure(tmp_path
     from test_hook_entry import _isolated_interpreter
 
     interpreter = _isolated_interpreter(tmp_path)
-    base = f"{interpreter} -I {hooks / 'hook_entry.py'} --cli claude"
+    base = runtime.render_hook_command(
+        [str(interpreter), "-I", str(hooks / "hook_entry.py"), "--cli", "claude"],
+        shell="posix",
+    )
 
     assert claude.pin_hook_command(cache, base)
     document = json.loads(manifest.read_text(encoding="utf-8"))
@@ -855,16 +866,15 @@ def test_pinned_commands_keep_each_manifest_event_for_bootstrap_failure(tmp_path
         "AUTORUN_NO_BOOTSTRAP": "1",
         "AUTORUN_HOME": str(tmp_path / "autorun-home"),
     }
-    payload = json.dumps({"hook_event_name": "FutureUnknownEvent", "tool_name": "Bash"})
+    payload = {"hook_event_name": "FutureUnknownEvent", "tool_name": "Bash", "cwd": str(tmp_path)}
 
-    tool = subprocess.run(
-        shlex.split(commands["PreToolUse"]), input=payload, text=True,
-        capture_output=True, env=environment, check=False,
+    tool = _launch(
+        PLATFORMS["claude"], {"command": commands["PreToolUse"]}, payload, environment,
     )
-    lifecycle = subprocess.run(
-        shlex.split(commands["SessionStart"]), input=payload, text=True,
-        capture_output=True, env=environment, check=True,
+    lifecycle = _launch(
+        PLATFORMS["claude"], {"command": commands["SessionStart"]}, payload, environment,
     )
+    lifecycle.check_returncode()
 
     assert tool.stdout.strip(), (
         f"the pinned PreToolUse command printed nothing: rc={tool.returncode} stderr={tool.stderr!r}"

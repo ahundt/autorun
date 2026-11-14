@@ -176,6 +176,33 @@ def release_bundle(tmp_path_factory):
     return root, checkout, commit, env, builds
 
 
+def test_release_archives_include_every_installer_template(release_bundle):
+    _root, checkout, _commit, _env, builds = release_bundle
+    package = checkout / "plugins" / "autorun" / "src" / "autorun"
+    # This legacy checkout link is staged from the canonical hooks directory;
+    # wheels deliberately carry exactly one hook_entry.py.
+    source_only = Path("gemini_template/hooks/hook_entry.py")
+    templates = {
+        path.relative_to(package).as_posix()
+        for tree in package.glob("*_template") for path in tree.rglob("*")
+        if path.is_file() and path.relative_to(package) != source_only
+    }
+    assert "prime_rust_template/AGENTS.md" in templates
+    with zipfile.ZipFile(next(builds[0].glob("*.whl"))) as archive:
+        missing_wheel = templates - {
+            name.removeprefix("autorun/") for name in archive.namelist()
+            if name.startswith("autorun/")
+        }
+    with tarfile.open(next(builds[0].glob("*.tar.gz")), "r:gz") as archive:
+        missing_sdist = templates - {
+            name.split("/src/autorun/", 1)[1] for name in archive.getnames()
+            if "/src/autorun/" in name
+        }
+    assert not (missing_wheel or missing_sdist), (
+        f"wheel missing {sorted(missing_wheel)}; sdist missing {sorted(missing_sdist)}"
+    )
+
+
 def test_release_archives_repeat_bytes_in_one_toolchain_and_are_clean(release_bundle):
     _root, _checkout, commit, _env, builds = release_bundle
     first = {path.name: _digest(path) for path in builds[0].iterdir()}
