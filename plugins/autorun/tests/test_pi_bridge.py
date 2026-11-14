@@ -253,7 +253,11 @@ def test_pi_print_mode_command_is_visible_without_calling_a_model(tmp_path, monk
     assert result.returncode == 0, result.stderr
     # Pi reserves print-mode stdout for model output and redirects extension
     # writes to stderr. The command must still be visible without a model call.
-    assert "autorun daemon unreachable" in result.stdout + result.stderr
+    # Either answer shows the extension handled `/ar st` itself: the bridge's
+    # refusal when this worker has no daemon, or the status when an earlier
+    # test in the same worker left one running in the shared test runtime.
+    shown = result.stdout + result.stderr
+    assert "autorun daemon unreachable" in shown or "AutoFile policy" in shown, shown
     assert "extension error" not in result.stderr.lower()
 
 
