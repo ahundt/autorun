@@ -1063,6 +1063,23 @@ class TestDaemonMainLifecycleCleanup:
 _DAEMON_MARKER = "from autorun.daemon import main; main()"
 
 
+@pytest.mark.parametrize("source", [r"C:\Users\runneradmin\checkout\src", "/checkout/src"])
+def test_source_lookup_accepts_the_generated_python_literal(source, monkeypatch, tmp_path):
+    from autorun import restart_daemon
+
+    code = f"import sys; sys.path.insert(0, {source!r}); {_DAEMON_MARKER}"
+    proc = mock.Mock(pid=123, info={"pid": 123, "cmdline": ["python", "-c", code]})
+    proc.cmdline.return_value = proc.info["cmdline"]
+    monkeypatch.setattr(restart_daemon.psutil, "Process", lambda _: proc)
+    monkeypatch.setattr(restart_daemon.psutil, "process_iter", lambda _: [proc])
+    monkeypatch.setattr(restart_daemon, "LOCK_PATH", tmp_path / "daemon.lock")
+    (tmp_path / "daemon.flock").touch()
+    monkeypatch.setattr(restart_daemon, "_owns_this_runtime", lambda _: True)
+    assert restart_daemon._pid_matches_src(123, source)
+    assert restart_daemon.get_daemon_pid(src_dir=source) == 123
+    assert not restart_daemon._pid_matches_src(123, source + "-other")
+
+
 class TestOnlyThisRuntimesDaemonIsSignalled:
     """A daemon is signalled only when this AUTORUN_HOME proves it owns it.
 
@@ -1145,27 +1162,40 @@ class TestOnlyThisRuntimesDaemonIsSignalled:
     ):
         """The fallback's purpose survives: a daemon that took the flock but
         wrote no PID record is found, because it holds this home's lock."""
-        if os.name == "nt":
-            pytest.skip("Windows psutil cannot reliably enumerate file-lock holders")
         import subprocess
 
-        from autorun.restart_daemon import get_daemon_pid
+        import psutil
+        from filelock import FileLock, Timeout
+        from autorun.restart_daemon import get_daemon_pid, _owns_this_runtime
 
         hold = (
-            "import sys, time; from filelock import FileLock; "
+            "import os, sys, time; from filelock import FileLock; "
             "lock = FileLock(sys.argv[1], timeout=0); lock.acquire(); "
-            "print('held', flush=True); time.sleep(60)"
+            "print(os.getpid(), flush=True); time.sleep(60)"
         )
         proc = subprocess.Popen(
             [sys.executable, "-c", hold, str(stale_home / "daemon.flock"), _DAEMON_MARKER],
             stdout=subprocess.PIPE, text=True,
         )
         try:
-            assert proc.stdout.readline().strip() == "held"
-            self._only(monkeypatch, proc.pid)
-            assert get_daemon_pid() == proc.pid
+            # A Windows venv python.exe is a redirector, not the lock owner.
+            owner_pid = int(proc.stdout.readline().strip())
+            self._only(monkeypatch, owner_pid)
+            with pytest.raises(Timeout):
+                FileLock(str(stale_home / "daemon.flock"), timeout=0).acquire()
+            if os.name == "nt" and not _owns_this_runtime(psutil.Process(owner_pid)):
+                # Windows open_files() can omit handles. Ownership is never
+                # weakened to a command-line resemblance: an owner that cannot
+                # be proven is not returned, so nothing signals it.
+                assert get_daemon_pid() is None
+            else:
+                assert get_daemon_pid() == owner_pid
         finally:
-            proc.kill()
+            if proc.poll() is None:
+                for child in psutil.Process(proc.pid).children(recursive=True):
+                    child.kill()
+                    child.wait(timeout=10)
+                proc.kill()
             proc.wait(timeout=10)
 
     def test_cleanup_after_a_kill_removes_a_flock_nobody_holds(self, stale_home, capsys):

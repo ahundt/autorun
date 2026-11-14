@@ -1626,22 +1626,27 @@ class TestHooksJson:
                         assert "hook_entry.py" in command
 
     def test_each_installed_command_carries_its_event_and_is_valid_shell(self):
-        if os.name == "nt":
-            pytest.skip("the command is validated by POSIX bash, not Windows shell")
+        from autorun.platforms import posix_shell
+
+        shell = posix_shell()
         hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
         data = json.loads(hooks_json.read_text(encoding="utf-8"))
 
-        for event, matchers in data["hooks"].items():
-            for matcher in matchers:
-                for hook in matcher["hooks"]:
-                    command = hook["command"]
-                    assert command.count(f"--event {event}") == 2, (event, command)
-                    checked = subprocess.run(
-                        ["bash", "-n", "-c", command],
-                        capture_output=True,
-                        text=True,
-                    )
-                    assert checked.returncode == 0, (event, checked.stderr)
+        commands = [
+            (event, hook["command"])
+            for event, matchers in data["hooks"].items()
+            for matcher in matchers
+            for hook in matcher["hooks"]
+        ]
+        for event, command in commands:
+            assert command.count(f"--event {event}") == 2, (event, command)
+        assert shell is not None, "A usable POSIX shell (Git Bash on Windows) is required"
+        for event, command in commands:
+            checked = subprocess.run(
+                [shell, "-n", "-c", command], capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+            )
+            assert checked.returncode == 0, (event, checked.stdout, checked.stderr)
 
     def test_no_shell_script_reference(self):
         """claude-hooks.json does not reference old shell script."""

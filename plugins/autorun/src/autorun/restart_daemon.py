@@ -48,13 +48,20 @@ _RESTART_LOCK_TIMEOUT_SECONDS: ContextVar[float] = ContextVar(
 )
 
 
+def _cmdline_matches_src(cmdline: str, src_dir: Path) -> bool:
+    # Generated python -c code contains repr(path), escaping Windows backslashes.
+    return 'from autorun.daemon import main' in cmdline and (
+        str(src_dir) in cmdline or repr(str(src_dir)) in cmdline
+    )
+
+
 def _pid_matches_src(pid: int, src_dir: Path) -> bool:
     """Return whether a live daemon PID was launched from this source tree."""
     try:
         cmdline_str = ' '.join(psutil.Process(pid).cmdline())
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         return False
-    return 'from autorun.daemon import main' in cmdline_str and str(src_dir) in cmdline_str
+    return _cmdline_matches_src(cmdline_str, src_dir)
 
 
 def _process_matches_runtime(proc) -> bool:
@@ -126,7 +133,7 @@ def get_daemon_pid(
                 cmdline_str = ' '.join(proc.info.get('cmdline') or [])
                 if 'from autorun.daemon import main' not in cmdline_str:
                     continue
-                if src_dir is not None and str(src_dir) not in cmdline_str:
+                if src_dir is not None and not _cmdline_matches_src(cmdline_str, src_dir):
                     continue
                 if runtime_only and not _process_matches_runtime(proc):
                     continue
@@ -526,7 +533,7 @@ def _daemon_cmdline(proc) -> str:
 def _is_daemon_process_for_src(proc, src_dir: Path) -> bool:
     """Return True for daemons owned by this source tree and runtime directory."""
     cmdline_str = _daemon_cmdline(proc)
-    if 'from autorun.daemon import main' not in cmdline_str or str(src_dir) not in cmdline_str:
+    if not _cmdline_matches_src(cmdline_str, src_dir):
         return False
     return _process_matches_runtime(proc)
 
