@@ -90,18 +90,20 @@ function screenedGuard(command) {
   // Segments end at ; | && newline or a & that is not part of a redirection,
   // taken with quotes removed and with quotes turned into spaces.
   const spaced = command.replace(/\\\n|\\/g, "").replace(/['"]/g, " ");
-  const separator = /;|\n|\|\|?|&&|(?<![<>&])&(?![>&\d])/;
-  const segments = [...plain.split(separator), ...spaced.split(separator)];
+  // `>|` is a redirection. The option is read from the quote-free text only;
+  // the words come from both forms.
+  const separator = /;|\n|(?<!>)\|\|?|&&|(?<![<>&])&(?![>&\d])/;
+  const joined = plain.split(separator);
+  const apart = spaced.split(separator);
+  const segments = joined.map((segment, index) => [segment, new Set(
+    (segment + " " + (apart.length === joined.length ? apart[index] : segment)).match(/[A-Za-z]+/g) ?? [])]);
   const guard = CRITICAL_GUARDS.find(([, tokens, screen]) => {
     const names = tokens.filter(token => /^[A-Za-z]+$/.test(token));
     if (!names.every(token => words.has(token))) return false;
     if (!screen) return tokens.every(token => names.includes(token) || plain.includes(token));
     const pattern = new RegExp(screen);
     if (names.length === tokens.length) return pattern.test(plain);
-    return segments.some(segment => {
-      const found = new Set(segment.match(/[A-Za-z]+/g) ?? []);
-      return pattern.test(segment) && names.every(token => found.has(token));
-    });
+    return segments.some(([segment, found]) => pattern.test(segment) && names.every(token => found.has(token)));
   });
   if (guard) return { guard: guard[0] };
   const syntax = SHELL_NAME_HIDING_FEATURES.find(feature => command.includes(feature));
