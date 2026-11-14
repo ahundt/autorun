@@ -23,9 +23,9 @@ CASES = [
     ('sudo find . -delete', [['sudo', 'find', '.', '-delete']]),
     ('X=1 find . -delete', [['X=1', 'find', '.', '-delete']]),
     ("echo 'a;b && c'", [['echo', 'a;b && c']]),
-    (HEREDOC, [['python3', '-', '<<', 'EOF'], ['find', '.', '-delete']]),
+    (HEREDOC, [['python3', '-'], ['find', '.', '-delete']]),
     ("bash <<< 'echo hi; find . -delete'",
-     [['bash', '<<<', 'echo hi; find . -delete'], ['echo', 'hi'], ['find', '.', '-delete']]),
+     [['bash'], ['echo', 'hi'], ['find', '.', '-delete']]),
     ('echo "$(date)"', [['echo', '$(date)'], ['date']]),
     ('echo `date`', [['echo', '`date`'], ['date']]),
     ('for x in a b; do echo "$x"; done', [['echo', '$x']]),
@@ -55,6 +55,16 @@ def test_dispatch_parses_each_distinct_script_once():
     assert counts and max(counts.values()) == 1, counts
     assert parse.call_count == len(counts), counts
     assert len(counts) in (2, 3), counts
+
+
+def test_warm_segments_reuse_cached_argv():
+    command = "env >/dev/null find . -name '>' -print"
+    cd._extract_cached.cache_clear()
+    first = list(cd.shell_segments(command))
+    with patch.object(cd, "_shlex_split_safe", side_effect=AssertionError("re-split cached argv")):
+        second = list(cd.shell_segments(command))
+    assert second == first
+    assert second[0][1] is first[0][1]
 
 
 def test_quoted_heredoc_body_is_data():

@@ -128,6 +128,17 @@ _MAX_RECURSION_DEPTH: Final[int] = 3
 _LEADING_REDIRECT = re.compile(
     rf"\s*(?:\d+)?(?:<<<|<<-?|>>|<>|>&|<&|>\||&>>?|[<>])\s*{_FALLBACK_WORD}"
 )
+_FALLBACK_ARGV = re.compile(rf"(?P<redirect>{_LEADING_REDIRECT.pattern})|{_FALLBACK_WORD}")
+_NAMED_DESCRIPTOR = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+_SHELL_QUOTES = re.compile(
+    r"""\$'(?:\\[\s\S]|[^'\\])*'|\$?"(?:\\[\s\S]|[^"\\])*"|'[^']*'|\\[\s\S]"""
+    r"|(?<!\S)\{[A-Za-z0-9_./+-]+(?:,[A-Za-z0-9_./+-]+)+\}(?!\S)"
+)
+_ANSI_ESCAPE = re.compile(r"\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|[\s\S])")
+
+
+class _UninspectableScript(ValueError):
+    """Executable shell text cannot be determined without running the command."""
 
 
 # ─── Optional bashlex ─────────────────────────────────────────────────────────
@@ -235,6 +246,7 @@ class CommandWrapperSpec:
     # The child argv is joined and run as shell script text (eval, watch), so
     # it is read as `sh -c "<joined>"`.
     args_are_script: bool = False
+    script_flags: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,8 +262,8 @@ class ExtractedCommands:
     # heredocs and echo piped to a shell, find -exec), nested ones included,
     # in the order found.
     scripts: tuple[str, ...] = ()
-    # None marks a fallback parse; otherwise source slices, then child scripts.
-    segments: tuple[str, ...] | None = None
+    # None marks an unsuccessful parse; otherwise cached (source words, argv) pairs.
+    segments: tuple[tuple[str, list[str]], ...] | None = None
     inspection_incomplete: bool = False
 
     def matches_single_word(self, pattern: str) -> bool:
@@ -523,10 +535,16 @@ _TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
     "exec": CommandWrapperSpec(flags_with_arg=frozenset({"-a"})),
     "command": CommandWrapperSpec(stop_flags=frozenset({"-v", "-V"})),
     "builtin": CommandWrapperSpec(),
+    "busybox": CommandWrapperSpec(stop_flags=frozenset({"--help", "--install", "--list", "--list-full"})),
     # xargs runs its operand with stdin appended as arguments.
     "xargs": _XARGS_WRAPPER_SPEC,
     # These join their operands and hand them to a shell.
     "eval": CommandWrapperSpec(args_are_script=True),
+    "parallel": CommandWrapperSpec(args_are_script=True),
+    "script": CommandWrapperSpec(script_flags=frozenset({"-c", "--command"})),
+    "flock": CommandWrapperSpec(
+        leading_positional_count=1, script_flags=frozenset({"-c", "--command"}),
+    ),
     "watch": CommandWrapperSpec(
         flags_with_arg=frozenset({"-n", "--interval", "-q", "--equexit"}),
         stop_flags=frozenset({"-h", "-v"}) | _HELP_VERSION,
@@ -650,6 +668,23 @@ def _strip_wrapper_once(tokens: list[str], spec: CommandWrapperSpec) -> list[str
         token = rest[i]
         option_head = _git_option_head(token)
 
+        if option_head in spec.script_flags:
+            script = token.partition("=")[2] if "=" in token else next(iter(rest[i + 1:]), "")
+            return ["sh", "-c", script]
+
+        if spec is _ENV_WRAPPER_SPEC and (
+            token.startswith("-S") or option_head == "--split-string"
+        ):
+            if token in ("-S", "--split-string"):
+                if i + 1 >= len(rest):
+                    return []
+                value, consumed = rest[i + 1], 2
+            else:
+                value = token[2:] if token.startswith("-S") else token.partition("=")[2]
+                consumed = 1
+            rest[i:i + consumed] = _shlex_split_safe(value)
+            continue
+
         if token == "--":
             return rest[i + 1:]
 
@@ -685,7 +720,9 @@ def _strip_wrapper_once(tokens: list[str], spec: CommandWrapperSpec) -> list[str
     return []
 
 
-def strip_transparent_command_wrappers(tokens: list[str]) -> list[str]:
+def strip_transparent_command_wrappers(
+    tokens: list[str], *, excluded_wrappers: frozenset[str] = frozenset(),
+) -> list[str]:
     """Return tokens with leading transparent wrappers removed.
 
     Wrappers are stripped by explicit argv grammar. This keeps `rtk echo rm`
@@ -695,6 +732,8 @@ def strip_transparent_command_wrappers(tokens: list[str]) -> list[str]:
     """
     stripped = list(tokens)
     while stripped:
+        if excluded_wrappers and _get_basename(stripped[0]) in excluded_wrappers:
+            return []
         # POSIX prefix assignments (`LC_ALL=C tail f`) run the command after
         # them, as `env LC_ALL=C tail f` does. A line of only assignments runs
         # no command, so it is left as written.
@@ -746,16 +785,27 @@ def _find_shell_exec_arg(tokens: list[str]) -> str | None:
 
 
 def _reads_stdin_script(tokens: list[str]) -> bool:
-    """Whether wrapper-stripped `tokens` is a shell reading its script from stdin.
+    """Whether wrapper-stripped `tokens` reads script text, rather than data, on stdin."""
+    if _sources_stdin(tokens):
+        return True
+    if not tokens or _get_basename(tokens[0]) not in SHELL_EXEC_COMMANDS or _find_shell_exec_arg(tokens) is not None:
+        return False
+    args = iter(tokens[1:])
+    for token in args:
+        if token == "--":
+            return next(args, "/dev/stdin") in ("-", "/dev/stdin")
+        if token in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
+            next(args, None)
+        elif token.startswith(("-", "+")) and token != "-":
+            if not token.startswith("--") and "s" in token[1:]:
+                return True
+        else:
+            return token in ("-", "/dev/stdin")
+    return True
 
-    ponytail: a shell with a script-file operand (`bash x.sh <<EOF`) is read as
-    one too, so its stdin data is scanned as commands; fails closed.
-    """
-    return (
-        bool(tokens)
-        and _get_basename(tokens[0]) in SHELL_EXEC_COMMANDS
-        and _find_shell_exec_arg(tokens) is None
-    )
+
+def _sources_stdin(tokens: list[str]) -> bool:
+    return len(tokens) > 1 and tokens[0] in (".", "source") and tokens[1] == "/dev/stdin"
 
 
 def _is_download(tokens: list[str]) -> bool:
@@ -809,8 +859,40 @@ def _child_scripts(tokens: list[str]) -> list[str]:
     return [shlex.join(c) for c in children if c]
 
 
+def _shell_quote_fragment(match: re.Match) -> str:
+    """Translate shell quoting into shlex quoting without evaluating expansions."""
+    text = match.group()
+    if text.startswith("{"):
+        return text[1:-1].replace(",", " ")
+    if text.startswith("$'"):
+        def unescape(escape):
+            value = escape[1]
+            if value[0] in "xuU":
+                if len(value) == 1:
+                    raise _UninspectableScript("invalid ANSI-C escape")
+                try:
+                    return chr(int(value[1:], 16))
+                except ValueError as exc:
+                    raise _UninspectableScript("invalid ANSI-C code point") from exc
+            if value[0] in "01234567":
+                return chr(int(value, 8) % 256)
+            escapes = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f",
+                       "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+            if value == "c":
+                raise _UninspectableScript("unsupported ANSI-C control escape")
+            return escapes.get(value, "\\" + value)
+        return shlex.quote(_ANSI_ESCAPE.sub(unescape, text[2:-1]).split("\0", 1)[0])
+    if text.startswith('$"'):
+        text = text[1:]
+    if text.startswith('"'):
+        return text.replace("\\\n", "").replace(r"\$", "$").replace(r"\`", "`")
+    return "" if text == "\\\n" else text
+
+
 def _shlex_split_safe(segment: str) -> list[str]:
-    """v8: Robust shlex.split with fallbacks."""
+    """Resolve literal shell word quoting on both parsing paths, without execution."""
+    if "$" in segment or "\\\n" in segment or ("{" in segment and "," in segment):
+        segment = _SHELL_QUOTES.sub(_shell_quote_fragment, segment)
     try:
         return shlex.split(segment)
     except ValueError:
@@ -821,7 +903,7 @@ def _shlex_split_safe(segment: str) -> list[str]:
 
 
 def _without_leading_redirects(segment: str) -> str:
-    """A simple command's leading redirections are shell syntax, not argv[0]."""
+    """Strip leading redirections from fallback source before unquoting."""
     pos = 0
     while match := _LEADING_REDIRECT.match(segment, pos):
         pos = match.end()
@@ -831,7 +913,7 @@ def _without_leading_redirects(segment: str) -> str:
 def _uninspected_shell() -> ExtractedCommands:
     # Reuse the unreadable-script shell guard when the bounded scan stops.
     shell = frozenset({"sh"})
-    return ExtractedCommands(shell, shell, shell, shell, inspection_incomplete=True)
+    return ExtractedCommands(shell, shell, shell, shell, segments=(), inspection_incomplete=True)
 
 
 def _extract_from_tokens(tokens: list[str]) -> tuple[str | None, str | None, set[str]]:
@@ -854,7 +936,7 @@ def _extract_from_tokens(tokens: list[str]) -> tuple[str | None, str | None, set
         return None, None, set()
 
     tokens = strip_transparent_command_wrappers(tokens)
-    if not tokens:
+    if not tokens or all(_is_env_assignment(token) for token in tokens):
         return None, None, set()
 
     cmd_idx = 0
@@ -894,7 +976,9 @@ def _substitution_scripts(cmd: str, *, heredoc: bool = False):
             commands -= 1
             if not commands:
                 yield cmd[start:i]
-        elif char == "`" or cmd.startswith("$(", i):
+        elif char == "`" or cmd.startswith("$(", i) or (
+            not heredoc and not quote and char in "<>" and cmd.startswith("(", i + 1)
+        ):
             arithmetic = cmd.startswith("$((", i)
             offset = 1 if char == "`" else 3 if arithmetic else 2
             stack.append([
@@ -937,7 +1021,9 @@ def _fallback_segments(cmd: str, depth: int = 0):
             while pos < len(segment) and segment[pos].isspace():
                 pos += 1
         segment = _without_leading_redirects(segment[pos:])
-        if segment and (tokens := _shlex_split_safe(segment)):
+        # Remove syntax before unquoting so an operand like '>' stays data.
+        argv = _FALLBACK_ARGV.sub(lambda m: " " if m.group("redirect") else m.group(), segment)
+        if segment and (tokens := _shlex_split_safe(argv)):
             yield segment, tokens, separator
         separator = following
     for script in _substitution_scripts(cmd):
@@ -951,11 +1037,15 @@ def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
 
     names, strings, potential, fetched = set(), set(), set(), set()
     nested: list[str] = []
+    segments: list[tuple[str, list[str]]] = []
+    child_segments: list[tuple[str, list[str]]] = []
     incomplete = False
 
     previous: list[str] = []
     downloading = False  # an earlier stage of this pipeline is curl/wget
     for segment, tokens, separator in _fallback_segments(cmd, depth):
+        if segment:
+            segments.append((segment, tokens))
         if not segment:
             fetched.add("sh")
             incomplete = True
@@ -973,11 +1063,12 @@ def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
         stripped = strip_transparent_command_wrappers(tokens)
         scripts = _child_scripts(stripped)
         if _reads_stdin_script(stripped):
-            scripts += [_herestring(stripped), _printed_text(previous) if piped else None]
+            scripts += [_herestring(_shlex_split_safe(segment)), _printed_text(previous) if piped else None]
         if stripped and _get_basename(stripped[0]) in SHELL_EXEC_COMMANDS and (
             (downloading and _reads_stdin_script(stripped)) or _SUBSTITUTED_DOWNLOAD.search(segment)
         ):
             fetched.add(_get_basename(stripped[0]))
+            scripts = []  # Downloaded script text is unavailable to inspection.
         for script in filter(None, scripts):
             inner = _extract_recursive(script, depth + 1)
             names.update(inner.names)
@@ -986,12 +1077,14 @@ def _extract_recursive(cmd: str, depth: int) -> ExtractedCommands:
             fetched.update(inner.fetched_shells)
             incomplete |= inner.inspection_incomplete
             nested += [script, *inner.scripts]
+            child_segments.extend(inner.segments or ())
         previous = stripped
         downloading = downloading or _is_download(stripped)
 
     return ExtractedCommands(
         frozenset(names), frozenset(strings), frozenset(potential), frozenset(fetched),
         tuple(dict.fromkeys(nested)),
+        tuple(segments + child_segments),
         inspection_incomplete=incomplete,
     )
 
@@ -1003,16 +1096,7 @@ def shell_segments(cmd: str):
     split at shell operators. Quoting survives in the argv, unlike the
     strings `extract_commands` returns.
     """
-    extracted = _extract_cached(cmd)
-    if extracted.segments is not None:
-        for segment in extracted.segments:
-            if tokens := _shlex_split_safe(_without_leading_redirects(segment)):
-                yield segment, tokens
-        return
-    for script in (cmd, *extracted.scripts):
-        for segment, tokens, _separator in _fallback_segments(script):
-            if segment:
-                yield segment, tokens
+    yield from _extract_cached(cmd).segments or ()
 
 
 def command_tokens_for(
@@ -1046,13 +1130,16 @@ def command_tokens_for(
 
         for i, token in enumerate(tokens):
             if _get_basename(token) == command_name:
-                # A segment reached through an excluded wrapper (sudo cat)
-                # is not this command as far as the caller is concerned.
                 if excluded_wrappers and any(
                     _get_basename(prefix) in excluded_wrappers for prefix in tokens[:i]
                 ):
                     break
                 return tuple(tokens[i:])
+        else:
+            # env -S may keep the child name inside a single source argument.
+            stripped = strip_transparent_command_wrappers(tokens, excluded_wrappers=excluded_wrappers)
+            if stripped:
+                return tuple(stripped)
 
     return ()
 
@@ -1079,7 +1166,7 @@ def _bashlex():
         """AST visitor with wrapper-aware and recursive shell -c parsing."""
         __slots__ = (
             "names", "strings", "potential", "fetched", "scripts", "depth",
-            "source", "original_source", "segments", "child_segments", "incomplete",
+            "source", "original_source", "segments", "child_segments", "incomplete", "segment_argv",
         )
 
         def __init__(self, source: str, original_source: str, depth: int = 0) -> None:
@@ -1092,12 +1179,20 @@ def _bashlex():
             self.source = source
             self.original_source = original_source
             self.incomplete = False
-            self.segments: list[str] = []
-            self.child_segments: list[str] = []
+            self.segments: list[tuple[str, list[str]]] = []
+            self.child_segments: list[tuple[str, list[str]]] = []
+            self.segment_argv: dict[str, list[str]] = {}
 
         def visitcommand(self, node, parts) -> bool:
-            self.segments.append(self.source[node.pos[0]:node.pos[1]])
-            all_words = [p.word for p in parts if p.kind == "word"]
+            word_parts = _command_word_parts(parts, self.source)
+            segment = " ".join(self.original_source[p.pos[0]:p.pos[1]] for p in word_parts)
+            # Repeated commands share argv within this parse.
+            tokens = self.segment_argv.get(segment)
+            if tokens is None:
+                tokens = self.segment_argv[segment] = _shlex_split_safe(segment)
+            if tokens:
+                self.segments.append((segment, tokens))
+            all_words = tokens
             # Filter out words containing newlines — these are heredoc bodies
             # or command substitutions with embedded content, not real arguments.
             # Prevents false positives like "git restore" matching inside a
@@ -1123,25 +1218,21 @@ def _bashlex():
             # Scripts this command runs. These use every word: a multi-line
             # `bash -c` body is a script, not a commit message.
             stripped = strip_transparent_command_wrappers(all_words)
-            if _find_shell_exec_arg(stripped) is not None:
-                # bashlex's word loses concatenated quote boundaries in shlex.quote.
-                stripped = strip_transparent_command_wrappers([
-                    (_shlex_split_safe(self.source[p.pos[0]:p.pos[1]]) or [p.word])[0]
-                    for p in parts if p.kind == "word"
-                ])
-            for script in _child_scripts(stripped):
-                self._scan(script)
             if _reads_stdin_script(stripped):
-                self._scan(_stdin_text(parts, self.original_source))
+                script = _stdin_text(parts, self.original_source)
+                self._scan(script)
             # `bash <(curl ...)`, `bash -c "$(curl ...)"`, `sh <<< "$(curl ...)"`.
             # ponytail: any download in the shell's words counts, so
             # `bash local.sh "$(curl ...)"` is read as one too; fails closed.
             if (
                 stripped
                 and _get_basename(stripped[0]) in SHELL_EXEC_COMMANDS
-                and any(_downloads(p) for p in parts)
+                and any(_downloads(p, self.source) for p in parts)
             ):
                 self.fetched.add(_get_basename(stripped[0]))
+            else:
+                for script in _child_scripts(stripped):
+                    self._scan(script)
 
             return True
 
@@ -1149,7 +1240,7 @@ def _bashlex():
             if heredoc is not None:
                 delimiter = _HEREDOC_DELIMITER.search(self.original_source, node.pos[0])
                 if delimiter and not any(c in delimiter.group("delimiter") for c in "'\"\\"):
-                    body = _stdin_text([node], self.original_source)
+                    body = _heredoc_text(heredoc, self.original_source)
                     for script in _substitution_scripts(body or "", heredoc=True):
                         self._scan(script)
             return True
@@ -1161,16 +1252,16 @@ def _bashlex():
             for i, (producer, consumer) in enumerate(zip(commands, commands[1:]), start=1):
                 if consumer.kind != "command":
                     continue
-                shell = strip_transparent_command_wrappers(_words(consumer))
+                shell = strip_transparent_command_wrappers(_words(consumer, self.original_source))
                 if not _reads_stdin_script(shell):
                     continue
                 # `curl ... | sh`, `wget -qO- ... | gunzip | bash`: a script
                 # that exists only on the wire.
-                if any(_downloads(c) for c in commands[:i]):
+                if any(_downloads(c, self.source) for c in commands[:i]):
                     self.fetched.add(_get_basename(shell[0]))
                 if producer.kind != "command":
                     continue
-                source = strip_transparent_command_wrappers(_words(producer))
+                source = strip_transparent_command_wrappers(_words(producer, self.original_source))
                 if source and _get_basename(source[0]) == "cat":
                     self._scan(_stdin_text(producer.parts, self.original_source))
                 else:
@@ -1187,38 +1278,50 @@ def _bashlex():
             self.fetched.update(inner.fetched_shells)
             self.incomplete |= inner.inspection_incomplete
             self.scripts += [script, *inner.scripts]
-            if inner.segments is not None:
-                self.child_segments.extend(inner.segments)
-            else:
-                for source in (script, *inner.scripts):
-                    self.child_segments.extend(s for s, _, _ in _fallback_segments(source))
+            self.child_segments.extend(inner.segments or ())
 
-    def _words(node) -> list[str]:
-        return [p.word for p in node.parts if p.kind == "word"]
+    def _command_word_parts(parts, source):
+        """Keep argv parts; an unquoted, adjacent {name} belongs to its redirect."""
+        return [p for i, p in enumerate(parts) if p.kind in ("word", "assignment") and not (
+            p.kind == "word" and p.word.startswith("{")
+            and i + 1 < len(parts) and parts[i + 1].kind == "redirect"
+            and p.pos[1] == parts[i + 1].pos[0]
+            and _NAMED_DESCRIPTOR.fullmatch(source[p.pos[0]:p.pos[1]])
+        )]
 
-    def _downloads(node) -> bool:
+    def _words(node, source) -> list[str]:
+        return _shlex_split_safe(" ".join(
+            source[p.pos[0]:p.pos[1]] for p in _command_word_parts(node.parts, source)
+        ))
+
+    def _downloads(node, source) -> bool:
         """Whether `node` is or contains a curl/wget command."""
-        if node.kind == "command" and _is_download(strip_transparent_command_wrappers(_words(node))):
+        if node.kind == "command" and _is_download(strip_transparent_command_wrappers(_words(node, source))):
             return True
         for attr in ("parts", "list", "command", "output"):
             value = getattr(node, attr, None)
             for child in value if isinstance(value, list) else [value]:
-                if hasattr(child, "kind") and _downloads(child):
+                if hasattr(child, "kind") and _downloads(child, source):
                     return True
         return False
 
     def _stdin_text(parts, original_source: str) -> str | None:
         """The here-string or heredoc body a command reads as stdin, or None."""
-        for p in parts:
-            if p.kind != "redirect":
+        for p in reversed(parts):
+            if p.kind != "redirect" or p.input not in (None, 0):
                 continue
             if p.type == "<<<":
-                return getattr(p.output, "word", None)
+                return _shlex_split_safe(original_source[p.output.pos[0]:p.output.pos[1]])[0]
             heredoc = getattr(p, "heredoc", None)
             if heredoc is not None:
-                # bashlex keeps the closing delimiter as the body's last line.
-                return original_source[heredoc.pos[0]:heredoc.pos[1]].rpartition("\n")[0]
+                return _heredoc_text(heredoc, original_source)
+            if p.type in ("<", "<&", "<>"):
+                return None
         return None
+
+    def _heredoc_text(heredoc, source: str) -> str:
+        # bashlex keeps the closing delimiter as the body's last line.
+        return source[heredoc.pos[0]:heredoc.pos[1]].rpartition("\n")[0]
 
     return bashlex, CommandVisitor
 
@@ -1314,12 +1417,15 @@ def _extract_impl(cmd: str, depth: int = 0) -> ExtractedCommands:
     """Internal extraction dispatcher."""
     if depth > _MAX_RECURSION_DEPTH:
         return _uninspected_shell()
-    if BASHLEX_AVAILABLE:
-        result = _extract_bashlex(cmd, depth)
-        # A parse that found no command still gets the fallback's second look.
-        if result.names or result.strings:
-            return result
-    return _extract_fallback(cmd, depth)
+    try:
+        if BASHLEX_AVAILABLE:
+            result = _extract_bashlex(cmd, depth)
+            if result.segments is not None:
+                return result
+        return _extract_fallback(cmd, depth)
+    except _UninspectableScript:
+        shell = frozenset({"sh"})
+        return ExtractedCommands(shell, shell, shell, shell, segments=())
 
 
 # ─── Public API (HOT PATH) ────────────────────────────────────────────────────
