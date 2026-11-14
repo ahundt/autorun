@@ -922,15 +922,21 @@ def _shell_script_word(tokens: list[str]) -> tuple[str, str] | None:
             if token in ("-s", "--shell", "-g", "--group", "-G", "--supp-group", "-w", "--whitelist-environment"):
                 next(args, None)
             continue
-        if token in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
+        if token in ("--rcfile", "--init-file", "--emulate"):
             next(args, None)
         elif token.startswith(("-", "+")) and token != "-":
             if not token.startswith("--"):
-                command |= token.startswith("-") and "c" in token[1:]
-                if "s" in token[1:]:
-                    stdin = token.startswith("-")
-                if "o" in token[1:] or "O" in token[1:]:
-                    next(args, None)
+                # Flags combine (`-ec`); o/O take a value, attached (`-oerrexit`,
+                # zsh) or as the next word, so what follows them is not flags.
+                for position, flag in enumerate(token[1:], 1):
+                    if flag in "oO":
+                        if position == len(token) - 1:
+                            next(args, None)
+                        break
+                    if flag == "c":
+                        command |= token.startswith("-")
+                    elif flag == "s":
+                        stdin = token.startswith("-")
         else:
             word = token
             break

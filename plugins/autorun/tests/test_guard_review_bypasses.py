@@ -1074,3 +1074,16 @@ def test_d_probe_comparison(monkeypatch, capsys, batch):
     with capsys.disabled():
         print("D_PROBES=" + json.dumps({"counts": counts, "rows": rows}, sort_keys=True))
     assert not failures, failures
+
+
+@pytest.mark.parametrize("command", GUARDED)
+@pytest.mark.parametrize("form", ["zsh -oerrexit -c", "zsh --emulate sh -c", "bash -eo pipefail -c",
+                                  "zsh -o errexit -c", "bash -co pipefail"])
+def test_shell_option_values_do_not_hide_the_script(command, form):
+    assert decision(form + " " + shlex.quote(command)) == "deny"
+
+
+@pytest.mark.parametrize("command", ["bash -o pipefail script.sh", "zsh -oerrexit script.zsh",
+                                     "bash -eo pipefail -c 'make | tee log'", "zsh --emulate sh -c 'ls'"])
+def test_shell_option_values_keep_ordinary_commands_allowed(command):
+    assert decision(command) != "deny"
