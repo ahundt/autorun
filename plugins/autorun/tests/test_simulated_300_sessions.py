@@ -13,8 +13,10 @@ Only stdin, hook-process startup and final stdout printing are omitted. Test-onl
 instrumentation adds a durable counter and observations after real dispatch;
 it never replaces guards, task handlers, dispatch limits or persistence.
 Each burst tolerates at most 10% non-gate load fail-open answers (timeouts or
-containment); a burst over that is repeated once with new sessions after the
-containment cooldown and the test fails only when the repeat is over it too.
+containment). One burst in the test may go over that if two further bursts of
+new sessions, each after the containment cooldown, both stay within it; a
+second burst over the limit, or either repeat over it, fails the test. A defect
+that overloads exactly one burst and none of the next two would pass.
 Only state assertions depending on those unanswered events are excluded. Gate
 decisions and the restart checks remain exact.
 """
@@ -338,17 +340,23 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
             await asyncio.sleep(0.05)
             canary = resources(process)
             assert canary["fds"] <= baseline["fds"] + FD_MARGIN, f"leaked descriptors: {baseline} -> {canary}"
+            repeated = False
             for offset in (0, sessions):
                 count, detail = await burst(offset)
                 if count > sessions // 10:
                     # One handler passing its 2 s deadline opens that session's
                     # circuit for the cooldown, so a single stall on a shared CI
-                    # runner is counted many times over. A daemon that cannot
-                    # carry this burst fails a second one too; a stall does not.
+                    # runner is counted many times over. Only one burst in the
+                    # test may be excused, and only by two bursts of new sessions
+                    # that both stay within the limit: a daemon that cannot
+                    # carry this load fails one of those three.
+                    assert not repeated, f"a second burst exceeded 10%: {detail}"
+                    repeated = True
                     print("CAPACITY_REPEAT " + detail)
-                    await asyncio.sleep(float(core.CONFIG["daemon_dispatch_timeout_cooldown_seconds"]) + 0.5)
-                    again, again_detail = await burst(5 * SESSIONS + offset)
-                    assert again <= sessions // 10, f"two bursts in a row exceeded 10%: {detail}; then {again_detail}"
+                    for repeat in (5, 7):
+                        await asyncio.sleep(float(core.CONFIG["daemon_dispatch_timeout_cooldown_seconds"]) + 0.5)
+                        again, again_detail = await burst(repeat * SESSIONS + offset)
+                        assert again <= sessions // 10, f"exceeded 10% again: {detail}; then {again_detail}"
                 await asyncio.sleep(0.1)
                 after = resources(process)
                 after_bursts.append(after)

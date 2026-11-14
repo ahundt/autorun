@@ -1307,7 +1307,9 @@ def test_quick_screen_lets_harmless_uses_of_conditional_guards_proceed(command, 
 
 
 # Spellings the full matcher reads through option clusters, long forms and lines.
-SCREEN_PARITY_COMMANDS = ["git add .;git commit -m x", "(git add .)", "git add -- .", "git add .>/dev/null",
+SCREEN_PARITY_COMMANDS = ["git clean -d?f", "git add -u?A", "git rebase -q?i", "sed -?i s/a/b/ f",
+    "find . -name x -exec echo {} \\; -delete", "cd repo && git clean -df", "ls | xargs git clean -f",
+    "git add .;git commit -m x", "(git add .)", "git add -- .", "git add .>/dev/null",
     "git clean -df", "git clean -xdf", "git clean --force", "git add --all",
     "git add -uA", "git rebase -qi HEAD~3", "sed -1i s/a/b/ f",
     "sh <<A\nsh <<B\nsh <<C\nsh <<D\necho hi\nD\nC\nB\nA\n"]
@@ -1326,6 +1328,9 @@ def test_review8_screen_sends_what_the_full_check_denies(command, cli_type):
 @pytest.mark.parametrize("command", ["git clean -n", "git add -u README", "git rebase main",
                                      "git add src/a_file.py", "git add ./src", "git rebase --continue",
                                      "git clean -n --exclude=a-f", "sed -e s/a-i/b/ f",
+                                     "git clean -n && tar -czf /tmp/backup.tgz src",
+                                     "git clean -n --exclude='*-config'", "git clean -n && ls -alf",
+                                     "git add README; ls -A", "git rebase main | grep -i conflict",
                                      "git reset HEAD file"])
 def test_review8_everyday_git_still_passes_the_screen(command):
     from autorun.config import screened_guard

@@ -294,7 +294,7 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "DANGEROUS: 'git clean -f' permanently deletes untracked files.\n\n**SAFER ALTERNATIVES:**\n\n1. **Preview first** (ALWAYS do this):\n   git clean -n   # dry-run, shows what would be deleted\n\n2. **Stash untracked files**:\n   git stash push -u -m \"WIP: stashing untracked files\"\n\n3. **Move to backup** (manual safety):\n   mkdir -p ../backup-untracked && git clean -n | xargs -I{} mv {} ../backup-untracked/\n\n4. **Interactive mode**:\n   git clean -i  # prompts for each file\n\nTo allow (default 1 use): /ar:ok 'git clean -f'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git clean -n",
-        "screen": r"(^|[^A-Za-z0-9-])(-\w*f|--force)",  # -f, a cluster holding f (-df, -xdf), and --force
+        "screen": r"(^|[\s_,{])(-[^\s=-]*f|--force)",  # -f, a cluster holding f (-df, -xdf), and --force
     },
     "git reset HEAD~": {
         "action": "block",
@@ -303,12 +303,12 @@ DEFAULT_INTEGRATIONS = {
     "git add -A": {
         "action": "block",
         "suggestion": "CAUTION: 'git add -A' stages ALL changes including untracked files, which may accidentally include sensitive files (.env, credentials) or large binaries.\n\n**SAFER ALTERNATIVE:**\n   git add <file1> <file2> ...  # stage specific files by name\n\n**Preview what would be staged:**\n   git status  # review untracked and modified files first\n\nTo allow (default 1 use): /ar:ok 'git add -A'\nScope: [N|5m|permanent] (default 1 use)",
-        "screen": r"(^|[^A-Za-z0-9-])(-\w*A|--all)",  # -A, a cluster holding A (-uA), and --all
+        "screen": r"(^|[\s_,{])(-[^\s=-]*A|--all)",  # -A, a cluster holding A (-uA), and --all
     },
     "git add .": {
         "action": "block",
         "suggestion": "CAUTION: 'git add .' stages ALL changes in the current directory, which may accidentally include sensitive files (.env, credentials) or large binaries.\n\n**SAFER ALTERNATIVE:**\n   git add <file1> <file2> ...  # stage specific files by name\n\n**Preview what would be staged:**\n   git status  # review untracked and modified files first\n\nTo allow (default 1 use): /ar:ok 'git add .'\nScope: [N|5m|permanent] (default 1 use)",
-        "screen": r"(^|[^A-Za-z0-9./-])\.(?![\w./-])",  # `.` as a whole argument, not ./src or a.py
+        "screen": r"(^|[\s_,{])\.(?![\w./-])",  # `.` as a whole argument, not ./src or a.py
     },
     "dd if=": {
         "action": "block",
@@ -391,7 +391,7 @@ DEFAULT_INTEGRATIONS = {
         "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["sed"]}},
         "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:no --global sed",
         "when": "_sed_modifies_files",
-        "screen": r"(^|[^A-Za-z0-9-])(-\w*i|--in-place)",  # -i, a cluster holding i (-Ei, -1i), --in-place
+        "screen": r"(^|[\s_,{])(-[^\s=-]*i|--in-place)",  # -i, a cluster holding i (-Ei, -1i), --in-place
     },
     "awk": {
         "action": "block",
@@ -437,7 +437,7 @@ DEFAULT_INTEGRATIONS = {
     "git rebase -i": {
         "action": "block",
         "suggestion": "BLOCKED: 'git rebase -i' rewrites commit history and requires an interactive terminal.\n\nAlternatives: git commit --fixup <hash>, git rebase main (non-interactive)\n\nTo allow (default 1 use): /ar:ok 'git rebase -i'\nScope: [N|5m|permanent] (default 1 use)",
-        "screen": r"(^|[^A-Za-z0-9-])-\w*i",  # -i and a cluster holding i (-qi); not --continue
+        "screen": r"(^|[\s_,{])-[^\s=-]*i",  # -i and a cluster holding i (-qi); not --continue
     },
     "git rebase --interactive": {
         "action": "block",
@@ -691,14 +691,30 @@ def screened_guard(command: str) -> tuple[str, str] | None:
     word (`npm run format` does not contain the word rm); any other token
     (`--hard`, `HEAD~`, `if=`) is matched as a substring, unless the guard has a
     `screen`, which then decides instead (`git clean -df` has no `-f` substring).
+    A screen that stands in for option tokens must match in the same literal
+    segment (between `;`, `&`, `|` and newlines) as the guard's words, so
+    `git clean -n && tar -czf x` does not count; a predicate guard's screen
+    (find, sed) is read over the whole command, since its own arguments may
+    hold a `;`.
     """
     import re
     plain = re.sub(r"\\\n|['\"\\]", "", command)
     # Also split at each quote, so a name glued to an option (-S'find x') is a word.
     words = set(re.findall(r"[A-Za-z]+", plain + " " + command))
+    segments = None
     for name, tokens, screen in _critical_guards_by_name():
-        if (all(token in words if token.isalpha() else bool(screen) or token in plain for token in tokens)
-                and (screen is None or re.search(screen, plain))):
+        names = [token for token in tokens if token.isalpha()]
+        if not all(token in words for token in names):
+            continue
+        if screen is None:
+            hit = all(token in plain for token in tokens if not token.isalpha())
+        elif len(names) == len(tokens):
+            hit = bool(re.search(screen, plain))
+        else:
+            segments = segments or re.split(r"[;&|\n]+", plain)
+            hit = any(re.search(screen, segment) and set(names) <= set(re.findall(r"[A-Za-z]+", segment))
+                      for segment in segments)
+        if hit:
             return "guard", name
     for feature in SHELL_NAME_HIDING_FEATURES:
         if feature in command:
