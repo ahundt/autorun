@@ -223,8 +223,8 @@ class TestDaemonFailureResponsesAreNative:
 
         response = json.loads(b"".join(written))
         assert response, "a failure must still say something"
-        # The wire carries one private field; every client strips it before the harness.
-        assert isinstance(response.pop("_autorun_failure_code"), str)
+        # This request carries no hook deadline, as a 1.0.0rc3 hook's does not, and
+        # that hook prints the answer as is: the private failure field must be absent.
         assert set(response) <= {"decision", "reason"}, response
         assert response == core.validate_hook_response("Stop", response, "antigravity")
 

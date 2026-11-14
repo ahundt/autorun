@@ -70,11 +70,19 @@ guarded command as a whole word (quotes and backslashes are removed first, so
 substitution. `npm run format` and `git commit -m "fix"` proceed. `find`, `sed`,
 `tmutil` and a shell running a script count only with the option that makes them
 destructive (`-delete`, `-i`, a `curl` or `wget`), so `find . -name x` and
-`bash build.sh` proceed. The denial names the guard the command matched and
-repeats that guard's own guidance, for example to use `trash` instead of `rm`.
+`bash build.sh` proceed; `git clean`, `git add` and `git rebase` count with
+their blocked option in any spelling the full check reads (`-df`, `--force`,
+`-uA`, `-qi`). The denial names the guard the command matched and repeats that
+guard's own guidance, for example to use `trash` instead of `rm`.
 When the full
 check cannot run, a spelling outside that list can escape; with budget the full
 check catches supported spellings as before.
+
+This behavior needs both the hook and the daemon from a release that has it
+(1.0.0 release candidate 4 or later). A session
+started before the upgrade keeps its older hook until it restarts, and a daemon
+that has not restarted since the upgrade still answers a busy moment by blocking
+the tool call; `autorun --install` restarts the daemon.
 
 `overload_policy` in `~/.autorun/autorun.config.json` has three values:
 `critical-guards` (default), `block` (blanket tool-gate denial on daemon

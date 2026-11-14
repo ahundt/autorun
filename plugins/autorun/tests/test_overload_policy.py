@@ -1274,8 +1274,23 @@ def test_guard_screens_cover_what_their_predicates_read():
     covers("time-machine-safety", integrations._TMUTIL_CONSENT_REQUIRED_VERBS)
     covers("shell-runs-downloaded-script", command_detection.NETWORK_DOWNLOADERS)
     covers("sed", {"-i", "-i.bak", "-Ei", "-ni", "--in-place", "--in-place=.bak"})
-    # A guard may carry a screen only alongside the predicate it narrows.
-    assert all(spec.get("when", "always") != "always" for spec in DEFAULT_INTEGRATIONS.values() if "screen" in spec)
+    covers("sed", {"-1i"})
+    covers("git clean -f", {"-f", "-df", "-xdf", "-fd", "--force"})
+    covers("git add -A", {"-A", "-uA", "-Av", "--all"})
+    covers("git add .", {".", " .;", " . "})
+    covers("git rebase -i", {"-i", "-qi", "-ri"})
+    # A screen replaces the literal match of its pattern's option tokens, so every
+    # guard whose pattern has a short option the matcher reads in clusters needs one.
+    import re as _re
+    from autorun.config import _critical_guards_by_name
+    by_name = {}
+    for name, tokens, screen in _critical_guards_by_name():
+        by_name.setdefault(name, []).append((tokens, screen))
+    unscreened = [name for name, rows in by_name.items() for tokens, screen in rows
+                  if not screen and any(_re.fullmatch(r"-[A-Za-z]|\.", token) for token in tokens)
+                  # a shorter pattern of the same command already sends it to the full check
+                  and not any(set(other) < set(tokens) for others in by_name.values() for other, _ in others)]
+    assert unscreened == [], unscreened
 
 
 @pytest.mark.parametrize("command,needs", [
@@ -1289,3 +1304,65 @@ def test_guard_screens_cover_what_their_predicates_read():
 def test_quick_screen_lets_harmless_uses_of_conditional_guards_proceed(command, needs):
     from autorun.config import needs_full_guard_check
     assert needs_full_guard_check(command) is needs
+
+
+# Spellings the full matcher reads through option clusters, long forms and lines.
+SCREEN_PARITY_COMMANDS = ["git add .;git commit -m x", "(git add .)", "git add -- .", "git add .>/dev/null",
+    "git clean -df", "git clean -xdf", "git clean --force", "git add --all",
+    "git add -uA", "git rebase -qi HEAD~3", "sed -1i s/a/b/ f",
+    "sh <<A\nsh <<B\nsh <<C\nsh <<D\necho hi\nD\nC\nB\nA\n"]
+
+
+@pytest.mark.parametrize("command", SCREEN_PARITY_COMMANDS)
+@pytest.mark.parametrize("cli_type", ["claude", "codex"])
+def test_review8_screen_sends_what_the_full_check_denies(command, cli_type):
+    from autorun.config import screened_guard
+    payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": command}}
+    assert client._critical_guard_reason(payload, cli_type), "the full check no longer denies this"
+    assert screened_guard(command) is not None
+    assert verdict(client.degraded_tool_response(payload, cli_type, "daemon_response_timeout")) == "deny"
+
+
+@pytest.mark.parametrize("command", ["git clean -n", "git add -u README", "git rebase main",
+                                     "git add src/a_file.py", "git add ./src", "git rebase --continue",
+                                     "git clean -n --exclude=a-f", "sed -e s/a-i/b/ f",
+                                     "git reset HEAD file"])
+def test_review8_everyday_git_still_passes_the_screen(command):
+    from autorun.config import screened_guard
+    assert screened_guard(command) is None
+
+
+@pytest.mark.parametrize("denial", [{"decision": "deny", "reason": "blocked"}, {"decision": "block"},
+                                    {"hookSpecificOutput": {"permissionDecision": "deny"}}])
+def test_review8_a_later_envelope_cannot_replace_a_denial(monkeypatch, denial):
+    """Antigravity's denial is a root `decision`; any denial must end the loop."""
+    from autorun import plugins
+    results = iter([denial, {"decision": "allow"}])
+    monkeypatch.setattr(plugins, "_check_blocked_command_input", lambda ctx: next(results))
+    ctx = core.EventContext(session_id="envelopes", event="PreToolUse", tool_name="Bash",
+        tool_input={"command": "a"}, tool_input_envelopes=({"command": "a"}, {"command": "b"}),
+        cli_type="antigravity", store=core.ThreadSafeDB())
+    assert plugins.check_blocked_commands(ctx) == denial
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", ["PreToolUse", "PostToolUse"])
+@pytest.mark.parametrize("sends_deadline", [False, True])
+async def test_review8_private_field_goes_only_to_a_client_that_strips_it(monkeypatch, event, sends_deadline):
+    """A 1.0.0rc3 hook prints the daemon's answer as is, and Codex rejects unknown fields."""
+    from unittest.mock import AsyncMock, Mock
+    daemon = core.AutorunDaemon(core.AutorunApp())
+    async def failing(ctx, cli_type):
+        return core.daemon_failure_response(event, "codex", "state unreadable", "state_evaluation_failed")
+    monkeypatch.setattr(daemon, "_dispatch_with_timeout", failing)
+    payload = {"session_id": "old-hook", "cli_type": "codex", "hook_event_name": event,
+               "tool_name": "Bash", "tool_input": {"command": "ls"}}
+    if sends_deadline:
+        payload[client.DEADLINE_PAYLOAD_KEY] = time.time() + 5
+    reader = asyncio.StreamReader()
+    reader.feed_data(json.dumps(payload).encode() + b"\n")
+    writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
+    await daemon.handle_client(reader, writer)
+    response = json.loads(writer.write.call_args_list[-1].args[0])
+    assert response, response
+    assert ("_autorun_failure_code" in response) is sends_deadline, response

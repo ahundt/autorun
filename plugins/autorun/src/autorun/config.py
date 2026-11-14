@@ -78,10 +78,12 @@ PATTERN_DISPLAY_MAX_LEN = 50  # regex/command patterns in error messages (securi
 #   enabled: Enable/disable integration (defaults to true)
 #   name: Debug identifier (defaults to pattern)
 #   platform_overrides: Per-cli replacements for action, suggestion, redirect
-#   screen: Regex (syntax shared by Python and JavaScript) that every command the
-#           `when` predicate can block must match. Used only by the degraded-mode
+#   screen: Regex (syntax shared by Python and JavaScript) that every command
+#           this guard can block must match. Used only by the degraded-mode
 #           quick screen (screened_guard): a command naming this guard but not
 #           matching proceeds without the full check, e.g. `find . -name x`.
+#           It also stands in for the pattern's option tokens, which the full
+#           matcher reads through clusters and long spellings (`git clean -df`).
 # =============================================================================
 def _codex_suggestion(command: str, body: str) -> str:
     """Codex block text: what to do instead, then the allow/block commands.
@@ -292,6 +294,7 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "DANGEROUS: 'git clean -f' permanently deletes untracked files.\n\n**SAFER ALTERNATIVES:**\n\n1. **Preview first** (ALWAYS do this):\n   git clean -n   # dry-run, shows what would be deleted\n\n2. **Stash untracked files**:\n   git stash push -u -m \"WIP: stashing untracked files\"\n\n3. **Move to backup** (manual safety):\n   mkdir -p ../backup-untracked && git clean -n | xargs -I{} mv {} ../backup-untracked/\n\n4. **Interactive mode**:\n   git clean -i  # prompts for each file\n\nTo allow (default 1 use): /ar:ok 'git clean -f'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git clean -n",
+        "screen": r"(^|[^A-Za-z0-9-])(-\w*f|--force)",  # -f, a cluster holding f (-df, -xdf), and --force
     },
     "git reset HEAD~": {
         "action": "block",
@@ -300,10 +303,12 @@ DEFAULT_INTEGRATIONS = {
     "git add -A": {
         "action": "block",
         "suggestion": "CAUTION: 'git add -A' stages ALL changes including untracked files, which may accidentally include sensitive files (.env, credentials) or large binaries.\n\n**SAFER ALTERNATIVE:**\n   git add <file1> <file2> ...  # stage specific files by name\n\n**Preview what would be staged:**\n   git status  # review untracked and modified files first\n\nTo allow (default 1 use): /ar:ok 'git add -A'\nScope: [N|5m|permanent] (default 1 use)",
+        "screen": r"(^|[^A-Za-z0-9-])(-\w*A|--all)",  # -A, a cluster holding A (-uA), and --all
     },
     "git add .": {
         "action": "block",
         "suggestion": "CAUTION: 'git add .' stages ALL changes in the current directory, which may accidentally include sensitive files (.env, credentials) or large binaries.\n\n**SAFER ALTERNATIVE:**\n   git add <file1> <file2> ...  # stage specific files by name\n\n**Preview what would be staged:**\n   git status  # review untracked and modified files first\n\nTo allow (default 1 use): /ar:ok 'git add .'\nScope: [N|5m|permanent] (default 1 use)",
+        "screen": r"(^|[^A-Za-z0-9./-])\.(?![\w./-])",  # `.` as a whole argument, not ./src or a.py
     },
     "dd if=": {
         "action": "block",
@@ -349,7 +354,7 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "when": "_shell_runs_downloaded_script",
         # command_detection.NETWORK_DOWNLOADERS, or four shell names (nesting past 3).
-        "screen": r"curl|wget|(\b(bash|dash|fish|ksh|sh|su|zsh)\b[^\n]*){4}",
+        "screen": r"curl|wget|(\b(bash|dash|fish|ksh|sh|su|zsh)\b[\s\S]*?){4}",
         "suggestion": (
             "Blocked: this shell would run a script autorun cannot read: one straight "
             "from a network download (curl or wget), or a shell nested more than 3 "
@@ -386,7 +391,7 @@ DEFAULT_INTEGRATIONS = {
         "platform_overrides": {"codex": {"suggestion": _CODEX_PLATFORM_SUGGESTIONS["sed"]}},
         "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:no --global sed",
         "when": "_sed_modifies_files",
-        "screen": "-[A-Za-z]*i",  # -i, a cluster holding i (-Ei), and --in-place
+        "screen": r"(^|[^A-Za-z0-9-])(-\w*i|--in-place)",  # -i, a cluster holding i (-Ei, -1i), --in-place
     },
     "awk": {
         "action": "block",
@@ -432,6 +437,7 @@ DEFAULT_INTEGRATIONS = {
     "git rebase -i": {
         "action": "block",
         "suggestion": "BLOCKED: 'git rebase -i' rewrites commit history and requires an interactive terminal.\n\nAlternatives: git commit --fixup <hash>, git rebase main (non-interactive)\n\nTo allow (default 1 use): /ar:ok 'git rebase -i'\nScope: [N|5m|permanent] (default 1 use)",
+        "screen": r"(^|[^A-Za-z0-9-])-\w*i",  # -i and a cluster holding i (-qi); not --continue
     },
     "git rebase --interactive": {
         "action": "block",
@@ -669,11 +675,6 @@ def critical_guard_tokens() -> tuple[tuple[str, ...], ...]:
     return tuple(tokens for _, tokens, _ in _critical_guards_by_name())
 
 
-def critical_guard_screens() -> dict[str, str]:
-    """Pattern -> `screen` regex, for the guards that have one."""
-    return {" ".join(tokens): screen for _, tokens, screen in _critical_guards_by_name() if screen}
-
-
 def needs_full_guard_check(command: str) -> bool:
     """Whether the quick screen sends this command to the full guard check."""
     return screened_guard(command) is not None
@@ -688,14 +689,15 @@ def screened_guard(command: str) -> tuple[str, str] | None:
     Quotes, backslashes and line continuations are dropped first, so "r"m and
     r\\m read as rm. A purely alphabetic guard token must then appear as a whole
     word (`npm run format` does not contain the word rm); any other token
-    (`-rf`, `HEAD~`, `if=`) is matched as a substring.
+    (`--hard`, `HEAD~`, `if=`) is matched as a substring, unless the guard has a
+    `screen`, which then decides instead (`git clean -df` has no `-f` substring).
     """
     import re
     plain = re.sub(r"\\\n|['\"\\]", "", command)
     # Also split at each quote, so a name glued to an option (-S'find x') is a word.
     words = set(re.findall(r"[A-Za-z]+", plain + " " + command))
     for name, tokens, screen in _critical_guards_by_name():
-        if (all(token in words if token.isalpha() else token in plain for token in tokens)
+        if (all(token in words if token.isalpha() else bool(screen) or token in plain for token in tokens)
                 and (screen is None or re.search(screen, plain))):
             return "guard", name
     for feature in SHELL_NAME_HIDING_FEATURES:

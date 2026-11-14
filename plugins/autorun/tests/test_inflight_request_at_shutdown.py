@@ -45,8 +45,8 @@ async def test_cancelled_dispatch_fails_closed(monkeypatch, event):
             assert specific["permissionDecision"] == "deny"
             assert client.load_guidance() in specific["permissionDecisionReason"]
         else:
-            # The wire carries one private field; every client strips it before the harness.
-            assert response.pop("_autorun_failure_code") == "daemon_dispatch_contained"
+            # No hook deadline in this request, so the client is one that prints the
+            # answer as is and the private failure field is withheld.
             assert response == core.validate_hook_response(event, response, "claude")
             assert "hookSpecificOutput" not in response
     writer.close.assert_called_once()

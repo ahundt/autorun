@@ -2217,7 +2217,11 @@ console.log(JSON.stringify({{denial: denialReason(await bridge.askToolGate({{
 ''', encoding="utf-8")
     result = subprocess.run(_javascript_command(driver), capture_output=True, text=True, timeout=10)
     assert result.returncode == 0 and result.stderr == "", result.stderr
-    assert "guard check did not answer in time" in json.loads(result.stdout)["denial"]
+    denial = json.loads(result.stdout)["denial"]
+    assert "guard check did not answer in time" in denial
+    # The last resort repeats the matched guard's own alternative, as Python does.
+    assert "names `rm`" in denial and "The `rm` guard says:" in denial and "trash" in denial
+    assert "/ar ok rm" in denial
 
 
 def _close_handler_bodies(source: str) -> list[str]:
@@ -2369,12 +2373,19 @@ console.log(JSON.stringify(rows));
 
 def test_review_bridge_screen_data_pinned():
     import re
-    from autorun.config import (critical_guard_tokens, critical_guard_screens, SHELL_NAME_HIDING_FEATURES,
+    from autorun import client
+    from autorun.config import (_critical_guards_by_name, SHELL_NAME_HIDING_FEATURES,
                                 SHELL_TOOL_NAMES, BASH_TOOLS)
     source = BRIDGE_SOURCE.read_text()
-    for name, expected in [("CRITICAL_GUARD_TOKENS", list(map(list, critical_guard_tokens()))),
+    guards = [[name, list(tokens), screen] for name, tokens, screen in _critical_guards_by_name()]
+    guidance = {name: client.guard_guidance(name, "pi") for name, _, _ in guards}
+    # One copy serves the three bridge harnesses: Prime reads Pi's text, and the
+    # bridge turns "/ar " into OpenCode's "/ar-".
+    assert guidance == {name: client.guard_guidance(name, "prime") for name in guidance}
+    assert ({name: text.replace("/ar ", "/ar-") for name, text in guidance.items()}
+            == {name: client.guard_guidance(name, "opencode") for name in guidance})
+    for name, expected in [("CRITICAL_GUARDS", guards), ("CRITICAL_GUARD_GUIDANCE", guidance),
                            ("SHELL_NAME_HIDING_FEATURES", list(SHELL_NAME_HIDING_FEATURES)),
-                           ("CRITICAL_GUARD_SCREENS", critical_guard_screens()),
                            ("SHELL_TOOL_NAMES", sorted(SHELL_TOOL_NAMES)), ("BASH_TOOLS", sorted(BASH_TOOLS))]:
         match = re.search(r"const " + name + r" = ([\[{].*?[\]}]);\n", source)
         assert match is not None, name

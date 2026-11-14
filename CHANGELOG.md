@@ -859,14 +859,21 @@ enforce those policies.
      guidance. `npm run format` and `git commit -m "fix"` proceed. `find`,
      `sed`, `tmutil` and a shell running a script count only with the option
      that makes them destructive (`-delete`, `-i`, a `curl` or `wget`), so
-     `find . -name x` and `bash build.sh` proceed. A denial without a finished
+     `find . -name x` and `bash build.sh` proceed; `git clean`, `git add` and
+     `git rebase` count with their blocked option in any spelling the full
+     check reads (`-df`, `--force`, `-uA`, `-qi`). A denial without a finished
      check says which guard the command names and gives that guard's own
-     guidance.
+     guidance, on the Pi, Prime and OpenCode bridges too.
      `/ar:no` rules, `/ar:ok` grants, the file policy, and task and plan gating
      are not checked while degraded. `block` denies every tool-gate call;
      `allow` permits every call without guards. Do not restart the daemon under
      load. Failure signals use a private daemon field, never user-written reason
      text; elapsed waits use monotonic deadlines bounded by each harness's budget.
+     The daemon sends that field only to a hook from this release, so a session
+     started before the upgrade, whose older hook prints the daemon's answer
+     unchanged, gets the answer it always did. Until the daemon itself has
+     restarted on this release (`autorun --install` restarts it), a busy daemon
+     still blocks tool calls as 1.0.0rc3 did.
 140. Shell command arguments now include mixed and nested lists, rendered as
      quoted argument vectors. Empty command values no longer hide the next
      command key. Conflicting native input envelopes are checked separately and

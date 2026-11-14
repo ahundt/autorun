@@ -1268,7 +1268,9 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             result = _check_blocked_command_input(ctx)
             if result is not None:
                 response = result
-                if result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny":
+                # Antigravity's native denial is a root `decision`, not the nested field.
+                if (result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+                        or result.get("decision") in ("deny", "block")):
                     return result
         return response
     finally:

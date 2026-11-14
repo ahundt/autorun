@@ -3613,6 +3613,7 @@ class AutorunDaemon:
         event = "unknown"
         tool = ""
         cli_type = "claude"
+        payload = None
         # None is pass-through only when dispatch completes; cancellation fails closed.
         response = None
         skip_response = False
@@ -3860,6 +3861,12 @@ class AutorunDaemon:
             else:
                 # None = pass-through: send {} so client exits 0 with no stdout output
                 final = response if response is not None else {}
+                # Only a client that sends the hook deadline strips the private
+                # failure field; an older hook (1.0.0rc3 and before, still launched
+                # by sessions started before an upgrade) prints the response as is,
+                # and Codex rejects a hook output with an unknown field.
+                if "_autorun_failure_code" in final and HOOK_DEADLINE_PAYLOAD_KEY not in (payload or {}):
+                    final = {k: v for k, v in final.items() if k != "_autorun_failure_code"}
                 # Debug logging (ALWAYS enabled)
                 response_json = json.dumps(final)
                 logger.debug(f"Daemon sending response ({len(response_json)} bytes): {response_json}")

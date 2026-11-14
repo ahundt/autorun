@@ -358,6 +358,20 @@ def _critical_guard_reason(payload: dict, cli_type: str) -> str | None:
     return None
 
 
+def guard_guidance(name: str, cli_type: str) -> str:
+    """A shipped guard's own text for this harness, by DEFAULT_INTEGRATIONS key."""
+    from .config import DEFAULT_INTEGRATIONS
+
+    spec = DEFAULT_INTEGRATIONS.get(name, {})
+    override = (spec.get("platform_overrides") or {}).get(cli_type) or {}
+    guidance = override.get("suggestion") or override.get("message") or spec.get("suggestion") or ""
+    try:
+        from .platforms import format_suggestion
+        return format_suggestion(guidance, cli_type)
+    except Exception:  # the guard's text unformatted is still better than none
+        return guidance
+
+
 def unchecked_guard_reason(command: str, cli_type: str) -> str:
     """Denial text for a screened command whose full check could not finish.
 
@@ -365,7 +379,7 @@ def unchecked_guard_reason(command: str, cli_type: str) -> str:
     straight from DEFAULT_INTEGRATIONS: the parser and integrations modules may
     be exactly what failed to load, so nothing here imports them.
     """
-    from .config import DEFAULT_INTEGRATIONS, screened_guard
+    from .config import screened_guard
 
     kind, name = screened_guard(command) or ("syntax", "shell syntax autorun could not read")
     retry = ("Retry when autorun recovers; do not restart the daemon. "
@@ -375,14 +389,7 @@ def unchecked_guard_reason(command: str, cli_type: str) -> str:
                 f"It is blocked as a precaution because it uses `{name}`, which can run a "
                 f"guarded command such as rm under another spelling. Write the command "
                 f"without `{name}`, or retry it unchanged. {retry}")
-    spec = DEFAULT_INTEGRATIONS.get(name, {})
-    override = (spec.get("platform_overrides") or {}).get(cli_type) or {}
-    guidance = override.get("suggestion") or override.get("message") or spec.get("suggestion") or ""
-    try:
-        from .platforms import format_suggestion
-        guidance = format_suggestion(guidance, cli_type)
-    except Exception:  # the guard's text unformatted is still better than none
-        pass
+    guidance = guard_guidance(name, cli_type)
     return (f"Autorun is degraded and ran out of time before it could finish checking this "
             f"command. It is blocked as a precaution because it names `{name}`, which a "
             f"built-in guard covers; the full check might have allowed it. {retry}\n\n"
