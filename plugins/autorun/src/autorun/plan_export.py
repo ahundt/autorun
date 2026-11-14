@@ -765,8 +765,9 @@ class PlanExport:
         """Plans written but not yet exported. Survives session clears.
         WARNING: For modifications, use atomic_update_active_plans() instead.
         """
-        with session_state(GLOBAL_SESSION_ID) as state:
-            return dict(state.get("active_plans", {}))  # Return copy
+        return dict(get_session_manager().read_field(
+            GLOBAL_SESSION_ID, "active_plans", {}
+        ) or {})
 
     def atomic_update_active_plans(self, updater) -> None:
         """Atomically update active_plans. updater(plans) modifies in-place."""

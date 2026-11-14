@@ -190,10 +190,10 @@ def test_task_workload_uses_registered_tools(platform):
 @LOAD_BENCHMARK
 def test_paired_release_load(tmp_path):
     baseline = Path(os.environ["AUTORUN_TEST_LOAD_BASELINE_TREE"])
-    rows = gate.run_paired(baseline, ROOT, sessions=(60, 100, 200), repetitions=5,
+    rows = gate.run_paired(baseline, ROOT, sessions=gate.RELEASE_SESSIONS, repetitions=5,
                            rounds=1, cli_type="claude", output_dir=tmp_path)
     assert all(not gate.failures(row) for row in rows)
-    for sessions in (60, 100, 200):
+    for sessions in gate.RELEASE_SESSIONS:
         good = [row["latency_ms"]["all"]["p50"] for row in rows
                 if row["label"] == "known_good" and row["sessions"] == sessions]
         candidate = [row["latency_ms"]["all"]["p50"] for row in rows

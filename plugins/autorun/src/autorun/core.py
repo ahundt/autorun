@@ -3249,7 +3249,17 @@ class AutorunApp:
         previous = state.get(_DISPATCH_CACHE_KEY, _DISPATCH_CACHE_MISSING)
         state[_DISPATCH_CACHE_KEY] = {}
         try:
-            return self._dispatch_with_cache(ctx)
+            from .session_manager import get_session_manager
+
+            # A hook opens many state scopes; reuse their connection without
+            # extending any write transaction across the handler chain.
+            scope = (
+                get_session_manager().operation_scope(timeout=state_lock_timeout(ctx))
+                if isinstance(object.__getattribute__(ctx, "_store"), ThreadSafeDB)
+                else contextlib.nullcontext()
+            )
+            with scope:
+                return self._dispatch_with_cache(ctx)
         finally:
             if previous is _DISPATCH_CACHE_MISSING:
                 state.pop(_DISPATCH_CACHE_KEY, None)

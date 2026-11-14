@@ -785,6 +785,18 @@ enforce those policies.
      killed before printing anything. The bridge read the empty output as no
      objection. It now allows the call only when the fallback exits 0 with no
      output, and otherwise blocks it with the recovery guidance.
+131. When many sessions started at the same moment, their session-start hooks
+     could time out in the daemon. One start cost about 11 ms of daemon CPU,
+     so 300 at once needed more than the 2-second limit. Session start now
+     reads its bookkeeping without taking the database write lock, and a hook
+     reuses one database connection instead of opening one per state access.
+     A start costs about 3 ms and a tool-call check about 1.7 ms, down from
+     2.5 ms.
+132. The hook client put no time limit on connecting to the daemon, so a slow
+     connection could hold a hook past its deadline. Connecting, sending and
+     closing now share the hook's deadline. A hook that runs out of time while
+     a daemon restart is in progress now tells the agent to retry once before
+     restarting the daemon, instead of telling it to restart at once.
 
 ### For contributors
 
@@ -875,6 +887,17 @@ enforce those policies.
     The inherited Claude project alias and uv project, tool and Python paths
     are cleared before they can redirect a test into a developer installation;
     the shared uv cache stays available.
+11. `test_simulated_300_sessions.py` runs in the default suite: 300 session
+    identities start together against one sandboxed daemon over TCP and a Unix
+    socket, through the real client forwarder and the production deadlines,
+    with no harness and no model call. It checks guard decisions, per-session
+    state and tasks, exact counters, resource recovery, and a restart during a
+    burst. Its deadlines are wall-clock, so the burst skips beside other
+    xdist workers and on a host loaded past its core count; CI runs it
+    serially on every operating system. A second check in the module is
+    host-independent: 300 session starts must cost less CPU than the
+    `SessionStart` deadline. `RELEASING.md` describes both beside the opt-in
+    `scripts/load_gate.py` benchmark.
 
 ## [1.0.0rc3] - 2026-10-06
 

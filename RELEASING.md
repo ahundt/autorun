@@ -1086,3 +1086,33 @@ These contain cached code with old versions and can cause confusion.
 ## Deleted Plugins
 
 - **plan-export** — merged into autorun plugin. Skip all plan-export references.
+
+## Simulated session capacity
+
+`tests/test_simulated_300_sessions.py` runs in the default suite. It drives
+300 session identities from one test process through one sandboxed daemon on
+SQLite, over TCP and over a Unix socket where the platform has one, using the
+real client forwarder. All 300 sessions start behind one barrier and then send
+their events independently. The test checks two such bursts, every guard
+decision, per-session state and tasks, exact durable counters, descriptor,
+thread and memory recovery, and a graceful shutdown and restart during a third
+burst. It starts no harness and makes no model call.
+
+The deadlines are the production ones and wall-clock, so the burst test skips
+beside other xdist workers, and on a host whose one-minute load average
+exceeds its core count unless `CI` is set. CI runs the suite serially, so the
+burst test runs there on every operating system. Before a release, also run
+the module alone on a quiet machine:
+
+```bash
+uv run --project plugins/autorun --locked pytest plugins/autorun/tests/test_simulated_300_sessions.py -rs
+```
+
+A skip is not a pass. The same module holds a check that does not depend on
+the host: 300 session starts must cost less CPU than the `SessionStart`
+dispatch deadline.
+
+`scripts/load_gate.py` is the opt-in paired benchmark. It starts real hook
+processes at `RELEASE_SESSIONS` (60, 100 and 200) and compares latency with a
+baseline checkout. It stops at 200 because 300 would start thousands of hook
+processes per repetition.

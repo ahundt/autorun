@@ -1218,3 +1218,83 @@ def hook_input_data():
         "prompt": "/afa",
         "session_transcript": []
     }
+
+
+@pytest.fixture(params=[False, True], ids=["tcp", "unix"])
+def running_daemon(request, monkeypatch):
+    from autorun import ipc
+
+    unix = request.param
+    if unix and not hasattr(__import__("socket"), "AF_UNIX"):
+        pytest.skip("Unix sockets unavailable")
+    with tempfile.TemporaryDirectory(prefix="os8-", dir=os.environ["AUTORUN_TEST_RUNTIME_DIR"]) as directory:
+        home = Path(directory)
+        monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", unix)
+        monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
+        for name, filename in [("SOCKET_PATH", "daemon.sock"), ("PORT_FILE", "daemon.port"),
+                               ("TOKEN_FILE", "daemon.token"), ("AUTORUN_LOCK_PATH", "daemon.lock"),
+                               ("AUTORUN_LOG_FILE", "daemon.log")]:
+            monkeypatch.setattr(ipc, name, home / filename)
+        env = dict(os.environ, HOME=str(home), USERPROFILE=str(home),
+                   AUTORUN_HOME=str(home), AUTORUN_TEST_STATE_DIR=str(home / "state"),
+                   PI_CODING_AGENT_DIR=str(home / ".pi" / "agent"))
+        config = getattr(request.module, "DAEMON_CONFIG", None)
+        if config is not None:
+            import json
+            (home / "autorun.config.json").write_text(json.dumps(config))
+        code = (
+            "from autorun import ipc; "
+            f"ipc.HAS_UNIX_SOCKETS = {unix!r}; "
+            + getattr(request.module, "DAEMON_SETUP", "") + "\nfrom autorun.daemon import main; main()"
+        )
+        with (home / "output.log").open("w") as output:
+            # cwd: `python -c` puts it first on sys.path, so an autorun.py in
+            # the caller's directory would shadow the package.
+            processes = []
+
+            def start():
+                proc = subprocess.Popen([sys.executable, "-c", code], env=env, cwd=home,
+                                        stdout=output, stderr=output)
+                processes.append(proc)
+                deadline = time.monotonic() + 10
+                while not ipc.answers_round_trip(timeout=0.1):
+                    assert proc.poll() is None, (home / "output.log").read_text()
+                    assert time.monotonic() < deadline, (home / "output.log").read_text()
+                    time.sleep(0.01)
+                # The PID restart_daemon reads. On Windows proc.pid is the
+                # venv's python.exe redirector, a parent of the daemon.
+                proc.daemon_pid = ipc.daemon_record_pid(home / "daemon.lock")
+                return proc
+
+            try:
+                proc = start()
+                proc.start_replacement = start
+                yield ipc, home, proc
+            finally:
+                for proc in processes:
+                    if proc.poll() is not None:
+                        continue
+                    if getattr(proc, "daemon_pid", None) is not None:
+                        ipc.request_shutdown(proc.daemon_pid)
+                        try:
+                            proc.wait(timeout=5)
+                            continue
+                        except subprocess.TimeoutExpired:
+                            pass
+                    # Windows' venv redirector can own the actual interpreter.
+                    # Capture only descendants of the Popen we started.
+                    children = psutil.Process(proc.pid).children(recursive=True)
+                    for child in children:
+                        try:
+                            child.terminate()
+                        except psutil.NoSuchProcess:
+                            pass
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                    _, alive = psutil.wait_procs(children, timeout=5)
+                    for child in alive:
+                        child.kill()

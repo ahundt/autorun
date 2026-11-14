@@ -614,8 +614,8 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
     # Inject context for daemon lifecycle management. A _pid already present
     # came from hooks/hook_entry.py (os.getppid(), on both of its paths) or a
     # JS bridge (its own pid) and wins; the walk is for direct invocations.
-    process = get_stable_process_identity()
     if "_pid" not in payload:
+        process = get_stable_process_identity()
         payload["_pid"] = process.pid
         payload["_pid_started_at_units"] = process.started_at_units
     if "_cwd" not in payload:
@@ -653,7 +653,11 @@ def run_client() -> int:
         pass
 
     payload, cli_type = prepare_payload_for_daemon(payload)
+    return asyncio.run(forward_prepared_payload(payload, cli_type))
 
+
+async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
+    """Forward parsed hook input using the client's bounded retry/error path."""
     # Lifecycle logging (DRY)
     hook_event = payload.get("hook_event_name", "unknown")
     hook_source = payload.get("source", "")
@@ -676,6 +680,7 @@ def run_client() -> int:
     spawned: list = []
     # forward() attempt number of the latest spawn; a list for the nested scope.
     last_spawn_attempt: list = []
+    waited_for_daemon = False
     deadline = monotonic_deadline(payload[DEADLINE_PAYLOAD_KEY])
     if deadline is None:  # prepare_payload_for_daemon set it; never fail open on a bad value
         deadline = time.monotonic() + client_total_budget(payload.get("cli_type", "claude"))
@@ -696,6 +701,7 @@ def run_client() -> int:
         )
 
     async def forward(depth: int = 0):
+        nonlocal waited_for_daemon
         remaining = deadline - time.monotonic()
         if depth >= DAEMON_START_ATTEMPTS or remaining <= 0:
             cause = (
@@ -713,11 +719,17 @@ def run_client() -> int:
         try:
             from .core import READ_BUFFER_LIMIT
 
-            reader, writer = await ipc.connect(limit=READ_BUFFER_LIMIT)
+            reader, writer = await asyncio.wait_for(
+                ipc.connect(limit=READ_BUFFER_LIMIT),
+                timeout=max(deadline - time.monotonic(), MINIMUM_ATTEMPT_SECONDS),
+            )
             try:
                 sent = True
                 writer.write(json.dumps(payload).encode() + b"\n")
-                await writer.drain()
+                await asyncio.wait_for(
+                    writer.drain(),
+                    timeout=max(deadline - time.monotonic(), MINIMUM_ATTEMPT_SECONDS),
+                )
 
                 resp = await asyncio.wait_for(
                     reader.readuntil(b"\n"),
@@ -759,8 +771,11 @@ def run_client() -> int:
             finally:
                 writer.close()
                 try:
-                    await writer.wait_closed()
-                except (ConnectionError, OSError):
+                    await asyncio.wait_for(
+                        writer.wait_closed(),
+                        timeout=max(deadline - time.monotonic(), MINIMUM_ATTEMPT_SECONDS),
+                    )
+                except (ConnectionError, OSError, asyncio.TimeoutError):
                     pass
 
         except asyncio.LimitOverrunError as e:
@@ -808,6 +823,7 @@ def run_client() -> int:
                 # restart_lock is free — no restart in progress
             except FlockTimeout:
                 restart_in_progress = True
+                waited_for_daemon = True
                 logger.debug(f"Restart in progress, waiting (depth={depth})")
             except (FileNotFoundError, OSError):
                 pass  # Lock file dir doesn't exist — no restart in progress
@@ -823,6 +839,7 @@ def run_client() -> int:
                     lock_path = ipc.AUTORUN_LOCK_PATH
                     if lock_path.exists():
                         if daemon_record_is_live(lock_path):
+                            waited_for_daemon = True
                             # A daemon that has started but not yet taken the
                             # flock. Real, and narrow, so it is worth waiting
                             # -- but only so long: this branch is the single
@@ -845,6 +862,7 @@ def run_client() -> int:
                     else:
                         should_spawn = True
                 except FlockTimeout:
+                    waited_for_daemon = True
                     # Daemon flock held — daemon is alive, socket may be starting
                     logger.debug(f"Daemon flock held, waiting (depth={depth})")
                 except (FileNotFoundError, OSError):
@@ -919,7 +937,7 @@ def run_client() -> int:
             return await forward(depth + 1)
 
     try:
-        return asyncio.run(forward())
+        return await forward()
     except Exception as e:
         logger.error(f"Client exception while contacting daemon: {e}", exc_info=True)
         return output_hook_response(
@@ -927,7 +945,11 @@ def run_client() -> int:
                 hook_event,
                 cli_type,
                 f"Daemon unavailable or timed out: {e}",
-                event_code=failure_event_code(e),
+                event_code=(
+                    "daemon_response_timeout"
+                    if waited_for_daemon and isinstance(e, RuntimeError)
+                    else failure_event_code(e)
+                ),
             ),
             event=hook_event,
             cli_type=cli_type,

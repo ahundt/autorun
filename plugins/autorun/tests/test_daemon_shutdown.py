@@ -11,67 +11,7 @@ import time
 from unittest import mock
 
 import pytest
-import psutil
 
-
-@pytest.fixture(params=[False, True], ids=["tcp", "unix"])
-def running_daemon(request, monkeypatch):
-    from autorun import ipc
-
-    unix = request.param
-    if unix and not hasattr(__import__("socket"), "AF_UNIX"):
-        pytest.skip("Unix sockets unavailable")
-    with tempfile.TemporaryDirectory(prefix="os8-", dir="/tmp" if os.name != "nt" else None) as directory:
-        home = Path(directory)
-        monkeypatch.setattr(ipc, "HAS_UNIX_SOCKETS", unix)
-        monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", home)
-        for name, filename in [("SOCKET_PATH", "daemon.sock"), ("PORT_FILE", "daemon.port"),
-                               ("TOKEN_FILE", "daemon.token")]:
-            monkeypatch.setattr(ipc, name, home / filename)
-        env = dict(os.environ, HOME=str(home), USERPROFILE=str(home),
-                   AUTORUN_HOME=str(home), AUTORUN_TEST_STATE_DIR=str(home / "state"))
-        code = (
-            "from autorun import ipc; "
-            f"ipc.HAS_UNIX_SOCKETS = {unix!r}; "
-            "from autorun.daemon import main; main()"
-        )
-        with (home / "output.log").open("w") as output:
-            # cwd: `python -c` puts it first on sys.path, so an autorun.py in
-            # the caller's directory would shadow the package.
-            proc = subprocess.Popen([sys.executable, "-c", code], env=env, cwd=home,
-                                    stdout=output, stderr=output)
-            try:
-                deadline = time.monotonic() + 10
-                while not ipc.answers_round_trip(timeout=0.1):
-                    assert proc.poll() is None, (home / "output.log").read_text()
-                    assert time.monotonic() < deadline, (home / "output.log").read_text()
-                    time.sleep(0.01)
-                # The PID restart_daemon reads. On Windows proc.pid is the
-                # venv's python.exe redirector, a parent of the daemon.
-                proc.daemon_pid = ipc.daemon_record_pid(home / "daemon.lock")
-                yield ipc, home, proc
-            finally:
-                # Terminating a Windows venv redirector leaves its daemon child
-                # holding daemon.flock; stop and wait for the recorded owner.
-                pid = ipc.daemon_record_pid(home / "daemon.lock")
-                if pid is not None:
-                    try:
-                        daemon = psutil.Process(pid)
-                        ipc.request_shutdown(pid)
-                        try:
-                            daemon.wait(timeout=5)
-                        except psutil.TimeoutExpired:
-                            daemon.kill()
-                            daemon.wait(timeout=5)
-                    except psutil.NoSuchProcess:
-                        pass
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=5)
 
 
 def test_shutdown_request_exits_and_removes_lifecycle_files(running_daemon):

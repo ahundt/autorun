@@ -780,22 +780,31 @@ def _consume_by_call_id(session_id: str, call_id: str) -> bool:
     return consumed_any
 
 
-def purge_stale_overrides(session_id: str) -> None:
+def purge_stale_overrides(session_id: str, *, ctx: object | None = None) -> None:
     """GC expired/exhausted grants from cache/overrides without consuming any.
 
     Called on SessionStart to keep the list tidy. The consume path also GCs
     inline, so this is maintenance-only — safe to skip if it fails (fail-open).
     """
-    with session_state(session_id) as st:
-        grants_raw = list(st.get(_GRANT_KEY, []))
+    def live_grants(raw):
         live = []
-        for gd in grants_raw:
+        for gd in raw:
             try:
-                g = ScopedAllow.from_dict(gd)
+                grant = ScopedAllow.from_dict(gd)
             except Exception:
                 continue
-            if g.is_valid():
-                live.append(g.to_dict())
+            if grant.is_valid():
+                live.append(grant.to_dict())
+        return live
+
+    if ctx is not None:
+        grants = ctx.state_get(_GRANT_KEY, []) or []
+        if not all(_safe_is_valid(grant) for grant in grants):
+            ctx.state_update(_GRANT_KEY, live_grants, [])
+        return
+    with session_state(session_id) as st:
+        grants_raw = list(st.get(_GRANT_KEY, []))
+        live = live_grants(grants_raw)
         if len(live) < len(grants_raw):
             st[_GRANT_KEY] = live
 

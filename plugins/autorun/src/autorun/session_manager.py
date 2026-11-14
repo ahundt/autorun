@@ -617,10 +617,30 @@ class SessionStateManager:
         return self._store.state_dir
 
     @contextlib.contextmanager
+    def operation_scope(self, timeout: float = DEFAULT_SESSION_TIMEOUT):
+        """Reuse one SQLite connection across an operation, closing it on exit.
+
+        This scope holds no transaction; individual state updates retain their
+        own atomic boundaries. JSON has no connection to reuse.
+        """
+        scope = getattr(self._store, "operation_scope", None)
+        with scope(timeout) if scope is not None else contextlib.nullcontext():
+            yield
+
+    @contextlib.contextmanager
     def session_state(self, session_id: str,
                       timeout: float = DEFAULT_SESSION_TIMEOUT, **_):
         with self._store.session(session_id, timeout) as s:
             yield s
+
+    def read_fields(self, session_id: str,
+                    timeout: float = DEFAULT_SESSION_TIMEOUT) -> dict:
+        """Snapshot this session for hydration without SQLite's writer slot."""
+        read = getattr(self._store, "read_fields", None)
+        if read is not None:
+            return read(session_id, timeout=timeout)
+        with self._store.session(session_id, timeout) as state:
+            return copy.deepcopy(dict(state.items()))
 
     def read_field(self, session_id: str, field: str, default=None,
                    timeout: float = DEFAULT_SESSION_TIMEOUT):

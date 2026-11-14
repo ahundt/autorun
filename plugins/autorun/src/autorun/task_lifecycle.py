@@ -5163,7 +5163,11 @@ def register_hooks(app_instance) -> None:
 
         try:
             manager = TaskLifecycle(ctx=ctx)
-            manager.atomic_update_metadata(_reset_stop_block_sequence)
+            metadata = get_session_manager().read_field(
+                manager.global_key, "session_metadata", {}, timeout=manager._state_lock_timeout
+            )
+            if not _stop_sequence_is_reset(metadata):
+                manager.atomic_update_metadata(_reset_stop_block_sequence)
             return manager.handle_session_start(ctx)
         except Exception as e:
             logger.warning(f"Task resume detection error: {e}")

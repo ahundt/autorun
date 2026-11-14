@@ -73,7 +73,7 @@ from .platforms import (
     task_progress_capability_available,
     writes_whole_task_list,
 )
-from .session_manager import SessionPersistenceError, session_state
+from .session_manager import SessionPersistenceError, get_session_manager, session_state, state_lock_timeout
 from .scoped_allow import (
     ScopeSpec,
     ScopedAllow,
@@ -2562,15 +2562,22 @@ def initialize_task_staleness_cadence(ctx: EventContext) -> None:
     """Start a new initial phase without disturbing resume/compact state."""
     if ctx.source not in {"startup", "clear"}:
         return None
-    _task_progress_state_set(ctx, "tool_calls_since_task_update", 0)
-    _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
-    _clear_task_staleness_enforcement(ctx)
-    _task_progress_state_set(ctx, "task_staleness_last_threshold", 0)
-    _task_progress_state_set(
-        ctx,
-        "task_staleness_initial_checkpoint_complete",
-        False,
+    session_id = task_lifecycle.task_progress_state_session_id(ctx)
+    stored = get_session_manager().read_fields(
+        session_id, timeout=state_lock_timeout(ctx)
     )
+    for name, initial in (
+        ("tool_calls_since_task_update", 0),
+        ("task_staleness_reminder_count", 0),
+        ("task_staleness_last_threshold", 0),
+        ("task_staleness_initial_checkpoint_complete", False),
+    ):
+        if name in stored:
+            _task_progress_state_set(ctx, name, initial)
+        else:
+            # An absent checkpoint already has this default after restart.
+            ctx.state_set_volatile(name, initial, session_id=session_id)
+    _clear_task_staleness_enforcement(ctx)
     return None
 
 
@@ -3219,7 +3226,7 @@ def cleanup_expired_allows(ctx: EventContext) -> None:
     try:
         from .cache_guard import purge_stale_overrides
 
-        purge_stale_overrides(ctx.session_id)
+        purge_stale_overrides(ctx.session_id, ctx=ctx)
     except Exception:
         pass  # fail-open; GC must never block session-start
     return None
@@ -3242,7 +3249,7 @@ def _cache_guard_invalidate(ctx: EventContext, event_name: str) -> None:
     try:
         from .cache_guard import CacheGuard
 
-        CacheGuard.from_session(session_id=ctx.session_id).on_compaction_event(
+        CacheGuard.from_ctx(ctx).on_compaction_event(
             event_name, ctx
         )
     except Exception:
