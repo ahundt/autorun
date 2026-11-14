@@ -142,17 +142,54 @@ _VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgeco
 # imported). test_hook_entry.py::test_event_sets_are_pinned_to_the_registry
 # holds them to client._TOOL_GATE_EVENTS and the native/canonical registry events.
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
-_VALID_EXPLICIT_EVENTS = {
-    "AfterAgent", "AfterModel", "AfterTool", "BeforeAgent", "BeforeModel", "BeforeTool",
-    "PermissionRequest", "PostCompact", "PreCompact", "PreCompress", "SessionEnd",
-    "SubagentStop", "UserPromptSubmit",
-    "PostInvocation", "PostToolUse", "PreInvocation", "PreToolUse", "SessionStart", "Stop",
-    "agent_settled", "agent_start", "before_agent_start", "chat.message",
-    "event:session.compacted", "event:session.idle", "event:todo.updated",
-    "experimental.session.compacting", "session_before_compact", "session_compact",
-    "session_shutdown", "session_start", "session_tree", "tool.execute.before", "tool_call",
-    "tool_result",
+#: The `--event` values each harness's installed commands may carry. Keyed by
+#: harness so one harness cannot be handed another's event: Antigravity has no
+#: prompt hook, and `--event UserPromptSubmit` must not give it one.
+_VALID_EXPLICIT_EVENTS_BY_CLI = {
+    "claude": frozenset({
+        "AfterModel", "BeforeModel", "PermissionRequest", "PostToolUse", "PreToolUse",
+        "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit",
+    }),
+    "gemini": frozenset({
+        "AfterAgent", "AfterModel", "AfterTool", "BeforeAgent", "BeforeModel",
+        "BeforeTool", "PostToolUse", "PreCompress", "PreToolUse", "SessionEnd",
+        "SessionStart", "Stop", "UserPromptSubmit",
+    }),
+    "antigravity": frozenset({
+        "AfterModel", "BeforeModel", "PostInvocation", "PostToolUse", "PreInvocation",
+        "PreToolUse", "SessionStart", "Stop",
+    }),
+    "qwen": frozenset({
+        "PermissionRequest", "PostToolUse", "PreCompact", "PreCompress", "PreToolUse",
+        "SessionEnd", "SessionStart", "Stop", "SubagentStop", "UserPromptSubmit",
+    }),
+    "codex": frozenset({
+        "PermissionRequest", "PostCompact", "PostToolUse", "PreCompact", "PreToolUse",
+        "SessionEnd", "SessionStart", "Stop", "SubagentStop", "UserPromptSubmit",
+    }),
+    "pi": frozenset({
+        "PostCompact", "PostToolUse", "PreCompact", "PreToolUse", "SessionEnd",
+        "SessionStart", "Stop", "SubagentStop", "UserPromptSubmit", "agent_settled",
+        "agent_start", "before_agent_start", "session_before_compact",
+        "session_compact", "session_shutdown", "session_start", "session_tree",
+        "tool_call", "tool_result",
+    }),
+    "prime": frozenset({
+        "PostCompact", "PostToolUse", "PreCompact", "PreToolUse", "SessionEnd",
+        "SessionStart", "Stop", "SubagentStop", "UserPromptSubmit", "agent_settled",
+        "agent_start", "before_agent_start", "session_before_compact",
+        "session_compact", "session_shutdown", "session_start", "session_tree",
+        "tool_call", "tool_result",
+    }),
+    "forgecode": frozenset(),
+    "opencode": frozenset({
+        "PostCompact", "PostToolUse", "PreCompact", "PreToolUse", "Stop",
+        "UserPromptSubmit", "chat.message", "event:session.compacted",
+        "event:session.idle", "event:todo.updated", "experimental.session.compacting",
+        "tool.execute.before",
+    }),
 }
+_VALID_EXPLICIT_EVENTS = frozenset().union(*_VALID_EXPLICIT_EVENTS_BY_CLI.values())
 #: config._CLI_DETECTORS without its environment variables, in the same
 #: (detection) order: (harness, payload session keys, event names, transcript
 #: path hints). test_multi_platform_detection.py pins it to the registry.
@@ -195,17 +232,21 @@ def _env_var_identifies_harness(name: str) -> bool:
     return not (name.endswith("_PROJECT_DIR") and os.environ.get("CLAUDE_PROJECT_DIR"))
 
 
-def explicit_event_name() -> str | None:
-    """Return the native event carried by an installed hook command."""
+def _argv_option(name: str) -> str | None:
+    """Value of `--name value` or `--name=value` on this process's command line."""
     for index, argument in enumerate(sys.argv[1:], 1):
-        if argument == "--event" and index + 1 < len(sys.argv):
-            value = sys.argv[index + 1]
-        elif argument.startswith("--event="):
-            value = argument.split("=", 1)[1]
-        else:
-            continue
-        return value if value in _VALID_EXPLICIT_EVENTS else None
+        if argument == name and index + 1 < len(sys.argv):
+            return sys.argv[index + 1]
+        if argument.startswith(name + "="):
+            return argument.split("=", 1)[1]
     return None
+
+
+def explicit_event_name() -> str | None:
+    """Return the event an installed hook command carries, if its harness has it."""
+    value = _argv_option("--event")
+    valid = _VALID_EXPLICIT_EVENTS_BY_CLI.get(_argv_option("--cli"), _VALID_EXPLICIT_EVENTS)
+    return value if value in valid else None
 
 
 #: Harness settings that decide whether its task tools exist, as the harness

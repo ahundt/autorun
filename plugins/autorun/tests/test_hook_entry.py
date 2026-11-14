@@ -816,17 +816,16 @@ class TestHookEntryExecutionPriority:
 
         hook_entry = load_hook_entry_module()
         assert hook_entry._TOOL_GATE_EVENTS == set(_TOOL_GATE_EVENTS)
-        assert hook_entry._VALID_EXPLICIT_EVENTS == {
-            event
-            for platform in PLATFORMS.values()
-            for event in (
+        assert hook_entry._VALID_EXPLICIT_EVENTS_BY_CLI == {
+            name: frozenset((
                 *platform.native_hook_events,
                 *platform.installed_hook_events,
                 *platform.harness_cli_to_autorun_events,
                 *platform.harness_cli_to_autorun_events.values(),
                 *platform.autorun_to_harness_cli_events,
                 *platform.autorun_to_harness_cli_events.values(),
-            )
+            ))
+            for name, platform in PLATFORMS.items()
         }
 
     @pytest.mark.parametrize("cli_type", sorted(p.name for p in _hook_platforms()))

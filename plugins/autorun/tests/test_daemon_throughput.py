@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -345,8 +348,16 @@ def test_daemon_startup_builds_the_bash_parser_before_serving(monkeypatch):
     restart under load timed out the first wave of calls and opened the
     dispatch circuit for every session.
     """
-    from autorun import command_detection, daemon
+    from autorun import command_detection, core, daemon
 
+    # The parser is built only by the process that wins the daemon lock, so
+    # this start needs a lock of its own: another test's daemon may hold the
+    # worker's.
+    home = Path(tempfile.mkdtemp(prefix="w", dir=os.environ["AUTORUN_TEST_RUNTIME_DIR"]))
+    monkeypatch.setattr(core, "LOCK_PATH", home / "daemon.lock")
+    for name, filename in (("SOCKET_PATH", "daemon.sock"), ("PORT_FILE", "daemon.port"),
+                           ("TOKEN_FILE", "daemon.token")):
+        monkeypatch.setattr(ipc, name, home / filename)
     command_detection._bashlex.cache_clear()
     async def before_serving(*args, **kwargs):
         assert command_detection._bashlex.cache_info().currsize == 1
