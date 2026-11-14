@@ -141,8 +141,8 @@ def test_burst_session_count_preserves_start_margin(spent, expected):
 def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sqlite_manager):
     if reason := wall_clock_is_unreliable():
         pytest.skip(reason)
-    start_cpu_seconds = measure_session_start_cpu()
     start_deadline = core.CONFIG["daemon_dispatch_timeouts_seconds"]["SessionStart"]
+    start_cpu_seconds = measure_session_start_cpu(enough=0.4 * start_deadline)
     sessions = burst_session_count(start_cpu_seconds, start_deadline)
     _, home, proc = running_daemon
     process = psutil.Process(proc.daemon_pid)
@@ -335,8 +335,12 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
     print("CAPACITY_METRICS " + json.dumps(metrics))
 
 
-def measure_session_start_cpu():
-    """CPU seconds for 300 real starts, excluding imports and one-time setup."""
+def measure_session_start_cpu(enough=0.0):
+    """CPU seconds for 300 real starts, excluding imports and one-time setup.
+
+    Repeats up to three times and stops at the first measurement no greater
+    than ``enough``: a slow host pays for the repeats only when it needs them.
+    """
     from autorun import plugins  # noqa: F401  registers the real handlers
 
     store = core.ThreadSafeDB()
@@ -353,6 +357,8 @@ def measure_session_start_cpu():
         for index in range(SESSIONS):
             start(f"{attempt}-{index}")
         spent.append(time.process_time() - begin)
+        if spent[-1] <= enough:
+            break
     return min(spent)
 
 
@@ -375,10 +381,13 @@ def test_wall_clock_session_count_scales_with_the_probe(slowest, expected):
     assert wall_clock_session_count(slowest, 2) == expected
 
 
+# Up to three passes of 300 starts; on a slow runner each takes several
+# seconds of wall time, which together exceed the suite's 30 s default.
+@pytest.mark.timeout(150)
 def test_300_session_starts_need_less_cpu_than_the_start_deadline(sqlite_manager):
     """300 starts must fit the full deadline on every host (rc3 needed ~3.2s)."""
-    spent = measure_session_start_cpu()
     deadline = core.CONFIG["daemon_dispatch_timeouts_seconds"]["SessionStart"]
+    spent = measure_session_start_cpu(enough=deadline)
     assert spent < deadline, (
         f"{SESSIONS} session starts cost {spent:.2f}s of CPU; they cannot all "
         f"finish inside the {deadline:g}s SessionStart deadline")
