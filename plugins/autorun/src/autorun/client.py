@@ -37,6 +37,7 @@ References:
 
 import os
 import sys
+import errno
 import json
 import time
 import asyncio
@@ -955,7 +956,13 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
         except UNANSWERED_REQUEST_ERRORS as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
-            if sent:
+            # Linux answers EINVAL to the first use of an AF_UNIX stream socket
+            # that never connected. A full listen backlog makes the non-blocking
+            # connect return EAGAIN, the unconnected socket then polls writable,
+            # and asyncio hands it back as connected. Nothing was delivered, so
+            # this is a failed connection, to be retried like any other.
+            never_connected = isinstance(e, OSError) and e.errno == errno.EINVAL
+            if sent and not never_connected:
                 # A daemon accepted the connection and may already be running
                 # this hook, so sending it again could run it twice. A
                 # response timeout lands here too, on every Python version.

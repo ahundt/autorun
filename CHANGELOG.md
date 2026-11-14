@@ -873,6 +873,9 @@ enforce those policies.
      unchanged, gets the answer it always did. Until the daemon itself has
      restarted on this release (`autorun --install` restarts it), a busy daemon
      still blocks tool calls as 1.0.0rc3 did.
+     On Linux, a hook whose connection never got past a busy daemon's full
+     listen backlog now reconnects within its time budget; it used to report
+     that the daemon took the request and did not answer.
 140. Shell command arguments now include mixed and nested lists, rendered as
      quoted argument vectors. Empty command values no longer hide the next
      command key. Conflicting native input envelopes are checked separately and
