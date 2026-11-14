@@ -85,6 +85,8 @@ def _isolation_sources() -> list[Path]:
     """
     files = _python_sources()
     files += [p.resolve() for p in TESTS.rglob("*.py") if "__pycache__" not in p.parts]
+    # scripts/ holds the load gate, which tests import and run on every OS.
+    files += [p.resolve() for p in (PLUGIN_ROOT / "scripts").rglob("*.py") if "__pycache__" not in p.parts]
     return sorted(set(files))
 
 
@@ -503,6 +505,41 @@ def test_the_dbstat_checker_requires_an_operationalerror_fallback():
     assert not dbstat_without_fallback(guarded)
 
 
+_PS_ARGV = re.compile(r"""\[\s*["']ps["']\s*,""")
+_COPIED_INTERPRETER = re.compile(r"copy2?\(\s*sys\.executable\b")
+
+
+def ps_subprocess_calls(source: str, filename: str = "<test>") -> list[int]:
+    """Lines that run `ps`. `shutil.which("ps")` is no guard: Git for Windows
+    puts a `ps` on PATH that rejects `-o`, so three load-gate tests failed
+    there with "ps: unknown option -- o". psutil answers on every OS."""
+    return [n for n, line in enumerate(source.splitlines(), 1)
+            if _PS_ARGV.search(line) and "portability:" not in line]
+
+
+def copied_interpreter_without_pyvenv_cfg(source: str, filename: str = "<test>") -> list[int]:
+    """Lines that copy the running interpreter with no `pyvenv.cfg` written
+    in the next four lines. A copied Windows venv launcher exits 106 with
+    "failed to locate pyvenv.cfg" unless that file names its home."""
+    lines = source.splitlines()
+    return [
+        n for n, line in enumerate(lines, 1)
+        if _COPIED_INTERPRETER.search(line) and "pyvenv.cfg" not in "\n".join(lines[n:n + 4])
+    ]
+
+
+def test_the_process_tool_checkers_catch_both_ci_failures_and_accept_the_fixes():
+    assert ps_subprocess_calls('run(["ps", "-o", "pid,command", "-p", pids])\n') == [1]
+    assert not ps_subprocess_calls('" ".join(psutil.Process(pid).cmdline())\n')
+    bare = "shutil.copy2(sys.executable, old_python)\nrun(old_python)\n"
+    assert copied_interpreter_without_pyvenv_cfg(bare) == [1]
+    fixed = (
+        "shutil.copy2(sys.executable, old_python)\n"
+        '(old / ".venv" / "pyvenv.cfg").write_text(home, encoding="utf-8")\n'
+    )
+    assert not copied_interpreter_without_pyvenv_cfg(fixed)
+
+
 def test_portability_scan_has_files():
     assert _portability_sources(), "portability scan found zero Python files"
 
@@ -522,6 +559,8 @@ def test_no_new_portability_offenders_in_product_or_tests():
     checks = (
         (unguarded_signal_sigkill, "signal.SIGKILL", _portability_sources()),
         (dbstat_without_fallback, "dbstat without sqlite3.OperationalError fallback", _portability_sources()),
+        (ps_subprocess_calls, "runs `ps`; use psutil", _portability_sources()),
+        (copied_interpreter_without_pyvenv_cfg, "copied interpreter without pyvenv.cfg", _portability_sources()),
         (lambda value, name: [line for line in posix_only_venv_paths(value, name)], "POSIX-only venv path", _python_sources()),
     )
     for checker, description, paths in checks:

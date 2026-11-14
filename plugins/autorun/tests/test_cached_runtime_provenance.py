@@ -365,3 +365,34 @@ def test_cache_install_builds_outside_the_source_project(tmp_path):
     assert outcome.ok, outcome.detail
     assert not (source / "build").exists()
     assert not list((source / "src").glob("*.egg-info"))
+
+
+def test_staging_never_copies_through_a_linked_sibling_package(tmp_path, monkeypatch):
+    """Violation: the `src/` copy descends into `src/pdf_extraction`.
+
+    On Windows that link is file-typed when its target did not exist as the
+    link was created, and copying it raised "[WinError 5] Access is denied",
+    so `claude: cache fallback` failed. The package must arrive only through
+    `materialize_sibling_packages`, which reads the link's target itself.
+    """
+    source = Path(autorun.__file__).resolve().parents[2]
+    link = source / "src" / "pdf_extraction"
+    assert link.exists(), "this checkout has no linked sibling package to stage"
+    copied_through_link = []
+    real_copytree = shutil.copytree
+
+    def recording_copytree(src, dst, *args, **kwargs):
+        ignore = kwargs.get("ignore")
+        if Path(src) == source / "src" and ignore is not None:
+            if link.name not in ignore(str(src), os.listdir(src)):
+                copied_through_link.append(str(src))
+        return real_copytree(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(runtime.shutil, "copytree", recording_copytree)
+    target = tmp_path / "project"
+    runtime._stage_cache_project(source, target)
+
+    assert not copied_through_link
+    staged = target / "src" / "pdf_extraction"
+    assert staged.is_dir() and not staged.is_symlink()
+    assert (staged / "__init__.py").is_file()

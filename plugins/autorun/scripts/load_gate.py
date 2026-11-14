@@ -187,6 +187,13 @@ def holders(sandbox):
     return sorted({int(pid) for pid in result.stdout.split()})
 
 
+def command_line(pid):
+    try:
+        return " ".join(psutil.Process(pid).cmdline())
+    except (psutil.NoSuchProcess, psutil.AccessDenied) as error:
+        return f"<{type(error).__name__}>"
+
+
 def stop_owned(sandbox, live_pid):
     daemon_pid = record_pid(sandbox / "ar/daemon.lock")
     if daemon_pid is None:
@@ -203,9 +210,8 @@ def stop_owned(sandbox, live_pid):
         raise RuntimeError(f"Refusing cleanup: unexpected file holder {pids}")
     if pids:
         # Kept in the JSON receipt instead of mixing diagnostics into JSON stdout.
-        commands = (checked(["ps", "-o", "pid,command", "-p", ",".join(map(str, pids))]).stdout
-                    if shutil.which("ps") else "\n".join(
-                        f"{pid} {psutil.Process(pid).cmdline()}" for pid in pids))
+        # psutil on every OS: Git for Windows ships a `ps` that rejects `-o`.
+        commands = "\n".join(f"{pid} {command_line(pid)}" for pid in pids)
         for pid in pids:
             try:
                 if os.name == "nt":

@@ -457,7 +457,21 @@ def _stage_cache_project(source: Path, target: Path) -> None:
         filenames = support.tracked_sdist_files(source, filenames)
     for filename in filenames:
         shutil.copy2(source / filename, target / filename)
-    ignore = shutil.ignore_patterns(*IGNORED_GLOBS, "*.egg-info")
+    patterns = shutil.ignore_patterns(*IGNORED_GLOBS, "*.egg-info")
+    # materialize_sibling_packages copies each linked package below. Copying
+    # through the link first did the work twice, and failed with "[WinError 5]
+    # Access is denied" when Windows typed the link as a file because its
+    # target did not exist yet when the link was created.
+    linked = {
+        os.path.join(str(source), str(relative))
+        for relative in getattr(support, "SIBLING_PACKAGE_LINKS", ())
+    }
+
+    def ignore(directory, names):
+        skipped = set(patterns(directory, names))
+        skipped.update(name for name in names if os.path.join(directory, name) in linked)
+        return skipped
+
     if (source / "src").is_dir():
         shutil.copytree(source / "src", target / "src", symlinks=False, ignore=ignore)
     if support is not None:

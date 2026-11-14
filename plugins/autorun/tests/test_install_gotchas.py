@@ -2032,6 +2032,9 @@ def test_claude_upgrade_keeps_superseded_cache_hook_runnable(tmp_path, monkeypat
     old_python.parent.mkdir(parents=True)
     if os.name == "nt":
         shutil.copy2(sys.executable, old_python)
+        (old / ".venv" / "pyvenv.cfg").write_text(
+            f"home = {Path(sys.executable).parent}\n", encoding="utf-8"
+        )
     else:
         old_python.symlink_to(sys.executable)
 

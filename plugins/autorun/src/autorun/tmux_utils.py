@@ -808,7 +808,7 @@ SCRIPT_INTERPRETERS = frozenset({'node', 'bun', 'deno'})
 
 
 def _ps_field(pid: str, field: str) -> str:
-    result = subprocess.run(['ps', '-p', pid, '-o', f'{field}='],
+    result = subprocess.run(['ps', '-p', pid, '-o', f'{field}='],  # portability: tmux panes exist only where POSIX ps does
                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2)
     return result.stdout.strip() if result.returncode == 0 else ''
 
