@@ -3312,11 +3312,13 @@ class TaskLifecycle:
             return (wait or {}).get("generation") == seen.get(task_id)
 
         applied: set = set()
+        newer: set = set()  # ids holding a question recorded after this prompt's read
 
         def restored(task: Dict) -> bool:
             if task.get("status") != AWAITING_USER_STATUS:
                 return False
             if not answers(str(task["id"]), (task.get("metadata") or {}).get("awaiting_user")):
+                newer.add(str(task["id"]))
                 return False
             record = (task.get("metadata") or {}).pop("awaiting_user", None) or {}
             previous = record.get("previous_status")
@@ -3327,10 +3329,14 @@ class TaskLifecycle:
 
         def clear_index(metadata: Dict) -> None:
             _reset_stop_block_sequence(metadata)
-            metadata[_AWAITING_USER_INDEX] = [task_id for task_id in metadata.get(_AWAITING_USER_INDEX, []) if str(task_id) not in applied]
+            # Of the ids this prompt saw, only one holding a newer question stays:
+            # a task finished or removed while it waited has nothing to restore.
+            # An id indexed after this prompt's read was never seen and stays.
+            done = {str(task_id) for task_id in waiting} - newer
+            metadata[_AWAITING_USER_INDEX] = [task_id for task_id in metadata.get(_AWAITING_USER_INDEX, []) if str(task_id) not in done]
             generations = metadata.get(_AWAITING_USER_GENERATIONS)
             if isinstance(generations, dict):
-                metadata[_AWAITING_USER_GENERATIONS] = {task_id: value for task_id, value in generations.items() if str(task_id) not in applied}
+                metadata[_AWAITING_USER_GENERATIONS] = {task_id: value for task_id, value in generations.items() if str(task_id) not in done}
 
         changed = self._update_task_rows({task_id: restored for task_id in waiting}, clear_index)
         for task_id in changed:

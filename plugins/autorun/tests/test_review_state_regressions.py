@@ -335,6 +335,28 @@ def test_prompt_restore_keeps_concurrently_indexed_wait(gate_env, monkeypatch):
     assert not session.manager.session_metadata.get("awaiting_user_task_ids")
 
 
+@pytest.mark.parametrize("ending", ["completed", "removed"])
+def test_prompt_drops_index_entries_for_tasks_no_longer_waiting(gate_env, ending):
+    """A task finished or removed while awaiting the user leaves no index entry behind."""
+    session = Session("review-stale-index", "claude")
+    session.seed("A", "First decision")
+    session.stop(awaiting("A", "approve first decision"))
+    lifecycle = TaskLifecycle(ctx=session.context("UserPromptSubmit"))
+    if ending == "completed":
+        lifecycle.update_task("A", {"status": "completed"}, "done")
+    else:
+        with lifecycle._session_state() as state:
+            repository = lifecycle._prepare_task_storage(state)
+            if repository is None:
+                tasks = dict(state.get("tasks", {})); tasks.pop("A"); state["tasks"] = tasks
+            else:
+                repository.delete_task(lifecycle.global_key, "A", lifecycle._state_lock_timeout)
+    session.prompt("anything", prompt_author="user")
+    metadata = session.manager.session_metadata
+    assert not metadata.get("awaiting_user_task_ids")
+    assert not metadata.get("awaiting_user_generations")
+
+
 def test_overlapping_stops_leave_the_recorded_question_answerable(gate_env, monkeypatch):
     """A Stop that loses the race to record a wait must not re-label the index."""
     session = Session("review-overlapping-stops", "claude")
