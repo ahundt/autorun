@@ -79,8 +79,15 @@ def private_tmux_binary(resolved: str | None) -> str | None:
     return str(resolved)
 
 
-def _configure_pytest_basetemp(config, runtime: Path) -> Path:
-    """Give each pytest process a unique temp root outside pytest's shared pool."""
+def _configure_pytest_basetemp(config) -> Path:
+    """Give each pytest process a unique temp root outside pytest's shared pool.
+
+    pytest's default `pytest-of-<user>/pytest-N` pool is pruned by every
+    session, so two suites running at once delete each other's directories.
+    The root is not placed inside AUTORUN_TEST_RUNTIME_DIR: tests build
+    "another runtime" under tmp_path, and the suite treats anything inside
+    its own runtime directory as its own to signal.
+    """
     basetemp = Path(tempfile.mkdtemp(prefix="ar_pytest_"))
     config.option.basetemp = str(basetemp)
     return basetemp
@@ -105,7 +112,7 @@ def pytest_configure(config):
     test_autorun_home = Path(os.environ["AUTORUN_HOME"])
     config._autorun_test_runtime_dir = str(test_runtime_dir)
     config._autorun_test_state_dir = str(test_state_dir)
-    config._autorun_test_basetemp = str(_configure_pytest_basetemp(config, test_runtime_dir))
+    config._autorun_test_basetemp = str(_configure_pytest_basetemp(config))
     os.environ["AUTORUN_TEST_STATE_DIR"] = str(test_state_dir)
     os.environ["AUTORUN_HOME"] = str(test_autorun_home)
 

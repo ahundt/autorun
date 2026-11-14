@@ -239,10 +239,10 @@ def posix_only_venv_paths(source: str, filename: str = "<test>") -> list[str]:
         return [m.group(0) for m in _POSIX_VENV.finditer(source)]
     guarded_lines = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.If) and any(
-            token in ast.unparse(node.test) for token in ("sys.platform", "os.name", "platform.system")
-        ):
-            guarded_lines.update(range(node.body[0].lineno, (node.body[-1].end_lineno or node.body[-1].lineno) + 1))
+        if isinstance(node, ast.If):
+            branch = _windows_excluded_branch(node)
+            for statement in branch:
+                guarded_lines.update(range(statement.lineno, statement.end_lineno + 1))
     documentation = _docstring_lines(tree)
     return [
         match.group(0)
@@ -286,14 +286,30 @@ def test_the_venv_layout_checker_catches_the_original_defect():
     assert not posix_only_venv_paths(guarded)
 
 
+def _windows_excluded_branch(node: ast.If) -> list[ast.stmt]:
+    """Recognize simple platform comparisons and return only the excluded arm."""
+    test = node.test
+    if not (isinstance(test, ast.Compare) and len(test.ops) == len(test.comparators) == 1):
+        return []
+    windows_values = {"sys.platform": "win32", "os.name": "nt", "platform.system()": "Windows"}
+    platform = ast.unparse(test.left)
+    value = test.comparators[0]
+    if platform not in windows_values or not isinstance(value, ast.Constant):
+        return []
+    if not isinstance(test.ops[0], (ast.Eq, ast.NotEq)):
+        return []
+    runs_on_windows = windows_values[platform] == value.value
+    if isinstance(test.ops[0], ast.NotEq):
+        runs_on_windows = not runs_on_windows
+    return node.orelse if runs_on_windows else node.body
+
+
 def _platform_guarded(node: ast.AST, parents: dict[int, ast.AST]) -> bool:
-    current = parents.get(id(node))
-    while current is not None:
-        if isinstance(current, ast.If):
-            condition = ast.unparse(current.test)
-            if any(token in condition for token in ("sys.platform", "os.name", "platform.system")):
-                return True
-        current = parents.get(id(current))
+    current = node
+    while (parent := parents.get(id(current))) is not None:
+        if isinstance(parent, ast.If) and current in _windows_excluded_branch(parent):
+            return True
+        current = parent
     return False
 
 
@@ -316,6 +332,25 @@ def test_the_signal_checker_catches_unguarded_sigkill_and_accepts_a_guard():
     assert unguarded_signal_sigkill("os.kill(pid, signal.SIGKILL)\n") == [1]
     guarded = "if sys.platform != 'win32':\n    os.kill(pid, signal.SIGKILL)\n"
     assert not unguarded_signal_sigkill(guarded)
+
+
+@pytest.mark.parametrize("condition,body_guarded", [
+    ("sys.platform != 'win32'", True),
+    ("os.name == 'posix'", True),
+    ("sys.platform == 'win32'", False),
+    ("os.name == 'nt'", False),
+])
+@pytest.mark.parametrize("in_else", [False, True])
+@pytest.mark.parametrize("checker,line", [
+    (unguarded_signal_sigkill, "os.kill(pid, signal.SIGKILL)"),
+    (posix_only_venv_paths, "path = '.venv/bin/python'"),
+])
+def test_platform_guard_excludes_only_the_branch_windows_cannot_run(
+    condition, body_guarded, in_else, checker, line
+):
+    body, otherwise = ("pass", line) if in_else else (line, "pass")
+    source = f"if {condition}:\n    {body}\nelse:\n    {otherwise}\n"
+    assert bool(checker(source)) == (body_guarded == in_else)
 
 
 # --- 3. background spawns that only detach on POSIX --------------------------

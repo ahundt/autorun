@@ -196,7 +196,9 @@ def stop_owned(sandbox, live_pid):
         owned.update(child.pid for child in psutil.Process(daemon_pid).children(recursive=True))
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         pass
-    pids = sorted(owned.intersection(holders(sandbox)))
+    # Windows open_files() may omit a held daemon.flock. The PID record and
+    # descendants identify our processes; file enumeration cannot prove exit.
+    pids = sorted(owned if os.name == "nt" else owned.intersection(holders(sandbox)))
     if os.getpid() in pids or (live_pid is not None and live_pid in pids):
         raise RuntimeError(f"Refusing cleanup: unexpected file holder {pids}")
     if pids:
@@ -207,9 +209,17 @@ def stop_owned(sandbox, live_pid):
         for pid in pids:
             try:
                 if os.name == "nt":
-                    psutil.Process(pid).terminate()
+                    process = psutil.Process(pid)
+                    runtime = process.environ().get("AUTORUN_HOME")
+                    if not runtime or Path(runtime).resolve() != (sandbox / "ar").resolve():
+                        owned.discard(pid)
+                        continue
+                    process.terminate()
+                    process.wait(timeout=STOP_TIMEOUT_SECONDS)
                 else:
                     os.kill(pid, signal.SIGTERM)
+            except psutil.TimeoutExpired as exc:
+                raise RuntimeError(f"Sandbox process {pid} did not exit; retained {sandbox}") from exc
             except (ProcessLookupError, PermissionError, psutil.NoSuchProcess, psutil.AccessDenied):
                 owned.discard(pid)
         deadline = time.monotonic() + STOP_TIMEOUT_SECONDS

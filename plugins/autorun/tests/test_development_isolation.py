@@ -56,29 +56,41 @@ def test_pytest_redirects_home_before_any_package_import(tmp_path):
     assert observed["controls"] == controls
 
 
-def test_concurrent_pytest_sessions_get_private_non_pruning_basetemp_roots(tmp_path):
+def test_concurrent_pytest_sessions_get_private_non_pruning_basetemp_roots():
     import types
     import conftest
 
-    first = tmp_path / "session-one"
-    second = tmp_path / "session-two"
-    first.mkdir()
-    second.mkdir()
-    marker = first / "survivor.txt"
-    marker.write_text("owned by session one\n", encoding="utf-8")
+    from _pytest.tmpdir import TempPathFactory
 
-    first_config = types.SimpleNamespace(option=types.SimpleNamespace())
-    second_config = types.SimpleNamespace(option=types.SimpleNamespace())
-    first_root = conftest._configure_pytest_basetemp(first_config, first)
-    second_root = conftest._configure_pytest_basetemp(second_config, second)
+    configs = [types.SimpleNamespace(option=types.SimpleNamespace()) for _ in range(2)]
+    roots = []
+    try:
+        for config in configs:
+            roots.append(conftest._configure_pytest_basetemp(config))
+        first_root, second_root = roots
+        assert first_root != second_root
+        assert first_root.parent == second_root.parent
+        assert all(root.name.startswith("ar_pytest_") for root in roots)
 
-    assert first_root != second_root
-    assert first_root.parent == second_root.parent
-    assert first_root.name.startswith("ar_pytest_")
-    assert second_root.name.startswith("ar_pytest_")
-    assert marker.read_text(encoding="utf-8") == "owned by session one\n"
-    assert first_config.option.basetemp == str(first_root)
-    assert second_config.option.basetemp == str(second_root)
+        def factory(config):
+            return TempPathFactory(
+                given_basetemp=Path(config.option.basetemp), retention_count=0,
+                retention_policy="none", trace=lambda *args: None, _ispytest=True,
+            )
+
+        first = factory(configs[0]).getbasetemp()
+        marker = first / "survivor.txt"
+        marker.write_text("owned by session one\n", encoding="utf-8")
+        stale = second_root / "prune-me.txt"
+        stale.touch()
+        # Exercise pytest's actual removal of the second session's base root.
+        assert factory(configs[1]).getbasetemp() == second_root.resolve()
+        assert not stale.exists(), "the test never exercised pytest's pruning"
+        assert first.exists()
+        assert marker.read_text(encoding="utf-8") == "owned by session one\n"
+    finally:
+        for root in roots:
+            shutil.rmtree(root)
 
 
 def test_clearing_environment_keeps_home_isolation():
@@ -114,11 +126,12 @@ def test_pytest_ignores_inherited_harness_and_runtime_overrides(tmp_path):
         runpy.run_path(sys.argv[1] + "/conftest.py")
         runtime = os.environ["AUTORUN_TEST_RUNTIME_DIR"]
         try:
-            config = SimpleNamespace(addinivalue_line=lambda *args: None)
+            config = SimpleNamespace(addinivalue_line=lambda *args: None, option=SimpleNamespace())
             runpy.run_path(sys.argv[1] + "/tests/conftest.py")["pytest_configure"](config)
             print(json.dumps({key: os.environ.get(key) for key in json.loads(sys.argv[2])}))
         finally:
             shutil.rmtree(runtime)
+            shutil.rmtree(getattr(config, "_autorun_test_basetemp", runtime), ignore_errors=True)
     """)
     result = subprocess.run([sys.executable, "-c", script, str(plugin), json.dumps(sorted(names))],
                             cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)

@@ -20,38 +20,88 @@ LOAD_BENCHMARK = pytest.mark.skipif(
 )
 
 
-def test_cleanup_signals_only_the_started_daemon_and_its_descendants(tmp_path, monkeypatch):
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_cleanup_signals_only_the_started_daemon_and_its_descendants(tmp_path, monkeypatch, platform):
     (tmp_path / "ar").mkdir()
-    (tmp_path / "ar/daemon.lock").write_text("11")
+    (tmp_path / "ar/daemon.lock").write_text("11", encoding="utf-8")
     held = {11, 12, 13}
-    signaled = []
-    monkeypatch.setattr(gate, "holders", lambda _: sorted(held))
-    monkeypatch.setattr(gate.psutil, "Process", lambda _: SimpleNamespace(
-        children=lambda recursive: [SimpleNamespace(pid=12)]))
+    signaled, waited = [], []
+    # Windows open_files can omit even the daemon: ownership comes from its
+    # sandbox PID record and descendants, never from a foreign file holder.
+    monkeypatch.setattr(gate, "holders", lambda _: [13] if platform == "nt" else sorted(held))
     monkeypatch.setattr(gate, "checked", lambda *a, **kw: SimpleNamespace(stdout="daemon"))
 
-    def terminate(pid, sig):
+    def terminate(pid, sig=None):
         signaled.append(pid)
+        if platform == "posix":
+            held.remove(pid)
+
+    def wait(pid, timeout):
+        assert pid in signaled and timeout == gate.STOP_TIMEOUT_SECONDS
+        waited.append(pid)
         held.remove(pid)
 
-    monkeypatch.setattr(gate.os, "kill", terminate)
+    monkeypatch.setattr(gate.psutil, "Process", lambda pid: SimpleNamespace(
+        children=lambda recursive: [SimpleNamespace(pid=12)],
+        cmdline=lambda: ["daemon"], environ=lambda: {"AUTORUN_HOME": str(tmp_path / "ar")},
+        terminate=lambda: terminate(pid), wait=lambda timeout: wait(pid, timeout),
+    ))
+    monkeypatch.setattr(gate, "os", SimpleNamespace(name=platform, getpid=os.getpid, kill=terminate))
     _, remaining = gate.stop_owned(tmp_path, None)
     assert signaled == [11, 12]
+    assert waited == ([11, 12] if platform == "nt" else [])
     assert held == {13}
     assert remaining == []
 
 
-def test_cleanup_treats_permission_denied_as_not_owned(tmp_path, monkeypatch):
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_cleanup_treats_permission_denied_as_not_owned(tmp_path, monkeypatch, platform):
     (tmp_path / "ar").mkdir()
-    (tmp_path / "ar/daemon.lock").write_text("11")
+    (tmp_path / "ar/daemon.lock").write_text("11", encoding="utf-8")
     monkeypatch.setattr(gate, "holders", lambda _: [11])
-    monkeypatch.setattr(gate.psutil, "Process", lambda _: SimpleNamespace(children=lambda recursive: []))
     monkeypatch.setattr(gate, "checked", lambda *a, **kw: SimpleNamespace(stdout="daemon"))
 
     def denied(*_):
         raise PermissionError("not ours")
 
-    monkeypatch.setattr(gate.os, "kill", denied)
+    monkeypatch.setattr(gate.psutil, "Process", lambda _: SimpleNamespace(
+        children=lambda recursive: [], cmdline=lambda: ["daemon"],
+        environ=lambda: {"AUTORUN_HOME": str(tmp_path / "ar")}, terminate=denied))
+    monkeypatch.setattr(gate, "os", SimpleNamespace(name=platform, getpid=os.getpid, kill=denied))
+    assert gate.stop_owned(tmp_path, None)[1] == []
+
+
+def test_windows_cleanup_retains_sandbox_if_termination_does_not_finish(tmp_path, monkeypatch):
+    (tmp_path / "ar").mkdir()
+    (tmp_path / "ar/daemon.lock").write_text("11", encoding="utf-8")
+    monkeypatch.setattr(gate, "holders", lambda _: [])
+    monkeypatch.setattr(gate, "checked", lambda *a, **kw: SimpleNamespace(stdout="daemon"))
+    monkeypatch.setattr(gate, "os", SimpleNamespace(name="nt", getpid=os.getpid))
+
+    def wait(timeout):
+        raise gate.psutil.TimeoutExpired(timeout, pid=11)
+
+    monkeypatch.setattr(gate.psutil, "Process", lambda _: SimpleNamespace(
+        children=lambda recursive: [], cmdline=lambda: ["daemon"],
+        environ=lambda: {"AUTORUN_HOME": str(tmp_path / "ar")}, terminate=lambda: None, wait=wait))
+    with pytest.raises(RuntimeError, match="retained"):
+        gate.stop_owned(tmp_path, None)
+    assert (tmp_path / "ar/daemon.lock").exists()
+
+
+def test_windows_cleanup_refuses_a_recorded_pid_from_another_runtime(tmp_path, monkeypatch):
+    (tmp_path / "ar").mkdir()
+    (tmp_path / "ar/daemon.lock").write_text("11", encoding="utf-8")
+    monkeypatch.setattr(gate, "holders", lambda _: [11])
+    monkeypatch.setattr(gate, "checked", lambda *a, **kw: SimpleNamespace(stdout="daemon"))
+    monkeypatch.setattr(gate, "os", SimpleNamespace(name="nt", getpid=os.getpid))
+
+    def unexpected():
+        pytest.fail("a foreign runtime's PID was terminated")
+
+    monkeypatch.setattr(gate.psutil, "Process", lambda _: SimpleNamespace(
+        children=lambda recursive: [], cmdline=lambda: ["daemon"],
+        environ=lambda: {"AUTORUN_HOME": str(tmp_path / "foreign")}, terminate=unexpected))
     assert gate.stop_owned(tmp_path, None)[1] == []
 
 
