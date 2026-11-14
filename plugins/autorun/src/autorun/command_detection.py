@@ -55,7 +55,7 @@ __all__ = [
 ]
 
 from .logging_utils import get_logger
-from .platforms import SHELL_COMMAND_KEYS
+from .platforms import shell_command_from_tool_input
 
 logger = get_logger(__name__)
 
@@ -884,19 +884,6 @@ def strip_transparent_command_wrappers(
             break
         stripped = next_tokens
     return stripped
-
-
-def shell_command_from_tool_input(tool_input: object) -> str:
-    """Return command text, quoting a string argv as one invocation."""
-    if not isinstance(tool_input, dict):
-        return ""
-    for key in SHELL_COMMAND_KEYS:
-        value = tool_input.get(key)
-        if isinstance(value, str):
-            return value
-        if isinstance(value, list) and all(isinstance(arg, str) for arg in value):
-            return shlex.join(value)
-    return ""
 
 
 def _shell_script_word(tokens: list[str]) -> tuple[str, str] | None:

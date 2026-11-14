@@ -540,7 +540,8 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
             logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → {len(truncated)} messages ({size_estimate // 1024}KB)")
 
     from .platforms import hook_payload_cwd, normalize_tool_payload
-    tool_name, tool_input = normalize_tool_payload(payload, cli_type)
+    tool_name, tool_input_envelopes = normalize_tool_payload(payload, cli_type)
+    tool_input = tool_input_envelopes[0]
 
     transcript_path = payload.get("transcript_path") or payload.get("transcriptPath")
 
@@ -576,6 +577,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         ),
         "tool_name": tool_name,
         "tool_input": tool_input,
+        "tool_input_envelopes": tool_input_envelopes,
         "tool_result": payload.get("tool_response") or payload.get("tool_result") or payload.get("toolResult"),
         "session_transcript": transcript,
         "permission_mode": payload.get("permission_mode", "default"),
@@ -1606,6 +1608,7 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     # Client calls may pass raw harness CLI names from payload['hook_event_name'],
     # while daemon-side calls pass normalized names. Handle both.
     event = to_autorun_event(event, cli_type)
+    response = {k: v for k, v in response.items() if k != "_autorun_failure_code"}
 
     # Debug logging
     logger.debug(f"validate_hook_response(event={event}, cli_type={cli_type}) input decision={response.get('decision')}")
@@ -1786,6 +1789,7 @@ class EventContext:
         "_command_arguments",
         "_tool_name",
         "_tool_input",
+        "_tool_input_envelopes",
         "_tool_result",
         "_session_transcript",
         "_state",
@@ -1885,6 +1889,7 @@ class EventContext:
         server_url: str = "",
         harness_pid: Optional[int] = None,
         harness_started_at_units: Optional[int] = None,
+        tool_input_envelopes: tuple[dict, ...] | None = None,
     ):
         object.__setattr__(self, "_session_id", session_id)
         object.__setattr__(
@@ -1897,6 +1902,7 @@ class EventContext:
         object.__setattr__(self, "_command_arguments", "")
         object.__setattr__(self, "_tool_name", tool_name)
         object.__setattr__(self, "_tool_input", tool_input or {})
+        object.__setattr__(self, "_tool_input_envelopes", tool_input_envelopes or (tool_input or {},))
         object.__setattr__(self, "_tool_result", tool_result)
         object.__setattr__(self, "_session_transcript", session_transcript or [])
         object.__setattr__(self, "_state", {})
@@ -2075,6 +2081,11 @@ class EventContext:
     @property
     def tool_input(self) -> Dict:
         return self._tool_input
+
+    @property
+    def tool_input_envelopes(self) -> tuple[dict, ...]:
+        """Distinct native envelopes; command gates check each without merging."""
+        return self._tool_input_envelopes
 
     @property
     def tool_result(self) -> str:
@@ -3089,7 +3100,7 @@ class AutorunApp:
             if failure is not None:
                 raise failure
             if result is not None:
-                return result
+                return {k: v for k, v in result.items() if k != "_autorun_failure_code"}
         # Flush accumulated notifications if no handler returned a response
         if flush_notifications and ctx._chain_notifications:
             return ctx.respond("allow", "")
@@ -3303,7 +3314,7 @@ def daemon_failure_response(event: str, cli_type: str, message: str, event_code:
     failure built from Claude's common fields reached Antigravity's Stop as
     continue/stopReason/suppressOutput/systemMessage. Handler responses are
     already filtered by ``respond()``; this does the same for failures. Tool
-    gates are left as native failure signals: clients read the event tag and
+    gates are left as native failure signals: clients read the private failure-code field and
     apply the hook-local overload policy without consulting session state.
     """
     from .client import build_daemon_failure_response, is_tool_gate_event
@@ -3311,7 +3322,9 @@ def daemon_failure_response(event: str, cli_type: str, message: str, event_code:
     response = build_daemon_failure_response(event, cli_type, message, event_code=event_code)
     if is_tool_gate_event(event):
         return response
-    return validate_hook_response(event, response, cli_type)
+    native = validate_hook_response(event, response, cli_type)
+    native["_autorun_failure_code"] = event_code
+    return native
 
 
 # === DAEMON ===
@@ -3679,6 +3692,7 @@ class AutorunDaemon:
                 prompt=normalized["prompt"],
                 tool_name=normalized["tool_name"],
                 tool_input=normalized["tool_input"],
+                tool_input_envelopes=normalized["tool_input_envelopes"],
                 tool_result=normalized["tool_result"],
                 session_transcript=normalized["session_transcript"],
                 store=self.store,

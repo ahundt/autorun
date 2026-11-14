@@ -171,7 +171,7 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
 def test_client_forwards_its_effective_deadline_to_the_daemon(monkeypatch):
     from autorun.config import HOOK_DEADLINE_ENV_VAR, HOOK_DEADLINE_PAYLOAD_KEY
 
-    wrapper_deadline = __import__("time").time() + 10.0
+    wrapper_deadline = __import__("time").time() + 2.0
     monkeypatch.setenv(HOOK_DEADLINE_ENV_VAR, repr(wrapper_deadline))
     monkeypatch.setattr(
         "autorun.client.get_stable_process_identity",
@@ -278,11 +278,10 @@ def test_the_client_deadline_comes_from_the_wrapper_when_it_supplies_one(monkeyp
 
     # A recent expired deadline is still this hook's clock, never a fresh budget.
     monkeypatch.setenv(DEADLINE_ENV_VAR, repr(_time.time() - 5.0))
-    assert client_deadline("claude") == pytest.approx(_time.monotonic() - 5.0, abs=0.001)
-    # Unparseable or implausibly distant values are stale/foreign.
+    assert client_deadline("claude") == pytest.approx(_time.monotonic(), abs=0.001)
+    # Invalid values use our budget; distant future deadlines cannot extend it.
     local_budget = client_total_budget("claude")
-    for value in ("not-a-float", repr(_time.time() + 3600),
-                  repr(_time.monotonic() + 2.0)):  # a monotonic value from an older wrapper
+    for value in ("not-a-float", repr(_time.time() + 3600)):
         monkeypatch.setenv(DEADLINE_ENV_VAR, value)
         assert client_deadline("claude") > _time.monotonic() + local_budget - 1.0
 
@@ -644,6 +643,7 @@ def test_stable_process_identity_pid_under_happy_stops_at_the_nearest_session_pr
 def test_daemon_failure_tool_gates_use_exact_native_fail_closed_schema(event, cli, decision, root_fields):
     response = build_daemon_failure_response(event, cli, "Daemon response timed out")
 
+    assert response.pop("_autorun_failure_code") == "daemon_failure"
     assert set(response) == root_fields
     if decision is not None:
         assert response["decision"] == decision

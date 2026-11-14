@@ -46,7 +46,8 @@ import math
 from pathlib import Path
 from typing import NoReturn
 
-_HOOK_STARTED_EPOCH = time.time()
+_HOOK_STARTED_MONOTONIC = time.monotonic()
+_HOOK_DEADLINES = {}
 
 # =============================================================================
 # Constants
@@ -304,7 +305,7 @@ def _file_wrapper_timeouts() -> dict:
     """
     try:
         loaded = json.loads((_autorun_home() / "autorun.config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError, MemoryError):
         return {}
     value = loaded.get("hook_wrapper_timeouts_seconds") if isinstance(loaded, dict) else None
     if not isinstance(value, dict):
@@ -343,21 +344,31 @@ DEGRADED_CHECK_RESERVE_SECONDS = 0.3
 
 def _hook_deadline(cli_type: str, payload: dict | None = None) -> float:
     """Full process-start deadline; upstream clocks may shorten, never renew it."""
-    local = _HOOK_STARTED_EPOCH + hook_timeout_for_cli(cli_type)
+    if cli_type in _HOOK_DEADLINES:
+        return _HOOK_DEADLINES[cli_type]
+    now = time.monotonic()
+    local = _HOOK_STARTED_MONOTONIC + hook_timeout_for_cli(cli_type)
     supplied = (payload or {}).get(HOOK_DEADLINE_PAYLOAD_KEY, os.environ.get(DEADLINE_ENV_VAR))
     try:
         value = float(supplied)
+        # More than a minute old is a stale inherited value, not this hook's.
         if not isinstance(supplied, bool) and math.isfinite(value) and abs(value - time.time()) <= 60:
-            local = min(local, value)
+            local = min(local, now + max(0.0, value - time.time()))
     except (TypeError, ValueError):
         pass
-    return local
+    _HOOK_DEADLINES[cli_type] = max(now, local)
+    return _HOOK_DEADLINES[cli_type]
+
+
+def _epoch_deadline(deadline: float) -> float:
+    """Serialize only at a process boundary; internal elapsed time is monotonic."""
+    return time.time() + max(0.0, deadline - time.monotonic())
 
 
 def _daemon_wait_seconds(deadline: float, event_name: str) -> float:
     """Stdlib transport mirror of the client's absolute-deadline arithmetic."""
     reserve = DEGRADED_CHECK_RESERVE_SECONDS if is_tool_gate_event(event_name) else 0
-    return max(0.0, deadline - reserve - time.time())
+    return max(0.0, deadline - reserve - time.monotonic())
 
 
 def cli_env_with_deadline(cli_type: str, deadline: float | None = None) -> dict:
@@ -377,7 +388,7 @@ def cli_env_with_deadline(cli_type: str, deadline: float | None = None) -> dict:
     child converts it to its own monotonic clock on arrival.
     """
     env = dict(os.environ)
-    env[DEADLINE_ENV_VAR] = repr(_hook_deadline(cli_type) if deadline is None else deadline)
+    env[DEADLINE_ENV_VAR] = repr(_epoch_deadline(_hook_deadline(cli_type) if deadline is None else deadline))
     # The pipe to the child is UTF-8 on both ends (try_cli decodes it so).
     env["PYTHONIOENCODING"] = "utf-8"
     return env
@@ -1056,6 +1067,8 @@ def _emit_daemon_result(
     event_name: str = "unknown",
 ) -> int:
     """Emit an already platform-normalized daemon response."""
+    response = dict(response)
+    response.pop("_autorun_failure_code", None)
     if not response:
         empty = _unhandled_response(cli_type, event_name)
         if empty is not None:
@@ -1114,7 +1127,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
     payload["cli_type"] = cli_type
     timeout = hook_timeout_for_cli(cli_type)
     guard_deadline = _hook_deadline(cli_type, payload)
-    payload[HOOK_DEADLINE_PAYLOAD_KEY] = guard_deadline
+    payload[HOOK_DEADLINE_PAYLOAD_KEY] = _epoch_deadline(guard_deadline)
     event_name = payload.get("hook_event_name", "unknown")
     if _daemon_wait_seconds(guard_deadline, event_name) <= 0:
         if is_tool_gate_event(event_name):
@@ -1151,8 +1164,8 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
         response = json.loads(response_line)
         if not isinstance(response, dict):
             raise ValueError("daemon response is not a JSON object")
-        if is_tool_gate_event(event_name) and "[AR_EVENT_V1:" in response_line:
-            code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: guard_deadline}, cli_type, response=response)
+        if is_tool_gate_event(event_name) and "_autorun_failure_code" in response:
+            code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: _epoch_deadline(guard_deadline)}, cli_type, response=response)
             if code is not None:
                 return True, code
         return True, _emit_daemon_result(response, cli_type, event_name)
@@ -1164,7 +1177,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
                 f"request but did not answer within {timeout:g}s"
             )
             if is_tool_gate_event(event_name):
-                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: guard_deadline}, cli_type, "daemon_response_timeout")
+                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: _epoch_deadline(guard_deadline)}, cli_type, "daemon_response_timeout")
                 if code is not None:
                     return True, code
                 fail_closed_tool_gate(
@@ -1179,7 +1192,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
             message = f"Daemon closed the connection without answering: {type(error).__name__}"
             _append_debug_log(message)
             if is_tool_gate_event(event_name):
-                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: guard_deadline}, cli_type, "daemon_response_timeout")
+                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: _epoch_deadline(guard_deadline)}, cli_type, "daemon_response_timeout")
                 if code is not None:
                     return True, code
                 fail_closed_tool_gate(message, cli_type, event_name, recoverable=True)
@@ -1190,7 +1203,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
             message = f"Daemon returned an invalid response: {type(error).__name__}"
             _append_debug_log(message)
             if is_tool_gate_event(event_name):
-                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: guard_deadline}, cli_type, "daemon_failure")
+                code = _try_degraded_tool({**payload, HOOK_DEADLINE_PAYLOAD_KEY: _epoch_deadline(guard_deadline)}, cli_type, "daemon_failure")
                 if code is not None:
                     return True, code
                 fail_closed_tool_gate(message, cli_type, event_name)
@@ -1201,7 +1214,7 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
 def _try_degraded_tool(payload: dict, cli_type: str, event_code: str = "daemon_failure",
                        *, response: dict | None = None) -> int | None:
     """Use the one Python policy owner; missing package keeps the stdlib denial."""
-    payload = {**payload, HOOK_DEADLINE_PAYLOAD_KEY: _hook_deadline(cli_type, payload)}
+    deadline = _hook_deadline(cli_type, payload)
     plugin_root = get_plugin_root()
     src_dir = Path(plugin_root) / "src" if plugin_root else get_src_dir()
     if src_dir and str(src_dir) not in sys.path:
@@ -1215,7 +1228,7 @@ def _try_degraded_tool(payload: dict, cli_type: str, event_code: str = "daemon_f
         if event_code is None:
             return None
     return output_hook_response(
-        degraded_tool_response(payload, cli_type, event_code),
+        degraded_tool_response(payload, cli_type, event_code, deadline=deadline),
         event=payload.get("hook_event_name") or payload.get("type") or "PreToolUse", cli_type=cli_type, source="degraded")
 
 
@@ -1268,7 +1281,7 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None, e
         payload = {}
     payload = payload if isinstance(payload, dict) else {}
     deadline = _hook_deadline(cli_type, payload)
-    payload[HOOK_DEADLINE_PAYLOAD_KEY] = deadline
+    payload[HOOK_DEADLINE_PAYLOAD_KEY] = _epoch_deadline(deadline)
     if _daemon_wait_seconds(deadline, event_name) <= 0:
         if is_tool_gate_event(event_name):
             code = _try_degraded_tool(payload, cli_type, "daemon_response_timeout")
@@ -1896,7 +1909,7 @@ def main() -> None:
         event_name = payload_for_detection.get("hook_event_name", event_name)
     if isinstance(payload_for_detection, dict) and payload_for_detection.get("_autorun_degraded_check") is True:
         payload = payload_for_detection if isinstance(payload_for_detection, dict) else {}
-        payload.setdefault(HOOK_DEADLINE_PAYLOAD_KEY, wrapper_deadline)
+        payload.setdefault(HOOK_DEADLINE_PAYLOAD_KEY, _epoch_deadline(wrapper_deadline))
         code = _try_degraded_tool(payload, cli_type, payload.get("_autorun_failure_code", "daemon_unavailable_or_timeout"))
         if code is not None:
             sys.exit(code)
@@ -1915,7 +1928,7 @@ def main() -> None:
         try:
             payload = json.loads(stdin_data)
             payload = prepare_hook_payload(payload, cli_type)
-            payload.setdefault(HOOK_DEADLINE_PAYLOAD_KEY, wrapper_deadline)
+            payload.setdefault(HOOK_DEADLINE_PAYLOAD_KEY, _epoch_deadline(wrapper_deadline))
             stdin_data = json.dumps(payload)
             event_name = payload.get("hook_event_name", event_name)
             log_debug(

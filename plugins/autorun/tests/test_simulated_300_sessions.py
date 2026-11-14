@@ -548,8 +548,8 @@ async def test_connect_cannot_outlive_the_prepared_hook_deadline(tmp_path, monke
         Popen=forbidden_spawn, DEVNULL=client.subprocess.DEVNULL))
     payload, cli = client.prepare_payload_for_daemon(
         {"hook_event_name": "PreToolUse", "cli_type": "claude", "_pid": 12345,
-         "tool_name": "Bash", "tool_input": {"command": "git status"}})
-    payload[client.DEADLINE_PAYLOAD_KEY] = time.time() + client.DEGRADED_CHECK_RESERVE_SECONDS + 0.1
+         "tool_name": "Bash", "tool_input": {"command": "git status"},
+         client.DEADLINE_PAYLOAD_KEY: time.time() + client.DEGRADED_CHECK_RESERVE_SECONDS + 0.1})
     started = time.monotonic()
     with FileLock(str(restart_lock)):
         response = await client.forward_prepared_payload(payload, cli)

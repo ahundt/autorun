@@ -866,8 +866,11 @@ and non-shell tools proceed with a notice; built-in destructive-command guards
 still deny dangerous shell commands. `/ar:no` rules, `/ar:ok` grants, the file
 policy, and task and plan gating are not checked until autorun answers again.
 A grant cannot bypass a guard during this period. Do not restart the daemon
-under load. A guard error or exhausted guard budget denies that shell call
-with wait-and-retry guidance; other tools continue.
+under load. A cheap literal screen lets ordinary commands such as `git status`
+proceed even when no check budget remains. If the full check fails or is late,
+only a command that names a guarded command as a whole word, or uses shell
+syntax that can spell one indirectly (`$'...'`, `eval`, `printf`, process
+substitution), is denied with wait-and-retry guidance.
 
 Set `overload_policy` in `~/.autorun/autorun.config.json` or override it with
 `AUTORUN_OVERLOAD_POLICY`: `critical-guards` (default), `block` (deny every

@@ -848,22 +848,27 @@ enforce those policies.
      and `git -c alias.x='!cmd' x`. `parallel --dry-run` only prints and is
      allowed.
 
-139. When autorun was too busy to answer, every tool call in every session
-     could be blocked until the daemon recovered. Failed permission checks now
-     use `overload_policy=critical-guards`: ordinary shell commands and other
-     tools proceed with a notice, while the built-in destructive-command
-     guards still block dangerous shell commands locally. `block` keeps the
-     previous blanket denial; `allow` permits all calls without local guards.
-     While degraded, `/ar:no` rules, `/ar:ok` grants, the file policy, and task
-     and plan gating are not checked. A guarded command stays blocked even
-     with a session grant. Wait for autorun to answer again; do not restart
-     the daemon under load.
-140. The command guards read only a command given as one string to a tool
-     registered as a shell. A command given as a list of arguments
-     (`["bash", "-lc", "rm -rf dir"]`) was read as empty, and a shell tool
-     under another name was not checked at all. A list is now read as the
-     argument vector it is, and any tool whose input carries `command`,
-     `cmd` or `CommandLine` is checked.
+139. When autorun is busy, unreachable or unable to read state, the default
+     `overload_policy=critical-guards` lets non-shell tools and ordinary shell
+     calls proceed with a notice. A cheap screen derived from the shipped
+     guards avoids importing the shell parser for commands such as `git status`.
+     A full local guard match denies the call; if the full check cannot finish,
+     only a command that names a guarded command as a whole word (quotes and
+     backslashes removed first), or that uses `$'...'`, `eval`, `printf`,
+     `base64`, `xxd` or process substitution, is denied with wait-and-retry
+     guidance. `npm run format` and `git commit -m "fix"` proceed.
+     `/ar:no` rules, `/ar:ok` grants, the file policy, and task and plan gating
+     are not checked while degraded. `block` denies every tool-gate call;
+     `allow` permits every call without guards. Do not restart the daemon under
+     load. Failure signals use a private daemon field, never user-written reason
+     text; elapsed waits use monotonic deadlines bounded by each harness's budget.
+140. Shell command arguments now include mixed and nested lists, rendered as
+     quoted argument vectors. Empty command values no longer hide the next
+     command key. Conflicting native input envelopes are checked separately and
+     any guarded command is denied. Only registered shell tools and tools whose
+     final name segment is a recognized shell execution name are shell tools;
+     an input key such as `command`, `cmd` or `CommandLine` alone never makes
+     an editor or debugger a shell tool.
 
 ### For contributors
 

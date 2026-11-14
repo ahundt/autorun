@@ -35,7 +35,6 @@ References:
 - Hook docs: https://code.claude.com/docs/en/hooks
 """
 
-import re
 import os
 import sys
 import json
@@ -188,11 +187,20 @@ def daemon_record_is_live(lock_path) -> bool:
     return ipc.daemon_record_pid(lock_path) is not None
 
 
-def client_deadline(cli_type: str) -> float:
-    """Full hook deadline, preserving the wrapper's clock even when expired."""
-    local = time.monotonic() + client_total_budget(cli_type) + CLIENT_BUDGET_MARGIN_SECONDS
-    supplied = monotonic_deadline(os.environ.get(DEADLINE_ENV_VAR))
-    return local if supplied is None else supplied
+def client_deadline(cli_type: str, epoch_seconds=None) -> float:
+    """Convert upstream epoch deadlines once, clamped to our own wrapper budget."""
+    now = time.monotonic()
+    deadline = now + client_total_budget(cli_type) + CLIENT_BUDGET_MARGIN_SECONDS
+    for value in (os.environ.get(DEADLINE_ENV_VAR), epoch_seconds):
+        supplied = monotonic_deadline(value)
+        if supplied is not None:
+            deadline = min(deadline, supplied)
+    return max(now, deadline)
+
+
+class PreparedPayload(dict):
+    """Process-local deadline; it is never serialized onto the IPC wire."""
+    deadline: float
 
 
 def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
@@ -320,19 +328,10 @@ DEGRADED_ALLOW_NOTICE = (
 )
 
 
-_FAILURE_TAG = re.compile(r"^\[autorun\] \[AR_EVENT_V1:([a-z_]+)\]")
-
-
 def degraded_failure_code(response: dict) -> str | None:
     """Recognize only infrastructure failures, never a normal policy denial."""
-    specific = response.get("hookSpecificOutput") or {}
-    reason = (specific.get("permissionDecisionReason")
-              or (specific.get("decision") or {}).get("message")
-              or response.get("reason") or response.get("systemMessage") or "")
-    # The daemon puts the tag first. A policy denial can quote the command it
-    # blocked, so a tag anywhere else in the text is the command's, not ours.
-    match = _FAILURE_TAG.match(reason)
-    return match.group(1) if match and match.group(1) in DEGRADED_FAILURE_CODES else None
+    code = response.get("_autorun_failure_code")
+    return code if isinstance(code, str) and code in DEGRADED_FAILURE_CODES else None
 
 
 def _critical_guard_reason(payload: dict, cli_type: str) -> str | None:
@@ -360,42 +359,56 @@ def _critical_guard_reason(payload: dict, cli_type: str) -> str | None:
 
 
 def degraded_tool_response(payload: dict, cli_type: str, event_code: str,
-                           message: str = "Autorun could not produce a normal decision") -> dict:
-    """Stateless fallback: guard errors or exhausted budgets deny shell calls
-    with wait-and-retry guidance and allow non-shell tools; never consult state.
+                           message: str = "Autorun could not produce a normal decision",
+                           *, deadline: float | None = None) -> dict:
+    """Stateless fallback: only potentially guarded calls need the full check.
+
+    When the full check cannot run, obfuscated names without literal guard tokens
+    (e.g. $'\\x72m') rely on the hiding-feature screen and other hidden spellings
+    can escape; with budget the full check catches supported spellings as before.
 
     A daemonized thread inside this hook bounds guard imports, parsing and git
     probes on all OSes; the hook stops waiting at its remaining deadline.
     """
-    from .config import overload_policy
-    from .platforms import format_commands_for_cli, is_shell_tool, normalize_tool_payload, platform_for
+    from .config import overload_policy, needs_full_guard_check
+    from .platforms import (format_commands_for_cli, is_shell_tool, normalize_tool_payload,
+                            platform_for, shell_command_from_tool_input)
+
+    if deadline is None:
+        deadline = (payload.deadline if isinstance(payload, PreparedPayload) else
+                    client_deadline(cli_type, payload.get(DEADLINE_PAYLOAD_KEY)))
 
     event = payload.get("hook_event_name") or payload.get("type") or "PreToolUse"
     if not is_tool_gate_event(event):
         return build_daemon_failure_response(event, cli_type, message, event_code)
     policy = overload_policy()
     if policy == "block":
-        return build_daemon_failure_response(event, cli_type, message, event_code)
+        response = build_daemon_failure_response(event, cli_type, message, event_code)
+        response.pop("_autorun_failure_code", None)
+        return response
     decision = "allow"
     reason = DEGRADED_ALLOW_NOTICE if policy == "allow" else DEGRADED_NOTICE
     platform = platform_for(cli_type)
-    tool_name, tool_input = normalize_tool_payload(payload, cli_type)
-    payload = {**payload, "tool_name": tool_name, "tool_input": tool_input}
-    is_shell = is_shell_tool(tool_name, tool_input, cli_type)
-    if policy == "critical-guards" and is_shell:
+    tool_name, envelopes = normalize_tool_payload(payload, cli_type)
+    is_shell = is_shell_tool(tool_name, envelopes[0], cli_type)
+    candidates = [inputs for inputs in envelopes
+                  if is_shell and needs_full_guard_check(shell_command_from_tool_input(inputs))]
+    if policy == "critical-guards" and candidates:
         import queue
         import threading
 
         result = queue.Queue(maxsize=1)
         def check():
             try:
-                result.put((_critical_guard_reason(payload, cli_type), None))
+                reason = None
+                for inputs in candidates:
+                    reason = _critical_guard_reason({**payload, "tool_name": tool_name, "tool_input": inputs}, cli_type)
+                    if reason:
+                        break
+                result.put((reason, None))
             except Exception as exc:
                 result.put((None, exc))
 
-        deadline = monotonic_deadline(payload.get(DEADLINE_PAYLOAD_KEY))
-        if deadline is None:
-            deadline = client_deadline(cli_type)
         budget = max(0.0, deadline - time.monotonic() - 0.025)
         try:
             if budget <= 0:
@@ -434,6 +447,7 @@ def build_daemon_failure_response(
     tagged_message = f"[AR_EVENT_V1:{event_code}] {message}".strip()
     if not is_tool_gate_event(event):
         return {
+            "_autorun_failure_code": event_code,
             "continue": True,
             "stopReason": "",
             "suppressOutput": False,
@@ -461,8 +475,11 @@ def build_daemon_failure_response(
         protocol = CLAUDE_HOOKS
     harness_event = _hook_specific_harness_cli_event_name(event, cli_type)
     if harness_event == "PermissionRequest":
-        return protocol.fail_closed_permission_request_response(reason, harness_event)
-    return protocol.fail_closed_pretool_response(reason, harness_event)
+        response = protocol.fail_closed_permission_request_response(reason, harness_event)
+    else:
+        response = protocol.fail_closed_pretool_response(reason, harness_event)
+    response["_autorun_failure_code"] = event_code
+    return response
 
 
 def _log_hook_lifecycle(message: str, **kwargs) -> None:
@@ -504,6 +521,8 @@ def output_hook_response(response: dict, event: str = "unknown", cli_type: str =
 
     Reference: docs/hooks_api_reference.md lines 395-427
     """
+    response = dict(response or {})
+    response.pop("_autorun_failure_code", None)
     from .config import overload_policy, should_use_exit2_workaround
     validate = source != "degraded" or overload_policy() == "block"
     if validate:
@@ -705,14 +724,13 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
     `autorun --cli ...` in this short-lived client are not a reliable identity
     channel. Persist the resolved cli_type into the JSON payload before sending.
     """
-    payload = dict(payload or {})
+    payload = PreparedPayload(payload or {})
     from .config import detect_cli_type
 
     cli_type = detect_cli_type(payload)
     # Stamp before process discovery; an upstream deadline is never refreshed.
-    deadline = monotonic_deadline(payload.get(DEADLINE_PAYLOAD_KEY))
-    if deadline is None:
-        deadline = client_deadline(cli_type)
+    deadline = client_deadline(cli_type, payload.get(DEADLINE_PAYLOAD_KEY))
+    payload.deadline = deadline
     payload[DEADLINE_PAYLOAD_KEY] = time.time() + deadline - time.monotonic()
 
     # Inject context for daemon lifecycle management. A _pid already present
@@ -784,9 +802,8 @@ async def forward_prepared_payload(payload: dict, cli_type: str) -> int:
     # forward() attempt number of the latest spawn; a list for the nested scope.
     last_spawn_attempt: list = []
     waited_for_daemon = False
-    deadline = monotonic_deadline(payload[DEADLINE_PAYLOAD_KEY])
-    if deadline is None:  # prepare_payload_for_daemon set it; never fail open on a bad value
-        deadline = client_deadline(cli_type)
+    deadline = (payload.deadline if isinstance(payload, PreparedPayload) else
+                client_deadline(cli_type, payload.get(DEADLINE_PAYLOAD_KEY)))
     deadline -= DEGRADED_CHECK_RESERVE_SECONDS if is_tool_gate_event(hook_event) else CLIENT_BUDGET_MARGIN_SECONDS
 
     def remaining_wait() -> float:

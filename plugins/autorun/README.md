@@ -38,8 +38,11 @@ If the daemon is busy, unreachable, misses a deadline or cannot evaluate state,
 non-shell tools with a notice and runs the built-in destructive-command guards
 locally for shell tools. No session state is read: `/ar:no` rules, `/ar:ok`
 grants, the file policy, and task and plan gating are not checked until autorun
-answers again. A guarded command stays blocked even with a grant. A guard error
-or exhausted budget denies that shell call with wait-and-retry guidance.
+answers again. A guarded command stays blocked even with a grant. A cheap screen
+lets ordinary commands such as `git status` proceed even with no check budget.
+If the full check fails or is late, only a command that names a guarded command
+as a whole word, or uses shell syntax that can spell one indirectly, is denied
+with wait-and-retry guidance.
 Do not restart the daemon under load.
 
 The `overload_policy` key in `~/.autorun/autorun.config.json` accepts

@@ -1259,6 +1259,23 @@ def _allowed_notice(claimed: list[ScopedAllow]) -> str:
 
 @app.on("PreToolUse")
 def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
+    """Check every conflicting envelope independently; any denial wins."""
+    original = ctx.tool_input
+    response = None
+    try:
+        for inputs in ctx.tool_input_envelopes:
+            object.__setattr__(ctx, "_tool_input", inputs)
+            result = _check_blocked_command_input(ctx)
+            if result is not None:
+                response = result
+                if result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny":
+                    return result
+        return response
+    finally:
+        object.__setattr__(ctx, "_tool_input", original)
+
+
+def _check_blocked_command_input(ctx: EventContext) -> Optional[Dict]:
     """
     Unified command integrations (superset of hookify).
 

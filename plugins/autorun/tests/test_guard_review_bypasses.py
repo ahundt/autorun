@@ -16,8 +16,11 @@ from autorun import command_detection as cd
 from autorun import core, plugins  # noqa: F401 -- register dispatch handlers
 from autorun import integrations
 
+_REVIEW_COMMAND_CORPUS = set()
+
 
 def dispatch(command):
+    _REVIEW_COMMAND_CORPUS.add(command)
     return core.app.dispatch(core.EventContext(
         session_id="test-guard-review", event="PreToolUse", tool_name="Bash",
         tool_input={"command": command}, cli_type="claude", store=core.ThreadSafeDB(),
@@ -1087,3 +1090,28 @@ def test_shell_option_values_do_not_hide_the_script(command, form):
                                      "bash -eo pipefail -c 'make | tee log'", "zsh --emulate sh -c 'ls'"])
 def test_shell_option_values_keep_ordinary_commands_allowed(command):
     assert decision(command) != "deny"
+
+
+@pytest.mark.timeout(300)  # one full guard check per corpus command; slow runners need the room
+def test_degraded_screen_preserves_entire_review_corpus(capsys):
+    """No command the full local check denies gets past the quick screen.
+
+    A screened-in command runs the same full check inside
+    degraded_tool_response (test_overload_policy covers that route), so the
+    degraded answer is asked for only where the screen skips the check.
+    """
+    from autorun import client
+    from autorun.config import critical_guard_tokens, needs_full_guard_check
+    exceptions = []
+    for command in sorted(_REVIEW_COMMAND_CORPUS):
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": command}}
+        denied = bool(client._critical_guard_reason(payload, "claude"))
+        if denied:
+            if not any(all(token in command for token in tokens) for tokens in critical_guard_tokens()):
+                exceptions.append(command)
+            assert needs_full_guard_check(command), command
+        elif not needs_full_guard_check(command):
+            response = client.degraded_tool_response(payload, "claude", "daemon_response_timeout")
+            assert response["hookSpecificOutput"]["permissionDecision"] == "allow", command
+    with capsys.disabled():
+        print("LITERAL_SCREEN_EXCEPTIONS=" + json.dumps(exceptions))

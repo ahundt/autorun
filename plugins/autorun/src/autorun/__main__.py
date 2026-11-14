@@ -1121,6 +1121,7 @@ def run_direct(payload: dict | None = None) -> int:
         prompt=normalized["prompt"],
         tool_name=normalized["tool_name"],
         tool_input=normalized["tool_input"],
+        tool_input_envelopes=normalized["tool_input_envelopes"],
         tool_result=normalized["tool_result"],
         session_transcript=normalized["session_transcript"],
         # No daemon here: this process handles one hook and exits, so

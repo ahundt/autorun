@@ -501,7 +501,7 @@ class TestNoRegressions:
         monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
         monkeypatch.setattr(ipc, "AUTORUN_CONFIG_DIR", tmp_path)
         monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", tmp_path / "daemon.pid")
-        monkeypatch.setenv(client.DEADLINE_ENV_VAR, repr(time.monotonic() + 3.0))
+        monkeypatch.setenv(client.DEADLINE_ENV_VAR, repr(time.time() + 3.0))
         monkeypatch.setattr(client, "daemon_response_timeout_for_cli", lambda _cli: 0.05)
 
         class Reader:

@@ -266,7 +266,8 @@ class TestHookEntryExecutionPriority:
         """Fast IPC preserves daemon routing metadata and Codex denial JSON."""
         hook_entry = load_hook_entry_module()
         monkeypatch.setattr(hook_entry.time, "time", lambda: 1000.0)
-        monkeypatch.setattr(hook_entry, "_HOOK_STARTED_EPOCH", 1000.0)
+        monkeypatch.setattr(hook_entry, "_HOOK_STARTED_MONOTONIC", 2000.0)
+        monkeypatch.setattr(hook_entry.time, "monotonic", lambda: 2000.0)
         expected_address = stage_daemon_endpoint(tmp_path)
         sent = bytearray()
 
@@ -328,7 +329,8 @@ class TestHookEntryExecutionPriority:
         stage_daemon_endpoint(tmp_path)
         monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
         monkeypatch.setattr(hook_entry.time, "time", lambda: 1000.0)
-        monkeypatch.setattr(hook_entry, "_HOOK_STARTED_EPOCH", 1000.0)
+        monkeypatch.setattr(hook_entry, "_HOOK_STARTED_MONOTONIC", 2000.0)
+        monkeypatch.setattr(hook_entry.time, "monotonic", lambda: 2000.0)
         monkeypatch.setattr(hook_entry, "hook_timeout_for_cli", lambda cli: 1.0)
         observed = []
         def local(payload, *args, **kwargs):
@@ -342,7 +344,7 @@ class TestHookEntryExecutionPriority:
             def connect(self, address): pass
             def sendall(self, data): pass
             def recv(self, _size):
-                return (json.dumps({"reason": "[AR_EVENT_V1:daemon_dispatch_timeout] busy"}) + "\n").encode()
+                return (json.dumps({"reason": "arbitrary text", "_autorun_failure_code": "daemon_dispatch_timeout"}) + "\n").encode()
         monkeypatch.setattr(hook_entry.socket, "socket", lambda *args: Socket())
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash"}
         if supplied is not None:

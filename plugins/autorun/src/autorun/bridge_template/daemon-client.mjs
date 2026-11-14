@@ -53,7 +53,7 @@ export function denialReason(response) {
   const specific = response.hookSpecificOutput ?? {};
   const decision = specific.permissionDecision ?? response.decision;
   if (decision !== "deny" && decision !== "block") return null;
-  return specific.permissionDecisionReason ?? response.reason ?? "blocked by autorun";
+  return specific.permissionDecisionReason || response.reason || "blocked by autorun";
 }
 
 export function responseMessage(response) {
@@ -71,7 +71,20 @@ export function degradedNotice(response) {
   return !denialReason(response) && message.includes("[AR_EVENT_V1:degraded_decision]") ? message : "";
 }
 
-const FAILURE_TAG = /^\[autorun\] \[AR_EVENT_V1:([a-z_]+)\]/;
+// Data derived from config.DEFAULT_INTEGRATIONS, pinned by test_review_bridge_screen_data_pinned.
+const CRITICAL_GUARD_TOKENS = [["rm"], ["rm", "-rf"], ["git", "reset", "--hard"], ["git", "checkout", "."], ["git", "checkout", "--"], ["git", "checkout"], ["git", "restore"], ["git", "stash", "drop"], ["git", "stash", "clear"], ["git", "clean", "-f"], ["git", "reset", "HEAD~"], ["git", "add", "-A"], ["git", "add", "."], ["dd", "if="], ["mkfs"], ["fdisk"], ["tmutil"], ["bash"], ["dash"], ["fish"], ["ksh"], ["sh"], ["su"], ["zsh"], ["sed"], ["awk"], ["find"], ["git", "filter-repo"], ["git", "filter-branch"], ["bfg"], ["git", "rebase", "-i"], ["git", "rebase", "--interactive"], ["git", "push", "--force"], ["git", "push", "-f"], ["git", "push"], ["gh", "pr", "create"], ["gh", "pr", "merge", "--squash"], ["gh", "pr", "merge"], ["gh", "release", "create"], ["gh", "repo", "create"], ["gh", "issue", "edit"], ["gh", "pr", "edit"], ["gh", "repo", "edit"], ["gh", "pr", "comment"], ["gh", "issue", "comment"], ["gh", "issue", "create"], ["npm", "version"], ["yarn", "version"], ["pnpm", "version"], ["cargo", "set-version"], ["poetry", "version"], ["uv", "version"], ["hatch", "version"], ["bump2version"], ["bumpversion"], ["mvn", "versions:set"], ["npm", "publish"], ["yarn", "publish"], ["pnpm", "publish"], ["cargo", "publish"], ["poetry", "publish"], ["uv", "publish"], ["hatch", "publish"], ["flit", "publish"], ["twine", "upload"], ["gem", "push"], ["mvn", "deploy"], ["gradle", "publish"], ["dotnet", "nuget", "push"], ["docker", "push"]];
+const SHELL_NAME_HIDING_FEATURES = ["$'", "$\"", "eval", "base64", "xxd", "printf", "<(", ">("];
+const SHELL_TOOL_NAMES = ["bash", "exec_command", "execute_command", "local_shell", "run_command", "run_shell_command", "run_terminal_cmd", "run_terminal_command", "sh", "shell", "shell_command", "terminal_exec", "zsh"];
+const BASH_TOOLS = ["Bash", "bash", "bash_command", "exec_command", "functions.exec_command", "run_command", "run_shell_command", "shell"];
+
+function needsFullGuardCheck(command) {
+  // Mirror of config.needs_full_guard_check: alphabetic tokens match whole words.
+  if (SHELL_NAME_HIDING_FEATURES.some(feature => command.includes(feature))) return true;
+  const plain = command.replace(/\\\n|['"\\]/g, "");
+  const words = new Set((plain + " " + command).match(/[A-Za-z]+/g) ?? []);
+  return CRITICAL_GUARD_TOKENS.some(tokens => tokens.every(
+    token => /^[A-Za-z]+$/.test(token) ? words.has(token) : plain.includes(token)));
+}
 const DEGRADED_FAILURE_CODES = new Set([
   "daemon_dispatch_timeout", "daemon_dispatch_contained", "daemon_dispatch_stalled",
   "state_lock_contended", "state_evaluation_failed", "daemon_failure",
@@ -79,9 +92,8 @@ const DEGRADED_FAILURE_CODES = new Set([
 ]);
 
 function failureCode(response) {
-  const message = denialReason(response) ?? "";
-  const match = message.match(FAILURE_TAG);
-  return match && DEGRADED_FAILURE_CODES.has(match[1]) ? match[1] : null;
+  const code = response?._autorun_failure_code;
+  return DEGRADED_FAILURE_CODES.has(code) ? code : null;
 }
 
 export function createDaemonBridge({
@@ -107,7 +119,7 @@ export function createDaemonBridge({
           ? { inprocess_capabilities: [...inprocessCapabilities] }
           : {}),
         _pid: process.pid,
-        [HOOK_DEADLINE_PAYLOAD_KEY]: deadline / 1000,
+        [HOOK_DEADLINE_PAYLOAD_KEY]: (Date.now() + Math.max(0, deadline - performance.now())) / 1000,
       }) + "\n";
 
     return new Promise((resolve) => {
@@ -122,7 +134,7 @@ export function createDaemonBridge({
         resolve({ response, connected });
       };
       const socket = createConnection(target);
-      const timer = setTimeout(() => finish(null), Math.max(deadline - Date.now(), 0));
+      const timer = setTimeout(() => finish(null), Math.max(deadline - performance.now(), 0));
       socket.setEncoding("utf8");
       socket.on("connect", () => {
         connected = true;
@@ -145,18 +157,29 @@ export function createDaemonBridge({
 
   async function askDaemon(payload) {
     if (autorunDisabled()) return null;
-    return (await exchange(payload, Date.now() + timeoutMs)).response;
+    const { response } = await exchange(payload, performance.now() + timeoutMs);
+    if (!response) return response;
+    const { _autorun_failure_code, ...verdict } = response;
+    return verdict;
   }
 
   function lastResort(payload, failureCode) {
-    // All three bridge harnesses call their shell tool "bash". Python owns
-    // the guards; without it critical-guards can only deny shell calls.
+    // Python owns full guards; the literal screen also lets ordinary shells proceed.
     // No config-file reader lives in this bridge: this last resort follows
     // AUTORUN_OVERLOAD_POLICY only; the Python route also reads the config file.
     const policy = process.env.AUTORUN_OVERLOAD_POLICY ?? "critical-guards";
-    const shell = payload.tool_name === "bash" ||
-      ["command", "cmd", "CommandLine"].some(key => Object.hasOwn(payload.tool_input ?? {}, key));
-    const deny = policy === "block" || (policy !== "allow" && shell);
+    const name = payload.tool_name ?? payload.toolName ?? payload.toolCall?.name ?? "";
+    const shell = BASH_TOOLS.includes(name) || SHELL_TOOL_NAMES.includes(name.split(/__|[./:]/).at(-1).toLowerCase());
+    const needsCheck = shell && [payload.tool_input, payload.toolInput, payload.toolCall?.args].some(inputs => {
+      for (const key of ["command", "cmd", "CommandLine"]) {
+        const value = inputs?.[key];
+        const command = typeof value === "string" ? value :
+          Array.isArray(value) ? value.flat(Infinity).map(String).join(" ") : "";
+        if (command) return needsFullGuardCheck(command);
+      }
+      return false;
+    });
+    const deny = policy === "block" || (policy !== "allow" && needsCheck);
     return { hookSpecificOutput: {
       permissionDecision: deny ? "deny" : "allow",
       permissionDecisionReason: `[autorun] [AR_EVENT_V1:${failureCode}] [AR_EVENT_V1:degraded_decision] ` +
@@ -164,10 +187,10 @@ export function createDaemonBridge({
           ? "Autorun could not answer and overload_policy=allow permits this call without built-in destructive-command guards, /ar:no rules, /ar:ok grants, the file policy or task and plan gating until autorun answers again; Do not restart the daemon."
           : policy === "block"
           ? "Autorun could not answer and overload_policy=block denies this tool call; wait and retry when it recovers; do not restart the daemon."
-          : shell
+          : needsCheck
           ? "Autorun is degraded and its critical guards could not finish; wait and retry this shell call when it recovers; do not restart the daemon." +
             (failureCode === "daemon_response_timeout" ? " " + RESPONSE_TIMEOUT_GUIDANCE : "")
-          : "Autorun could not answer, so built-in destructive-command guards are still enforced by denying shell calls while /ar:no rules, /ar:ok grants, the file policy and task and plan gating are not checked until autorun answers again; Do not restart the daemon."),
+          : "Autorun could not answer, so the quick screen found no possible built-in destructive-command guard while /ar:no rules, /ar:ok grants, the file policy and task and plan gating are not checked until autorun answers again; Do not restart the daemon.").replaceAll("/ar:", cliType === "opencode" ? "/ar-" : "/ar "),
     }};
   }
 
@@ -198,7 +221,7 @@ export function createDaemonBridge({
       const timer = setTimeout(
         // A timeout is usually a cold start, as in hook_entry's own timeout.
         () => finish(failed()),
-        Math.max(deadline - Date.now(), 0),
+        Math.max(deadline - performance.now(), 0),
       );
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
@@ -217,7 +240,8 @@ export function createDaemonBridge({
         try {
           const parsed = JSON.parse(stdout);
           const decision = parsed?.hookSpecificOutput?.permissionDecision ?? parsed?.decision;
-          finish(["allow", "approve", "deny", "block"].includes(decision) ? parsed : failed());
+          const { _autorun_failure_code, ...verdict } = parsed ?? {};
+          finish(["allow", "approve", "deny", "block"].includes(decision) ? verdict : failed());
         } catch {
           // Output that is present but unparseable is a real malfunction: a
           // permission gate that cannot read its own verdict must not fail open.
@@ -234,7 +258,7 @@ export function createDaemonBridge({
       child.stdin.end(JSON.stringify({ ...payload, cli_type: cliType,
         _autorun_degraded_check: true,
         _autorun_failure_code: failureCode,
-        [HOOK_DEADLINE_PAYLOAD_KEY]: deadline / 1000,
+        [HOOK_DEADLINE_PAYLOAD_KEY]: (Date.now() + Math.max(0, deadline - performance.now())) / 1000,
       }) + "\n");
     });
   }
@@ -242,11 +266,14 @@ export function createDaemonBridge({
   async function askToolGate(payload) {
     if (autorunDisabled()) return null;
     // One deadline for both routes, so a tool call waits at most timeoutMs.
-    const deadline = Date.now() + timeoutMs;
+    const deadline = performance.now() + timeoutMs;
     // Reserve interpreter startup and a bounded check inside the same budget.
     const { response, connected } = await exchange(payload, deadline - Math.min(500, timeoutMs / 2));
     const code = failureCode(response);
-    if (response && !code) return response;
+    if (response && !code) {
+      const { _autorun_failure_code, ...verdict } = response;
+      return verdict;
+    }
     return askHookEntry(payload, deadline, code ?? (connected
       ? "daemon_response_timeout" : "daemon_unavailable_or_timeout"));
   }

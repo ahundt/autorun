@@ -37,26 +37,57 @@ SHELL_COMMAND_KEYS = ("command", "cmd", "CommandLine")
 
 
 def is_shell_tool(tool_name: str, tool_input: object, cli_type: str) -> bool:
-    """Check registered shells and command-bearing inputs, never file content."""
-    from .config import BASH_TOOLS
+    """Check registered shells and exec-style name suffixes, never input keys."""
+    from .config import BASH_TOOLS, SHELL_TOOL_NAMES
 
     return (tool_name in BASH_TOOLS
             or tool_name == platform_for(cli_type).tool_names.get("bash")
-            or (isinstance(tool_input, dict)
-                and any(key in tool_input for key in SHELL_COMMAND_KEYS)))
+            or re.split(r"__|[./:]", tool_name or "")[-1].lower() in SHELL_TOOL_NAMES)
 
 
-def normalize_tool_payload(payload: dict, cli_type: str) -> tuple[str, dict]:
-    """Canonical tool identity and inputs shared by healthy and degraded gates."""
+def normalize_tool_payload(payload: dict, cli_type: str) -> tuple[str, tuple[dict, ...]]:
+    """Return identity and distinct populated input envelopes without merging.
+
+    Conflicting envelopes must each be checked: deny if any command is guarded.
+    """
     tool_call = payload.get("toolCall")
     tool_call = tool_call if isinstance(tool_call, dict) else {}
-    raw = payload.get("tool_input") or payload.get("toolInput") or tool_call.get("args") or {}
-    inputs = dict(raw) if isinstance(raw, dict) else {}
-    for native, canonical in platform_for(cli_type).tool_input_aliases.items():
-        value = inputs.get(native)
-        if canonical not in inputs and value is not None:
-            inputs[canonical] = value
-    return (payload.get("tool_name") or payload.get("toolName") or tool_call.get("name", ""), inputs)
+    envelopes = []
+    for raw in (payload.get("tool_input"), payload.get("toolInput"), tool_call.get("args")):
+        if not isinstance(raw, dict) or not raw or raw in envelopes:
+            continue
+        inputs = dict(raw)
+        for native, canonical in platform_for(cli_type).tool_input_aliases.items():
+            value = inputs.get(native)
+            if canonical not in inputs and value is not None:
+                inputs[canonical] = value
+        envelopes.append(inputs)
+    return (payload.get("tool_name") or payload.get("toolName") or tool_call.get("name", ""),
+            tuple(envelopes) or ({},))
+
+
+def shell_command_from_tool_input(tool_input: object) -> str:
+    """First non-empty command; flatten argv lists/tuples and quote each str()."""
+    if not isinstance(tool_input, dict):
+        return ""
+    for key in SHELL_COMMAND_KEYS:
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            return value
+        if isinstance(value, (list, tuple)):
+            import shlex
+
+            words = []
+            pending = list(reversed(value))
+            while pending:
+                word = pending.pop()
+                if isinstance(word, (list, tuple)):
+                    pending.extend(reversed(word))
+                else:
+                    words.append(str(word))
+            if words:
+                return shlex.join(words)
+    return ""
 
 
 def hook_payload_cwd(payload: dict) -> str | None:

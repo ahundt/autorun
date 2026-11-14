@@ -62,8 +62,14 @@ do not restart it under load. The local default guards still deny destructive
 shell commands. Ordinary shell commands and non-shell tools proceed. `/ar:no`
 rules, `/ar:ok` grants, the file policy, and task and plan gating are not checked
 until autorun answers again. A guarded command cannot use a session grant.
-If a local guard errors or runs out of budget, that shell call is denied with
-wait-and-retry guidance; non-shell tools continue.
+A cheap literal screen lets ordinary commands such as `git status` proceed even
+with an expired budget or broken parser. If a full check fails or runs out of
+budget, a command is denied with wait-and-retry guidance only when it names a
+guarded command as a whole word (quotes and backslashes are removed first, so
+`"r"m` counts) or uses `$'...'`, `eval`, `printf`, `base64`, `xxd` or process
+substitution. `npm run format` and `git commit -m "fix"` proceed. When the full
+check cannot run, a spelling outside that list can escape; with budget the full
+check catches supported spellings as before.
 
 `overload_policy` in `~/.autorun/autorun.config.json` has three values:
 `critical-guards` (default), `block` (blanket tool-gate denial on daemon
@@ -79,7 +85,9 @@ Pi, Prime and OpenCode ask the Python client for degraded decisions. If that
 child is unavailable, silent, invalid or late, the bridge's last resort follows
 `AUTORUN_OVERLOAD_POLICY` only: `block` denies every tool-gate call, `allow`
 permits every call, and `critical-guards` (including an unknown value) denies
-shell calls and permits other tools. The bridge has no config-file reader;
+only shell calls needing the full check: ordinary shell calls and other tools
+proceed with a notice. Its token table and hiding-feature list are pinned to
+Python by tests. The bridge has no config-file reader;
 set the environment variable to cover this last resort as well as the Python
 route. It does not implement destructive-command predicates in JavaScript.
 

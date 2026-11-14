@@ -39,6 +39,12 @@ BASH_TOOLS = {
     "functions.exec_command",
     "shell",
 }
+# Exec-style names only; a command input key does not identify a shell tool.
+SHELL_TOOL_NAMES = frozenset({
+    "shell", "bash", "sh", "zsh", "shell_command", "exec_command", "run_command",
+    "run_shell_command", "run_terminal_cmd", "run_terminal_command", "local_shell",
+    "execute_command", "terminal_exec",
+})
 WRITE_TOOLS = {"Write", "write_file", "write_to_file", "write"}
 EDIT_TOOLS = {
     "Edit",
@@ -182,8 +188,10 @@ HOOK_DEADLINE_ENV_VAR = "AUTORUN_HOOK_DEADLINE_EPOCH"
 HOOK_DEADLINE_PAYLOAD_KEY = "_autorun_hook_deadline_epoch"
 DEGRADED_CHECK_RESERVE_SECONDS = 0.3
 
-#: Beyond this, a deadline is a stale value inherited from an unrelated process
-#: rather than ours. The largest configured wrapper timeout is 5s.
+#: Further than this from now, either way, a deadline is a stale value inherited
+#: from an unrelated process (a harness started from inside a hook), not ours:
+#: ignore it rather than treat every later hook as out of time. The largest
+#: configured wrapper timeout is 5s, and receivers clamp to their own budget.
 MAX_PLAUSIBLE_WRAPPER_SECONDS = 60.0
 
 
@@ -199,11 +207,9 @@ def monotonic_deadline(epoch_seconds) -> float | None:
     the milliseconds in transit can skew the result, and every reader also
     bounds its wait by its own budget.
 
-    None for anything unusable, and for a value more than
-    MAX_PLAUSIBLE_WRAPPER_SECONDS from now either way: a stale variable
-    inherited from an unrelated process, or a monotonic instant from an older
-    sender, must not set the budget. A recent past value is returned as is,
-    already expired.
+    None for non-numeric or non-finite values and for a value more than
+    MAX_PLAUSIBLE_WRAPPER_SECONDS from now either way; a recent past value means no time left.
+    The receiver clamps the result to its own budget and retains it thereafter.
     """
     import math
     import time
@@ -219,7 +225,7 @@ def monotonic_deadline(epoch_seconds) -> float | None:
     remaining = epoch - time.time()
     if abs(remaining) > MAX_PLAUSIBLE_WRAPPER_SECONDS:
         return None
-    return time.monotonic() + remaining
+    return time.monotonic() + max(0.0, remaining)
 SCOPED_ALLOW_DEFAULT_GRACE_SECONDS = 1.0
 CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS = 5.0
 TASK_PAUSE_DEFAULT_TTL_SECONDS = 5 * 60
@@ -623,6 +629,46 @@ def guards_disabled_by_env() -> set[str]:
 
 for _key in guards_disabled_by_env():
     DEFAULT_INTEGRATIONS.pop(_key, None)
+
+
+# Spellings that can still hide a guarded name after quotes and backslashes are
+# removed; these keep the full parser. A name produced by $(..), ${..} or
+# backticks is a documented limit of the guards themselves.
+SHELL_NAME_HIDING_FEATURES = ("$'", '$"', "eval", "base64", "xxd", "printf", "<(", ">(")
+_critical_guard_tokens = None
+
+
+def critical_guard_tokens() -> tuple[tuple[str, ...], ...]:
+    """Literal tokens for every shipped shell block pattern, computed once."""
+    global _critical_guard_tokens
+    if _critical_guard_tokens is None:
+        _critical_guard_tokens = tuple(
+            tuple(pattern.split())
+            for name, spec in DEFAULT_INTEGRATIONS.items()
+            if spec.get("event", "bash") in {"bash", "all"}
+            and (spec.get("action", "block") == "block"
+                 or any(o.get("action") == "block" for o in spec.get("platform_overrides", {}).values()))
+            for pattern in (spec.get("patterns") or [name])
+        )
+    return _critical_guard_tokens
+
+
+def needs_full_guard_check(command: str) -> bool:
+    """Conservative literal screen; no command parser or integration imports.
+
+    Quotes, backslashes and line continuations are dropped first, so "r"m and
+    r\\m read as rm. A purely alphabetic guard token must then appear as a whole
+    word (`npm run format` does not contain the word rm); any other token
+    (`-rf`, `HEAD~`, `if=`) is matched as a substring.
+    """
+    if any(feature in command for feature in SHELL_NAME_HIDING_FEATURES):
+        return True
+    import re
+    plain = re.sub(r"\\\n|['\"\\]", "", command)
+    # Also split at each quote, so a name glued to an option (-S'find x') is a word.
+    words = set(re.findall(r"[A-Za-z]+", plain + " " + command))
+    return any(all(token in words if token.isalpha() else token in plain for token in tokens)
+               for tokens in critical_guard_tokens())
 
 
 # Configuration - Three-stage completion system with clear instruction/confirmation naming
@@ -1318,7 +1364,7 @@ def read_user_config() -> dict:
 
     try:
         loaded = json.loads(user_config_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError, MemoryError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
 
