@@ -131,6 +131,9 @@ def test_burst_session_count_preserves_start_margin(spent, expected):
     assert burst_session_count(spent, 2) == expected
 
 
+# Three bursts and a restart: each wait inside is bounded (20 s per burst, 10 s
+# for the old daemon to exit), so the whole test needs more than the suite's 30 s.
+@pytest.mark.timeout(150)
 def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sqlite_manager):
     if reason := wall_clock_is_unreliable():
         pytest.skip(reason)
