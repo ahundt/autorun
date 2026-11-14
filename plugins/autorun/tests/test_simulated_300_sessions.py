@@ -1,8 +1,11 @@
 """Capacity regression: 60–300 coroutines, one real daemon, no AI calls.
 
-The burst count is measured from in-process SessionStart CPU cost, retaining
-2.5x deadline headroom on slower hosts. The CPU test still requires all 300
-starts to fit the full deadline on every host.
+The burst count is the smaller of two measurements, each keeping deadline
+headroom on slower hosts: in-process SessionStart CPU cost, and the slowest
+answer to a 60-session start burst sent to the real daemon. The second one
+sees what CPU time cannot: transport, thread scheduling and disk sync, which
+on a shared Windows runner cost more than the handlers do. The CPU test still
+requires all 300 starts to fit the full deadline on every host.
 
 Requests use client.prepare_payload_for_daemon and forward_prepared_payload,
 including TCP authentication, warm connection retries and fail-closed handling.
@@ -36,6 +39,7 @@ SPEC.loader.exec_module(gate)
 # Match the existing load gate: this capacity claim is for SQLite.
 DAEMON_CONFIG = {"state_backend": "sqlite"}
 SESSIONS = 300
+PROBE_SESSIONS = 60  # also the smallest burst the test ever runs
 INCREMENTS = 3
 FD_MARGIN = 4
 THREAD_MARGIN = 2
@@ -140,9 +144,6 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
     start_cpu_seconds = measure_session_start_cpu()
     start_deadline = core.CONFIG["daemon_dispatch_timeouts_seconds"]["SessionStart"]
     sessions = burst_session_count(start_cpu_seconds, start_deadline)
-    calibration = dict(sessions=sessions, start_cpu_seconds=start_cpu_seconds,
-                       start_deadline_seconds=start_deadline, start_deadline_fraction=0.4)
-    print("CAPACITY_CALIBRATION " + json.dumps(calibration))
     _, home, proc = running_daemon
     process = psutil.Process(proc.daemon_pid)
     baseline = resources(process)
@@ -208,7 +209,7 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
         assert probe["volatile_bytes"] <= core.VOLATILE_MAX_BYTES
         # Durable hydration is documented as daemon-lifetime caching, not
         # Stop-time eviction. Only session/global namespaces may be retained.
-        assert probe["loaded_sessions"] <= 2 * (2 * sessions) + 16
+        assert probe["loaded_sessions"] <= 2 * (2 * sessions + PROBE_SESSIONS) + 16
 
     async def session(index, barrier, first_turn):
         await barrier.wait()
@@ -254,7 +255,18 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
             f"{len(errors)} session failures; first: {errors[:3]}\n"
             f"slowest so far: {latencies}\ndaemon log tail:\n{daemon_log_tail()}")
 
+    calibration = {}
+
     async def run():
+        nonlocal sessions
+        await asyncio.gather(*(request(3 * SESSIONS + i, "SessionStart") for i in range(PROBE_SESSIONS)))
+        probe_seconds = latencies.pop("SessionStart")
+        sessions = min(sessions, wall_clock_session_count(probe_seconds, start_deadline))
+        calibration.update(
+            sessions=sessions, start_cpu_seconds=start_cpu_seconds,
+            probe_sessions=PROBE_SESSIONS, probe_slowest_seconds=round(probe_seconds, 3),
+            start_deadline_seconds=start_deadline, start_deadline_fraction=0.4)
+        print("CAPACITY_CALIBRATION " + json.dumps(calibration))
         sampling = True
 
         async def sample():
@@ -335,15 +347,32 @@ def measure_session_start_cpu():
             store=store, cli_type="claude", source="startup"))
 
     start(-1)  # imports and one-time setup are not per-session cost
-    begin = time.process_time()
-    for index in range(SESSIONS):
-        start(index)
-    return time.process_time() - begin
+    spent = []
+    for attempt in range(3):  # other processes only add time; the least is the cost
+        begin = time.process_time()
+        for index in range(SESSIONS):
+            start(f"{attempt}-{index}")
+        spent.append(time.process_time() - begin)
+    return min(spent)
 
 
 def burst_session_count(spent, deadline):
     # Mac passes with ~2.5x headroom; the 3–4x slower runner misses deadlines.
     return max(60, min(SESSIONS, int(SESSIONS * (0.4 * deadline) / spent)))
+
+
+def wall_clock_session_count(probe_slowest, deadline):
+    """Sessions whose slowest start should answer in half the deadline.
+
+    Scales the measured probe linearly: N simultaneous starts queue behind
+    one another, so the slowest waits about N times one start's service time.
+    """
+    return max(PROBE_SESSIONS, min(SESSIONS, int(PROBE_SESSIONS * (0.5 * deadline) / probe_slowest)))
+
+
+@pytest.mark.parametrize("slowest, expected", [(0.1, 300), (0.2, 300), (0.4, 150), (0.9, 66), (3, 60)])
+def test_wall_clock_session_count_scales_with_the_probe(slowest, expected):
+    assert wall_clock_session_count(slowest, 2) == expected
 
 
 def test_300_session_starts_need_less_cpu_than_the_start_deadline(sqlite_manager):
