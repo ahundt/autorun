@@ -448,11 +448,13 @@ enforce those policies.
     its session, overload messages distinguish a busy daemon from an
     unreachable one, and restart refuses to replace a recently started daemon
     that answers its health probe.
-67. Codex blocked plain file reads behind wrappers and suggested a "shell
-    file inspection tool" with a `file_path=` parameter it does not have.
-    The read redirects and their messages were removed: `cat`, `head`,
-    `tail` (including `tail -f`), `grep`, `find`, and `echo >` no longer
-    have redirect guards. Destructive-command guards remain active.
+67. Codex blocked plain file reads behind a wrapper (`rtk cat f`,
+    `env LC_ALL=C head f`) and told the agent to use a "shell file inspection
+    tool" with a `file_path=` parameter Codex does not have. rc4 removes the
+    read guards on every harness: `cat`, `head`, `tail` (including `tail -f`),
+    `grep` and `echo >` run, and `find` is blocked only when it deletes or
+    writes files. Codex's messages for the remaining `sed` and `awk` guards
+    name tools it has: `apply_patch`, `rg -n` and `sed -n`.
 68. `awk` filtering a pipe, such as `ls -l | awk '{print $5}'`, was blocked.
     Simple filters on a pipe are now allowed, as `cat`, `grep` and `find`
     are: printing fields and strings, an `NR` or field condition, a column
@@ -778,6 +780,11 @@ enforce those policies.
      typing the command a second time worked. The command now runs on the
      first prompt and its reply carries the notice. This affected every `/ar:`
      command on every harness with task tools.
+130. On Pi, Prime Agent before 0.10 and OpenCode, a tool call was allowed when
+     the daemon was unreachable and the fallback hook process crashed or was
+     killed before printing anything. The bridge read the empty output as no
+     objection. It now allows the call only when the fallback exits 0 with no
+     output, and otherwise blocks it with the recovery guidance.
 
 ### For contributors
 
