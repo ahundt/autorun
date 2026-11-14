@@ -201,6 +201,17 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
             burst_fail_open.append((index, event, failure, round(elapsed, 2)))
             return response
         outcome = gate.classify(json.dumps(response), "", 0, deny)
+        if active_burst and "degraded_decision" in json.dumps(response) and outcome in {
+                "degraded_allow", "intended_denial"}:
+            # A tool gate the loaded daemon could not answer: the hook decides
+            # locally. An ordinary call proceeds and a guarded one is still
+            # denied; either way it counts toward the burst's fail-open limit.
+            decision = (response.get("hookSpecificOutput", {}).get("permissionDecision")
+                        or response.get("permissionDecision") or response.get("decision"))
+            assert (decision == "deny") is bool(deny), f"{index} {event}: wrong degraded decision {response}"
+            fail_open.setdefault(index, []).append((event, fields or {}))
+            burst_fail_open.append((index, event, failure or "degraded", round(elapsed, 2)))
+            return response
         if restarting and outcome in {"refused_or_overloaded", "fail_closed"}:
             assert deny, f"{index}: ordinary command denied during restart: {response}"
             specific = response.get("hookSpecificOutput", {})

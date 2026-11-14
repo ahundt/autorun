@@ -528,6 +528,7 @@ def test_the_suite_cannot_signal_an_autorun_daemon_it_did_not_start(tmp_path):
     not our descendant and its AUTORUN_HOME is outside the runtime root."""
     import signal
     import subprocess
+    import time
 
     import conftest
     import psutil
@@ -540,6 +541,13 @@ def test_the_suite_cannot_signal_an_autorun_daemon_it_did_not_start(tmp_path):
     env = dict(os.environ, AUTORUN_HOME=str(tmp_path))
     pid = int(subprocess.run([sys.executable, "-c", spawn], env=env, capture_output=True, text=True,
                              check=True).stdout)
+    # Popen returns once the child is forked; until its exec finishes the
+    # process table still shows the spawner's command line, and the guard
+    # under test recognises a daemon by that command line.
+    deadline = time.monotonic() + 10
+    while "autorun.daemon" not in psutil.Process(pid).cmdline():
+        assert time.monotonic() < deadline, f"decoy never showed its command line: {psutil.Process(pid).cmdline()}"
+        time.sleep(0.01)
     try:
         with pytest.raises(RuntimeError, match=f"PID {pid}"):
             os.kill(pid, signal.SIGTERM)
