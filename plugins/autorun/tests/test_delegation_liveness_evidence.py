@@ -206,6 +206,9 @@ def _replace_receipt(key: str, update) -> None:
         state["receipts"] = receipts
 
 
+# Seeding 1,024 receipts is 1,024 saved state files; the Windows runner needs
+# 27 s for it on a good day, against the suite's 30 s default.
+@pytest.mark.timeout(150)
 def test_open_receipt_survives_any_number_of_newer_open_receipts(gate_env):
     """A Codex child returns in its own session; only its receipt names the parent.
     However many other children were spawned after it and are still running,
