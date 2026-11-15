@@ -578,7 +578,10 @@ def test_counted_pause_replays_same_stop_once_then_consumes_distinct_stops():
 
 
 def test_parallel_replays_consume_one_of_five_stops():
-    ctx = _context("pause-parallel")
+    # The subject is the claim, not the wait for it: a replay that gives up on
+    # the state lock after the hook default of 0.5 s is refused (and logged),
+    # which a stalled CI runner produced for one of the eight threads.
+    ctx = _context("pause-parallel", store=ThreadSafeDB(state_timeout=30))
     activate_task_pause(
         ctx,
         scope=ScopeSpec(remaining_uses=5),
