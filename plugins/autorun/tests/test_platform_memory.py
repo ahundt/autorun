@@ -29,7 +29,7 @@ from autorun.installer.steps import apply_regions, regions_for  # noqa: E402
 from autorun.installer.traversal import Context, Mode  # noqa: E402
 from autorun.platforms import PLATFORMS  # noqa: E402
 
-MEMORY_PLATFORMS = ["claude", "codex", "forgecode"]
+MEMORY_PLATFORMS = ["claude", "codex", "forgecode", "antigravity"]
 
 REAL_PLUGIN_DIR = Path(__file__).resolve().parents[1]
 
@@ -109,8 +109,12 @@ def test_codex_slug_is_unchanged_for_backward_compatibility():
 
 
 def test_platforms_without_a_memory_file_declare_nothing():
-    """Gemini/Qwen/Antigravity have no global instructions file autorun owns."""
-    for name in ("gemini", "qwen", "antigravity"):
+    """Gemini and Qwen have no global instructions file autorun owns.
+
+    Antigravity does: its docs list ``~/.gemini/config/AGENTS.md`` as a
+    global rules file, and without one its sessions got no autorun rules.
+    """
+    for name in ("gemini", "qwen"):
         assert PLATFORMS[name].memory_filename == ""
 
 

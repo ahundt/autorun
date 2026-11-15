@@ -1912,6 +1912,11 @@ ANTIGRAVITY = register(
         extension_manifest_name="plugin.json",
         extension_hooks_at_root=True,
         skill_search_routes=(HomeDirSkills(".gemini/config/skills"),),
+        # ~/.gemini/config/AGENTS.md is one of Antigravity's documented global
+        # rules files (https://antigravity.google/docs/rules).
+        memory_filename="AGENTS.md",
+        memory_template="antigravity_template/AGENTS.md",
+        memory_sentinel_slug="antigravity-agents-md",
         list_cmd=("agy", "plugin", "list"),
         native_skills=ExtensionSkills("plugins"),
         extensions_subdir="plugins",

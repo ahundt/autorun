@@ -23,7 +23,7 @@ PLUGIN_ASSET_TREES = (
     *(
         (Path(f"src/autorun/{name}_template"), Path(f"{name}_template"))
         for name in (
-            "bridge", "claude", "codex", "forgecode", "gemini", "opencode", "pi",
+            "antigravity", "bridge", "claude", "codex", "forgecode", "gemini", "opencode", "pi",
             "prime_rust",
         )
     ),

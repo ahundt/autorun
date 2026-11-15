@@ -19,6 +19,7 @@ recursive-include scripts *.py
 
 # Workspace configuration
 include pyproject.toml
+recursive-include src/autorun/antigravity_template *
 recursive-include src/autorun/bridge_template *
 recursive-include src/autorun/claude_template *
 recursive-include src/autorun/codex_template *

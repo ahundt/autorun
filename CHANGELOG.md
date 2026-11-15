@@ -899,6 +899,12 @@ enforce those policies.
      `SessionStart`, `PreInvocation` and `Stop` are now flat handler lists, as
      Antigravity's hooks documentation requires, and the install test checks
      the shape of every event.
+142. Google Antigravity sessions received none of autorun's guidance. The install
+     wrote no rules file for Antigravity, so the model never saw the override
+     commands or the guardrails. `autorun --install` now adds a marked block to
+     `~/.gemini/config/AGENTS.md`, one of Antigravity's documented global rules
+     files, and keeps any text already there. `autorun --uninstall` removes only
+     that block.
 
 ### For contributors
 
