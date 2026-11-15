@@ -1141,8 +1141,17 @@ def test_native_gate_events(platform, event, failure, command, guard):
 async def test_load_subcases(running_daemon, capture, platform, failure, command, guard, monkeypatch, capsys):
     session = f"load-{time.monotonic_ns()}"
     if failure == "R1-cooldown":
-        first = await request(platform, command, "R1", monkeypatch, capsys, session_id=session)
-        assert_load_decision(first, guard)
+        # Only a handler that started and then overran opens the session's
+        # circuit. On a slow runner the injected 20 ms deadline can pass
+        # before the handler starts, which is contained without opening it.
+        for _attempt in range(20):
+            first = await request(platform, command, "R1", monkeypatch, capsys, session_id=session,
+                tool=platform.tool_names["read"] if not command else None)
+            assert_load_decision(first, guard)
+            if failure_tag(first) == "daemon_dispatch_timeout":
+                break
+        else:
+            pytest.fail(f"no injected handler timeout in 20 attempts: {first}")
     response = await request(platform, command, failure, monkeypatch, capsys, session_id=session,
         tool=platform.tool_names["read"] if not command else None)
     decision = response.get("hookSpecificOutput", {}).get("permissionDecision", response.get("decision", "allow"))
