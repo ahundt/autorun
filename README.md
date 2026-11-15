@@ -7,9 +7,9 @@ Left alone, an AI coding agent stalls mid-task, calls a first draft done, publis
 
 autorun redirects risky commands to safe alternatives and keeps agents running until every task is finished and verified. You allow risky commands like `/ar:ok 'git push'` once, N times, for a set time, or permanently.
 
-autorun supports nine [agents](#supported-agents): Claude Code, Codex CLI, Qwen Code, Google Antigravity, Pi, Prime Agent, OpenCode, ForgeCode, and Gemini CLI.
+autorun supports nine [agents](#supported-agents): Claude Code, Codex CLI, Qwen Code, Google Antigravity, Pi, Prime Agent, OpenCode, ForgeCode, and Gemini CLI. The Claude, Codex (ChatGPT), and Antigravity desktop apps work too.
 
-autorun installs [skills](#skills) to plan before building, keep commit messages reviewable, shorten prose without losing facts, and carry long, correction-heavy work to a verified definition of done.
+autorun installs [skills](#skills) to plan before building, keep commit messages reviewable, shorten prose without losing facts, and carry long work to a strong definition of done, fixing problems on the way.
 
 ## Why autorun
 
@@ -82,8 +82,7 @@ OpenCode, ForgeCode, and Prime Agent 0.10+ lack some of these commands. On those
   - [Plans](#plans)
   - [Task tracking](#task-tracking)
   - [Other commands](#other-commands)
-  - [Renamed commands](#renamed-commands)
-- [Keep sessions alive with byobu](#keep-sessions-alive-with-byobu)
+- [Run and control many sessions with byobu](#run-and-control-many-sessions-with-byobu)
 - [Install](#install)
   - [Supported agents](#supported-agents)
   - [Codex CLI](#codex-cli) · [Pi and Prime Agent](#pi-and-prime-agent) · [OpenCode](#opencode) · [Qwen Code](#qwen-code) · [Legacy Gemini CLI](#legacy-gemini-cli)
@@ -124,7 +123,7 @@ These ship in `ar`, autorun's own plugin:
 | [`mermaid-diagrams`](plugins/autorun-skills/skills/mermaid-diagrams/SKILL.md) | render Mermaid diagrams to styled SVG with one command; only bun is required |
 | [`streamline-text`](plugins/autorun-skills/skills/streamline-text/SKILL.md) | shorten prose, then check that every required fact remains |
 | [`synthesize-project-requirements`](plugins/autorun-skills/skills/synthesize-project-requirements/SKILL.md) | pull requirements, corrections, and gotchas scattered across your notes, git history, and past sessions into one note whose claims you can check against evidence |
-| [`task-lifecycle-workflow`](plugins/autorun-skills/skills/task-lifecycle-workflow/SKILL.md) | run long, correction-heavy work from research to a verified finish, keep every correction you made along the way, and review the result cold before calling the work done |
+| [`task-lifecycle-workflow`](plugins/autorun-skills/skills/task-lifecycle-workflow/SKILL.md) | run long work from research to a strong definition of done, fix problems on the way, keep every correction you made, and review the result cold before calling the work done |
 | [`test-fixes-in-parallel`](plugins/autorun-skills/skills/test-fixes-in-parallel/SKILL.md) | try 8 to 10 fundamentally different fixes simultaneously, using parallel subagents, for a bug that resists one-at-a-time attempts, and name the fixes that work and why |
 | [`tmux-automation`](plugins/autorun-skills/skills/tmux-automation/SKILL.md) | run, watch, and type into programs in tmux or byobu panes, checking the target pane first so your other sessions stay undisturbed |
 | [`write-decision-ready-technical-reports`](plugins/autorun-skills/skills/write-decision-ready-technical-reports/SKILL.md) | write a report that opens with the current state, the recommendation, the alternatives, and what each costs, with the evidence after, so a reader can decide without redoing the investigation |
@@ -138,7 +137,7 @@ These ship in `ar`, autorun's own plugin:
 
 ### Choosing between the plan skills and `task-lifecycle-workflow`
 
-Use [`plannew`](plugins/autorun/skills/plannew/SKILL.md), [`planrefine`](plugins/autorun/skills/planrefine/SKILL.md), [`planupdate`](plugins/autorun/skills/planupdate/SKILL.md), or [`planprocess`](plugins/autorun/skills/planprocess/SKILL.md) for one explicit planning operation. [`task-lifecycle-workflow`](plugins/autorun-skills/skills/task-lifecycle-workflow/SKILL.md) carries long, correction-heavy work to a verified definition of done, with a cold read of the result before the work counts as ready.
+Use [`plannew`](plugins/autorun/skills/plannew/SKILL.md), [`planrefine`](plugins/autorun/skills/planrefine/SKILL.md), [`planupdate`](plugins/autorun/skills/planupdate/SKILL.md), or [`planprocess`](plugins/autorun/skills/planprocess/SKILL.md) for one explicit planning operation. [`task-lifecycle-workflow`](plugins/autorun-skills/skills/task-lifecycle-workflow/SKILL.md) carries long work to a strong definition of done, fixing problems on the way, with a cold read of the result before the work counts as ready.
 
 ### Listing and placing skills
 
@@ -146,7 +145,7 @@ Use [`plannew`](plugins/autorun/skills/plannew/SKILL.md), [`planrefine`](plugins
 
 ## Commands
 
-Every command is `ar` plus one name, such as `/ar:status`. `/ar:help` lists every command, `/ar:help <command>` shows that command's arguments, and typing `ar` alone opens the list. Older names still run on agents that pass the text to autorun; see [Renamed commands](#renamed-commands).
+Every command is `ar` plus one name, such as `/ar:status`. `/ar:help` lists every command, `/ar:help <command>` shows that command's arguments, and typing `ar` alone opens the list. Older names still run on agents that pass the text to autorun; see [Renamed commands](docs/RENAMED_COMMANDS.md).
 
 ### Command spelling
 
@@ -357,32 +356,9 @@ Settings live in `~/.autorun/task-lifecycle.config.json`. [docs/TASK_TRACKING.md
 2. `set expired-min-tokens <tokens>` sets the floor.
 3. Optional tool-time thresholds: `set ratio|read|age <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`), `ok [5m|N|perm]`, `no`, and `global <subcommand>`. Details: [commands/cache.md](plugins/autorun/commands/cache.md).
 
-### Renamed commands
+## Run and control many sessions with byobu
 
-Each command has one name. An old name still runs the new command wherever the agent passes the text to autorun. That covers Pi, Prime Agent, and Gemini CLI in any spelling, and Codex as `ar:<name>` or `ar <name>`. Claude Code and Qwen Code answer an old `/ar:` name with "Unknown command"; ForgeCode, Antigravity, and OpenCode have no route for old names.
-
-| Old name | Use instead |
-|---|---|
-| `st`, `afst`, `blocks`, `globalstatus` | `/ar:status` |
-| `a`, `allow`, `afa` | `/ar:file allow` |
-| `j`, `justify`, `afj` | `/ar:file justify` |
-| `f`, `find`, `afs` | `/ar:file existing-only` |
-| `run`, `autorun` | `/ar:go` |
-| `gp`, `proc`, `autoproc` | `/ar:goprocess` |
-| `x` | `/ar:stop` |
-| `sos` | `/ar:estop` |
-| `pn`, `pr`, `pu`, `pp` | `/ar:plannew`, `/ar:planrefine`, `/ar:planupdate`, `/ar:planprocess` |
-| `pe` | `/ar:planexport` |
-| `globalok`, `globalno`, `globalclear` | `/ar:ok --global`, `/ar:no --global`, `/ar:clear --global` |
-| `gc`, `ph` | the `commit` and `philosophy` skills (`/ar:commit`, `/ar:philosophy` on Claude Code) |
-| `gemini`, `test`, `claude-code-plugin-help`, `tm`, `tmux`, `tt`, `ttest` | removed as commands; `/ar:tmux` is now the `tmux` skill, and the tmux test procedures are in the `tmux-automation` skill |
-| unprefixed `/afs`, `/afa`, `/afj`, `/afst`, `/autorun`, `/autoproc`, `/autostop`, `/estop` | removed; use the names above |
-
-Change each old command name in your own instruction files (`CLAUDE.md`, `AGENTS.md`, saved prompts) to the new name.
-
-## Keep sessions alive with byobu
-
-An agent in a plain terminal dies when the terminal closes or SSH drops. Inside [byobu](https://www.byobu.org/) (a tmux front end) the agent keeps running, and you can reattach from another machine or a phone over SSH or [Mosh](https://mosh.org/):
+[byobu](https://www.byobu.org/) (a tmux front end) runs many terminal sessions at once, and autorun controls those sessions from the command line. `autorun tmux list` shows every agent session in your panes, and `autorun tmux send` types text into the sessions you name ([docs/TMUX.md](docs/TMUX.md)). Agents keep running when the terminal closes or SSH drops, and you can reattach from another machine or a phone over SSH or [Mosh](https://mosh.org/):
 
 ```bash
 brew install byobu                   # Linux: sudo apt install byobu
@@ -391,7 +367,7 @@ byobu new-session -s autorun-work    # then start your agent inside it and give 
 byobu attach -t autorun-work         # later, from any terminal: ssh or mosh in first
 ```
 
-F2 opens a window, F3 and F4 move between windows, and F9 opens the menu. More in the [byobu documentation](https://www.byobu.org/documentation). To list running sessions and type into a session, use `autorun tmux list` and `autorun tmux send` ([docs/TMUX.md](docs/TMUX.md)).
+F2 opens a window, F3 and F4 move between windows, and F9 opens the menu. More in the [byobu documentation](https://www.byobu.org/documentation).
 
 ## Install
 
@@ -403,10 +379,10 @@ Preview writes with `autorun --install-dry-run` and verify the result with `auto
 
 | Agent | How autorun connects | Install only this one | Type commands as |
 |---|---|---|---|
-| Claude Code | native hooks | `--claude` | `/ar:status` |
-| Google Antigravity | native hooks (plugin bundle) | `--antigravity` | `/ar:status` |
+| Claude Code, Claude desktop app | native hooks | `--claude` | `/ar:status` |
+| Google Antigravity, desktop app | native hooks (plugin bundle) | `--antigravity` | `/ar:status` |
 | Qwen Code | native hooks (extension) | `--qwen` | `/ar:status` |
-| Codex CLI | native hooks | `--codex` | `ar:status` |
+| Codex CLI, ChatGPT Codex app | native hooks | `--codex` | `ar:status` |
 | Pi | in-process extension that vetoes tool calls | `--pi` | `/ar status` |
 | Prime Agent | Pi extension below 0.10.0; 0.10+ gets guidance and skills | `--prime` | below 0.10: `/ar status`; 0.10+: skills only |
 | OpenCode | in-process prompt, tool, Stop, and compaction plugin; blocked Stop starts a new turn on 0.6.0+ | when found | `/ar-status` |
