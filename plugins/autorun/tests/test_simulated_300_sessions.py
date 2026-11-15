@@ -227,6 +227,14 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
             assert deny and response["hookSpecificOutput"]["permissionDecision"] == "deny"
             assert "trash" in json.dumps(response) and "retry when it recovers" in json.dumps(response)
             return response
+        if (event == "Stop" and outcome == "unexpected_denial" and "incomplete tasks" in json.dumps(response)
+                and any(missed == "PostToolUse" and sent.get("tool_name") == "TaskUpdate"
+                        for missed, sent in fail_open.get(index, []))):
+            # The daemon never received this session's TaskUpdate (counted in
+            # the burst's fail-open limit above), so its task is still open and
+            # Stop is refused with the task named: the session repeats the
+            # update. Any other Stop refusal still fails below.
+            return response
         expected = "intended_denial" if deny else "allowed"
         assert outcome == expected, f"{index} {event} {fields}: {outcome}, expected {expected}: {response}"
         probe = response.get("_capacity", {})

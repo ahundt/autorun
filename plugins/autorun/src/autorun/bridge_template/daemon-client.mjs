@@ -87,16 +87,15 @@ function screenedGuard(command) {
   // then match in the same literal segment as the guard's words.
   const plain = command.replace(/\\\n|['"\\]/g, "");
   const words = new Set((plain + " " + command).match(/[A-Za-z]+/g) ?? []);
-  // Segments end at ; | && newline or a & that is not part of a redirection,
-  // taken with quotes removed and with quotes turned into spaces.
-  const spaced = command.replace(/\\\n|\\/g, "").replace(/['"]/g, " ");
-  // `>|` is a redirection. The option is read from the quote-free text only;
-  // the words come from both forms.
+  // Segments end at ; | && newline or a & that is not part of a redirection;
+  // `>|` is a redirection. The command is split once: the option is read from a
+  // segment with quotes and backslashes removed, its words also with each
+  // turned into a space (-S'git clean', C:\Git\cmd\git.exe).
   const separator = /;|\n|(?<!>)\|\|?|&&|(?<![<>&])&(?![>&\d])/;
-  const joined = plain.split(separator);
-  const apart = spaced.split(separator);
-  const segments = joined.map((segment, index) => [segment, new Set(
-    (segment + " " + (apart.length === joined.length ? apart[index] : segment)).match(/[A-Za-z]+/g) ?? [])]);
+  const segments = command.replaceAll("\\\n", "").split(separator).map(raw => {
+    const bare = raw.replace(/['"\\]/g, "");
+    return [bare, new Set((bare + " " + raw.replace(/['"\\]/g, " ")).match(/[A-Za-z]+/g) ?? [])];
+  });
   const guard = CRITICAL_GUARDS.find(([, tokens, screen]) => {
     const names = tokens.filter(token => /^[A-Za-z]+$/.test(token));
     if (!names.every(token => words.has(token))) return false;

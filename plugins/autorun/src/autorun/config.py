@@ -695,9 +695,10 @@ def screened_guard(command: str) -> tuple[str, str] | None:
     segment as the guard's words, so `git clean -n && tar -czf x` does not
     count. Segments end at `;`, `|`, `&&`, a newline, or a `&` that is not part
     of a redirection (`2>&1`, `&>`); `>|` is a redirection as well. A segment's
-    words are read with quotes removed and again with quotes turned into
-    spaces, so `env -S'git clean -f'` still has the word git; its option is
-    read with quotes removed only. A predicate guard's screen (find, sed) is read over the whole
+    words are read with quotes and backslashes removed and again with each
+    turned into a space, so `env -S'git clean -f'` and `C:\\Git\\cmd\\git.exe`
+    still have the word git; its option is read with them removed only.
+    A predicate guard's screen (find, sed) is read over the whole
     command, since its own arguments may hold a `;`.
     """
     import re
@@ -715,15 +716,17 @@ def screened_guard(command: str) -> tuple[str, str] | None:
             hit = bool(re.search(screen, plain))
         else:
             if segments is None:
-                spaced = re.sub(r"['\"]", " ", re.sub(r"\\\n|\\", "", command))
                 # `>|` and `2>|` are redirections too, not pipes.
                 separator = r";|\n|(?<!>)\|\|?|&&|(?<![<>&])&(?![>&\d])"
-                joined, apart = re.split(separator, plain), re.split(separator, spaced)
-                # The option is read from the quote-free text only, so a quoted
-                # argument (--exclude='-fixtures/') cannot start one; the words
-                # come from both forms.
-                segments = [(segment, set(re.findall(r"[A-Za-z]+", segment + " " + other)))
-                            for segment, other in zip(joined, apart if len(apart) == len(joined) else joined)]
+                # The command is split once. The option is read from a segment's
+                # quote-free text only, so a quoted argument
+                # (--exclude='-fixtures/') cannot start one; its words are also
+                # read with each quote and backslash as a space, which keeps
+                # git in -S'git clean' and in C:\Git\cmd\git.exe.
+                segments = []
+                for raw in re.split(separator, command.replace("\\\n", "")):
+                    bare = re.sub(r"['\"\\]", "", raw)
+                    segments.append((bare, set(re.findall(r"[A-Za-z]+", bare + " " + re.sub(r"['\"\\]", " ", raw)))))
             hit = any(re.search(screen, segment) and set(names) <= found for segment, found in segments)
         if hit:
             return "guard", name
