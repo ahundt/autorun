@@ -3,11 +3,11 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-An AI coding agent left alone stops mid-task, calls a first draft done, and runs commands that destroy work. autorun keeps it working: it tracks the agent's tasks and refuses to let it stop while any are open, so the agent goes back to them until they are finished and verified. It also blocks commands that would delete files or discard uncommitted changes, names the safer command, and lets you allow one for a set number of runs or a set time.
+An AI coding agent left alone stops mid-task, calls a first draft done, and runs commands that destroy work. autorun keeps it working. It tracks the agent's tasks and refuses a stop while any are open, so the agent returns to them until they are finished and verified. It also blocks commands that delete files or discard uncommitted changes, and names the safer command. You allow a blocked command for a single run, a number of runs, or a set time.
 
-It works in Claude Code, Codex CLI, Qwen Code, Google Antigravity, Pi, Prime Agent, OpenCode, ForgeCode and Gemini CLI. What autorun can enforce differs by agent; [Supported agents](#supported-agents) has the table.
+autorun supports nine [agents](#supported-agents): Claude Code, Codex CLI, Qwen Code, Google Antigravity, Pi, Prime Agent, OpenCode, ForgeCode and Gemini CLI.
 
-The same install adds [skills](#skills): instructions an agent loads when you ask it to plan a change, write a commit message, shorten a document or coordinate a long task.
+The same install adds [skills](#skills), which an agent loads when you ask it to plan a change, write a commit message, shorten a document or coordinate a long task.
 
 ## Why autorun
 
@@ -15,7 +15,7 @@ The same install adds [skills](#skills): instructions an agent loads when you as
 |---|---|---|
 | stops mid-task and waits for you to type "continue" | refuses the stop while tracked tasks are open and sends the agent back to them, with no command from you | `/ar:tasks` to see them |
 | is about to delete files or discard uncommitted work (`rm -rf`, `git reset --hard`, `git clean`) | blocks the command and names the safer one (`trash`, `git stash`); the block message gives the command that allows it | the command in the block message |
-| pushes, opens a PR, or bumps a version | blocks each one until you allow it, for one run, a number of runs, or a set time | `/ar:ok 'git push'`, `/ar:ok 'git push' 3`, `/ar:ok 'git push' 1h` |
+| pushes, opens a PR, or bumps a version | blocks each until you allow it for a single run, a number of runs, or a set time | `/ar:ok 'git push'`, `/ar:ok 'git push' 3`, `/ar:ok 'git push' 1h` |
 | starts a large change with no plan | loads a skill that writes a plan with checkable steps, and one that critiques the plan against the code | `/ar:plannew`, `/ar:planrefine` |
 | designs without stated principles, or writes a vague commit message | loads the skill for that job | `/ar:philosophy`, `/ar:commit` |
 | says "done" after a first draft | makes it implement, then critically evaluate, then verify before it may stop | `/ar:go <task>` |
@@ -39,7 +39,7 @@ This needs [uv](https://docs.astral.sh/uv/getting-started/installation/) and Pyt
 ### See a guard work
 
 1. Ask the agent to run `git push`. autorun blocks the command and tells the agent to keep working locally until you allow it.
-2. To let one push through, type the allow command for your agent. Add `3` for three pushes or `1h` for an hour:
+2. To allow a single push, type the allow command for your agent. Add `3` to allow three pushes or `1h` to allow pushes for an hour:
 
 | Agent | Type |
 |---|---|
@@ -190,9 +190,9 @@ Before a shell command runs, autorun checks it against its guards. A blocked age
 | public actions you did not ask for | `git push`, `gh pr create`/`merge`/`edit`/`comment`, `gh issue create`/`edit`/`comment`, `gh release create`, `gh repo create`/`edit` | your permission |
 | unrequested releases | version bumps by command or manifest edit, publishing to a registry | your consent |
 | disks and backups | `dd if=`, `mkfs`, `fdisk`, Time Machine changes through `tmutil` | backing up first |
-| scripts nobody read | `curl` or `wget` piped into a shell, including `bash <(curl …)` | download, read, then run; `/ar:ok bash` allows one run |
+| scripts nobody read | `curl` or `wget` piped into a shell, including `bash <(curl …)` | download, read, then run; `/ar:ok bash` allows `bash` for a single run |
 | shell text tools | `sed` that edits files, `awk` except a plain field filter on a pipe (`ls -l \| awk '{print $5}'`) | the agent's own edit tool, or `sed -n` and a pipe to print |
-| files deleted or overwritten by `find` | `find` with `-delete`, `-fprint`, `-fprint0`, `-fprintf` or `-fls`; a `find` that only lists is allowed | list the matches first, then `-exec trash {} +`, or `> file` to save the list; `/ar:ok find` allows one run |
+| files deleted or overwritten by `find` | `find` with `-delete`, `-fprint`, `-fprint0`, `-fprintf` or `-fls`; a `find` that only lists is allowed | list the matches first, then `-exec trash {} +`, or `> file` to save the list; `/ar:ok find` allows `find` for a single run |
 | commit quality | `git` (warning only) | the commit-message rules |
 
 Shell reads run as written: `cat`, `head`, `tail`, `grep`, a `find` that only lists, and `echo >` have no guard.
@@ -208,7 +208,7 @@ Run these for this session, or put `--global` as the first argument for every se
 | This session | Every session | Effect |
 |---|---|---|
 | `/ar:no <pattern>`, `/ar:no "<pattern>" <message>` | `/ar:no --global` with the same arguments | block; a message needs a quoted, `regex:` or `glob:` pattern, or it becomes part of the pattern |
-| `/ar:ok <pattern> [N\|5m\|perm]` | `/ar:ok --global <pattern> [N\|5m\|perm]` | allow `N` times, for a duration (`5m`, `2h30m`, `2d`), or `perm` (session: until it ends; global: until cleared); default one use |
+| `/ar:ok <pattern> [N\|5m\|perm]` | `/ar:ok --global <pattern> [N\|5m\|perm]` | allow `N` times, for a duration (`5m`, `2h30m`, `2d`), or `perm` (session: until it ends; global: until cleared); with no scope, a single use |
 | `/ar:status` | `/ar:status` | list blocks and allows; one view shows both |
 | `/ar:clear` | `/ar:clear --global` | remove all blocks and allows |
 
