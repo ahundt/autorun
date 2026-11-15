@@ -353,8 +353,12 @@ DEFAULT_INTEGRATIONS = {
         "patterns": ["bash", "dash", "fish", "ksh", "sh", "su", "zsh"],
         "action": "block",
         "when": "_shell_runs_downloaded_script",
-        # command_detection.NETWORK_DOWNLOADERS, or four shell names (nesting past 3).
-        "screen": r"curl|wget|(\b(bash|dash|fish|ksh|sh|su|zsh)\b[\s\S]*?){4}",
+        # command_detection.NETWORK_DOWNLOADERS, or nesting past 3: four shell
+        # names (`.sh` counts) and three ways to hand a shell its script
+        # (heredoc, pipe, process substitution, -c). Four `bash x.sh` lines
+        # have none of the latter.
+        "screen": (r"curl|wget|^(?=(?:[\s\S]*?(?:<<|\||<\(|\s-\w*c|--command)){3})"
+                   r"(?:[\s\S]*?\b(?:bash|dash|fish|ksh|sh|su|zsh)\b){4}"),
         "suggestion": (
             "Blocked: this shell would run a script autorun cannot read: one straight "
             "from a network download (curl or wget), or a shell nested more than 3 "
@@ -720,14 +724,20 @@ def screened_guard(command: str) -> tuple[str, str] | None:
                 separator = r";|\n|(?<!>)\|\|?|&&|(?<![<>&])&(?![>&\d])"
                 # The command is split once. The option is read from a segment's
                 # quote-free text only, so a quoted argument
-                # (--exclude='-fixtures/') cannot start one; its words are also
-                # read with each quote and backslash as a space, which keeps
-                # git in -S'git clean' and in C:\Git\cmd\git.exe.
+                # (--exclude='-fixtures/') cannot start one. The command word
+                # is also read with each quote and backslash as a space, which
+                # keeps git in -S'git clean' and in C:\Git\cmd\git.exe. A
+                # subcommand must be an argument by itself, so `clean` in
+                # src/clean/x or clean-code is not one.
                 segments = []
                 for raw in re.split(separator, command.replace("\\\n", "")):
                     bare = re.sub(r"['\"\\]", "", raw)
-                    segments.append((bare, set(re.findall(r"[A-Za-z]+", bare + " " + re.sub(r"['\"\\]", " ", raw)))))
-            hit = any(re.search(screen, segment) and set(names) <= found for segment, found in segments)
+                    segments.append((
+                        bare, set(re.findall(r"[A-Za-z]+", bare + " " + re.sub(r"['\"\\]", " ", raw))),
+                        set(re.findall(r"(?<![A-Za-z0-9./\\-])[A-Za-z]+(?![A-Za-z0-9./\\-])",
+                                       bare + " " + re.sub(r"['\"]", " ", raw.replace("\\", ""))))))
+            hit = any(re.search(screen, segment) and names[0] in command_words and set(names[1:]) <= argument_words
+                      for segment, command_words, argument_words in segments)
         if hit:
             return "guard", name
     for feature in SHELL_NAME_HIDING_FEATURES:

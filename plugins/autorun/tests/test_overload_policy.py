@@ -1321,7 +1321,8 @@ SCREEN_PARITY_COMMANDS = ["git clean 2>&1 -f", "git add 2>&1 -A", "git add 2>&1 
     "git clean -df &>/dev/null", "git add . >&2", "git clean >|/tmp/out -f", "git add 2>|/tmp/out .",
     r"& 'C:\Program Files\Git\cmd\git.exe' clean -f", r"& 'C:\Program Files\Git\cmd\git.exe' add .",
     r"& 'C:\Program Files\Git\cmd\git.exe' rebase -i main", "env -S'git clean -f' >'|out'",
-    "env -S'git clean -f' >'&out'",
+    "env -S'git clean -f' >'&out'", "env -S 'git\\_clean\\_-f'", "{git,clean,-f}",
+    "bash -c \"bash -c 'bash -c \\\"bash -c ls\\\"'\"", "echo 'echo \"echo \\\"echo ls | sh\\\" | sh\" | sh' | sh",
     "git rebase >|/tmp/out -qi main",
     "find . -name x -exec echo {} \\; -delete", "cd repo && git clean -df", "ls | xargs git clean -f",
     "git add .;git commit -m x", "(git add .)", "git add -- .", "git add .>/dev/null",
@@ -1349,7 +1350,10 @@ def test_review8_screen_sends_what_the_full_check_denies(command, cli_type):
                                      "sed -e's/foo/item/' input.txt", "sed -f./filter.sed input.txt",
                                      "git clean -n & tar -czf x src", "git clean -n 2>&1 | grep -f pats",
                                      "git clean -n --exclude='-fixtures/'", "git clean -n >|out | grep -f pats",
-                                     r"C:\Git\cmd\git.exe add src", r"& 'C:\Program Files\Git\cmd\git.exe' clean -n",
+                                     r"C:\Git\cmd\git.exe add src", r"git grep -f 'C:\src\clean-code\patterns.txt'",
+                                     "git grep -f src/clean/patterns.txt", "git log -A3 -- docs/add/readme.md",
+                                     "bash tests/unit.sh\nbash tests/integration.sh\nbash tests/lint.sh\nbash tests/smoke.sh",
+                                     "bash a.sh && bash b.sh", r"& 'C:\Program Files\Git\cmd\git.exe' clean -n",
                                      "git reset HEAD file"])
 def test_review8_everyday_git_still_passes_the_screen(command):
     from autorun.config import screened_guard
