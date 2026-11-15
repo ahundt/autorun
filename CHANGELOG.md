@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
-## [1.0.0rc4] - 2026-11-07
+## [1.0.0rc4] - 2026-11-15
 
 autorun 1.0.0rc4 changes command names, skill ownership, task-state handling,
 harness hooks, tmux targeting, and same-version Claude cache repair. It ships
