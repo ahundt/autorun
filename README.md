@@ -14,8 +14,8 @@ The same install adds [skills](#skills): instructions an agent loads when you as
 | When your agent... | autorun... | You type |
 |---|---|---|
 | stops mid-task and waits for you to type "continue" | refuses the stop while tracked tasks are open and sends the agent back to them, with no command from you | `/ar:tasks` to see them |
-| is about to delete files or discard uncommitted work (`rm -rf`, `git reset --hard`, `git clean`) | blocks the command and names the safer one (`trash`, `git stash`); you allow it only when you mean it, for one run, a number of runs, or a set time | `/ar:ok rm`, `/ar:ok rm 3`, `/ar:ok rm 1h` |
-| pushes, opens a PR, or bumps a version | blocks each one until you allow it | `/ar:ok 'git push' 1h` |
+| is about to delete files or discard uncommitted work (`rm -rf`, `git reset --hard`, `git clean`) | blocks the command and names the safer one (`trash`, `git stash`); the block message gives the command that allows it | the command in the block message |
+| pushes, opens a PR, or bumps a version | blocks each one until you allow it, for one run, a number of runs, or a set time | `/ar:ok 'git push'`, `/ar:ok 'git push' 3`, `/ar:ok 'git push' 1h` |
 | starts a large change with no plan | loads a skill that writes a plan with checkable steps, and one that critiques the plan against the code | `/ar:plannew`, `/ar:planrefine` |
 | designs without stated principles, or writes a vague commit message | loads the skill for that job | `/ar:philosophy`, `/ar:commit` |
 | says "done" after a first draft | makes it implement, then critically evaluate, then verify before it may stop | `/ar:go <task>` |
@@ -38,15 +38,17 @@ This needs [uv](https://docs.astral.sh/uv/getting-started/installation/) and Pyt
 
 ### See a guard work
 
-1. Ask the agent to delete a scratch file with `rm`. autorun blocks the command and tells the agent to use `trash`.
-2. To let one `rm` through, type the allow command for your agent. Add `3` for three runs or `1h` for an hour:
+1. Ask the agent to run `git push`. autorun blocks the command and tells the agent to keep working locally until you allow it.
+2. To let one push through, type the allow command for your agent. Add `3` for three pushes or `1h` for an hour:
 
 | Agent | Type |
 |---|---|
-| Claude Code, Google Antigravity, Qwen Code, Gemini CLI | `/ar:ok rm` |
-| Codex CLI | `ar:ok rm` |
-| Pi, Prime Agent below 0.10 | `/ar ok rm` |
-| OpenCode | `ar:ok rm` |
+| Claude Code, Google Antigravity, Qwen Code, Gemini CLI | `/ar:ok 'git push'` |
+| Codex CLI | `ar:ok 'git push'` |
+| Pi, Prime Agent below 0.10 | `/ar ok 'git push'` |
+| OpenCode | `ar:ok 'git push'` |
+
+Deleting files is guarded the same way: `rm` is blocked with a pointer to `trash`, and the block message gives the command that allows it.
 
 The rest of this README writes commands the Claude Code way, for example `/ar:status`. Codex drops the slash (`ar:status`). Pi and Prime Agent use a space (`/ar status`). OpenCode uses a hyphen (`/ar-status`), for `status`, `go`, `file`, `commit` and `philosophy` only.
 
