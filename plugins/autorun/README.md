@@ -3,7 +3,7 @@
 An AI coding agent left alone stops mid-task, calls a first draft done, and runs
 commands such as `rm -rf` or `git reset --hard`. autorun adds hooks that send it
 back to work and block those commands. It supports Claude Code, Codex, Qwen
-Code, Pi, Prime Agent, ForgeCode, OpenCode, Antigravity and the retired Gemini CLI.
+Code, Pi, Prime Agent, ForgeCode, OpenCode, Antigravity and the legacy Gemini CLI.
 
 ## Install
 

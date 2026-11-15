@@ -280,6 +280,16 @@ def _memory_file_text() -> list[tuple[Path, str]]:
     return [(path, path.read_text(encoding="utf-8")) for path in AGENT_MEMORY_FILES]
 
 
+
+def test_readme_skill_count_matches_the_shipped_skills():
+    """The README states how many skills one install adds; a skill added or
+    removed must change that number."""
+    shipped = sum(len(list((REPO_ROOT / "plugins" / plugin / "skills").glob("*/SKILL.md")))
+                  for plugin in ("autorun", "autorun-skills", "pdf-extractor"))
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"installs {shipped} of them" in readme
+
+
 def test_agent_memory_files_only_reference_paths_that_exist():
     """Every repo-relative path in an agent memory file must resolve."""
     missing: list[str] = []
@@ -1521,7 +1531,7 @@ def test_documented_install_commands_name_the_registrable_distribution():
         REPO_ROOT / "RELEASING.md",
         PLUGIN_ROOT / "README.md",
         REPO_ROOT / "plugins" / "pdf-extractor" / "README.md",
-        REPO_ROOT / "plugins" / "pdf-extractor" / "CLAUDE.md",
+        REPO_ROOT / "plugins" / "pdf-extractor" / "AGENTS.md",
         *sorted((REPO_ROOT / "docs" / "releases").glob("*.md")),
     ):
         if not path.is_file():

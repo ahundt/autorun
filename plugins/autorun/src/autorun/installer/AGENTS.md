@@ -9,7 +9,7 @@ All ask: what is here, is it ours, does it match what we ship?
 
 | Mode | Effect |
 |---|---|
-| `PREVIEW` | prints, writes nothing. Status *is* dry run |
+| `PREVIEW` | prints, writes nothing. `--status` runs this walk, then health checks and one hook probe |
 | `INSTALL` | acts on `PUBLISH` and `RETIRE` |
 | `UNINSTALL` | same walk, sources dropped, so all `RETIRE` |
 
@@ -19,9 +19,12 @@ so `--uninstall pdf-extractor` cannot touch autorun's trees.
 
 ## Three rules
 
-1. **Only `fs` mutates:** `publish_tree`, `publish_files`, `withdrawn`,
-   `withdraw_files`, `json_document`. Each records a manifest, so an
-   unidentifiable tree cannot be created.
+1. **Only `fs` mutates installed trees:** `publish_tree`, `publish_files`,
+   `withdrawn` and `withdraw_files` each record a manifest, so an
+   unidentifiable tree cannot be created. `fs.json_document` edits a JSON
+   file in place and records none. Two modules write their own kind of file:
+   `memory` (the autorun block in a user's guidance file) and `runtime`
+   (runtime receipts).
 2. **Steps yield `Intent`s and touch no disk.** That is why no `dry_run` parameter
    is threaded anywhere.
 3. **Harness differences are data.** Nothing in `traversal.py` names a harness.
@@ -51,8 +54,8 @@ materialize + refresh.
 
 | | Owner |
 |---|---|
-| `gemini-extension.json`, fixed. Not `<name>-extension.json`. All three family CLIs | `extension.MANIFEST_NAME` |
-| `<ext>/hooks/hooks.json`. The manifest's own `hooks` field is ignored | `extension.stage_extension` |
+| `gemini-extension.json` for Gemini and Qwen, not `<name>-extension.json`; Antigravity's is `plugin.json` | `extension.MANIFEST_NAME`, `Platform.extension_manifest_name` |
+| `<ext>/hooks/hooks.json`, and the manifest's own `hooks` field is ignored; Antigravity instead keeps `hooks.json` at the bundle root and names it in that field | `extension.stage_extension`, `Platform.extension_hooks_at_root` |
 | `.<cli>-extension-install.json` receipt, per harness | `extension.RECEIPT_GLOB` |
 | `.autorun-owned` · `.autorun-install.lock` (in the **parent**) | `fs.OWNED_MARKER_NAME`, `INSTALL_LOCK_NAME` |
 | Codex top level: only `description`, `hooks`. Any other key drops **every** hook | `codex.ALLOWED_TOP_LEVEL` |
@@ -178,8 +181,8 @@ that need it. No disk access: stage generated content to a temp dir and point th
   git URL — followed by `python -m autorun --install`, and the next hook finds
   the deps. It never installs a bare distribution name. So a missing
   dependency must surface as an `ImportError` at import: any other exception is
-  caught by `run_fallback`'s `except Exception`, which fails open and never
-  bootstraps, leaving autorun permanently uninstalled. `filelock` in `fs` is the
+  caught by `run_fallback`'s `except Exception`, which never bootstraps (it denies
+  tool-gate events and lets the rest through), leaving autorun permanently uninstalled. `filelock` in `fs` is the
   package's only third-party import, and `config.py` is stdlib-only, which is
   what makes `settings.autorun_config()` safe to call mid-install. Adding a
   dependency, or a module-scope call that raises anything else, breaks this.
@@ -225,13 +228,11 @@ Installer specifics:
 
 ## Checks
 
-Every module self-checks, from the repository root:
+Every module with a `demo()` self-checks (all but `__init__.py` and
+`entrypoint.py`), from the repository root:
 `uv run --project plugins/autorun python -c "from autorun.installer.fs import demo; demo()"`.
 Named tests live in `plugins/autorun/tests/test_install_*.py`.
 
 `test_install_gotchas.py::test_every_installer_module_self_check_passes` runs
 that command for each module, discovering them rather than listing them, so a
-new module's `demo()` is covered the moment it exists. Until it was added the
-claim above was unverified and `registration.demo()` had been failing for eight
-days: it asserted every `REGISTRATIONS` key was a bare harness name, which
-stopped being true when the `codex:<marketplace>` variants arrived.
+new module's `demo()` is covered the moment it exists.

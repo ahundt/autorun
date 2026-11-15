@@ -20,10 +20,12 @@ the session looks healthy.
    `allowed-tools` says `Bash(uv *)`, not `Bash(python3:*)`. This includes
    `!`-prefixed dynamic output.
 3. **`hooks/hook_entry.py` writes to stderr only for Claude's exit-2 deny**;
-   other errors go through `fail_open()`, which writes JSON to stdout.
+   other errors go through `fail_after_fallback_error()`, which denies a
+   tool-gate event and answers every other event with JSON on stdout.
 4. **Cache sync**: a `pyproject.toml` or `hooks.json` fix reaches a harness only
-   through `autorun --install --force` (sandboxed; live only on the user's
-   instruction). Hand-copying into `~/.claude/plugins/cache/` is overwritten by
+   through `autorun --install` (sandboxed; live only on the user's
+   instruction). Add `--force` to replace an installed file that was edited
+   or that autorun cannot prove it wrote. Hand-copying into `~/.claude/plugins/cache/` is overwritten by
    the next install.
 5. **Session restart**: hook configuration is read once at session start, so
    those fixes take effect in the NEXT session.

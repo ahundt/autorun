@@ -63,6 +63,9 @@ Each one-liner below acts on the live machine unless it follows this prefix.
 - Commits follow `plugins/autorun/skills/commit/SKILL.md` (`<files>:` or
   `type(scope):` subject; previous behavior, exact changes, why, verification).
   Read the full staged diff before every commit.
+- Run independent work in parallel (background jobs, worker processes,
+  separate agents) when the pieces share no state, and make any job longer
+  than a minute print progress. Keep to one full pytest suite at a time.
 
 ## 3. What is here
 
@@ -79,8 +82,9 @@ in the last four fails silently.
 The wheel is `autorun_ai-*.whl`, but that is **not** a fourth name to write:
 nothing declares it, PEP 427 just normalises `-` to `_`. Derive it
 (`DISTRIBUTION.replace("-", "_")`). `test_each_autorun_spelling_keeps_its_own_job`
-pins all of the above, including that no module spells the stem out and that the
-plugin id stays `ar`.
+pins all of the above, including that `test_release_artifacts.py` and
+`publish.yml` derive the stem instead of spelling it, and that the plugin id
+stays `ar`.
 
 Three harness plugins, one uv workspace member (`plugins/autorun`): **autorun**
 (`/ar:` — autonomous execution with three-stage verification, file policies,
@@ -100,7 +104,7 @@ built from the same extension template.
 | `plugins/autorun/{commands,skills,hooks}/` | Slash commands, skills, `hooks/hook_entry.py` + `hooks.json` |
 | `plugins/autorun/AGENTS.md` | Plugin development guidance: hook error prevention, feature lessons, bug-workaround policy, harness families |
 | `plugins/autorun-skills/` | Manifests for every harness family, `README.md`, and `skills/`: the general-purpose skills. An install hands any copy `ar` wrote under an earlier release to this plugin (`installer/skills.heirs`) |
-| `plugins/pdf-extractor/` | Manifests, command, skill, `CLAUDE.md` (full docs), and `src/pdf_extraction` (symlinked into `plugins/autorun/src/` so it ships in the `autorun-ai` distribution; backends beyond `pdftotext` need the `pdf` extra) |
+| `plugins/pdf-extractor/` | Manifests, command, skill, `AGENTS.md` (development guide), and `src/pdf_extraction` (symlinked into `plugins/autorun/src/` so it ships in the `autorun-ai` distribution; backends beyond `pdftotext` need the `pdf`, `pdf-gpu` or `pdf-llm` extra) |
 | `README.md` | User documentation: installation, every `/ar:` command, three-stage markers, safety-guard defaults, tmux integration, troubleshooting |
 
 `/ar:help` lists every command in the current harness's spelling. Each

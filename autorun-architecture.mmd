@@ -17,56 +17,43 @@ flowchart TD
     %%  STEP 1: INSTALL
     %% ========================================
     INSTALL["💿 STEP 1<br/><br/>INSTALL AUTORUN"]:::stepBox
-    INSTALL_CMD["uv tool install autorun-ai<br/>autorun --install"]:::choiceBox
-
-    %% ========================================
-    %%  SETTINGS PANEL (Always available)
-    %% ========================================
-    subgraph SETTINGS["⚙️ SETTINGS"]
-        direction TB
-
-        subgraph FILE_SET["File Creation Policy"]
-            F1["<b>File Controls:</b><br/>──────────<br/><b>Allow all file creation</b><br/>/ar:file allow<br/>──────────<br/><b>Require justification before creating files</b><br/>/ar:file justify<br/>──────────<br/><b>Find existing only, block all new files</b><br/>/ar:file existing-only<br/>──────────<br/><b>Show current policy</b><br/>/ar:status"]:::settingBox
-        end
-
-        FILE_SET --> BLOCK_SET
-
-        subgraph BLOCK_SET["Command Redirecting"]
-            direction LR
-            B1["<b>Redirect dangerous commands to safer alternatives</b><br/>──────────<br/><b>Block in this session</b><br/>/ar:no #quot;&lt;pattern&gt;#quot; reason<br/>──────────<br/><b>Allow in this session</b><br/>/ar:ok &lt;pattern&gt;<br/>──────────<br/><b>Clear session blocks and allows</b><br/>/ar:clear<br/>──────────<br/><b>Block in ALL sessions</b><br/>/ar:no --global #quot;&lt;pattern&gt;#quot; reason<br/>──────────<br/><b>Allow in ALL sessions</b><br/>/ar:ok --global &lt;pattern&gt;<br/>──────────<br/><b>Show session and global blocks</b><br/>/ar:status"]:::settingBox
-        end
-    end
+    INSTALL_CMD["uv tool install autorun-ai<br/>autorun --install<br/>──────────<br/>adds hooks, commands and skills<br/>to each AI coding agent it finds"]:::choiceBox
 
     %% ========================================
     %%  STEP 2: CHOOSE HOW AI WORKS
     %% ========================================
     subgraph WORKFLOW_OPTIONS[" "]
         direction TB
-        PROVIDE["📋 PROVIDE TASK INSTRUCTIONS"]:::stepBox
+        PROVIDE["📋 STEP 2<br/><br/>PROVIDE TASK INSTRUCTIONS"]:::stepBox
         subgraph WORKFLOW_CMDS[" "]
             direction LR
             W1["<b>Run task directly</b><br/>──────────<br/>/ar:go &lt;instructions&gt;"]:::choiceBox
 
-            W2["<b>Multi-step projects</b><br/>──────────<br/><b>Create new plan</b><br/>/ar:plannew &lt;instructions&gt;<br/>──────────<br/><b>Refine plan</b><br/>/ar:planrefine &lt;instructions&gt;<br/>──────────<br/><b>Update plan</b><br/>/ar:planupdate &lt;instructions&gt;<br/>──────────<br/><b>Execute plan</b><br/>/ar:planprocess &lt;instructions&gt;"]:::choiceBox
+            W2["<b>Multi-step projects (plan skills)</b><br/>──────────<br/><b>Create new plan</b><br/>/ar:plannew &lt;instructions&gt;<br/>──────────<br/><b>Refine plan</b><br/>/ar:planrefine &lt;instructions&gt;<br/>──────────<br/><b>Update plan</b><br/>/ar:planupdate &lt;instructions&gt;<br/>──────────<br/><b>Execute plan</b><br/>/ar:planprocess &lt;instructions&gt;"]:::choiceBox
 
             W1 --- W2
         end
         PROVIDE --> WORKFLOW_CMDS
     end
 
-    WORKFLOW["🚀 START AUTONOMOUS WORK"]:::stepBox
+    %% ========================================
+    %%  STEP 3: AI WORKS, WITH THE SETTINGS INSIDE IT
+    %% ========================================
+    subgraph AI_STEP["🤖 STEP 3: AI WORKS"]
+        direction TB
+        AI_ENGINE["🔄 Works autonomously and keeps going until its tasks are done<br/><br/>1️⃣ IMPLEMENT<br/>2️⃣ EVALUATE<br/>3️⃣ VERIFY<br/><br/>(You can step away!)"]:::aiBox
 
-    %% ========================================
-    %%  STEP 3: AI WORKS
-    %% ========================================
-    AI_ENGINE["🤖 STEP 3<br/><br/>AI WORKS AUTONOMOUSLY<br/><br/>🔄 Loops until complete:<br/><br/>1️⃣ IMPLEMENT<br/>2️⃣ EVALUATE<br/>3️⃣ VERIFY<br/><br/>(You can step away!)"]:::aiBox
+        subgraph SETTINGS["⚙️ ADJUST ANYTIME"]
+            direction LR
+            B1["<b>Commands that delete or discard work are blocked</b><br/>──────────<br/><b>Allow one run</b><br/>/ar:ok &lt;pattern&gt;<br/>──────────<br/><b>Allow 3 runs, or for 1 hour</b><br/>/ar:ok &lt;pattern&gt; 3<br/>/ar:ok &lt;pattern&gt; 1h<br/>──────────<br/><b>Block another command</b><br/>/ar:no #quot;&lt;pattern&gt;#quot; reason<br/>──────────<br/><b>In ALL sessions</b><br/>/ar:ok --global, /ar:no --global<br/>──────────<br/><b>Clear session blocks and allows</b><br/>/ar:clear"]:::settingBox
 
-    %% ========================================
-    %%  MONITOR & CONTROL (Optional)
-    %% ========================================
-    subgraph CONTROL_OPTIONS[" "]
-        direction LR
-        C1["<b>tmux/byobu</b><br/>──────────<br/><b>List AI sessions and send them text</b><br/>/ar:tmux<br/>──────────<br/><b>List AI sessions in tmux windows</b><br/>autorun tmux list<br/>──────────<br/><b>Send text to chosen sessions</b><br/>autorun tmux send"]:::choiceBox
+            T1["<b>Tracked tasks</b><br/>──────────<br/><b>Show tasks and reminders</b><br/>/ar:tasks<br/>──────────<br/><b>Let the agent stop for now</b><br/>/ar:task pause"]:::settingBox
+
+            B1 ~~~ T1 ~~~ F1
+            F1["<b>New files</b><br/>──────────<br/><b>Allow all file creation</b><br/>/ar:file allow<br/>──────────<br/><b>Require a justification</b><br/>/ar:file justify<br/>──────────<br/><b>Edit existing files only</b><br/>/ar:file existing-only<br/>──────────<br/><b>Show current settings</b><br/>/ar:status"]:::settingBox
+        end
+
+        AI_ENGINE ~~~ SETTINGS
     end
 
     %% ========================================
@@ -79,13 +66,10 @@ flowchart TD
     %% ========================================
     INSTALL --> INSTALL_CMD
     INSTALL_CMD --> WORKFLOW_OPTIONS
+    WORKFLOW_OPTIONS --> AI_STEP
+    AI_STEP -->|"done"| COMPLETE
 
-    WORKFLOW_OPTIONS --> WORKFLOW
-    WORKFLOW --> AI_ENGINE
-    WORKFLOW -.->|"adjust anytime"| SETTINGS
-
-    WORKFLOW -.-> CONTROL_OPTIONS
-    AI_ENGINE -->|"done"| COMPLETE
+    style AI_STEP fill:#e6f4ea,stroke:#22543d,stroke-width:4px,color:#22543d
 
     %% Make all connector lines thicker
     linkStyle default stroke-width:6px

@@ -981,7 +981,7 @@ Unchecked `0.10.0` → `0.10.1` replace will change `pdfplumber>=0.10.0` to `pdf
 
 **Affected files:**
 - `plugins/autorun/pyproject.toml` — `pdfplumber>=0.10.0` in the `pdf` extra
-- `plugins/pdf-extractor/CLAUDE.md` — install commands
+- `plugins/pdf-extractor/AGENTS.md` — install commands
 - `plugins/pdf-extractor/skills/pdf-extractor/SKILL.md` — install commands (2 places)
 - `plugins/pdf-extractor/skills/pdf-extractor/references/backends.md` — dependency note
 
