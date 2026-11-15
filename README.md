@@ -3,25 +3,27 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-An AI coding agent left alone stops mid-task, calls a first draft done, and runs commands that destroy work. autorun keeps it working. It tracks the agent's tasks and refuses a stop while any are open, so the agent returns to them until they are finished and verified. It also blocks commands that delete files or discard uncommitted changes, and names the safer command. You allow a blocked command for a single run, a number of runs, or a set time.
+Left alone, an AI coding agent stalls mid-task, calls a first draft done, publishes unfinished code under your name, and destroys data.
 
-autorun supports nine [agents](#supported-agents): Claude Code, Codex CLI, Qwen Code, Google Antigravity, Pi, Prime Agent, OpenCode, ForgeCode and Gemini CLI.
+autorun redirects risky commands to safe alternatives and keeps agents running until every task is finished and verified. You allow risky commands like `/ar:ok 'git push'` once, N times, for a set time, or permanently.
 
-The same install adds [skills](#skills), which an agent loads when you ask it to plan a change, write a commit message, shorten a document or coordinate a long task.
+autorun supports nine [agents](#supported-agents): Claude Code, Codex CLI, Qwen Code, Google Antigravity, Pi, Prime Agent, OpenCode, ForgeCode, and Gemini CLI.
+
+autorun also installs [skills](#skills) to plan before building, keep commit messages reviewable, shorten prose without losing facts, and carry long, correction-heavy work to a verified definition of done.
 
 ## Why autorun
 
-| When your agent... | autorun... | You type |
+| autorun... | When your agent... | You type |
 |---|---|---|
-| stops mid-task and waits for you to type "continue" | refuses the stop while tracked tasks are open and sends the agent back to them, with no command from you | `/ar:tasks` to see them |
-| is about to delete files or discard uncommitted work (`rm -rf`, `git reset --hard`, `git clean`) | blocks the command and names the safer one (`trash`, `git stash`); the block message gives the command that allows it | the command in the block message |
-| pushes, opens a PR, or bumps a version | blocks each until you allow it for a single run, a number of runs, or a set time | `/ar:ok 'git push'`, `/ar:ok 'git push' 3`, `/ar:ok 'git push' 1h` |
-| starts a large change with no plan | loads a skill that writes a plan with checkable steps, and one that critiques the plan against the code | `/ar:plannew`, `/ar:planrefine` |
-| designs without stated principles, or writes a vague commit message | loads the skill for that job | `/ar:philosophy`, `/ar:commit` |
-| says "done" after a first draft | makes it implement, then critically evaluate, then verify before it may stop | `/ar:go <task>` |
-| leaves scratch files all over the repository | limits it to editing existing files, or to new files it justifies | `/ar:file existing-only` |
+| keeps agents running until every task is verified | would stall a long run mid-task, waiting for "continue" | nothing, it auto-runs; `/ar:tasks` lists open tasks if you want them |
+| redirects dangerous commands to safe alternatives | attempts to destroy data for good, even the whole machine (`rm -rf`, `git reset --hard`, `git clean`) | `/ar:ok 'git reset HEAD~'` gives permission once, then relocks; the agent undoes a commit and keeps your files |
+| holds pushes, PRs, and version bumps until you allow them | attempts to publish unfinished code under your name without permission (push, PR, version bump) | `/ar:ok 'git push'` gives permission once, then relocks; `/ar:ok 'git push' 3` for three pushes; `/ar:ok 'git push' 1h` for an hour |
+| loads skills that write and critique a checkable plan | would start a large change with no plan, so wrong turns cost rework | `/ar:plannew` writes a plan, `/ar:planrefine` critiques it |
+| loads the commit-message and design-principles skills | would write vague commits nobody can review, or design without stated principles | `/ar:commit` guides the commit message, `/ar:philosophy` applies design principles |
+| runs implement, evaluate, and verify stages before the agent finishes | would hand you a first draft as finished work | `/ar:go <task>` starts the three stages |
+| limits the agent to existing files, or justified new ones | would bury real changes in scratch files you never asked for | `/ar:file existing-only` or `/ar:file justify` sets the file policy |
 
-Commands here are in Claude Code's spelling; [Quick Start](#quick-start) has the prefix for each agent.
+Commands use Claude Code's spelling; [Quick Start](#quick-start) lists each agent's.
 
 ![How autorun is used: install it, give the agent a task, and it implements, evaluates and verifies while guards and file policies apply](autorun-architecture.svg)
 
