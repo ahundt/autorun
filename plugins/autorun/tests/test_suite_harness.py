@@ -543,10 +543,18 @@ def test_the_suite_cannot_signal_an_autorun_daemon_it_did_not_start(tmp_path):
                              check=True).stdout)
     # Popen returns once the child is forked; until its exec finishes the
     # process table still shows the spawner's command line, and the guard
-    # under test recognises a daemon by that command line.
+    # under test recognises a daemon by that command line. macOS refuses to
+    # read it mid-exec (sysctl KERN_PROCARGS2 gives psutil.AccessDenied), so
+    # a refusal means "not visible yet", not a failure.
+    def shown():
+        try:
+            return psutil.Process(pid).cmdline()
+        except psutil.AccessDenied:
+            return []
+
     deadline = time.monotonic() + 10
-    while "autorun.daemon" not in psutil.Process(pid).cmdline():
-        assert time.monotonic() < deadline, f"decoy never showed its command line: {psutil.Process(pid).cmdline()}"
+    while "autorun.daemon" not in shown():
+        assert time.monotonic() < deadline, f"decoy never showed its command line: {shown()}"
         time.sleep(0.01)
     try:
         with pytest.raises(RuntimeError, match=f"PID {pid}"):
