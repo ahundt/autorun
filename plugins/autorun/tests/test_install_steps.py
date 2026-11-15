@@ -482,7 +482,12 @@ def test_antigravity_staging_uses_its_native_manifest_and_hook_events(walk, sand
     serialized = (plugin / "hooks.json").read_text(encoding="utf-8")
     for event in ("SessionStart", "PreToolUse", "PostToolUse", "PreInvocation", "Stop"):
         assert f"--cli antigravity --event {event}" in serialized
-    for groups in hooks["autorun"].values():
+    for event, groups in hooks["autorun"].items():
+        # Antigravity's hooks.md: only the tool events take a matcher group; the
+        # others are flat handler lists. A grouped SessionStart made Antigravity
+        # reject the whole file ("command hook must specify 'command'") and
+        # load none of autorun's hooks.
+        assert all(("hooks" in group) == (event in {"PreToolUse", "PostToolUse"}) for group in groups), (event, groups)
         handlers = [
             handler
             for group in groups

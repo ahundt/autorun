@@ -849,16 +849,19 @@ class AntigravityHookProtocol(HookProtocol):
                     continue
                 handlers = entry.get("hooks")
                 if isinstance(handlers, list):
-                    native_entries.append(
-                        {
-                            "matcher": entry.get("matcher", "*"),
-                            "hooks": [
-                                self._native_handler(handler, event)
-                                for handler in handlers
-                                if isinstance(handler, dict)
-                            ],
-                        }
-                    )
+                    native = [
+                        self._native_handler(handler, event)
+                        for handler in handlers
+                        if isinstance(handler, dict)
+                    ]
+                    # hooks.md: only the tool events take a matcher group. A
+                    # grouped SessionStart makes Antigravity reject the file.
+                    if event in {"PreToolUse", "PostToolUse"}:
+                        native_entries.append(
+                            {"matcher": entry.get("matcher", "*"), "hooks": native}
+                        )
+                    else:
+                        native_entries.extend(native)
                 else:
                     native_entries.append(self._native_handler(entry, event))
             events[event] = native_entries
