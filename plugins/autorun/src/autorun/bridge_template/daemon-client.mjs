@@ -110,7 +110,10 @@ function screenedGuard(command) {
   });
   if (guard) return { guard: guard[0] };
   // Mirror of config.may_nest_past_limit: an upper bound on script levels.
-  const count = (text, pattern) => (text.match(pattern) ?? []).length;
+  // Every count reads three texts and takes the largest: quotes and backslashes
+  // removed, each quote as a space, each quote and backslash as a space.
+  const texts = [plain, command.replaceAll("\\", "").replace(/['"]/g, " "), command.replace(/['"\\]/g, " ")];
+  const seen = pattern => Math.max(...texts.map(text => (text.match(pattern) ?? []).length));
   const openParens = [];
   let depth = 0, deepest = 0;
   for (const paren of command.match(/\$?\(|\)/g) ?? []) {
@@ -119,12 +122,11 @@ function screenedGuard(command) {
       if (paren === "$(") deepest = Math.max(deepest, ++depth);
     } else if (openParens.pop()) depth--;
   }
-  const readers = /(?:\b|(?<=-S))(?:bash|dash|fish|ksh|sh|su|zsh|source|flock|script)\b|(?<![\w./-])\.(?=\s)/g;
-  const spaced = command.replaceAll("\\", "").replace(/['"]/g, " ");
-  const levels = Math.min(Math.max(count(plain, readers), count(spaced, readers)),
-      count(plain, /<<|\||<\(|\s-[^\Wc]*c|--command/g) + 1) + count(plain, /\b(?:parallel|watch)\b/g)
-    + count(plain, /(?<![\w-])-(?:exec|ok)(?:dir)?(?![\w-])/g) + count(plain, /alias\./g)
-    + (command.includes("`") ? 1 : 0) + deepest;
+  const levels = Math.min(
+      seen(/(?:\b|(?<=-S))(?:bash|dash|fish|ksh|sh|su|zsh|source|flock|script)\b|(?<![\w./-])\.(?=\s)/g),
+      seen(/<<|\||<\(|\s-[^\Wc]*c|--command/g) + 1)
+    + seen(/(?:\b|(?<=-S))(?:parallel|watch)\b/g) + seen(/(?<![\w-])-(?:exec|ok)(?:dir)?(?![\w-])/g)
+    + seen(/alias\./g) + (command.includes("`") ? 1 : 0) + deepest;
   if (levels > 3) return { guard: "shell-runs-downloaded-script" };
   const syntax = SHELL_NAME_HIDING_FEATURES.find(feature => command.includes(feature));
   return syntax ? { syntax } : null;

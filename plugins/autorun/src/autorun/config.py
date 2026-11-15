@@ -703,15 +703,21 @@ def may_nest_past_limit(command: str) -> bool:
     """
     import re
     plain = re.sub(r"\\\n|['\"\\]", "", command)
-    # Read with quotes removed and again with each as a space (-S'sh'), and
-    # attached to env -S (-Ssh); `.` as a word.
-    readers = r"(?:\b|(?<=-S))(?:%s)\b|(?<![\w./-])\.(?=\s)" % "|".join(SCRIPT_READERS)
-    spaced = re.sub(r"['\"]", " ", command.replace("\\", ""))
-    shells = max(len(re.findall(readers, plain)), len(re.findall(readers, spaced)))
-    wrappers = len(re.findall(r"\b(?:%s)\b" % "|".join(IMPLICIT_SHELL_WRAPPERS), plain))
+    # One rule for every count: read the text with quotes and backslashes
+    # removed (r"m), with each quote as a space (-S'sh') and with each
+    # backslash as a space too (C:\Git\bin\bash.exe), and take the largest.
+    texts = (plain, re.sub(r"['\"]", " ", command.replace("\\", "")), re.sub(r"['\"\\]", " ", command))
+
+    def seen(pattern):
+        return max(len(re.findall(pattern, text)) for text in texts)
+
+    # A name may also be attached to env -S (-Ssh, -Swatch); `.` counts as a word.
+    named = r"(?:\b|(?<=-S))(?:%s)\b"
+    shells = seen(named % "|".join(SCRIPT_READERS) + r"|(?<![\w./-])\.(?=\s)")
+    wrappers = seen(named % "|".join(IMPLICIT_SHELL_WRAPPERS))
     # `[^\Wc]*c` stops at the first c of an option cluster, so -cccc has one reading.
-    handed = len(re.findall(r"<<|\||<\(|\s-[^\Wc]*c|--command", plain))
-    finds = len(re.findall(r"(?<![\w-])-(?:exec|ok)(?:dir)?(?![\w-])", plain))
+    handed = seen(r"<<|\||<\(|\s-[^\Wc]*c|--command")
+    finds = seen(r"(?<![\w-])-(?:exec|ok)(?:dir)?(?![\w-])")
     # Deepest $( inside $(, plus one for backticks (the parser reads one level of them).
     open_parens, depth = [], 0
     nested = "`" in command
@@ -723,7 +729,7 @@ def may_nest_past_limit(command: str) -> bool:
             deepest = max(deepest, depth)
         elif open_parens:
             depth -= open_parens.pop()
-    return min(shells, handed + 1) + wrappers + finds + plain.count("alias.") + nested + deepest > 3
+    return min(shells, handed + 1) + wrappers + finds + seen(r"alias\.") + nested + deepest > 3
 
 
 def screened_guard(command: str) -> tuple[str, str] | None:

@@ -1364,6 +1364,12 @@ SCREEN_PARITY_COMMANDS = ["git clean 2>&1 -f", "git add 2>&1 -A", "git add 2>&1 
     "parallel \"find . -exec sh -c 'sh -c ls' {} +\" ::: x",
     "env -S'sh' <<A\nsh <<B\nsh <<C\nsh <<D\nls\nD\nC\nB\nA",
     "env -Ssh <<A\nsh <<B\nsh <<C\nsh <<D\nls\nD\nC\nB\nA",
+    # Every count reads the same three texts, so a Windows path and an
+    # attached env -S name a wrapper as they name a shell.
+    r"""& 'C:\Program Files\Git\bin\bash.exe' -c "find /tmp -exec sh -c 'sh -c ls' {} +" """.strip(),
+    """env -S'watch -n 1' "find /tmp -exec sh -c 'sh -c ls' {} +" """.strip(),
+    """env -S'parallel' "find /tmp -exec sh -c 'sh -c ls' {} +" ::: x""",
+    """env -Swatch "find /tmp -exec sh -c 'sh -c ls' {} +" """.strip(),
     _nested(lambda script: f"watch {shlex.quote(script)}", 4),
     _nested(lambda script: f"flock /tmp/l -c {shlex.quote(script)}", 4),
     _nested(lambda script: f"script -q /dev/null -c {shlex.quote(script)}", 4)]
