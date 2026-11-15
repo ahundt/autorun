@@ -119,8 +119,10 @@ function screenedGuard(command) {
       if (paren === "$(") deepest = Math.max(deepest, ++depth);
     } else if (openParens.pop()) depth--;
   }
-  const levels = Math.min(count(plain, /\b(?:bash|dash|fish|ksh|sh|su|zsh)\b/g),
-      count(plain, /<<|\||<\(|\s-[^\Wc]*c|--command/g) + 1)
+  const readers = /(?:\b|(?<=-S))(?:bash|dash|fish|ksh|sh|su|zsh|source|flock|script)\b|(?<![\w./-])\.(?=\s)/g;
+  const spaced = command.replaceAll("\\", "").replace(/['"]/g, " ");
+  const levels = Math.min(Math.max(count(plain, readers), count(spaced, readers)),
+      count(plain, /<<|\||<\(|\s-[^\Wc]*c|--command/g) + 1) + count(plain, /\b(?:parallel|watch)\b/g)
     + count(plain, /(?<![\w-])-(?:exec|ok)(?:dir)?(?![\w-])/g) + count(plain, /alias\./g)
     + (command.includes("`") ? 1 : 0) + deepest;
   if (levels > 3) return { guard: "shell-runs-downloaded-script" };

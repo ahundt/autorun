@@ -681,12 +681,21 @@ def needs_full_guard_check(command: str) -> bool:
     return screened_guard(command) is not None
 
 
+# Commands the parser reads a script from (command_detection: SHELL_EXEC_COMMANDS,
+# source, the wrappers with script_flags) and wrappers that hand their operands
+# to a shell (parallel, args_are_script; eval is a SHELL_NAME_HIDING_FEATURE).
+# Spelled out because config.py imports only the stdlib; a test pins them equal.
+SCRIPT_READERS = ("bash", "dash", "fish", "ksh", "sh", "su", "zsh", "source", "flock", "script")
+IMPLICIT_SHELL_WRAPPERS = ("parallel", "watch")
+
+
 def may_nest_past_limit(command: str) -> bool:
     """Whether `command` could hold more script levels than the parser reads
     (command_detection._MAX_RECURSION_DEPTH), which the full check denies.
 
     An upper bound from literal counts, each one pass over the text. A level is
-    a shell handed a script (-c, --command, a heredoc, a pipe, <( ), a find
+    a SCRIPT_READERS command (or `.`) handed a script (-c, --command, a
+    heredoc, a pipe, <( ), an IMPLICIT_SHELL_WRAPPERS command, a find
     -exec/-execdir/-ok/-okdir, a git `alias.` or a substitution inside another
     (the parser counts those in a heredoc body and in syntax it cannot read).
     Four `bash x.sh` lines hand no shell a script, and four `$(date)` in a row
@@ -694,7 +703,12 @@ def may_nest_past_limit(command: str) -> bool:
     """
     import re
     plain = re.sub(r"\\\n|['\"\\]", "", command)
-    shells = len(re.findall(r"\b(?:bash|dash|fish|ksh|sh|su|zsh)\b", plain))
+    # Read with quotes removed and again with each as a space (-S'sh'), and
+    # attached to env -S (-Ssh); `.` as a word.
+    readers = r"(?:\b|(?<=-S))(?:%s)\b|(?<![\w./-])\.(?=\s)" % "|".join(SCRIPT_READERS)
+    spaced = re.sub(r"['\"]", " ", command.replace("\\", ""))
+    shells = max(len(re.findall(readers, plain)), len(re.findall(readers, spaced)))
+    wrappers = len(re.findall(r"\b(?:%s)\b" % "|".join(IMPLICIT_SHELL_WRAPPERS), plain))
     # `[^\Wc]*c` stops at the first c of an option cluster, so -cccc has one reading.
     handed = len(re.findall(r"<<|\||<\(|\s-[^\Wc]*c|--command", plain))
     finds = len(re.findall(r"(?<![\w-])-(?:exec|ok)(?:dir)?(?![\w-])", plain))
@@ -709,7 +723,7 @@ def may_nest_past_limit(command: str) -> bool:
             deepest = max(deepest, depth)
         elif open_parens:
             depth -= open_parens.pop()
-    return min(shells, handed + 1) + finds + plain.count("alias.") + nested + deepest > 3
+    return min(shells, handed + 1) + wrappers + finds + plain.count("alias.") + nested + deepest > 3
 
 
 def screened_guard(command: str) -> tuple[str, str] | None:

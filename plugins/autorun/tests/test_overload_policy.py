@@ -1283,6 +1283,15 @@ def test_guard_screens_cover_what_their_predicates_read():
     covers("find", {"-delete"} | command_detection._FIND_WRITING_ACTIONS)
     covers("time-machine-safety", integrations._TMUTIL_CONSENT_REQUIRED_VERBS)
     covers("shell-runs-downloaded-script", command_detection.NETWORK_DOWNLOADERS)
+    # may_nest_past_limit names every command the parser reads a script from.
+    from autorun import config
+    wrappers = command_detection._TRANSPARENT_WRAPPER_SPECS
+    assert command_detection._MAX_RECURSION_DEPTH == 3
+    assert command_detection.SHELL_EXEC_COMMANDS | {"source"} | {
+        name for name, spec in wrappers.items() if spec.script_flags} == set(config.SCRIPT_READERS)
+    assert {"parallel"} | {name for name, spec in wrappers.items() if spec.args_are_script} == (
+        set(config.IMPLICIT_SHELL_WRAPPERS) | {"eval"})
+    assert "eval" in config.SHELL_NAME_HIDING_FEATURES
     covers("sed", {"-i", "-i.bak", "-Ei", "-ni", "--in-place", "--in-place=.bak"})
     covers("sed", {"-1i"})
     covers("git clean -f", {"-f", "-df", "-xdf", "-fd", "--force"})
@@ -1347,7 +1356,17 @@ SCREEN_PARITY_COMMANDS = ["git clean 2>&1 -f", "git add 2>&1 -A", "git add 2>&1 
     _nested(lambda script: f"cat <<EOF\n$({script})\nEOF", 4),
     # Syntax the parser cannot read is split by text, where each $( is a level.
     "case x in x) echo $(echo $(echo $(echo $(ls))));; esac", "coproc echo $(echo $(echo $(echo $(ls))))",
-    "x=( a b ); echo $(echo $(echo $(echo `ls`)))"]
+    "x=( a b ); echo $(echo $(echo $(echo `ls`)))",
+    # Other commands the parser reads a script from: `.`/source on stdin,
+    # parallel and watch (an implicit shell), flock -c and script -c.
+    "bash <<OUTER\n. /dev/stdin <<INNER\nsh -c 'sh -c ls'\nINNER\nOUTER",
+    "bash <<OUTER\nsource /dev/stdin <<INNER\nsh -c 'sh -c ls'\nINNER\nOUTER",
+    "parallel \"find . -exec sh -c 'sh -c ls' {} +\" ::: x",
+    "env -S'sh' <<A\nsh <<B\nsh <<C\nsh <<D\nls\nD\nC\nB\nA",
+    "env -Ssh <<A\nsh <<B\nsh <<C\nsh <<D\nls\nD\nC\nB\nA",
+    _nested(lambda script: f"watch {shlex.quote(script)}", 4),
+    _nested(lambda script: f"flock /tmp/l -c {shlex.quote(script)}", 4),
+    _nested(lambda script: f"script -q /dev/null -c {shlex.quote(script)}", 4)]
 
 
 @pytest.mark.parametrize("command", SCREEN_PARITY_COMMANDS)
@@ -1378,7 +1397,9 @@ SCREEN_PASS_COMMANDS = ["git clean -n", "git add -u README", "git rebase main",
                                      "find . -name '*.py' -exec grep -l TODO {} +",
                                      "cat > notes.txt <<EOF\n$(date) $(pwd) `id` $(whoami)\nEOF",
                                      "sh -c 'ls | wc -l' && bash -c 'date | cut -c1-4'",
-                                     "git -c alias.st=status st", "find . -type f -exec chmod 644 {} \\; -exec ls {} +"]
+                                     "git -c alias.st=status st", "find . -type f -exec chmod 644 {} \\; -exec ls {} +",
+                                     "cp a . ; cp b . ; cp c . ; cp d .", "watch -n1 ls", "parallel gzip ::: a b c",
+                                     "git commit -m 'fix the build script and the test script and the lint script; add a script'"]
 # Each made a part of an earlier screen backtrack: 200 KB of data in a quoted heredoc.
 SCREEN_SLOW_BODIES = ["bash -" + "c" * 200_000, "bash dash fish ksh sh su zsh -" + "c" * 200_000, "<" * 200_000,
                       " -c" * 66_000, "sh " * 66_000, "| " * 100_000 + "sh", "-exec " * 33_000, "$(" * 100_000,
