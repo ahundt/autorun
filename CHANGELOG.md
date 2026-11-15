@@ -862,7 +862,10 @@ enforce those policies.
      `find . -name x` and `bash build.sh` proceed; `git clean`, `git add` and
      `git rebase` count with their blocked option alone or in a cluster (`-df`, `--force`, `-uA`, `-qi`),
      also when a quoted argument holds a word of that shape
-     (`git rebase --exec 'git diff -Gfix' main`). A denial without a finished
+     (`git rebase --exec 'git diff -Gfix' main`). A command that could run more
+     than 3 scripts inside one another counts too, adding up each shell handed
+     a script, each `find -exec`, each git `alias.` and the deepest `$(...)`
+     inside `$(...)`; four `bash x.sh` lines do not. A denial without a finished
      check says which guard the command names and gives that guard's own
      guidance, on the Pi, Prime and OpenCode bridges too.
      `/ar:no` rules, `/ar:ok` grants, the file policy, and task and plan gating

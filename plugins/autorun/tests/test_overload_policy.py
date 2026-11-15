@@ -1,4 +1,5 @@
 """Degraded permission checks through the real client and isolated IPC."""
+import shlex
 import asyncio
 from contextlib import asynccontextmanager
 import json
@@ -1315,6 +1316,12 @@ def test_quick_screen_lets_harmless_uses_of_conditional_guards_proceed(command, 
     assert needs_full_guard_check(command) is needs
 
 
+def _nested(wrap, depth, script="ls"):
+    for _ in range(depth):
+        script = wrap(script)
+    return script
+
+
 # Spellings the full matcher reads through option clusters, long forms and lines.
 SCREEN_PARITY_COMMANDS = ["git clean 2>&1 -f", "git add 2>&1 -A", "git add 2>&1 .", "git rebase 2>&1 -i main",
     "env -S'git clean -f'", "env -S'git add -A'", "env -S'git add .'", "env -S'git rebase -i'",
@@ -1328,7 +1335,19 @@ SCREEN_PARITY_COMMANDS = ["git clean 2>&1 -f", "git add 2>&1 -A", "git add 2>&1 
     "git add .;git commit -m x", "(git add .)", "git add -- .", "git add .>/dev/null",
     "git clean -df", "git clean -xdf", "git clean --force", "git add --all",
     "git add -uA", "git rebase -qi HEAD~3", "sed -1i s/a/b/ f",
-    "sh <<A\nsh <<B\nsh <<C\nsh <<D\necho hi\nD\nC\nB\nA\n"]
+    "sh <<A\nsh <<B\nsh <<C\nsh <<D\necho hi\nD\nC\nB\nA\n",
+    # Nesting the parser counts without four shell names: find -exec, a git
+    # `!` alias and a substitution in a heredoc body are each a script level.
+    "find . -exec sh -c \"sh -c 'sh -c ls'\" {} +",
+    "find . -exec find . -exec find . -exec find . -exec ls {} \\; \\; \\; \\;",
+    "sh -c \"find . -exec sh -c 'find . -exec ls {} +' {} +\"",
+    "find . -ok sh -c 'find . -okdir sh -c ls \\;' \\;",
+    _nested(lambda script: f"git -c alias.x={shlex.quote('!' + script)} x", 4),
+    _nested(lambda script: f"git -c alias.x={shlex.quote('!sh -c ' + shlex.quote(script))} x", 2),
+    _nested(lambda script: f"cat <<EOF\n$({script})\nEOF", 4),
+    # Syntax the parser cannot read is split by text, where each $( is a level.
+    "case x in x) echo $(echo $(echo $(echo $(ls))));; esac", "coproc echo $(echo $(echo $(echo $(ls))))",
+    "x=( a b ); echo $(echo $(echo $(echo `ls`)))"]
 
 
 @pytest.mark.parametrize("command", SCREEN_PARITY_COMMANDS)
@@ -1341,7 +1360,7 @@ def test_review8_screen_sends_what_the_full_check_denies(command, cli_type):
     assert verdict(client.degraded_tool_response(payload, cli_type, "daemon_response_timeout")) == "deny"
 
 
-@pytest.mark.parametrize("command", ["git clean -n", "git add -u README", "git rebase main",
+SCREEN_PASS_COMMANDS = ["git clean -n", "git add -u README", "git rebase main",
                                      "git add src/a_file.py", "git add ./src", "git rebase --continue",
                                      "git clean -n --exclude=a-f", "sed -e s/a-i/b/ f",
                                      "git clean -n && tar -czf /tmp/backup.tgz src",
@@ -1354,10 +1373,32 @@ def test_review8_screen_sends_what_the_full_check_denies(command, cli_type):
                                      "git grep -f src/clean/patterns.txt", "git log -A3 -- docs/add/readme.md",
                                      "bash tests/unit.sh\nbash tests/integration.sh\nbash tests/lint.sh\nbash tests/smoke.sh",
                                      "bash a.sh && bash b.sh", r"& 'C:\Program Files\Git\cmd\git.exe' clean -n",
-                                     "git reset HEAD file"])
+                                     "git reset HEAD file",
+                                     "ls | sort | uniq -c | sort -rn | head", "echo $(date) $(pwd) $(id) $(whoami)",
+                                     "find . -name '*.py' -exec grep -l TODO {} +",
+                                     "cat > notes.txt <<EOF\n$(date) $(pwd) `id` $(whoami)\nEOF",
+                                     "sh -c 'ls | wc -l' && bash -c 'date | cut -c1-4'",
+                                     "git -c alias.st=status st", "find . -type f -exec chmod 644 {} \\; -exec ls {} +"]
+# Each made a part of an earlier screen backtrack: 200 KB of data in a quoted heredoc.
+SCREEN_SLOW_BODIES = ["bash -" + "c" * 200_000, "bash dash fish ksh sh su zsh -" + "c" * 200_000, "<" * 200_000,
+                      " -c" * 66_000, "sh " * 66_000, "| " * 100_000 + "sh", "-exec " * 33_000, "$(" * 100_000,
+                      "alias." * 33_000, "git clean " * 20_000, "<<EOF " * 33_000]
+
+
+@pytest.mark.parametrize("command", SCREEN_PASS_COMMANDS)
 def test_review8_everyday_git_still_passes_the_screen(command):
     from autorun.config import screened_guard
     assert screened_guard(command) is None
+
+
+@pytest.mark.parametrize("body", SCREEN_SLOW_BODIES, ids=lambda body: repr(body[:12]))
+def test_review14_screen_reads_large_data_in_linear_time(body):
+    """The screen runs before any deadline applies, so it must not backtrack:
+    the earlier pattern took over 2 s on the first body, this takes milliseconds."""
+    from autorun.config import screened_guard
+    started = time.perf_counter()
+    screened_guard("cat <<'EOF'\n" + body + "\nEOF")
+    assert time.perf_counter() - started < 2
 
 
 @pytest.mark.parametrize("denial", [{"decision": "deny", "reason": "blocked"}, {"decision": "block"},

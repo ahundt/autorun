@@ -353,12 +353,9 @@ DEFAULT_INTEGRATIONS = {
         "patterns": ["bash", "dash", "fish", "ksh", "sh", "su", "zsh"],
         "action": "block",
         "when": "_shell_runs_downloaded_script",
-        # command_detection.NETWORK_DOWNLOADERS, or nesting past 3: four shell
-        # names (`.sh` counts) and three ways to hand a shell its script
-        # (heredoc, pipe, process substitution, -c). Four `bash x.sh` lines
-        # have none of the latter.
-        "screen": (r"curl|wget|^(?=(?:[\s\S]*?(?:<<|\||<\(|\s-\w*c|--command)){3})"
-                   r"(?:[\s\S]*?\b(?:bash|dash|fish|ksh|sh|su|zsh)\b){4}"),
+        # command_detection.NETWORK_DOWNLOADERS; nesting past 3 is counted by
+        # may_nest_past_limit, since it needs no shell name (find -exec).
+        "screen": "curl|wget",
         "suggestion": (
             "Blocked: this shell would run a script autorun cannot read: one straight "
             "from a network download (curl or wget), or a shell nested more than 3 "
@@ -684,6 +681,37 @@ def needs_full_guard_check(command: str) -> bool:
     return screened_guard(command) is not None
 
 
+def may_nest_past_limit(command: str) -> bool:
+    """Whether `command` could hold more script levels than the parser reads
+    (command_detection._MAX_RECURSION_DEPTH), which the full check denies.
+
+    An upper bound from literal counts, each one pass over the text. A level is
+    a shell handed a script (-c, --command, a heredoc, a pipe, <( ), a find
+    -exec/-execdir/-ok/-okdir, a git `alias.` or a substitution inside another
+    (the parser counts those in a heredoc body and in syntax it cannot read).
+    Four `bash x.sh` lines hand no shell a script, and four `$(date)` in a row
+    are one level deep.
+    """
+    import re
+    plain = re.sub(r"\\\n|['\"\\]", "", command)
+    shells = len(re.findall(r"\b(?:bash|dash|fish|ksh|sh|su|zsh)\b", plain))
+    # `[^\Wc]*c` stops at the first c of an option cluster, so -cccc has one reading.
+    handed = len(re.findall(r"<<|\||<\(|\s-[^\Wc]*c|--command", plain))
+    finds = len(re.findall(r"(?<![\w-])-(?:exec|ok)(?:dir)?(?![\w-])", plain))
+    # Deepest $( inside $(, plus one for backticks (the parser reads one level of them).
+    open_parens, depth = [], 0
+    nested = "`" in command
+    deepest = 0
+    for paren in re.findall(r"\$?\(|\)", command):
+        if paren != ")":
+            open_parens.append(paren == "$(")
+            depth += open_parens[-1]
+            deepest = max(deepest, depth)
+        elif open_parens:
+            depth -= open_parens.pop()
+    return min(shells, handed + 1) + finds + plain.count("alias.") + nested + deepest > 3
+
+
 def screened_guard(command: str) -> tuple[str, str] | None:
     """What sends a command to the full check: ("guard", DEFAULT_INTEGRATIONS key)
     for the first shipped guard it names, else ("syntax", feature); None lets it proceed.
@@ -740,6 +768,8 @@ def screened_guard(command: str) -> tuple[str, str] | None:
                       for segment, command_words, argument_words in segments)
         if hit:
             return "guard", name
+    if may_nest_past_limit(command):
+        return "guard", "shell-runs-downloaded-script"
     for feature in SHELL_NAME_HIDING_FEATURES:
         if feature in command:
             return "syntax", feature
