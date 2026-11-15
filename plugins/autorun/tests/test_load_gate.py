@@ -192,7 +192,11 @@ def test_small_hook_process_load(sessions):
                            sandbox_parent=os.environ["AUTORUN_TEST_RUNTIME_DIR"])
     assert len(result["calls"]) <= 20 * sessions
     assert result["calls"]
-    assert not gate.failures(result), result["outcomes"]
+    # Name each offending call's text: counts alone cannot say which phrase
+    # classified a call as refused (one Windows CI call did, once).
+    assert not gate.failures(result), (result["outcomes"], [
+        (call["event"], call["outcome"], call["returncode"], call["stdout"][:300], call["stderr"][:300])
+        for call in result["calls"] if call["outcome"] in gate.BAD_OUTCOMES])
     assert result["outcomes"]["intended_denial"] > 0
     assert result["daemon_peak_rss_bytes"] > 0
     assert result["daemon_peak_open_files"] > 0
