@@ -25,6 +25,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import threading
 import time
 from types import SimpleNamespace
@@ -37,6 +38,28 @@ import pytest
 from autorun import client, core, ipc
 from autorun.platforms import PLATFORMS
 from autorun.config import harness_setting
+
+#: What a loaded daemon produces: its own load codes, or no answer in time.
+#: Any other cause (unreadable state, a crashed handler) is a defect, and the
+#: burst allowance must not absorb it.
+LOAD_CAUSES = client.LOAD_EVENT_CODES | {"daemon_response_timeout", "daemon_unavailable_or_timeout"}
+
+
+def degraded_gate_causes(response):
+    """Failure codes a locally decided gate reply names in its event tags."""
+    return set(re.findall(r"AR_EVENT_V1:(\w+)", json.dumps(response))) - {client.DEGRADED_EVENT_CODE}
+
+
+@pytest.mark.parametrize("code,load", [
+    ("daemon_dispatch_timeout", True), ("state_lock_contended", True), ("daemon_response_timeout", True),
+    ("state_evaluation_failed", False), ("daemon_failure", False), ("daemon_dispatch_stalled", False)])
+def test_only_load_causes_count_toward_the_burst_allowance(code, load):
+    reply = client.degraded_tool_response(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "git status --short"}},
+        "claude", code, deadline=time.monotonic() + 5)
+    causes = degraded_gate_causes(reply)
+    assert causes == {code}
+    assert (causes <= LOAD_CAUSES) is load
 
 SPEC = importlib.util.spec_from_file_location(
     "capacity_load_gate", Path(__file__).parents[1] / "scripts/load_gate.py"
@@ -209,6 +232,8 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
             decision = (response.get("hookSpecificOutput", {}).get("permissionDecision")
                         or response.get("permissionDecision") or response.get("decision"))
             assert (decision == "deny") is bool(deny), f"{index} {event}: wrong degraded decision {response}"
+            causes = degraded_gate_causes(response)
+            assert causes and causes <= LOAD_CAUSES, f"{index} {event}: degraded for a non-load cause {causes}: {response}"
             fail_open.setdefault(index, []).append((event, fields or {}))
             burst_fail_open.append((index, event, failure or "degraded", round(elapsed, 2)))
             return response

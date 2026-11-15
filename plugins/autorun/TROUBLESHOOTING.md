@@ -70,7 +70,9 @@ guarded command as a whole word (quotes and backslashes are removed first, so
 substitution. `npm run format` and `git commit -m "fix"` proceed. `find`, `sed`,
 `tmutil` and a shell running a script count only with the option that makes them
 destructive (`-delete`, `-i`, a `curl` or `wget`), so `find . -name x` and
-`bash build.sh` proceed; `git clean`, `git add` and `git rebase` count with
+`bash build.sh` proceed. A command that hands a script to a shell, `find -exec`,
+`watch` or `parallel` more than three levels deep also counts, with no
+downloader named; `git clean`, `git add` and `git rebase` count with
 their blocked option alone or in a cluster (`-df`, `--force`,
 `-uA`, `-qi`). The denial names the guard the command matched and repeats that
 guard's own guidance, for example to use `trash` instead of `rm`.
