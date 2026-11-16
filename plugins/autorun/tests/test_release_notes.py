@@ -163,10 +163,10 @@ def test_the_upgrade_commands_lead_the_upgrade_section():
     marketplace = rendered.index(
         "```bash\nclaude plugin marketplace update autorun && claude plugin update ar@autorun\n```"
     )
-    assert upgrading < marketplace < command, "marketplace-only readers learn first"
+    assert command < marketplace < first_step, "the uv commands lead; the marketplace route follows them"
     assert "`autorun --version` prints `autorun 0.0.1rc2`" in _prose(rendered)
     pdf = rendered.index("'autorun-ai[pdf]==0.0.1rc2'")
-    assert command < pdf < first_step, "the PDF variant must show before the steps"
+    assert command < pdf < marketplace, "the PDF variant shows before the marketplace route"
     assert "compare/v0.0.1rc1...v0.0.1rc2" in rendered
 
 

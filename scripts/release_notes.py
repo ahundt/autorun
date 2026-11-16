@@ -171,47 +171,40 @@ def upgrade_commands(version: str) -> str:
         if is_prerelease(version)
         else ""
     )
-    steps = (
-        f"Check that `autorun --version` prints `autorun {version}`.{pin}",
-        "Restart open agent sessions. Each one reads its hooks only when it starts.",
+    # One paragraph, not a numbered list: the CHANGELOG's own steps follow it, and
+    # two lists that both start at 1 read as two installs.
+    after = (
+        f"After either command, check that `autorun --version` prints `autorun {version}`.{pin} "
         "New installs use the same commands. The README covers other harnesses and "
-        f"options: <{REPOSITORY}#readme>.",
+        f"options: <{REPOSITORY}#readme>."
     )
     # Wrap like the hand-written text, but never inside a `code span`: a command
     # split across lines reads as two in `git show`.
     def keep_code_whole(match: re.Match[str]) -> str:
         return match.group(0).replace(" ", "\0")
 
-    numbered = "\n".join(
-        textwrap.fill(
-            re.sub(r"`[^`]+`", keep_code_whole, step),
-            width=80,
-            initial_indent=f"{number}. ",
-            subsequent_indent="   ",
-            break_long_words=False,
-            break_on_hyphens=False,
-        ).replace("\0", " ")
-        for number, step in enumerate(steps, 1)
-    )
-    marketplace = textwrap.fill(
-        "If you installed only through the Claude Code marketplace, run this "
-        "instead of the commands below, then restart Claude Code. The first "
-        "half fetches the new release into Claude's copy of the marketplace. "
-        "That route does not run `autorun --install`, so any setting this "
-        "section says the install changes is yours to add.",
+    after = textwrap.fill(
+        re.sub(r"`[^`]+`", keep_code_whole, after),
         width=80,
         break_long_words=False,
         break_on_hyphens=False,
+    ).replace("\0", " ")
+    marketplace_text = (
+        "Claude Code only: if you installed through its marketplace and not with "
+        "`uv`, run this instead of the commands above. The first half fetches the "
+        "new release into Claude's copy of the marketplace. That route does not run "
+        "`autorun --install`, so any setting this section says the install changes "
+        "is yours to add, and the steps below that run `autorun` need the `uv` install."
     )
+    marketplace = textwrap.fill(
+        re.sub(r"`[^`]+`", keep_code_whole, marketplace_text),
+        width=80,
+        break_long_words=False,
+        break_on_hyphens=False,
+    ).replace("\0", " ")
     return (
-        f"{marketplace}\n"
-        "\n"
-        "```bash\n"
-        "claude plugin marketplace update autorun && claude plugin update ar@autorun\n"
-        "```\n"
-        "\n"
-        "Otherwise run one of these. Use the second if you installed the PDF\n"
-        "backends (`uv tool list --show-extras` lists `pdf`); the first removes them.\n"
+        "Run one of these. Use the second if you installed the PDF backends\n"
+        "(`uv tool list --show-extras` lists `pdf`); the first removes them.\n"
         "\n"
         "```bash\n"
         f"uv tool install --force 'autorun-ai=={version}' && autorun --install\n"
@@ -221,7 +214,13 @@ def upgrade_commands(version: str) -> str:
         f"uv tool install --force 'autorun-ai[pdf]=={version}' && autorun --install\n"
         "```\n"
         "\n"
-        f"{numbered}"
+        f"{after}\n"
+        "\n"
+        f"{marketplace}\n"
+        "\n"
+        "```bash\n"
+        "claude plugin marketplace update autorun && claude plugin update ar@autorun\n"
+        "```"
     )
 
 
