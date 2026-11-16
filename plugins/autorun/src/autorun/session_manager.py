@@ -2214,6 +2214,18 @@ class SQLiteStore:
 
     def _connect(self, timeout: float):
         try:
+            return self._connect_once(timeout)
+        except SessionBackendError:
+            # A full disk reports as "unable to open database file". Release
+            # the reserve and retry once; without it the failure stands.
+            from . import disk_reserve
+
+            if not disk_reserve.release_if_exhausted(Path(self._db_path)):
+                raise
+            return self._connect_once(timeout)
+
+    def _connect_once(self, timeout: float):
+        try:
             conn = sqlite3.connect(
                 self._db_path,
                 timeout=max(0.0, timeout),

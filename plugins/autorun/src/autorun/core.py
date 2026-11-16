@@ -72,6 +72,7 @@ from .platforms import (
     to_harness_cli_event,
 )
 from . import ipc
+from .disk_reserve import arm as disk_reserve_arm
 from .logging_utils import get_logger
 
 # === CONFIGURATION ===
@@ -3942,6 +3943,8 @@ class AutorunDaemon:
                     break
 
                 now = time.time()
+                # Recreate the disk reserve once space has returned.
+                await asyncio.get_running_loop().run_in_executor(None, disk_reserve_arm)
 
                 # Clean dead PIDs
                 dead = {pid for pid in self.active_pids if not self._pid_exists(pid)}
@@ -4057,17 +4060,25 @@ class AutorunDaemon:
         """
         from filelock import FileLock, Timeout
 
+        from . import disk_reserve
+
         flock_path = ipc.daemon_flock_path(LOCK_PATH)
-        try:
-            self._daemon_lock = FileLock(str(flock_path), timeout=0)
-            self._daemon_lock.acquire()
-        except Timeout:
-            self._daemon_lock = None
-            return False
-        except OSError as e:
-            logger.warning(f"FileLock.acquire() raised OSError (NFS?): {e}")
-            self._daemon_lock = None
-            return self._socket_connect_test()
+        for attempt in (1, 2):
+            try:
+                self._daemon_lock = FileLock(str(flock_path), timeout=0)
+                self._daemon_lock.acquire()
+                break
+            except Timeout:
+                self._daemon_lock = None
+                return False
+            except OSError as e:
+                logger.warning(f"FileLock.acquire() raised OSError (NFS?): {e}")
+                self._daemon_lock = None
+                # A full disk fails the lock file's creation; the reserve
+                # frees room for it, and the retry runs once.
+                if attempt == 1 and disk_reserve.release_if_exhausted(flock_path):
+                    continue
+                return self._socket_connect_test()
         # Write PID to daemon.lock for discovery by other processes.
         # Separate from flock acquisition so write failure doesn't release the lock.
         # Pre-validate: ensure parent dir exists and is writable (the flock file lives
@@ -4190,6 +4201,7 @@ class AutorunDaemon:
 
         # Start watchdog as tracked task
         self._watchdog_task = asyncio.create_task(self.watchdog())
+        asyncio.get_running_loop().run_in_executor(None, disk_reserve_arm)
 
         logger.info(f"Daemon started on {ipc.get_address()}")
 
