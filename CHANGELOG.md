@@ -7,6 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
+## [Unreleased]
+
+### Fixed
+
+1. A full disk no longer stops autorun from writing its own state. On
+   2026-11-13 SQLite could not create its `-wal` and `-shm` files
+   (`unable to open database file`) and every tool call was refused, so the
+   agent that had to free space could not run a command; on 2026-11-15 a full
+   disk also stopped the daemon from starting, because creating `daemon.flock`
+   failed with ENOSPC. autorun now keeps `~/.autorun/disk.reserve`, 8 MiB
+   (`disk_reserve_bytes`; 0 turns it off), created while the volume has four
+   times that free. When opening the state database or taking the daemon lock
+   fails on a volume with under half the reserve free, autorun deletes the
+   reserve and retries once; the daemon recreates it when space returns. A real
+   full volume that made the unpatched daemon degrade every tool call
+   (`state_evaluation_failed`) now runs them normally. Guarded deletions still
+   need `/ar:ok rm` typed by you, which works again once state can be written.
+
 ## [1.0.0rc4] - 2026-11-15
 
 autorun adds safety guards for destructive shell commands, task tracking, file

@@ -1009,6 +1009,14 @@ CONFIG = {
     # Provisional: chosen to keep the log reclaimed, not by comparison.
     "state_wal_autocheckpoint_pages": 1000,
     "state_journal_size_limit_bytes": 8 * 1024 * 1024,
+    # ─── Disk reserve ───
+    # Size of ~/.autorun/disk.reserve, a file autorun holds while the disk has
+    # room and deletes the moment its own state writes fail on a nearly full
+    # volume, so the failure that fills a disk does not also stop autorun from
+    # opening its database or starting its daemon. 0 disables it. See
+    # disk_reserve.py. Provisional: sized to cover the SQLite sidecar files
+    # (state_journal_size_limit_bytes) plus the daemon lock and logs.
+    "disk_reserve_bytes": 8 * 1024 * 1024,
     # Bound on parameters per SELECT when reading a named set of fields, kept
     # under SQLite's variable limit. Larger requests are split into several
     # statements rather than refused.
