@@ -27,6 +27,7 @@ import pytest
 
 from autorun.core import EventContext, ThreadSafeDB, normalize_hook_payload
 from autorun.platforms import (
+    PLATFORMS,
     forwarded_harness_env_names,
     host_task_list_env_names,
     host_task_list_tool,
@@ -126,6 +127,37 @@ def test_the_console_path_adds_nothing_outside_a_harness(monkeypatch):
 )
 def test_host_task_list_tool(cli_type, harness_env, expected):
     assert host_task_list_tool(cli_type, harness_env) == expected
+
+
+@pytest.mark.parametrize("cli_type", sorted(set(PLATFORMS) - {"claude"}))
+def test_other_harnesses_ignore_inherited_desktop_variables(cli_type, monkeypatch):
+    """A Codex, Gemini, Qwen, Pi... session started from a desktop session's
+    Bash tool inherits both desktop variables, and its hook forwards them. The
+    host belongs to Claude's registry entry, so for every other harness the
+    variables must change neither the host answer nor the task evidence."""
+    from autorun.client import prepare_payload_for_daemon
+
+    def evidence(env: dict) -> tuple:
+        for name in forwarded_harness_env_names():
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        payload, detected = prepare_payload_for_daemon(
+            {"hook_event_name": "SessionStart", "session_id": f"other-{cli_type}", "cli_type": cli_type}
+        )
+        assert detected == cli_type
+        normalized = normalize_hook_payload(payload)
+        ctx = EventContext(
+            session_id=payload["session_id"], event="SessionStart", store=ThreadSafeDB(),
+            cli_type=cli_type, active_tools=normalized["active_tools"],
+            host_task_list_tool=normalized["host_task_list_tool"],
+        )
+        return normalized["host_task_list_tool"], normalized["active_tools"], ctx.task_tool_evidence
+
+    plain = evidence({})
+    inherited = evidence(DESKTOP_ENV)
+    assert inherited[0] is None
+    assert inherited == plain
 
 
 def test_normalized_payload_carries_the_host_task_list():
