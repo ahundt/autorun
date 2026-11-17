@@ -369,14 +369,16 @@ def pytest_collection_modifyitems(config, items):
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun import CONFIG  # noqa: E402
-from autorun.platforms import task_tool_switch_env_names  # noqa: E402
+from autorun.platforms import forwarded_harness_env_names  # noqa: E402
 
-# Task-gate evidence reads the harness's task-tool switch variables
-# (platforms.TaskToolSwitch). A run started inside a harness session inherits
-# that session's values, which would change what every gate test sees; clear
-# them so each run starts the same, and tests that need a switch set it.
-for _switch_variable in task_tool_switch_env_names():
-    os.environ.pop(_switch_variable, None)
+# Task gates read the harness variables hooks forward: task-tool switches
+# (platforms.TaskToolSwitch) and host task-list markers (platforms.HostTaskList).
+# A run started inside a harness session, such as the Claude desktop app,
+# inherits that session's values, which would change what every gate test and
+# every hook subprocess sees; clear them so each run starts the same, and tests
+# that need one set it.
+for _harness_variable in forwarded_harness_env_names():
+    os.environ.pop(_harness_variable, None)
 
 
 # =============================================================================

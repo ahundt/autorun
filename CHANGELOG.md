@@ -7,6 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions are the plugin versions in `.claude-plugin/marketplace.json`; the
 marketplace itself carries a separate `version` field.
 
+## [Unreleased]
+
+### Fixed
+
+1. In the Claude desktop app's Code tab, autorun no longer tells the session to
+   load TaskCreate, TaskGet, TaskList and TaskUpdate. The app keeps the
+   session's task list in `mcp__ccd_turn__update_plan` and tells the model to
+   use that list instead of those tools. autorun's SessionStart message said
+   the opposite, and one session followed autorun and kept two task lists.
+   autorun now recognises the app from `CLAUDE_CODE_ENTRYPOINT=claude-desktop`
+   together with a `mcp__ccd_turn__` tool in `CLAUDE_CODE_TERMINAL_MCP_TOOLS`,
+   points the session at the app's list, and keeps its own task gates (Stop,
+   staleness, SessionStart resume) off there. Terminal and SDK sessions are
+   unchanged. The registry holds the host as `Platform.host_task_lists`
+   (`platforms.HostTaskList`).
+2. Hooks run as the console command `autorun --cli <harness>` now forward the
+   same harness variables as `hooks/hook_entry.py`. The Claude desktop app
+   loads the plugin's own `hooks/hooks.json`, which uses that command, and it
+   forwarded none of them. So the daemon never saw
+   `CLAUDE_CODE_ENABLE_TODO_TOOLS`, and every such session reported
+   "autorun is not enforcing task tracking yet". Both paths now read one list,
+   `platforms.forwarded_harness_env_names()`.
+
 ## [1.0.0rc4] - 2026-11-15
 
 autorun adds safety guards for destructive shell commands, task tracking, file

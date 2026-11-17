@@ -199,6 +199,44 @@ class TaskToolSwitch:
 
 
 @dataclass(frozen=True, slots=True)
+class HostTaskList:
+    """A host application that runs this harness and keeps its own task list.
+
+    Such a host tells the model to track work in ``tool`` instead of the
+    harness's task tools, so autorun must not tell the same session to load
+    those task tools. The host is recognised only from variables the harness
+    process carries, which both hook paths forward
+    (:func:`forwarded_harness_env_names`): ``entrypoint_env``
+    equal to ``entrypoint``, and ``tools_env`` naming at least one tool that
+    starts with ``tool_prefix`` (the MCP server that owns ``tool`` is attached).
+    ``source`` records where those values were observed.
+
+    Known limit: the desktop app's tool processes keep both variables, so a
+    ``claude`` started from inside a desktop session (``claude -p`` from its
+    Bash tool) inherits them and is treated as a desktop session too: its task
+    gates stay off and it is pointed at a list it does not have. No variable
+    observed so far separates the two.
+    """
+
+    entrypoint_env: str
+    entrypoint: str
+    tools_env: str
+    tool_prefix: str
+    tool: str
+    source: str
+
+    def forwarded_env(self) -> tuple[str, ...]:
+        """Every variable a hook process must forward to recognise this host."""
+        return (self.entrypoint_env, self.tools_env)
+
+    def matches(self, harness_env: "Mapping[str, str]") -> bool:
+        if str(harness_env.get(self.entrypoint_env, "")).strip() != self.entrypoint:
+            return False
+        tools = re.split(r"[\s,]+", str(harness_env.get(self.tools_env, "")))
+        return any(name.startswith(self.tool_prefix) for name in tools)
+
+
+@dataclass(frozen=True, slots=True)
 class SkillRoute:
     """Where one harness loads skills from when autorun does not use the
     shared ``~/.agents/skills`` root.
@@ -1193,6 +1231,9 @@ class Platform:
     # The setting that turns this harness's task tools on, when they are an
     # opt-in. See TaskToolSwitch for both of its consumers.
     task_tool_switch: TaskToolSwitch | None = None
+    # Host applications that run this harness with their own task list in place
+    # of its task tools. See HostTaskList.
+    host_task_lists: tuple[HostTaskList, ...] = ()
     # True when a successful call to one of this harness's task tools in a main
     # session proves the tools exist for the rest of that session (a Claude
     # session on an older model has them without the switch). False where a
@@ -1689,6 +1730,23 @@ CLAUDE = register(
             env="CLAUDE_CODE_ENABLE_TODO_TOOLS",
             # =0 selects the legacy TodoWrite engine instead of the Task tools.
             env_off=("CLAUDE_CODE_ENABLE_TASKS",),
+        ),
+        # The Claude desktop app's Code tab shows mcp__ccd_turn__update_plan as
+        # the session's task list and tells the model to use it in place of
+        # TaskCreate/TaskUpdate/TaskList/TaskGet and not to search for them.
+        host_task_lists=(
+            HostTaskList(
+                entrypoint_env="CLAUDE_CODE_ENTRYPOINT",
+                entrypoint="claude-desktop",
+                tools_env="CLAUDE_CODE_TERMINAL_MCP_TOOLS",
+                tool_prefix="mcp__ccd_turn__",
+                tool="mcp__ccd_turn__update_plan",
+                source=(
+                    "claude process environment of a desktop Code-tab session, "
+                    "2026-11-16: desktop app 5.11492.5, Claude Code 2.1.325, "
+                    "CLAUDE_CODE_TERMINAL_MCP_TOOLS=mcp__ccd_turn__wrap_up"
+                ),
+            ),
         ),
         # Verified against the live tool: TaskUpdate rejects anything else with
         # InputValidationError ('expected one of "pending"|"in_progress"|
@@ -2785,6 +2843,43 @@ def task_tool_switch_env_names() -> frozenset[str]:
         if platform.task_tool_switch is not None
         for name in platform.task_tool_switch.forwarded_env()
     )
+
+
+def host_task_list_env_names() -> frozenset[str]:
+    """Every variable a hook process must forward to recognise a host task list."""
+    return frozenset(
+        name
+        for platform in PLATFORMS.values()
+        for host in platform.host_task_lists
+        for name in host.forwarded_env()
+    )
+
+
+def forwarded_harness_env_names() -> frozenset[str]:
+    """Every harness variable a hook process copies into ``autorun_harness_env``.
+
+    The daemon does not share the session's environment. Both hook paths copy
+    these: ``hooks/hook_entry.py`` (its own pinned tuple, since it imports no
+    autorun module) and ``client.prepare_payload_for_daemon`` (the
+    ``autorun --cli <harness>`` console command).
+    """
+    return task_tool_switch_env_names() | host_task_list_env_names()
+
+
+def host_task_list_tool(
+    cli_type: str | None, harness_env: "Mapping[str, str] | None"
+) -> str | None:
+    """The task-list tool a host application gives this session, or None.
+
+    ``harness_env`` is what the hook process forwarded. None means the session
+    has no such host, and autorun's ordinary task guidance applies.
+    """
+    if not isinstance(harness_env, Mapping):
+        return None
+    for host in platform_for(cli_type).host_task_lists:
+        if host.matches(harness_env):
+            return host.tool
+    return None
 
 
 def agent_spawn_tools_for(cli_type: "str | None") -> frozenset[str]:

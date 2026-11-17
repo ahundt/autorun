@@ -1140,6 +1140,7 @@ def run_direct(payload: dict | None = None) -> int:
         agent_type=normalized["agent_type"],
         prompt_author=normalized["prompt_author"],
         active_tools=normalized["active_tools"],
+        host_task_list_tool=normalized["host_task_list_tool"],
         transcript_path=normalized.get("transcript_path"),
         agent_transcript_path=normalized.get("agent_transcript_path"),
         stop_hook_active=normalized["stop_hook_active"],

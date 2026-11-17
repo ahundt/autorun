@@ -307,8 +307,27 @@ def task_tool_recovery_sentence(cli_type: str | None) -> str:
 # --- BUG #80305/#80401 WORKAROUND END --- DELETE WHEN FIXED ---
 
 
+def _host_task_list_instruction(tool: str) -> str:
+    """SessionStart guidance for a session whose host keeps its own task list.
+
+    The host (the Claude desktop app's Code tab) tells the model to use
+    ``tool`` instead of Claude's task tools and not to search for them, so
+    the ordinary load instruction would contradict it and leave the session
+    with two task lists.
+    """
+    names = _claude_task_tool_names()
+    return (
+        f"This session's host keeps its task list in `{tool}`. Track work "
+        f"there, and do not load or call {', '.join(names[:-1])} or {names[-1]}. "
+        "autorun does not read that list, so its task tracking stays off in "
+        "this session."
+    )
+
+
 def _deferred_task_tool_instruction(ctx: EventContext) -> str:
     """The SessionStart load instruction, with one recovery path, not two."""
+    if ctx.host_task_list_tool:
+        return _host_task_list_instruction(ctx.host_task_list_tool)
     load = (
         "Before tracked work, use ToolSearch once with "
         f"`select:{','.join(_claude_task_tool_names())}` to load Claude Code's "

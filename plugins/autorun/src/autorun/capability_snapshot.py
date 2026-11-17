@@ -110,6 +110,17 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
                 "proves_tools": platform.task_tool_switch.proves_tools,
             }
         ),
+        "host_task_lists": [
+            {
+                "entrypoint_env": host.entrypoint_env,
+                "entrypoint": host.entrypoint,
+                "tools_env": host.tools_env,
+                "tool_prefix": host.tool_prefix,
+                "tool": host.tool,
+                "source": host.source,
+            }
+            for host in platform.host_task_lists
+        ],
         "first_model_invocation_event": platform.first_model_invocation_event,
         "first_model_invocation_index_field": platform.first_model_invocation_index_field,
         "prompt_payload_field": platform.prompt_payload_field,

@@ -788,6 +788,20 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
         # receives the archived plan.
         from .platforms import hook_payload_cwd
         payload["_cwd"] = hook_payload_cwd(payload) or os.getcwd()
+    if "autorun_harness_env" not in payload:
+        # When a manifest runs `autorun --cli <harness>` directly (the package's
+        # hooks/hooks.json, which the Claude desktop app loads), this process is
+        # the hook and its environment is the harness's. When hooks/hook_entry.py
+        # falls back to this command it has already attached the field; keep it.
+        from .platforms import forwarded_harness_env_names
+
+        harness_env = {
+            name: os.environ[name]
+            for name in sorted(forwarded_harness_env_names())
+            if name in os.environ
+        }
+        if harness_env:
+            payload["autorun_harness_env"] = harness_env
 
     payload["cli_type"] = cli_type
 

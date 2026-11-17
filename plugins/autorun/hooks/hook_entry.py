@@ -253,16 +253,22 @@ def explicit_event_name() -> str | None:
     return value if value in valid else None
 
 
-#: Harness settings that decide whether its task tools exist, as the harness
-#: passes them to this process (platforms.TaskToolSwitch). The daemon does not
-#: share the session's environment, so they travel in the payload. This file
-#: imports no autorun module; test_task_tool_switch.py pins this tuple to
-#: platforms.task_tool_switch_env_names().
-TASK_TOOL_SWITCH_ENV = ("CLAUDE_CODE_ENABLE_TASKS", "CLAUDE_CODE_ENABLE_TODO_TOOLS")
+#: Harness variables the daemon needs but cannot read, because it does not
+#: share the session's environment: task-tool switches (platforms.TaskToolSwitch)
+#: and host task-list markers (platforms.HostTaskList). They travel in the
+#: payload's ``autorun_harness_env``. This file imports no autorun module;
+#: test_task_tool_switch.py pins this tuple to
+#: platforms.forwarded_harness_env_names().
+FORWARDED_HARNESS_ENV = (
+    "CLAUDE_CODE_ENABLE_TASKS",
+    "CLAUDE_CODE_ENABLE_TODO_TOOLS",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_TERMINAL_MCP_TOOLS",
+)
 
 
 def prepare_hook_payload(payload: dict, cli_type: str) -> dict:
-    """Attach command-owned event identity, task-tool switches, and Antigravity aliases."""
+    """Attach command-owned event identity, harness env, and Antigravity aliases."""
     prepared = dict(payload)
     prepared["cli_type"] = cli_type
     # _pid is the process that launched this hook (the harness, or its
@@ -270,9 +276,9 @@ def prepare_hook_payload(payload: dict, cli_type: str) -> dict:
     # keeps a supplied _pid. JS bridges send their own in-process pid, and only
     # a direct `autorun` call lets the client pick one by walking its parents.
     prepared.setdefault("_pid", os.getppid())
-    switches = {name: os.environ[name] for name in TASK_TOOL_SWITCH_ENV if name in os.environ}
-    if switches:
-        prepared["autorun_harness_env"] = switches
+    harness_env = {name: os.environ[name] for name in FORWARDED_HARNESS_ENV if name in os.environ}
+    if harness_env:
+        prepared["autorun_harness_env"] = harness_env
     event_name = explicit_event_name()
     if event_name:
         # The installed command is trusted registry data. It is authoritative

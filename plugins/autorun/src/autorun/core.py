@@ -539,7 +539,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
             transcript = truncated
             logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → {len(truncated)} messages ({size_estimate // 1024}KB)")
 
-    from .platforms import hook_payload_cwd, normalize_tool_payload
+    from .platforms import hook_payload_cwd, host_task_list_tool, normalize_tool_payload
     tool_name, tool_input_envelopes = normalize_tool_payload(payload, cli_type)
     tool_input = tool_input_envelopes[0]
 
@@ -593,6 +593,11 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         # Effective model-facing tools when an in-process bridge can report
         # them. None means unknown; an empty frozenset means known-empty.
         "active_tools": active_tools,
+        # The task-list tool a host application (the Claude desktop app) gives
+        # this session instead of the harness's task tools, or None.
+        "host_task_list_tool": host_task_list_tool(
+            cli_type, payload.get("autorun_harness_env")
+        ),
         # Current Claude Code Stop payload fields (v2.1.145+). Preserve them
         # without interpretation so Stop policies can prefer structured state
         # over transcript inference while older harnesses keep safe defaults.
@@ -1805,6 +1810,7 @@ class EventContext:
         "_agent_type",
         "_prompt_author",
         "_active_tools",
+        "_host_task_list_tool",
         "_agent_transcript_path",
         "_chain_notifications",
         "_transcript_path",
@@ -1878,6 +1884,7 @@ class EventContext:
         agent_type: str | None = None,
         prompt_author: str | None = None,
         active_tools: "frozenset[str] | None" = None,
+        host_task_list_tool: str | None = None,
         transcript_path: str = None,
         agent_transcript_path: str = None,
         stop_hook_active: bool = False,
@@ -1959,6 +1966,7 @@ class EventContext:
             "_active_tools",
             None if active_tools is None else frozenset(active_tools),
         )
+        object.__setattr__(self, "_host_task_list_tool", host_task_list_tool or None)
         object.__setattr__(self, "_agent_transcript_path", agent_transcript_path or None)
         object.__setattr__(self, "_stop_hook_active", bool(stop_hook_active))
         object.__setattr__(self, "_last_assistant_message", last_assistant_message or "")
@@ -2155,6 +2163,16 @@ class EventContext:
         """Effective model-facing tools, or None when the bridge cannot know."""
         return self._active_tools
 
+    @property
+    def host_task_list_tool(self) -> "str | None":
+        """The task-list tool a host application keeps for this session.
+
+        Set when the session runs inside a host that tracks work in its own
+        tool in place of the harness's task tools (platforms.HostTaskList);
+        None otherwise.
+        """
+        return self._host_task_list_tool
+
     #: Session state recording that a main session called one of its task
     #: tools successfully (task_lifecycle.track_task_operations): the model
     #: that made the call, or True where the transcript names none.
@@ -2175,7 +2193,14 @@ class EventContext:
         the registry allows it, a task call this main session already made
         successfully proves the tools: a Claude session on an older model has
         them without any switch. None means unknown.
+
+        A host that keeps its own task list (``host_task_list_tool``) answers
+        first, with an empty set: the host told the model not to use the
+        harness's task tools, so no task gate may demand them, whatever a
+        switch or an earlier task call would otherwise prove.
         """
+        if self._host_task_list_tool:
+            return frozenset()
         if self._active_tools is not None:
             return self._active_tools
         from .platforms import platform_for, registered_task_tools
@@ -3709,6 +3734,7 @@ class AutorunDaemon:
                 agent_type=normalized["agent_type"],
                 prompt_author=normalized["prompt_author"],
                 active_tools=normalized["active_tools"],
+                host_task_list_tool=normalized["host_task_list_tool"],
                 transcript_path=normalized.get("transcript_path"),
                 agent_transcript_path=normalized.get("agent_transcript_path"),
                 stop_hook_active=normalized["stop_hook_active"],

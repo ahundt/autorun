@@ -21,6 +21,7 @@ from autorun.core import EventContext, ThreadSafeDB, normalize_hook_payload
 from autorun.platforms import (
     PLATFORMS,
     TASK_CREATE_CAPABILITY_ROLES,
+    forwarded_harness_env_names,
     registered_task_tools,
     task_enforcement_capability_available,
     task_tool_role,
@@ -48,12 +49,13 @@ def test_the_hook_forwards_exactly_the_variables_the_registry_declares():
     would never reach the daemon, and the gates would stand down forever on
     that harness with nothing reporting why.
     """
-    assert set(_hook_entry().TASK_TOOL_SWITCH_ENV) == task_tool_switch_env_names()
+    assert set(_hook_entry().FORWARDED_HARNESS_ENV) == forwarded_harness_env_names()
+    assert task_tool_switch_env_names() <= forwarded_harness_env_names()
 
 
 def test_the_hook_forwards_only_switches_that_are_set(monkeypatch):
     hook_entry = _hook_entry()
-    for name in task_tool_switch_env_names():
+    for name in forwarded_harness_env_names():
         monkeypatch.delenv(name, raising=False)
     assert "autorun_harness_env" not in hook_entry.prepare_hook_payload({}, "claude")
 
