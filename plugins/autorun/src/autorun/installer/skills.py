@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping
 
-from . import discovery
+from . import discovery, provenance
 from .fs import _strip_extended_prefix, owns, read_marker
 from .discovery import redirected_home
 from .traversal import Context, Intent, Kind
@@ -147,7 +147,10 @@ def blocked_names(shipped: Mapping[str, Path], destination: Path, plugin: str) -
     """Names at ``destination`` that autorun may not write.
 
     A name is blocked when something is already there that autorun did not
-    write, or wrote and the user has since edited. Comparison is case-folded
+    write, or wrote and the user has since edited. "Did not write" asks the
+    marker, then :mod:`provenance` for an unmarked tree byte-identical to one
+    autorun wrote: a marker lost to the user's ignore rules must not turn
+    autorun's own stale copy into a user skill. Comparison is case-folded
     because macOS would silently alias ``Commit`` onto ``commit`` while Linux
     would not, and a route that works on one machine and clobbers on another is
     worse than one that refuses on both.
@@ -164,9 +167,17 @@ def blocked_names(shipped: Mapping[str, Path], destination: Path, plugin: str) -
         entry = existing.get(name.casefold())
         if entry is None:
             continue
-        if not owns(read_marker(entry), plugin):
+        if not _ours(entry, plugin, name, shipped[name]):
             blocked.add(name)
     return frozenset(blocked)
+
+
+def _ours(entry: Path, plugin: str, name: str, source: Path | None) -> bool:
+    """Autorun's tree: by its marker, or by exact provenance when it has none."""
+    marker = read_marker(entry)
+    if marker is not None:
+        return owns(marker, plugin)
+    return provenance.autorun_wrote(entry, plugin=plugin, name=name, source=source)
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,8 +389,13 @@ def skill_plan(
 
         for name, source in shipped.items():
             reached_shared = want_shared and name not in blocked_shared
+            # The proof lets decide() adopt an unmarked copy autorun provably
+            # wrote instead of keeping it as the user's.
+            proof = provenance.proof_for(plugin=plugin, source=source, name=name)
             if reached_shared:
-                intents.append(Intent(target=shared_dir / name, source=source, plugin=plugin))
+                intents.append(Intent(
+                    target=shared_dir / name, source=source, plugin=plugin, ownership_proof=proof,
+                ))
                 shared.append(name)
             # A loadable skill already occupying the shared root reaches this
             # harness whenever the harness reads that root: Pi and Prime list
@@ -393,7 +409,7 @@ def skill_plan(
             visible_via_shared = (
                 not reached_shared
                 and bool(getattr(platform, "loads_shared_agents_skills", False))
-                and not owns(read_marker(shared_dir / name), plugin)
+                and not _ours(shared_dir / name, plugin, name, source)
                 and is_loadable(shared_dir / name)
             )
             # The native route runs when the user asked for it, and as the
@@ -411,7 +427,10 @@ def skill_plan(
                 elif include_native:
                     for root in natives:
                         if name not in blocked_names({name: source}, root, plugin):
-                            intents.append(Intent(target=root / name, source=source, plugin=plugin))
+                            intents.append(Intent(
+                                target=root / name, source=source, plugin=plugin,
+                                ownership_proof=proof,
+                            ))
                             reached_native = True
                 if reached_native:
                     native.append(name)

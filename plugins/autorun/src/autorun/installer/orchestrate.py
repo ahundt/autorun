@@ -265,7 +265,8 @@ def _perform(
                     "skill placement",
                     status.Level.WARN,
                     f"{getattr(harness, 'name', '?')}: kept existing "
-                    f"{', '.join(planned.refused)} this install does not own — "
+                    f"{', '.join(planned.refused)}, which carry no autorun "
+                    "marker and match no version autorun wrote — "
                     + (", ".join(str(path) for path in blocking) or "paths not autorun's")
                     + "; the harness uses those copies, not this release's",
                     "to take autorun's, move those directories aside and rerun "
@@ -1089,11 +1090,12 @@ def _config_roots(
     selected_names = {
         getattr(harness, "name", "") for harness in harnesses
     } - {""}
-    # The shared ~/.agents/skills root is populated by every harness that
-    # reads it. It is swept on every run so a skill autorun stopped shipping
-    # retires, but ``perform`` claims every shipped skill there regardless of
-    # selection, so a Claude-only run cannot retire the trees Codex, Qwen, Pi,
-    # Prime, ForgeCode, or OpenCode still load.
+    # The shared ~/.agents/skills root holds autorun's copies only under
+    # --skill-placement both (and every copy rc1-rc3 wrote there). It is swept
+    # on every run so a copy no route claims retires; ``perform`` claims the
+    # shipped names there whenever a selected harness routes to it, so a
+    # Claude-only run cannot retire trees another harness still loads. The
+    # sweep also retires an unmarked copy provenance proves autorun wrote.
     found.append(discovery.shared_root(home=ctx.home).parent)
     staging = extension.registration_source_root(ctx)
     # The staging root holds one subtree per harness. Sweeping the whole root

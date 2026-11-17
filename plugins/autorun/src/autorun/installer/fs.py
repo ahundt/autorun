@@ -824,9 +824,11 @@ def decide(
                         Verdict.PUBLISH if source is not None else Verdict.RETIRE,
                         target,
                         (
-                            "adopting exact harness install receipt"
+                            # The proof is a harness's install receipt or
+                            # provenance's exact match to what autorun wrote.
+                            "adopting an exact copy autorun installed"
                             if source is not None
-                            else "retiring exact harness install receipt"
+                            else "retiring an exact copy autorun installed"
                         ),
                     )
             except (OSError, RuntimeError, ValueError):

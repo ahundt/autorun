@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
 from ..ipc import ensure_config_dir
+from . import provenance
 from .discovery import process_home, redirected_home
 from .fs import (
     Decision,
@@ -272,7 +273,7 @@ def _perform(
     publishers = {Kind.TREE: publish_tree, Kind.FILES: publish_files, Kind.LINK: publish_link}
     if decision.verdict is Verdict.PUBLISH and intent.source is not None:
         if intent.kind is Kind.TREE:
-            return publish_tree(
+            published = publish_tree(
                 intent.source,
                 intent.target,
                 plugin=intent.plugin,
@@ -281,6 +282,9 @@ def _perform(
                 backup_root=backups,
                 **intent.settings,
             )
+            if published.verdict is Verdict.PUBLISH:
+                _receipt(provenance.record, intent.target, intent.plugin)
+            return published
         if intent.kind is Kind.LINK:
             return publish_link(
                 intent.source,
@@ -325,7 +329,21 @@ def _perform(
         # removal read exactly like a clean one.
         if not removed:
             return Decision(Verdict.KEEP, intent.target, "could not remove", decision.edited)
+        if intent.kind is Kind.TREE:
+            _receipt(provenance.forget, intent.target)
     return decision
+
+
+def _receipt(action: Callable[..., None], *args: str | Path) -> None:
+    """Keep the publication receipt, never at the cost of the publication.
+
+    The marker inside the tree is still written; a receipt that cannot be
+    saved costs only the fallback for a marker the user later loses.
+    """
+    try:
+        action(*args)
+    except (OSError, ValueError):
+        pass
 
 
 def _exact_target(intent: Intent) -> Path | None:
@@ -428,6 +446,18 @@ def retirements(
                     else Kind.TREE
                 )
                 yield Intent(target=tree, source=None, plugin=plugin, kind=kind)
+            # The same trees after the user's tooling lost their marker: only
+            # an exact match to what autorun wrote is retired, under the proof
+            # withdrawn() re-checks against the quarantined copy.
+            for tree in provenance.proven_trees(root, plugin=plugin):
+                resolved = tree.resolve()
+                if resolved in keep or resolved in seen:
+                    continue
+                seen.add(resolved)
+                yield Intent(
+                    target=tree, source=None, plugin=plugin,
+                    ownership_proof=provenance.proof_for(plugin=plugin, name=tree.name),
+                )
 
 
 def run(
@@ -498,9 +528,11 @@ def run(
                 intent.target,
                 source,
                 plugin=intent.plugin,
-                ownership_proof=(
-                    intent.ownership_proof if source is not None else None
-                ),
+                # The retirement question needs the proof too: a tree whose
+                # marker the user's tooling lost is retired only on an exact
+                # match to what autorun wrote (provenance), which withdrawn()
+                # re-checks against the quarantined copy before deleting.
+                ownership_proof=intent.ownership_proof,
                 force=ctx.force,
             )
         decisions.append(

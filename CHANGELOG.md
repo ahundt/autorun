@@ -29,6 +29,17 @@ marketplace itself carries a separate `version` field.
    `CLAUDE_CODE_ENABLE_TODO_TOOLS`, and every such session reported
    "autorun is not enforcing task tracking yet". Both paths now read one list,
    `platforms.forwarded_harness_env_names()`.
+3. Codex now gets this release's skills when an earlier autorun left copies
+   in `~/.agents/skills` that lost their `.autorun-owned` marker, for example
+   because that directory is kept in git and the marker was ignored. Those
+   copies read as your own skills, so the install left them in place and
+   Codex, which reads that directory, kept running them instead of its plugin's
+   copies. An unmarked copy is now autorun's when it is byte-identical to a
+   version autorun installed: the install records what it publishes in
+   `~/.autorun/installer/published-trees.json`, and it recognizes every skill
+   version autorun committed before that. Such copies are retired and the
+   packaged ones take over. A copy you edited, or a skill you wrote, is kept as
+   before, and the warning now says it matches no version autorun wrote.
 
 ## [1.0.0rc4] - 2026-11-15
 

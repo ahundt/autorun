@@ -1691,7 +1691,8 @@ CLAUDE = register(
         memory_sentinel_slug="claude-memory-md",
         # The installed plugin already exposes its skills. A second global copy
         # under ~/.claude/skills is also scanned by OpenCode, which then races
-        # it against the canonical ~/.agents/skills copy by name.
+        # it by name against any skill in ~/.agents/skills, a root autorun
+        # writes only under --skill-placement both.
         native_skills=PluginPackageSkills(),
         list_cmd=("claude", "plugin", "list"),
         app_bundle_ids=("com.anthropic.claudefordesktop",),
@@ -2109,8 +2110,10 @@ CODEX = register(
         skill_search_routes=(ConfigDirSkills("skills"),),
         memory_filename="AGENTS.md",
         memory_template="codex_template/AGENTS.md",
-        # https://learn.chatgpt.com/docs/build-skills — Codex scans the shared
-        # $HOME/.agents/skills root directly, so it needs no second copy.
+        # Skills ship inside the Codex plugin (~/plugins/<name>/skills). Codex
+        # also scans $HOME/.agents/skills (learn.chatgpt.com/docs/build-skills),
+        # so a user's own skill there wins its name and the packaged copy is
+        # withheld rather than listed twice (skills.skill_plan).
         native_skills=PluginPackageSkills(_codex_plugin_package_dir),
         loads_shared_agents_skills=True,
         # Predates the shared installer; keep the slug so uninstall still finds

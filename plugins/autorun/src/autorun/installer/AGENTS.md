@@ -22,9 +22,11 @@ so `--uninstall pdf-extractor` cannot touch autorun's trees.
 1. **Only `fs` mutates installed trees:** `publish_tree`, `publish_files`,
    `withdrawn` and `withdraw_files` each record a manifest, so an
    unidentifiable tree cannot be created. `fs.json_document` edits a JSON
-   file in place and records none. Two modules write their own kind of file:
-   `memory` (the autorun block in a user's guidance file) and `runtime`
-   (runtime receipts).
+   file in place and records none. Three modules write their own kind of file:
+   `memory` (the autorun block in a user's guidance file), `runtime`
+   (runtime receipts) and `provenance` (publication receipts in
+   `~/.autorun/installer/published-trees.json`, written by
+   `traversal._perform`).
 2. **Steps yield `Intent`s and touch no disk.** That is why no `dry_run` parameter
    is threaded anywhere.
 3. **Harness differences are data.** Nothing in `traversal.py` names a harness.
@@ -36,7 +38,7 @@ so `--uninstall pdf-extractor` cannot touch autorun's trees.
 | Where does this harness keep config? | `discovery.config_dir` (CONFIG override → env var → default) |
 | Extensions dir, or none? | `discovery.extensions_dir`, where `None` is a real answer |
 | Where do skills go / come from? | `discovery.skill_destinations(reading=…)` |
-| Is this tree ours? | `fs.owns` (+ `PLUGIN_ALIASES` for old markers) |
+| Is this tree ours? | `fs.owns` (+ `PLUGIN_ALIASES` for old markers); with no marker, `provenance.autorun_wrote` (exact match only) |
 | May we write here? | `fs.decide` / `fs.decide_files` |
 | Where is the marketplace / a plugin? | `discovery.marketplace_root`, `plugin_dir` |
 | What did the user configure? | `settings.INSTALL_SETTINGS`, resolved once at entry |
@@ -46,7 +48,8 @@ so `--uninstall pdf-extractor` cannot touch autorun's trees.
 `fs` owned trees, marker+hash manifest, atomic JSON · `traversal` walk, modes,
 `Intent`, retirement sweep · `discovery` roots, plugins, dirs · `settings` one
 declaration → resolution, help, parsers · `skills` routes, blocking, bridge ·
-`memory` sentinel region · `runtime` uv, probe, bootstrap, self-update, daemon ·
+`memory` sentinel region · `provenance` unmarked-tree proof, publication
+receipts, legacy skill catalog · `runtime` uv, probe, bootstrap, self-update, daemon ·
 `harness` TOML + placeholders · `codex` hooks, marketplace · `extension`
 materialize + refresh.
 
@@ -87,6 +90,17 @@ that need it. No disk access: stage generated content to a temp dir and point th
   retires it (route no longer shipped, or `--uninstall`) after the current
   tree is copied to `~/.autorun/installer/backups/` by `fs._park_backup`
   (never beside the skill — a harness would list the backup as a skill).
+- **A marker can be lost; ownership cannot.** `.autorun-owned` sits inside
+  the tree, so a user's git ignore rules, a clean or a fresh clone of a
+  managed directory (`~/.agents` kept in git) removes it. With no marker the
+  tree read as user-authored: rc4 left every skill rc1-rc3 had copied there,
+  and Codex withheld its packaged copies and ran the stale ones. An unmarked
+  tree is autorun's only when `provenance.autorun_wrote` finds it byte-
+  identical to the source being installed, to the receipt for that path, or
+  to a version in `_legacy_skill_digests.py` (frozen history from
+  `scripts/legacy_skill_digests.py`; receipts cover every later install).
+  It reaches `decide`/`withdrawn` as the existing `ownership_proof`, so an
+  edited tree stays the user's and nothing about marked trees changes.
 - **Shared dirs are owned per file.** For `commands/` use
   `publish_files`/`withdraw_files`. `publish_tree` there either refuses or
   deletes the user's files.

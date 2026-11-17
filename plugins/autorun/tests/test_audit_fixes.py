@@ -186,7 +186,14 @@ def test_retired_marketplace_names_are_absent_from_current_install_surfaces():
         repo / "README.md",
         repo / ".claude-plugin" / "marketplace.json",
     ]
-    paths.extend((repo / "plugins" / "autorun" / "src" / "autorun").rglob("*.py"))
+    # The generated legacy catalog is history by design: it keys digests by the
+    # names old releases installed (clautorun-maintainer included) so the sweep
+    # can recognize and retire those stale copies. Nothing reads it as a name.
+    catalog = repo / "plugins/autorun/src/autorun/installer/_legacy_skill_digests.py"
+    paths.extend(
+        path for path in (repo / "plugins" / "autorun" / "src" / "autorun").rglob("*.py")
+        if path != catalog
+    )
     paths.extend((repo / "plugins" / "autorun" / "skills").rglob("*.md"))
 
     for path in paths:

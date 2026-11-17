@@ -206,6 +206,36 @@ def test_a_visible_user_skill_suppresses_the_native_fallback_for_shared_readers(
     assert placement.refused == ("ar:commit",), "the withheld copy is reported, not silent"
 
 
+def test_an_unmarked_copy_autorun_wrote_does_not_suppress_the_native_route(
+    plugin, shared, ctx, monkeypatch
+):
+    """The case above, when the shared copy is autorun's own from an earlier
+    release and only its marker was lost (a user's git repo ignored it).
+    Codex then withheld its packaged copy and ran the stale one; a byte-exact
+    match to something autorun wrote is autorun's, so the native route runs."""
+    from autorun.installer import provenance
+
+    monkeypatch.setenv("AUTORUN_HOME", str(ctx.home / "ar-home"))
+    shared.mkdir(parents=True)
+    stale = shared / "commit"
+    stale.mkdir()
+    (stale / "SKILL.md").write_text(
+        "---\ndescription: an older autorun commit skill\n---\nold\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        provenance, "LEGACY_DIGESTS", {"ar": {"commit": (provenance.tree_digest(stale),)}}
+    )
+
+    reader = FakePlatform("reader", True, native_skills=Route("skills"))
+    intents, placement = skill_plan(reader, ctx, {"ar": plugin}, shared_root_override=shared)
+    by_name = {i.target.name: i for i in intents}
+
+    assert by_name["commit"].target.parent != shared, "the packaged copy is published"
+    assert placement.refused == ()
+    assert blocked_names(shippable_skills(plugin), shared, "ar") == frozenset()
+    assert by_name["commit"].ownership_proof(stale), "decide() can adopt it"
+
+
 @pytest.mark.parametrize(
     "content",
     [
