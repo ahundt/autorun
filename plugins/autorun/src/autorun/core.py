@@ -752,6 +752,10 @@ class ThreadSafeDB:
     ):
         self._lock = threading.RLock()
         self._cache: Dict[str, Any] = {}
+        # Cached keys grouped by every prefix that `startswith(prefix + ":")`
+        # would match. Protected by `self._lock`, like `_cache`; only
+        # `_cache_put` and `_cache_pop` may change `_cache` or this index.
+        self._cache_index: Dict[str, Set[str]] = {}
         self._loaded_sessions: Set[str] = set()
         self._state_timeout = state_timeout
         self._batch = threading.local()
@@ -779,6 +783,40 @@ class ThreadSafeDB:
         session_id = parts[0] if len(parts) > 1 else "__default__"
         field = parts[-1]
         return session_id, field
+
+    @staticmethod
+    def _cache_index_ids(key: str) -> List[str]:
+        """Every id whose `f"{id}:"` prefix `key` starts with."""
+        ids = []
+        colon = key.find(":")
+        while colon != -1:
+            ids.append(key[:colon])
+            colon = key.find(":", colon + 1)
+        return ids
+
+    def _cache_put(self, key: str, value: Any) -> None:
+        """Store one cached value and index the key. Caller holds `self._lock`.
+
+        The index lists a key under the text before each ":" in it, the exact
+        set of ids `key.startswith(f"{id}:")` accepts. That reproduces the
+        old full scan even when session ids or fields contain ":".
+        """
+        if key not in self._cache:
+            for owner in self._cache_index_ids(key):
+                self._cache_index.setdefault(owner, set()).add(key)
+        self._cache[key] = value
+
+    def _cache_pop(self, key: str) -> None:
+        """Drop one cached value and its index entries. Caller holds `self._lock`."""
+        if key not in self._cache:
+            return
+        del self._cache[key]
+        for owner in self._cache_index_ids(key):
+            keys = self._cache_index.get(owner)
+            if keys is not None:
+                keys.discard(key)
+                if not keys:
+                    del self._cache_index[owner]
 
     def _batch_depth(self) -> int:
         return int(getattr(self._batch, "depth", 0))
@@ -840,9 +878,9 @@ class ThreadSafeDB:
         with self._lock:
             if key not in self._volatile and session_id in self._loaded_sessions:
                 if value is MISSING:
-                    self._cache.pop(key, None)
+                    self._cache_pop(key)
                 else:
-                    self._cache[key] = value
+                    self._cache_put(key, value)
         return default if value is MISSING else value
 
     def set(self, key: str, value: Any, *, timeout: float | None = None):
@@ -908,7 +946,7 @@ class ThreadSafeDB:
                 # report it. The key may also be tracked as volatile: drop that
                 # too, or hydration would keep skipping the stored value.
                 self._drop_volatile_bookkeeping(key)
-                self._cache.pop(key, None)
+                self._cache_pop(key)
                 self._loaded_sessions.discard(session_id)
                 if isinstance(exc, SessionPersistenceError):
                     raise
@@ -916,7 +954,7 @@ class ThreadSafeDB:
             if has_staged_value:
                 dirty.pop(key, None)
             self._publish_hydrated(session_id, hydrated.items())
-            self._cache[key] = persisted
+            self._cache_put(key, persisted)
             self._loaded_sessions.add(session_id)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
 
@@ -933,7 +971,7 @@ class ThreadSafeDB:
             value = copy.deepcopy(value)
         with self._lock:
             self._note_shadowing(key)
-            self._cache[key] = value
+            self._cache_put(key, value)
             self._track_volatile(key, value)
 
     def update_volatile(self, key: str, updater: Callable[[Any], Any], default=None) -> Any:
@@ -957,7 +995,7 @@ class ThreadSafeDB:
             value = updater(current)
             cached = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
             self._note_shadowing(key)
-            self._cache[key] = cached
+            self._cache_put(key, cached)
             self._track_volatile(key, cached)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
 
@@ -1028,7 +1066,7 @@ class ThreadSafeDB:
         """
         shadowed = key in self._shadowing
         self._drop_volatile_bookkeeping(key)
-        self._cache.pop(key, None)
+        self._cache_pop(key)
         if shadowed:
             self._loaded_sessions.discard(self._split_key(key)[0])
 
@@ -1043,7 +1081,7 @@ class ThreadSafeDB:
             if key in self._volatile:
                 self._shadowing.add(key)
             else:
-                self._cache[key] = value
+                self._cache_put(key, value)
 
     def _evict_volatile_over_limits(self) -> None:
         """Discard the oldest advisory entries until the limits are met.
@@ -1102,14 +1140,12 @@ class ThreadSafeDB:
         """True when the daemon cache holds anything for this session."""
         if session_id in self._loaded_sessions:
             return True
-        prefix = f"{session_id}:"
-        return any(key.startswith(prefix) for key in self._cache)
+        return session_id in self._cache_index
 
     def _refresh_session_cache(self, session_id: str) -> None:
         """Re-read one session so cached fields match what is on disk."""
-        prefix = f"{session_id}:"
-        for key in [key for key in self._cache if key.startswith(prefix) and key not in self._volatile]:
-            del self._cache[key]
+        for key in [key for key in self._cache_index.get(session_id, ()) if key not in self._volatile]:
+            self._cache_pop(key)
         self._loaded_sessions.discard(session_id)
         try:
             with session_state(session_id, timeout=self._state_timeout) as state:
@@ -1189,7 +1225,7 @@ class ThreadSafeDB:
                 except Exception as e:
                     for field in fields:
                         self._drop_volatile_bookkeeping(f"{session_id}:{field}")
-                        self._cache.pop(f"{session_id}:{field}", None)
+                        self._cache_pop(f"{session_id}:{field}")
                     # The session is no longer known to be fully hydrated, so the
                     # next read must go back to storage rather than concluding a
                     # missing field was never set.
@@ -1202,7 +1238,7 @@ class ThreadSafeDB:
                 # writer the same transaction as the last storage writer.
                 for field, value in fields.items():
                     key = f"{session_id}:{field}"
-                    self._cache[key] = value
+                    self._cache_put(key, value)
                     self._drop_volatile_bookkeeping(key)
 
             if failures:

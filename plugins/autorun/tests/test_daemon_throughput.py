@@ -1246,3 +1246,169 @@ def test_a_direct_write_inside_synchronized_session_is_never_skipped_back(backen
         direct_write()
     store.set("dw:flag", False)
     assert ThreadSafeDB().get("dw:flag") is False
+
+
+# --- cache bookkeeping cost: a state write must not scan other sessions ------
+
+
+class _CountingCache(dict):
+    """A cache dict that counts every key a caller iterates over."""
+
+    examined = 0
+
+    def __iter__(self):
+        for key in super().__iter__():
+            type(self).examined += 1
+            yield key
+
+    def keys(self):
+        return iter(self)
+
+    def items(self):
+        for key in list(super().keys()):
+            type(self).examined += 1
+            yield key, self[key]
+
+
+def _write_through_the_public_path(store: ThreadSafeDB, session_id: str) -> None:
+    store.set(f"{session_id}:flag", True)
+    with store.synchronized_session(session_id):
+        pass
+
+
+def test_a_state_write_does_not_examine_other_sessions_cached_keys(backend):
+    """The cost of one write must not grow with how many sessions are cached."""
+    examined_by_size = {}
+    for other_sessions in (10, 400):
+        store = ThreadSafeDB()
+        for index in range(other_sessions):
+            for field in ("a", "b", "c"):
+                store.set_volatile(f"other-{index}:{field}", index)
+        store._cache = _CountingCache(store._cache)
+        _CountingCache.examined = 0
+        _write_through_the_public_path(store, "target")
+        examined_by_size[other_sessions] = _CountingCache.examined
+    assert examined_by_size[400] <= examined_by_size[10] + 5, (
+        f"keys examined for one write: {examined_by_size} (10 vs 400 other sessions)")
+
+
+def _recomputed_index(cache):
+    index = {}
+    for key in cache:
+        for position, char in enumerate(key):
+            if char == ":":
+                index.setdefault(key[:position], set()).add(key)
+    return index
+
+
+def _assert_index_matches(store: ThreadSafeDB, probes) -> None:
+    assert store._cache_index == _recomputed_index(store._cache)
+    assert all(store._cache_index.values()), "an empty index entry leaked"
+    for session_id in probes:
+        brute = session_id in store._loaded_sessions or any(
+            key.startswith(f"{session_id}:") for key in store._cache)
+        assert store._has_cached_fields(session_id) == brute, session_id
+
+
+def test_the_cache_index_matches_a_recount_after_random_operations(backend, monkeypatch):
+    """Seeded fuzz over the public operations, ids and fields containing ':'."""
+    import random
+
+    sessions = ["a", "a:b", "a:b:c", "b", "ab", "x:y"]
+    fields = ["f", "g", "h"]
+    probes = sessions + ["a:", "", "zzz"]
+    rng = random.Random(20261118)
+    store = ThreadSafeDB(volatile_max_entries=6)
+    real_session_state = core.session_state
+    failing = {"on": False}
+
+    @contextlib.contextmanager
+    def maybe_failing(*args, **kwargs):
+        if failing["on"]:
+            raise OSError("injected: disk full")
+        with real_session_state(*args, **kwargs) as state:
+            yield state
+
+    monkeypatch.setattr(core, "session_state", maybe_failing)
+    for step in range(400):
+        key = f"{rng.choice(sessions)}:{rng.choice(fields)}"
+        failing["on"] = rng.random() < 0.15
+        operation = rng.choice(["set", "volatile", "get", "update", "refresh", "stored", "uvolatile"])
+        try:
+            if operation == "set":
+                store.set(key, step)
+            elif operation == "volatile":
+                store.set_volatile(key, step)
+            elif operation == "uvolatile":
+                store.update_volatile(key, lambda current: (current or 0) + 1, 0)
+            elif operation == "get":
+                store.get(key)
+            elif operation == "update":
+                store.update(key, lambda current: step, None)
+            elif operation == "stored":
+                store.get_stored(key)
+            else:
+                with store.synchronized_session(key.rsplit(":", 1)[0]):
+                    pass
+        except Exception:
+            pass  # injected storage failures are expected; the index must still match
+        _assert_index_matches(store, probes)
+    assert store._cache, "the fuzz never cached anything"
+
+
+def test_dropping_the_last_cached_key_of_a_session_leaves_no_index_entry(backend):
+    store = ThreadSafeDB()
+    store.set_volatile("solo:f", 1)
+    assert "solo" in store._cache_index
+    store._drop_volatile("solo:f")
+    assert "solo" not in store._cache_index
+    assert not store._has_cached_fields("solo")
+
+
+def test_a_session_id_that_prefixes_another_sees_the_longer_ids_keys(backend):
+    """startswith semantics are kept: id "a" matches the key "a:b:f"."""
+    store = ThreadSafeDB()
+    store.set_volatile("a:b:f", 1)
+    assert store._has_cached_fields("a")
+    assert store._has_cached_fields("a:b")
+    assert not store._has_cached_fields("ab")
+
+
+def test_state_directory_key_resolves_once_per_unchanged_input(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    first, second = tmp_path / "one", tmp_path / "two"
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(first))
+    session_manager._reset_for_testing()
+    resolved = []
+    real_resolve = Path.resolve
+
+    def counting(self, *args, **kwargs):
+        resolved.append(str(self))
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", counting)
+    for _ in range(50):
+        session_manager._state_dir_key()
+    assert len(resolved) <= 1, f"{len(resolved)} resolves for 50 unchanged lookups"
+
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(second))
+    assert session_manager._state_dir_key() == str(real_resolve(second))
+    assert session_manager._state_dir_key() != str(real_resolve(first))
+    session_manager._reset_for_testing()
+    resolved.clear()
+    session_manager._state_dir_key()
+    assert len(resolved) == 1, "_reset_for_testing must clear the resolution cache"
+    session_manager._reset_for_testing()
+
+
+def test_get_session_manager_follows_a_changed_state_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "one"))
+    session_manager._reset_for_testing()
+    try:
+        one = session_manager.get_session_manager()
+        assert session_manager.get_session_manager() is one
+        monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path / "two"))
+        assert session_manager.get_session_manager() is not one
+    finally:
+        session_manager._reset_for_testing()

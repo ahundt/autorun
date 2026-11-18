@@ -129,6 +129,14 @@ disk, and one hook failure under load on Linux.
    ordinary name such as `notes.md` is still not covered. And the install
    output does not name the backup it made, so look in that directory after an
    upgrade or uninstall if you kept files in an autorun folder.
+7. Starting a session cost more CPU the more sessions the daemon had cached. Each
+   state write scanned every cached key of every session, and each
+   `get_session_manager()` call resolved the state directory path again, about
+   seven times per hook. A write now looks up only its own session's keys, and
+   the resolved path is remembered per unresolved input. On macOS 300 session
+   starts drop from about 0.31 s to about 0.28 s of CPU, and the cost no longer
+   grows with the number of cached sessions. A state directory symlink that is
+   retargeted while the daemon runs is not noticed until it restarts.
 
 ### For contributors
 

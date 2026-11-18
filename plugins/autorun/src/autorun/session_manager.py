@@ -491,9 +491,28 @@ def state_directory(explicit: "str | Path | None" = None) -> Path:
     return Path.home().joinpath(*_DEFAULT_STATE_DIR_PARTS)
 
 
+# Canonical state directory by the unresolved path it came from. Resolving
+# costs several syscalls per path component and ran seven times per hook
+# dispatch. The key is the unresolved path (which already folds in the explicit
+# argument, STATE_DIR_ENV_VAR and the home directory) plus the working
+# directory when that path is relative. A symlink retargeted while the process
+# runs is not noticed; no caller or test relies on that. Plain dict get/set
+# are atomic, and a lost race only repeats one resolve.
+_STATE_DIR_KEYS: dict[tuple[str, str], str] = {}
+_STATE_DIR_KEYS_MAX = 64
+
+
 def _state_dir_key(state_dir: "str | None" = None) -> str:
     """Return the canonical state directory for cache isolation."""
-    return str(state_directory(state_dir).resolve())
+    unresolved = state_directory(state_dir)
+    lookup = (str(unresolved), "" if unresolved.is_absolute() else os.getcwd())
+    key = _STATE_DIR_KEYS.get(lookup)
+    if key is None:
+        key = str(unresolved.resolve())
+        if len(_STATE_DIR_KEYS) >= _STATE_DIR_KEYS_MAX:
+            _STATE_DIR_KEYS.clear()
+        _STATE_DIR_KEYS[lookup] = key
+    return key
 
 
 def _build_store(key: str):
@@ -3865,5 +3884,6 @@ def _reset_for_testing():
     global _store, _manager
     _stores.clear()
     _managers.clear()
+    _STATE_DIR_KEYS.clear()
     _store = None
     _manager = None
