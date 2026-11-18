@@ -126,3 +126,47 @@ def test_a_unix_socket_that_never_connected_is_tried_again(monkeypatch, tmp_path
     assert code == 0
     assert len(connections) == 2, "the request was not sent again"
     assert "from the daemon" in out, out
+
+
+def test_connect_refuses_a_unix_socket_that_never_connected(monkeypatch):
+    """`ipc.connect` must not hand back a socket the daemon never accepted.
+
+    On Linux a non-blocking AF_UNIX connect returns EAGAIN when the daemon's
+    listen backlog is full, and asyncio returns that socket as connected. The
+    caller then marks its request as sent and writes to nothing. The first
+    recv fails with EINVAL, which `forward` already retries, but when the
+    first send fails instead asyncio reports only `ConnectionResetError
+    ('Connection lost')`, indistinguishable from a daemon that took the
+    request and died: three of four Python 3.12 CI runs on ubuntu-26.04 failed
+    `test_two_bursts_and_restart[unix]` with "Daemon accepted the request but
+    did not answer". Asking the socket for its peer settles it before anything
+    is sent.
+    """
+    import asyncio
+    import socket
+
+    from autorun import ipc
+
+    if not ipc.HAS_UNIX_SOCKETS:
+        pytest.skip("the daemon listens on TCP on this platform")
+
+    unconnected = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    closed = []
+
+    class Writer:
+        def get_extra_info(self, name):
+            return unconnected if name == "socket" else None
+
+        def close(self):
+            closed.append(True)
+
+    async def open_unix_connection(**_kwargs):
+        return object(), Writer()
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", open_unix_connection)
+    try:
+        with pytest.raises(ConnectionRefusedError, match="never connected"):
+            asyncio.run(ipc.connect())
+    finally:
+        unconnected.close()
+    assert closed == [True], "the unconnected transport was left open"

@@ -53,6 +53,14 @@ marketplace itself carries a separate `version` field.
    full volume that made the unpatched daemon degrade every tool call
    (`state_evaluation_failed`) now runs them normally. Guarded deletions still
    need `/ar:ok rm` typed by you, which works again once state can be written.
+5. A hook sent while the daemon's connection queue is full is now retried
+   instead of failing with "Daemon accepted the request but did not answer:
+   ConnectionResetError('Connection lost')". On Linux such a connection attempt
+   returns a socket that never connected, and the request written to it went
+   nowhere. 1.0.0rc4 retried this when the first read failed (EINVAL) but not
+   when the first write did. `ipc.connect` now asks the socket for its peer
+   and reports a socket without one as a refused connection, before anything
+   is sent, so the client waits and reconnects.
 
 ## [1.0.0rc4] - 2026-11-15
 

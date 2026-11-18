@@ -338,9 +338,26 @@ async def connect(*, limit: int = 2**16, timeout: float = 5.0):
         OSError: Other connection errors.
     """
     if HAS_UNIX_SOCKETS:
-        return await asyncio.open_unix_connection(
+        reader, writer = await asyncio.open_unix_connection(
             path=str(SOCKET_PATH), limit=limit
         )
+        # Linux answers EAGAIN to a non-blocking AF_UNIX connect when the
+        # daemon's listen backlog is full, and asyncio returns that socket as
+        # connected. A caller would then send its request to nothing, and a
+        # failed first send surfaces only as "Connection lost", which reads as
+        # a daemon that took the request and died. A socket with no peer never
+        # connected: say so here, before anything is sent, so callers retry.
+        sock = writer.get_extra_info("socket")
+        try:
+            if sock is not None:
+                sock.getpeername()
+        except OSError as error:
+            writer.close()
+            raise ConnectionRefusedError(
+                error.errno,
+                f"Unix socket {SOCKET_PATH} never connected ({error.strerror})",
+            ) from error
+        return reader, writer
     else:
         port = _read_port()
         preamble = connection_preamble()
