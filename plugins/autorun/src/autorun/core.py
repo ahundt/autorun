@@ -2170,9 +2170,27 @@ class EventContext:
 
         Set when the session runs inside a host that tracks work in its own
         tool in place of the harness's task tools (platforms.HostTaskList);
-        None otherwise.
+        None otherwise. The environment only says the host is there: whether
+        this session has the tool is ``host_task_list_in_use``.
         """
         return self._host_task_list_tool
+
+    #: Session state recording that a main session called its host's task-list
+    #: tool (task_lifecycle.record_host_task_list_use). The environment
+    #: variables that name the host do not prove the tool is attached (a desktop
+    #: session without it was observed 2026-11-17), so only a call does.
+    HOST_TASK_LIST_OBSERVED = "host_task_list_observed"
+
+    @property
+    def host_task_list_in_use(self) -> bool:
+        """True once this main session called its host's task-list tool.
+
+        Scoped like the task-call proof: a subagent's call proves nothing for
+        the session, and a subagent never reads the main session's proof.
+        """
+        if not self._host_task_list_tool or self.agent_id:
+            return False
+        return bool(self.state_get(self.HOST_TASK_LIST_OBSERVED, False))
 
     #: Session state recording that a main session called one of its task
     #: tools successfully (task_lifecycle.track_task_operations): the model
@@ -2195,12 +2213,14 @@ class EventContext:
         successfully proves the tools: a Claude session on an older model has
         them without any switch. None means unknown.
 
-        A host that keeps its own task list (``host_task_list_tool``) answers
-        first, with an empty set: the host told the model not to use the
-        harness's task tools, so no task gate may demand them, whatever a
-        switch or an earlier task call would otherwise prove.
+        A host that keeps its own task list answers first, with an empty set,
+        once this session has called that list's tool (``host_task_list_in_use``):
+        the host told the model not to use the harness's task tools, so no task
+        gate may demand them, whatever a switch or an earlier task call would
+        otherwise prove. Before such a call the host variables prove nothing and
+        the session is judged as a terminal session with the same switches.
         """
-        if self._host_task_list_tool:
+        if self.host_task_list_in_use:
             return frozenset()
         if self._active_tools is not None:
             return self._active_tools

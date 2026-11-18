@@ -220,62 +220,176 @@ def _session_start(session_id: str, host_task_list_tool: str | None) -> str:
     return str(plugins.app.dispatch(ctx))
 
 
-def test_desktop_session_start_points_at_the_host_list_not_task_tools(isolated_session):
-    text = _session_start("desktop-start", DESKTOP_TOOL)
+def _hook_ctx(payload: dict, store) -> EventContext:
+    """Build the context the daemon builds from a hook payload (core.py
+    AutorunDaemon.handle_client): normalize, then pass the normalized fields on."""
+    normalized = normalize_hook_payload(payload)
+    return EventContext(
+        session_id=normalized["session_id"],
+        event=normalized["hook_event_name"],
+        prompt=normalized["prompt"],
+        tool_name=normalized["tool_name"],
+        tool_input=normalized["tool_input"],
+        tool_input_envelopes=normalized["tool_input_envelopes"],
+        tool_result=normalized["tool_result"],
+        store=store,
+        cli_type=normalized["cli_type"],
+        source=normalized["source"],
+        agent_id=normalized["agent_id"],
+        agent_type=normalized["agent_type"],
+        active_tools=normalized["active_tools"],
+        host_task_list_tool=normalized["host_task_list_tool"],
+    )
+
+
+def _dispatch(event: str, session_id: str, store, env=None, **fields):
+    """Dispatch one hook event through the real chain; return (response, ctx)."""
+    from autorun import plugins
+
+    payload = {"hook_event_name": event, "session_id": session_id, "cli_type": "claude", **fields}
+    if env is not None:
+        payload["autorun_harness_env"] = env
+    ctx = _hook_ctx(payload, store)
+    if event != "SessionStart":
+        ctx.autorun_active = False
+        ctx.autorun_stage = EventContext.STAGE_INACTIVE
+    return plugins.app.dispatch(ctx), ctx
+
+
+def _start_text(session_id: str, store, env) -> str:
+    response, _ = _dispatch("SessionStart", session_id, store, env, source="startup")
+    return str(response)
+
+
+SWITCH = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+
+
+def test_desktop_session_start_without_proof_is_conditional(isolated_session):
+    """(a) The environment alone does not prove the plan tool exists."""
+    text = _start_text("desktop-start", ThreadSafeDB(), DESKTOP_ENV)
+
+    assert f"If this session has `{DESKTOP_TOOL}`" in text
+    assert "do not load or call TaskCreate, TaskGet, TaskList or TaskUpdate" in text
+    assert "Otherwise, before tracked work, use ToolSearch once with `select:TaskCreate" in text
+    # It must not assert the tool exists, and must not say autorun's tracking is off.
+    assert "keeps its task list in" not in text
+    assert "stays off" not in text
+
+
+def test_desktop_session_start_after_proof_names_the_host_list(isolated_session):
+    """(b) Once the session has called the plan tool, the instruction is unconditional."""
+    store = ThreadSafeDB()
+    _dispatch("PostToolUse", "desktop-start-proof", store, DESKTOP_ENV, tool_name=DESKTOP_TOOL,
+              tool_input={"steps": []}, tool_response="Plan shown (3 steps).")
+    text = _start_text("desktop-start-proof", store, DESKTOP_ENV)
 
     assert DESKTOP_TOOL in text
-    assert "select:Task" not in text
+    assert "If this session has" not in text
     assert "ToolSearch" not in text
-    # The settings.json fix is for sessions that need Claude's Task tools; a
-    # desktop session is told not to use them, so it must not be sent there.
+    assert "select:Task" not in text
     assert "CLAUDE_CODE_ENABLE_TODO_TOOLS" not in text
     assert "not enforcing task tracking yet" not in text
 
 
-def test_task_gates_stand_down_under_a_host_task_list(isolated_session):
-    """SessionStart says autorun's tracking is off there; the gates must agree.
-
-    Every task gate (staleness, Stop, SessionStart resume) asks
-    ``task_tool_evidence``. Under a host list it answers known-empty, even when
-    the switch was forwarded or the model called TaskCreate anyway, so no gate
-    demands the Task tools the host told the model not to use.
-    """
-    from autorun.platforms import (
-        TASK_UPDATE_CAPABILITY_ROLES,
-        registered_task_tools,
-        task_enforcement_capability_available,
-    )
+def test_task_evidence_follows_the_proof_not_the_environment(isolated_session):
+    """(a)+(b) Same switch variables: desktop without proof equals a terminal;
+    after the plan tool was called the evidence is the empty set."""
+    from autorun.platforms import registered_task_tools
 
     store = ThreadSafeDB()
-    switch_proven = registered_task_tools("claude")
-    desktop = EventContext(
-        session_id="desktop-gates", event="Stop", store=store, cli_type="claude",
-        active_tools=switch_proven, host_task_list_tool=DESKTOP_TOOL,
-    )
-    desktop.state_set(EventContext.TASK_TOOLS_OBSERVED, True)
-    assert desktop.task_tool_evidence == frozenset()
-    assert not task_enforcement_capability_available(
-        "claude", desktop.task_tool_evidence, TASK_UPDATE_CAPABILITY_ROLES
-    )
+    env = {**DESKTOP_ENV, **SWITCH}
+    terminal_env = {"CLAUDE_CODE_ENTRYPOINT": "cli", **SWITCH}
 
-    terminal = EventContext(
-        session_id="terminal-gates", event="Stop", store=store, cli_type="claude",
-        active_tools=switch_proven,
-    )
-    assert terminal.task_tool_evidence == switch_proven
+    def evidence(session_id, harness_env):
+        _, ctx = _dispatch("Stop", session_id, store, harness_env)
+        return ctx.task_tool_evidence
+
+    assert evidence("evi-desktop", env) == evidence("evi-terminal", terminal_env)
+    assert evidence("evi-desktop", env) == registered_task_tools("claude")
+
+    _dispatch("PostToolUse", "evi-desktop", store, env, tool_name=DESKTOP_TOOL, tool_input={})
+    assert evidence("evi-desktop", env) == frozenset()
+    # Proof belongs to the session that made the call.
+    assert evidence("evi-desktop-other", env) == registered_task_tools("claude")
 
 
-def test_desktop_stop_does_not_block_on_task_tool_tasks(isolated_session):
-    from autorun import plugins
+def test_proof_survives_a_new_store_over_the_same_session_state(isolated_session):
+    """(b) The record lives in session state like the task-call proof, so a
+    later hook process or a restarted daemon (a fresh ThreadSafeDB) sees it."""
+    _dispatch("PostToolUse", "persist", ThreadSafeDB(), DESKTOP_ENV, tool_name=DESKTOP_TOOL, tool_input={})
+    _, ctx = _dispatch("Stop", "persist", ThreadSafeDB(), DESKTOP_ENV)
+    assert ctx.task_tool_evidence == frozenset()
+
+
+def test_a_subagent_call_does_not_prove_the_tool_for_the_session(isolated_session):
+    """(b) Same scoping as the task-call proof: only the main agent's call counts."""
     from autorun.platforms import registered_task_tools
+
+    store = ThreadSafeDB()
+    env = {**DESKTOP_ENV, **SWITCH}
+    _dispatch("PostToolUse", "sub", store, env, tool_name=DESKTOP_TOOL, tool_input={},
+              agent_id="agent-1", agent_type="general-purpose")
+    _, ctx = _dispatch("Stop", "sub", store, env)
+    assert ctx.task_tool_evidence == registered_task_tools("claude")
+
+
+def test_the_proof_is_recorded_before_any_handler_that_can_answer(isolated_session):
+    """The PostToolUse chain stops at the first handler that answers, so the
+    recorder must precede the handlers that can (stop-block delivery,
+    staleness and creation reminders)."""
+    from autorun import plugins
+
+    names = [h.__name__ for h in plugins.app.chains["PostToolUse"]]
+    recorder = names.index("record_host_task_list_use")
+    for later in ("deliver_pending_stop_injection", "check_task_staleness",
+                  "remind_until_tasks_created", "track_task_operations"):
+        assert recorder < names.index(later)
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"CLAUDE_CODE_ENTRYPOINT": "cli", "CLAUDE_CODE_TERMINAL_MCP_TOOLS": "mcp__ccd_turn__wrap_up"},
+        {"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"},
+        {},
+    ],
+)
+def test_the_tool_name_proves_nothing_outside_the_desktop_app(isolated_session, env):
+    """(c) An MCP tool that happens to share the name changes nothing off desktop."""
+    from autorun.platforms import registered_task_tools
+
+    store = ThreadSafeDB()
+    env = {**env, **SWITCH}
+    # Own session per case: SessionStart's once-per-session claim outlives a store.
+    sid = f"nodesk-{env.get('CLAUDE_CODE_ENTRYPOINT', 'unset')}-{len(env)}"
+    _dispatch("PostToolUse", sid, store, env, tool_name=DESKTOP_TOOL, tool_input={})
+    _, ctx = _dispatch("Stop", sid, store, env)
+    assert ctx.task_tool_evidence == registered_task_tools("claude")
+    assert ctx.state_get(EventContext.HOST_TASK_LIST_OBSERVED, False) is False
+    assert "ToolSearch" in _start_text(sid, store, env)
+
+
+def test_other_tools_in_a_desktop_session_record_nothing(isolated_session):
+    store = ThreadSafeDB()
+    _dispatch("PostToolUse", "other-tool", store, DESKTOP_ENV, tool_name="mcp__ccd_turn__wrap_up", tool_input={})
+    _, ctx = _dispatch("Stop", "other-tool", store, DESKTOP_ENV)
+    assert ctx.state_get(EventContext.HOST_TASK_LIST_OBSERVED, False) is False
+
+
+def test_desktop_stop_blocks_without_proof_and_not_with_it(isolated_session):
+    """(d) Without proof a desktop Stop blocks on incomplete tasks exactly as a
+    terminal Stop does; once the session has used the plan tool it does not."""
+    from autorun import plugins
     from autorun.task_lifecycle import TaskLifecycle
 
-    def stop(host_tool):
-        ctx = EventContext(
-            session_id="desktop-stop" if host_tool else "terminal-stop",
-            event="Stop", store=ThreadSafeDB(), cli_type="claude",
-            active_tools=registered_task_tools("claude"),
-            host_task_list_tool=host_tool,
+    def stop(session_id, env, prove):
+        store = ThreadSafeDB()
+        if prove:
+            _dispatch("PostToolUse", session_id, store, env, tool_name=DESKTOP_TOOL, tool_input={})
+        ctx = _hook_ctx(
+            {"hook_event_name": "Stop", "session_id": session_id, "cli_type": "claude",
+             "autorun_harness_env": env},
+            store,
         )
         ctx.autorun_active = False
         ctx.autorun_stage = EventContext.STAGE_INACTIVE
@@ -284,8 +398,10 @@ def test_desktop_stop_does_not_block_on_task_tool_tasks(isolated_session):
         manager.update_task("1", {"status": "in_progress"}, "started")
         return plugins.app.dispatch(ctx)
 
-    assert "Unfinished" in str(stop(None)), "control: a terminal session blocks"
-    result = stop(DESKTOP_TOOL)
+    env = {**DESKTOP_ENV, **SWITCH}
+    assert "Unfinished" in str(stop("stop-terminal", {"CLAUDE_CODE_ENTRYPOINT": "cli", **SWITCH}, False)), "control"
+    assert "Unfinished" in str(stop("stop-desktop-no-proof", env, False))
+    result = stop("stop-desktop-proof", env, True)
     assert result is None or "Unfinished" not in str(result)
 
 

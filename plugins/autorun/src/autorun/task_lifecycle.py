@@ -308,28 +308,45 @@ def task_tool_recovery_sentence(cli_type: str | None) -> str:
 
 
 def _host_task_list_instruction(tool: str) -> str:
-    """SessionStart guidance for a session whose host keeps its own task list.
+    """SessionStart guidance for a session seen using its host's task list.
 
     The host (the Claude desktop app's Code tab) tells the model to use
     ``tool`` instead of Claude's task tools and not to search for them, so
     the ordinary load instruction would contradict it and leave the session
     with two task lists.
     """
-    names = _claude_task_tool_names()
     return (
         f"This session's host keeps its task list in `{tool}`. Track work "
-        f"there, and do not load or call {', '.join(names[:-1])} or {names[-1]}. "
+        f"there, and {_do_not_use_task_tools()}. "
         "autorun does not read that list, so its task tracking stays off in "
         "this session."
     )
 
 
+def _do_not_use_task_tools() -> str:
+    names = _claude_task_tool_names()
+    return f"do not load or call {', '.join(names[:-1])} or {names[-1]}"
+
+
 def _deferred_task_tool_instruction(ctx: EventContext) -> str:
-    """The SessionStart load instruction, with one recovery path, not two."""
-    if ctx.host_task_list_tool:
-        return _host_task_list_instruction(ctx.host_task_list_tool)
+    """The SessionStart load instruction, with one recovery path, not two.
+
+    Inside a host that keeps its own task list the variables only say the tool
+    may exist, so the instruction is conditional until the session has used it
+    (``EventContext.host_task_list_in_use``).
+    """
+    host_tool = ctx.host_task_list_tool
+    if host_tool and ctx.host_task_list_in_use:
+        return _host_task_list_instruction(host_tool)
+    lead = "Before tracked work, use"
+    if host_tool:
+        lead = (
+            f"If this session has `{host_tool}` (the Claude desktop app's task "
+            f"list), track work there and {_do_not_use_task_tools()}. "
+            "Otherwise, before tracked work, use"
+        )
     load = (
-        "Before tracked work, use ToolSearch once with "
+        f"{lead} ToolSearch once with "
         f"`select:{','.join(_claude_task_tool_names())}` to load Claude Code's "
         "deferred task tools. If it returns no match, do not loop"
     )
@@ -4974,6 +4991,22 @@ def register_hooks(app_instance) -> None:
                 "They stay waiting until your next message is recorded.",
                 channel="both",
             )
+        return None
+
+    @app_instance.on("PostToolUse")
+    def record_host_task_list_use(ctx: EventContext) -> None:
+        """Record that this main session called its host's task-list tool.
+
+        Registered ahead of every handler that can answer: the chain is
+        first-wins, and a PostToolUse that follows a call that ran is the only
+        proof the host's tool exists (EventContext.host_task_list_in_use). One
+        string comparison per event; state is touched only for that tool.
+        """
+        host_tool = ctx.host_task_list_tool
+        if not host_tool or ctx.tool_name != host_tool or ctx.agent_id:
+            return None
+        if not ctx.state_get(EventContext.HOST_TASK_LIST_OBSERVED, False):
+            ctx.state_set(EventContext.HOST_TASK_LIST_OBSERVED, True)
         return None
 
     @app_instance.on("PostToolUse")

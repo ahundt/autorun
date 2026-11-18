@@ -11,17 +11,17 @@ marketplace itself carries a separate `version` field.
 
 ### Fixed
 
-1. In the Claude desktop app's Code tab, autorun no longer tells the session to
-   load TaskCreate, TaskGet, TaskList and TaskUpdate. The app keeps the
-   session's task list in `mcp__ccd_turn__update_plan` and tells the model to
-   use that list instead of those tools. autorun's SessionStart message said
-   the opposite, and one session followed autorun and kept two task lists.
-   autorun now recognises the app from `CLAUDE_CODE_ENTRYPOINT=claude-desktop`
-   together with a `mcp__ccd_turn__` tool in `CLAUDE_CODE_TERMINAL_MCP_TOOLS`,
-   points the session at the app's list, and keeps its own task gates (Stop,
-   staleness, SessionStart resume) off there. Terminal and SDK sessions are
-   unchanged. The registry holds the host as `Platform.host_task_lists`
-   (`platforms.HostTaskList`).
+1. In the Claude desktop app's Code tab, autorun no longer pushes the session
+   toward TaskCreate when the app has given it its own plan list,
+   `mcp__ccd_turn__update_plan`. The app tells the model to use that list
+   instead of the Task tools, and autorun's SessionStart message used to say
+   the opposite. A desktop session now gets a conditional instruction: use the
+   plan list if the session has it, otherwise load the Task tools as before.
+   Once autorun sees the session call `mcp__ccd_turn__update_plan`, it names
+   that list outright and keeps its own task gates (Stop, staleness,
+   SessionStart resume) off for that session. A desktop session that never
+   calls it, because the app did not attach it, keeps the Task tools and the
+   gates, as do terminal and SDK sessions.
 2. Hooks run as the console command `autorun --cli <harness>` now forward the
    same harness variables as `hooks/hook_entry.py`. The Claude desktop app
    loads the plugin's own `hooks/hooks.json`, which uses that command, and it

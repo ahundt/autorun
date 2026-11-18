@@ -200,22 +200,26 @@ class TaskToolSwitch:
 
 @dataclass(frozen=True, slots=True)
 class HostTaskList:
-    """A host application that runs this harness and keeps its own task list.
+    """A host application that runs this harness and may keep its own task list.
 
     Such a host tells the model to track work in ``tool`` instead of the
-    harness's task tools, so autorun must not tell the same session to load
-    those task tools. The host is recognised only from variables the harness
-    process carries, which both hook paths forward
-    (:func:`forwarded_harness_env_names`): ``entrypoint_env``
-    equal to ``entrypoint``, and ``tools_env`` naming at least one tool that
-    starts with ``tool_prefix`` (the MCP server that owns ``tool`` is attached).
-    ``source`` records where those values were observed.
+    harness's task tools. The variables below only say the host is there; they
+    do not prove the tool is attached: a desktop Code-tab session with both
+    variables had working TaskCreate/TaskUpdate and no ``mcp__ccd_turn__*``
+    tool (2026-11-17). So they make the host a candidate only. autorun treats
+    the list as the session's once it has seen the session call ``tool``
+    (``EventContext.host_task_list_in_use``, recorded by
+    ``task_lifecycle.record_host_task_list_use``); until then the session is
+    judged as a terminal session and the SessionStart text is conditional on
+    the tool existing. A nested ``claude`` that inherits the desktop variables
+    is just that case: it never calls the tool, so it keeps Task tools and the
+    gates.
 
-    Known limit: the desktop app's tool processes keep both variables, so a
-    ``claude`` started from inside a desktop session (``claude -p`` from its
-    Bash tool) inherits them and is treated as a desktop session too: its task
-    gates stay off and it is pointed at a list it does not have. No variable
-    observed so far separates the two.
+    The host is recognised from variables the harness process carries, which
+    both hook paths forward (:func:`forwarded_harness_env_names`):
+    ``entrypoint_env`` equal to ``entrypoint``, and ``tools_env`` naming at
+    least one tool that starts with ``tool_prefix`` (the MCP server that owns
+    ``tool`` is attached). ``source`` records where those values were observed.
     """
 
     entrypoint_env: str
@@ -1745,7 +1749,13 @@ CLAUDE = register(
                 source=(
                     "claude process environment of a desktop Code-tab session, "
                     "2026-11-16: desktop app 5.11492.5, Claude Code 2.1.325, "
-                    "CLAUDE_CODE_TERMINAL_MCP_TOOLS=mcp__ccd_turn__wrap_up"
+                    "CLAUDE_CODE_TERMINAL_MCP_TOOLS=mcp__ccd_turn__wrap_up; "
+                    "2026-11-17: a desktop Code-tab session (Claude Code "
+                    "2.1.326) with the same variables, CLAUDE_CODE_ENABLE_TASKS=1 "
+                    "and CLAUDE_CODE_ENABLE_TODO_TOOLS=1 had working "
+                    "TaskCreate/TaskUpdate and no mcp__ccd_turn__ tool, so the "
+                    "variables do not prove the tool; other desktop sessions "
+                    "called it (9 of 15 recent ones)"
                 ),
             ),
         ),
