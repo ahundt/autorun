@@ -102,6 +102,11 @@ SUBSTITUTED_NAMES = ("hooks.json", "plugin.json", "settings.json")
 #: registration-withdrawal timestamp.
 CACHE_METADATA_GLOBS = (*IGNORED_GLOBS, ".orphaned_at")
 
+#: What a retired cache version holds that is neither autorun's payload nor the
+#: user's work: the runtime autorun builds (``.venv``) and Claude's timestamp.
+#: ``fs.withdrawn`` does not back these up with a user's unrecorded files.
+CACHE_DISPOSABLE_GLOBS = (".venv", ".orphaned_at")
+
 
 def _copy_payload(source: Path, staged: Path) -> None:
     """Copy a plugin the way Claude's own installer writes it into the cache.
@@ -492,6 +497,7 @@ def retire_cache_versions(
                 plugin=plugin,
                 ignored_globs=CACHE_METADATA_GLOBS,
                 preserve_lock_path=True,
+                disposable=CACHE_DISPOSABLE_GLOBS,
             ):
                 raise OSError(f"could not retire proven cache tree: {directory}")
             removed.append(directory)

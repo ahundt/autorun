@@ -154,6 +154,9 @@ __all__ = [
     "INSTALL_LOCK_NAME",
     "SKIP_NAMES",
     "IGNORED_GLOBS",
+    "REGENERATED_GLOBS",
+    "HARNESS_RECORD_GLOBS",
+    "TOOL_CACHE_GLOBS",
 ]
 
 OWNED_MARKER_NAME = ".autorun-owned"
@@ -163,6 +166,31 @@ SKIP_NAMES = frozenset({
     ".ruff_cache", "htmlcov",
 })
 
+#: What an operating system or interpreter writes into any directory in use.
+#: The one definition: ``IGNORED_GLOBS`` includes it, ``provenance`` leaves it
+#: out of an installed tree's digest, and :func:`_park_unaccounted` does not
+#: count it as the user's work. It is rewritten on next use, so a backup of it
+#: would only grow the backup directory on every ordinary upgrade.
+REGENERATED_GLOBS: tuple[str, ...] = (
+    "*.pyc", "*.pyo", ".DS_Store", "._*", "Thumbs.db", "desktop.ini",
+)
+
+#: Files a harness's own CLI writes into an extension it installed. Never ours
+#: and never the user's, so neither a manifest nor a backup holds them.
+HARNESS_RECORD_GLOBS: tuple[str, ...] = (
+    ".*-extension-install.json", "qwen-extension.json",
+)
+
+#: Caches and reports that test and lint tools write into a tree they run in. A
+#: plugin cache Claude copies from a development checkout holds them. They are
+#: rebuilt by the next run, so :func:`_park_unaccounted` neither counts nor
+#: copies them. ``.git`` and ``.venv`` are not here: inside a tree autorun
+#: installed they are the user's work.
+TOOL_CACHE_GLOBS: tuple[str, ...] = (
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", "htmlcov",
+    ".coverage", ".coverage.*", "coverage.xml",
+)
+
 #: Build junk that neither reaches a user's config directory nor appears in a
 #: manifest. One declaration with two consumers, ``_ignored`` for the scan and
 #: ``_IGNORED`` for the copy, because the two must agree exactly and once did
@@ -171,13 +199,13 @@ SKIP_NAMES = frozenset({
 #: for an identical tree, and each install rewrote it.
 IGNORED_GLOBS: tuple[str, ...] = (
     *sorted(SKIP_NAMES),
-    "*.pyc", "*.pyo", "*.tmp", "*~", "*.bak",
+    "*.tmp", "*~", "*.bak",
     ".coverage", ".coverage.*", "coverage.xml",
-    ".*-extension-install.json", "qwen-extension.json",
+    *HARNESS_RECORD_GLOBS,
     # File-manager metadata written into any directory a user opens. Recorded,
     # it made every later install KEEP the tree as "edited" and uninstall
     # leave it behind.
-    ".DS_Store", "._*", "Thumbs.db", "desktop.ini",
+    *REGENERATED_GLOBS,
 )
 _LINK = "link:"
 
@@ -1054,6 +1082,70 @@ def _default_backup_root() -> Path:
     return autorun_state_dir() / "installer" / "backups"
 
 
+def _park_unaccounted(
+    held: Path,
+    backup_root: Path | None = None,
+    *,
+    name: str = "",
+    disposable: Iterable[str] = (),
+) -> Path | None:
+    """Park ``held`` when it holds content autorun neither wrote nor read.
+
+    ``held`` is a tree about to be deleted or replaced: the quarantined copy
+    in :func:`withdrawn`, the ``previous`` stage in :func:`_swapped`. Every
+    decision that led here read the tree through ``scan_tree``, which skips
+    ``IGNORED_GLOBS``, so a user's ``SKILL.md.bak``, ``notes~``, ``.git/HEAD``
+    or ``__pycache__/my-notes.txt`` was invisible to it and went with the tree.
+
+    What autorun accounts for is the marker's manifest (recorded and intended
+    files) when it has hashes. Without hashes (an unmarked tree proven by a
+    receipt or a content match, or a hashless legacy marker) it is every path
+    the ownership scan reads, that is, one with no ``IGNORED_GLOBS`` component.
+    A file under :data:`REGENERATED_GLOBS` or :data:`HARNESS_RECORD_GLOBS` names
+    is never counted, nor is any path with a component matching a
+    ``disposable`` glob: names the caller knows are neither autorun's payload
+    nor the user's work, such as a harness-managed ``.venv``. Those and
+    :data:`TOOL_CACHE_GLOBS` directories are not descended and are left out of
+    the copy. When anything else is left, the rest of the tree is copied to
+    ``backup_root`` (default :func:`_default_backup_root`) by
+    :func:`_park_backup`, which also drops our marker from the copy, and its
+    path is returned. The verdict is unchanged: the caller still deletes or
+    replaces the tree.
+
+    Complexity: one ``os.walk`` of ``held`` (no hashing, no reads), which the
+    caller was already about to delete or replace; a copy only when a user's
+    file was found. Never called for a tree that is kept or skipped.
+    """
+    if held.is_symlink() or not held.is_dir():
+        return None
+    manifest = read_marker(held, name=name)
+    accounted: set[str] | None = (
+        set(manifest.files) | set(manifest.intended_files)
+        if manifest is not None and manifest.files
+        else None
+    )
+    skipped = (*TOOL_CACHE_GLOBS, *disposable)
+    junk = (*REGENERATED_GLOBS, *HARNESS_RECORD_GLOBS, *skipped)
+    for directory, subdirs, names in os.walk(held):
+        here = Path(directory)
+        subdirs[:] = [d for d in subdirs if not _ignored(d, skipped)]
+        entries = [*names, *(d for d in subdirs if (here / d).is_symlink())]
+        for entry in entries:
+            relative = (here / entry).relative_to(held).as_posix()
+            if relative == OWNED_MARKER_NAME or _ignored(entry, junk):
+                continue
+            if accounted is not None:
+                unread = relative not in accounted
+            else:
+                unread = any(_ignored(part) for part in Path(relative).parts)
+            if unread:
+                return _park_backup(
+                    held, backup_root or _default_backup_root(), name=name,
+                    skip=skipped,
+                )
+    return None
+
+
 def _identity(path: Path) -> tuple | None:
     """Content identity for one file, link, or complete directory tree.
 
@@ -1105,7 +1197,13 @@ def _identity(path: Path) -> tuple | None:
 
 
 @contextmanager
-def _swapped(target: Path) -> Iterator[Path]:
+def _swapped(
+    target: Path,
+    *,
+    backup_root: Path | None = None,
+    park_unaccounted: bool = True,
+    disposable: Iterable[str] = (),
+) -> Iterator[Path]:
     """Yield a same-filesystem stage and atomically replace ``target`` on success.
 
     The caller decides whether the target may be replaced *before* filling the
@@ -1123,6 +1221,15 @@ def _swapped(target: Path) -> Iterator[Path]:
     than discarded — the same place :func:`_resume_interrupted` puts a tree it
     cannot put back. The publication still completes: a partly-installed
     package is its own failure, and the user's copy is recoverable.
+
+    The replaced tree is deleted with the stage on success, so it is also
+    parked, in ``backup_root`` or the default one, when it holds a file autorun
+    did not write and did not read (:func:`_park_unaccounted`). That check and
+    its copy run before the new tree lands: a failure there rolls the swap back
+    instead of losing the file. ``publish_files`` and the snapshot restore copy
+    the old tree into the stage, so nothing is lost there and they pass
+    ``park_unaccounted=False``: a shared ``commands/`` holds the user's files
+    by design.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
@@ -1176,6 +1283,10 @@ def _swapped(target: Path) -> Iterator[Path]:
                     frozen = _identity(backup)
                     if judged is None or frozen is None or frozen != judged:
                         _park_backup(backup, _default_backup_root(), name=target.name)
+                    elif park_unaccounted:
+                        _park_unaccounted(
+                            backup, backup_root, name=target.name, disposable=disposable
+                        )
                 # A writer can recreate ``target`` after the first rename and
                 # before this one.  Preserve that new object and retry rather
                 # than either deleting it or losing the frozen previous tree
@@ -1215,6 +1326,7 @@ def published(
     *,
     plugin: str = "",
     authorize: Callable[[], Decision] | None = None,
+    backup_root: Path | None = None,
     **settings: str,
 ) -> Iterator[Path]:
     """Stage beside ``target``, record what we wrote, and swap it in atomically.
@@ -1232,7 +1344,7 @@ def published(
     guarantees that only within a filesystem) and keeps the rollback local. The
     lock also lives in the parent, so it outlives the artifact being replaced.
     """
-    with _swapped(target) as staged:
+    with _swapped(target, backup_root=backup_root) as staged:
         if authorize is not None:
             decision = authorize()
             if decision.verdict is not Verdict.PUBLISH:
@@ -1463,12 +1575,18 @@ def fill_tree(source: Path, target: Path) -> Path | None:
     return target
 
 
-def _copy_path(source: Path, target: Path) -> None:
-    """Copy one file, directory, or link without following a link."""
+def _copy_path(source: Path, target: Path, *, skip: Iterable[str] = ()) -> None:
+    """Copy one file, directory, or link without following a link.
+
+    ``skip`` names (globs) are left out of a directory copy.
+    """
     if source.is_symlink():
         target.symlink_to(os.readlink(source), target_is_directory=source.is_dir())
     elif source.is_dir():
-        shutil.copytree(source, target, symlinks=True)
+        shutil.copytree(
+            source, target, symlinks=True,
+            ignore=shutil.ignore_patterns(*skip) if skip else None,
+        )
     else:
         shutil.copy2(source, target)
 
@@ -1505,7 +1623,7 @@ def preserved_paths(paths: Iterable[Path]) -> Iterator[Callable[[], None]]:
         finally:
             if not committed:
                 for path, snapshot in snapshots:
-                    with _swapped(path) as staged:
+                    with _swapped(path, park_unaccounted=False) as staged:
                         _copy_path(snapshot, staged)
 
 
@@ -1518,6 +1636,7 @@ def withdrawn(
     backup_root: Path | None = None,
     ignored_globs: Iterable[str] = IGNORED_GLOBS,
     preserve_lock_path: bool = False,
+    disposable: Iterable[str] = (),
 ) -> bool:
     """Delete a directory autorun owns, restoring it if the delete fails.
 
@@ -1532,6 +1651,13 @@ def withdrawn(
     ``backup_root`` that tree is refused, so a caller cannot discard an
     unrecorded copy by omission; a hashed tree with an edit is refused
     whatever ``force`` says.
+
+    A file in the tree that autorun neither wrote nor read, such as a user's
+    ``SKILL.md.bak`` or ``.git/``, is copied to ``backup_root`` (default
+    :func:`_default_backup_root`) before the delete; see
+    :func:`_park_unaccounted`. ``disposable`` globs name content that is
+    neither autorun's nor the user's (Claude's cache ``.venv``), so it is
+    neither copied nor counted.
 
     Returns True only when the directory is actually gone. The variant this
     replaces used ``shutil.rmtree(ignore_errors=True)`` and reported success
@@ -1603,6 +1729,11 @@ def withdrawn(
                 if park:
                     assert backup_root is not None
                     _park_backup(quarantined, backup_root, name=target.name)
+                else:
+                    # A tree already copied whole above needs no second copy.
+                    _park_unaccounted(
+                        quarantined, backup_root, name=target.name, disposable=disposable
+                    )
                 shutil.rmtree(quarantined)
             except BaseException:
                 _put_back(quarantined, target)
@@ -1769,7 +1900,7 @@ def publish_files(
     if occupied is not None:
         return occupied
     actual = directory.resolve() if directory.is_symlink() else directory
-    with _swapped(actual) as staged:
+    with _swapped(actual, park_unaccounted=False) as staged:
         if actual.is_dir():
             shutil.copytree(actual, staged, symlinks=True)
         else:
@@ -2361,7 +2492,9 @@ def publish_tree(
     if decision.verdict in (Verdict.KEEP, Verdict.SKIP):
         return decision
     try:
-        with published(target, plugin=plugin, authorize=judge, **settings) as staged:
+        with published(
+            target, plugin=plugin, authorize=judge, backup_root=backup_root, **settings
+        ) as staged:
             if decision.reason == LEGACY_REPUBLISH:
                 # Under the publication lock and before the swap, so a
                 # concurrent install cannot slip between the copy and the
@@ -2375,7 +2508,9 @@ def publish_tree(
     return decision
 
 
-def _park_backup(target: Path, backup_root: Path, *, name: str = "") -> Path:
+def _park_backup(
+    target: Path, backup_root: Path, *, name: str = "", skip: Iterable[str] = ()
+) -> Path:
     """Copy ``target`` to ``backup_root/<name>-<stamp>`` and return the copy.
 
     Shared by the forced republish, the forced retirement of a hashless legacy
@@ -2402,7 +2537,7 @@ def _park_backup(target: Path, backup_root: Path, *, name: str = "") -> Path:
     while kept.exists() or kept.is_symlink():
         kept = backup_root / f"{stem}-{_stamp()}.{counter}"
         counter += 1
-    _copy_path(target, kept)
+    _copy_path(target, kept, skip=skip)
     if kept.is_dir() and not kept.is_symlink():
         (kept / OWNED_MARKER_NAME).unlink(missing_ok=True)
     return kept

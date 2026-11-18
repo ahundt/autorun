@@ -1000,3 +1000,50 @@ def test_refresh_replaces_a_cached_outside_link_with_its_content(source_with_out
     assert not (cached / "src" / "pkg").is_symlink()
     assert (cached / "src" / "pkg" / "__init__.py").is_file()
     assert claude.cache_mismatches(source, cached) == ()
+
+
+# A retired cache version holds a runtime autorun built (``.venv``) and Claude's
+# ``.orphaned_at``. Neither is autorun's payload or the user's work, so retiring
+# a version on every upgrade must not copy them into the backup directory.
+
+def _backup_files(tmp_path: Path) -> list[Path]:
+    root = tmp_path / "ar-home" / "installer" / "backups"
+    return [p for p in root.rglob("*") if p.is_file()] if root.exists() else []
+
+
+def _old_version_with_runtime(source: Path, home: Path) -> Path:
+    old = install(source, home, version="1.2.3")
+    (old / ".orphaned_at").write_text("2026-11-12T00:00:00Z\n", encoding="utf-8")
+    for name in ("bin/python", "lib/python3.12/site-packages/dep/__init__.py", "pyvenv.cfg"):
+        path = old / ".venv" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("runtime\n", encoding="utf-8")
+    return old
+
+
+def test_retiring_a_cache_version_with_its_runtime_makes_no_backup(
+    source, home, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    old = _old_version_with_runtime(source, home)
+    removed, _kept = claude.retire_cache_versions(
+        Harness(), market="autorun", plugin="ar", keep=("9.9.9",), home=home
+    )
+    assert removed == (old,) and not old.exists()
+    assert _backup_files(tmp_path) == []
+
+
+def test_retiring_a_cache_version_parks_a_users_file_but_not_the_runtime(
+    source, home, tmp_path, monkeypatch
+):
+    """The parked copy holds the user's file and not ``.venv``."""
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    old = _old_version_with_runtime(source, home)
+    (old / "hooks" / "hook_entry.py.bak").write_text("mine\n", encoding="utf-8")
+    removed, _kept = claude.retire_cache_versions(
+        Harness(), market="autorun", plugin="ar", keep=("9.9.9",), home=home
+    )
+    assert removed == (old,) and not old.exists()
+    parked = _backup_files(tmp_path)
+    assert [p.read_text(encoding="utf-8") for p in parked if p.name == "hook_entry.py.bak"] == ["mine\n"]
+    assert not any(".venv" in p.parts for p in parked)

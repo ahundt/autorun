@@ -102,11 +102,33 @@ that need it. No disk access: stage generated content to a temp dir and point th
   It reaches `decide`/`withdrawn` as the existing `ownership_proof`, so an
   edited tree stays the user's and nothing about marked trees changes.
   "Byte-identical" reads every file except the marker and
-  `provenance.REGENERATED_GLOBS` (`.DS_Store`, `*.pyc` and similar), not
+  `fs.REGENERATED_GLOBS` (`.DS_Store`, `*.pyc` and similar), not
   `fs.IGNORED_GLOBS`: a `SKILL.md.bak`, `notes~` or `.git/` inside an unmarked
   tree is the user's work, and a digest that skipped it retired the tree with
   that file in it and no backup. A directory named like a regenerated pattern
   also counts as unread content.
+- **A delete destroys what no decision read.** `scan_tree`/`compare` skip
+  `IGNORED_GLOBS`, so a user's `SKILL.md.bak`, `notes~`, `.git/HEAD` or
+  `__pycache__/my-notes.txt` inside a *marked* tree, a receipt-proven extension
+  tree or an Antigravity bundle was invisible to `decide` and went with the tree
+  on retirement and on every replacement (`withdrawn`, `_swapped`). Measured
+  2026-11-17: destroyed on all six routes. `fs._park_unaccounted` is the one
+  owner: before either delete it walks the held tree once and, if any entry is
+  outside the manifest (or, with no hashes, outside what the scan reads) and is
+  not `REGENERATED_GLOBS`/`HARNESS_RECORD_GLOBS` junk, copies the tree to the
+  backup root. Junk alone makes no backup. Neither do `fs.TOOL_CACHE_GLOBS`
+  (`.pytest_cache`, `.ruff_cache`, coverage output): a Claude cache copied from a
+  development checkout holds them, and counting them parked 29 MB on every
+  uninstall in a sandbox rehearsal. A caller that knows content is
+  neither ours nor the user's passes `disposable=` globs (`withdrawn`;
+  `claude.CACHE_DISPOSABLE_GLOBS` = `.venv`, `.orphaned_at`): skipped, not
+  descended, not copied, so retiring a cache version never copies its runtime.
+  `publish_files` and the snapshot restore pass `park_unaccounted=False` to
+  `_swapped` because they copy the old tree into the stage (a shared
+  `commands/` holds the user's files by design). Never delete a tree from `fs`
+  without going through `withdrawn` or `_swapped`. Limit: with no marker the
+  receipt proof reads nothing, so a user file with an *ordinary* name in such a
+  tree is not covered; only names the scan skips are.
 - **Shared dirs are owned per file.** For `commands/` use
   `publish_files`/`withdraw_files`. `publish_tree` there either refuses or
   deletes the user's files.

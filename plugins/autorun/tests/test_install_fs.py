@@ -1062,3 +1062,310 @@ def test_an_interrupt_while_judging_a_withdrawn_link_restores_it(tmp_path, monke
 
     monkeypatch.undo()
     assert link.is_symlink() and link.resolve() == (shared / "skill").resolve()
+
+
+# ---------------------------------------------------------------------------
+# A file autorun did not write and did not read is never destroyed
+# ---------------------------------------------------------------------------
+#
+# 2026-11-17 audit: ``compare`` and ``scan_tree`` skip ``IGNORED_GLOBS``, so a
+# user's ``SKILL.md.bak``, ``notes~`` or ``.git/`` inside a tree autorun owns is
+# invisible to every decision, and the delete that follows (``withdrawn`` for
+# retirement, ``_swapped`` for replacement) removed it with no backup.
+
+#: User files under names the ownership scan skips. Each is content autorun
+#: neither wrote nor read.
+USER_FILES_UNDER_IGNORED_NAMES = (
+    "SKILL.md.bak", "notes~", ".git/HEAD", "__pycache__/my-notes.txt",
+)
+#: Operating-system and interpreter leftovers: regenerated, never worth a backup.
+REGENERATED_ONLY = (".DS_Store", "._SKILL.md", "Thumbs.db", "desktop.ini",
+                    "mod.pyc", "__pycache__/mod.cpython-312.pyc")
+
+
+@pytest.fixture
+def walk_env(tmp_path, monkeypatch):
+    from autorun.installer.traversal import Context, Mode, run
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "ar-home"))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    ctx = Context(marketplace_root=tmp_path / "marketplace", home=home)
+
+    def walk(mode, *intents):
+        return run((), ctx, mode, extra=list(intents))
+
+    walk.install, walk.uninstall = Mode.INSTALL, Mode.UNINSTALL
+    walk.backups = tmp_path / "ar-home" / "installer" / "backups"
+    return walk
+
+
+def _skill_source(root: Path, body: str = "# skill\n") -> Path:
+    root.mkdir(parents=True)
+    (root / "SKILL.md").write_text(body, encoding="utf-8")
+    return root
+
+
+def _put(root: Path, relative: str, text: str = "mine\n") -> Path:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _parked_text(walk, name: str) -> list[str]:
+    """Contents of every parked file called ``name`` under the backup root."""
+    if not walk.backups.exists():
+        return []
+    return [p.read_text(encoding="utf-8") for p in walk.backups.rglob(name) if p.is_file()]
+
+
+def _backup_files(walk) -> list[Path]:
+    return [p for p in walk.backups.rglob("*") if p.is_file()] if walk.backups.exists() else []
+
+
+@pytest.mark.parametrize("extra", USER_FILES_UNDER_IGNORED_NAMES)
+def test_uninstall_parks_a_users_file_in_a_marked_tree(tmp_path, walk_env, extra):
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo")
+    target = tmp_path / "skills" / "demo"
+    intent = Intent(target=target, source=source, plugin="ar")
+    walk_env(walk_env.install, intent)
+    _put(target, extra, "mine-marked\n")
+
+    walk_env(walk_env.uninstall, intent)
+    assert not target.exists()
+    assert _parked_text(walk_env, Path(extra).name) == ["mine-marked\n"]
+
+
+@pytest.mark.parametrize("extra", USER_FILES_UNDER_IGNORED_NAMES)
+def test_uninstall_parks_a_users_file_in_a_tree_a_receipt_proves(tmp_path, walk_env, extra):
+    """No marker, and a harness receipt (not a read of the tree) is the proof."""
+    from autorun.installer.traversal import Intent
+
+    target = _skill_source(tmp_path / "ext" / "demo")
+    _put(target, extra, "mine-receipt\n")
+    intent = Intent(target=target, source=None, plugin="ar", ownership_proof=lambda _t: True)
+
+    walk_env(walk_env.uninstall, intent)
+    assert not target.exists()
+    assert _parked_text(walk_env, Path(extra).name) == ["mine-receipt\n"]
+
+
+@pytest.mark.parametrize("extra", USER_FILES_UNDER_IGNORED_NAMES)
+def test_uninstall_parks_a_users_file_in_a_tree_the_antigravity_receipt_proves(
+    tmp_path, walk_env, extra
+):
+    """Antigravity's extension is a ``LINK`` intent whose target is a real
+    directory; the retirement reaches ``withdrawn`` through ``decide_link``."""
+    from autorun.installer.traversal import Intent, Kind
+
+    shared = tmp_path / "shared"
+    target = _skill_source(tmp_path / "agy" / "plugins" / "demo")
+    _put(target, extra, "mine-agy\n")
+    intent = Intent(
+        target=target, plugin="ar", kind=Kind.LINK, link_root=shared,
+        ownership_proof=lambda _t: True,
+    )
+    walk_env(walk_env.uninstall, intent)
+    assert not target.exists()
+    assert _parked_text(walk_env, Path(extra).name) == ["mine-agy\n"]
+
+
+@pytest.mark.parametrize("extra", USER_FILES_UNDER_IGNORED_NAMES)
+def test_an_upgrade_parks_a_users_file_in_a_marked_tree(tmp_path, walk_env, extra):
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo", "# v1\n")
+    target = tmp_path / "skills" / "demo"
+    intent = Intent(target=target, source=source, plugin="ar")
+    walk_env(walk_env.install, intent)
+    _put(target, extra, "mine-upgrade\n")
+    (source / "SKILL.md").write_text("# v2\n", encoding="utf-8")
+
+    walk_env(walk_env.install, intent)
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "# v2\n"
+    assert _parked_text(walk_env, Path(extra).name) == ["mine-upgrade\n"]
+
+
+@pytest.mark.parametrize("extra", USER_FILES_UNDER_IGNORED_NAMES)
+def test_adopting_a_proven_unmarked_tree_parks_a_users_file(tmp_path, walk_env, extra):
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo", "# v2\n")
+    target = _skill_source(tmp_path / "skills" / "demo", "# v1\n")
+    _put(target, extra, "mine-adopt\n")
+    intent = Intent(target=target, source=source, plugin="ar", ownership_proof=lambda _t: True)
+
+    walk_env(walk_env.install, intent)
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "# v2\n"
+    assert _parked_text(walk_env, Path(extra).name) == ["mine-adopt\n"]
+
+
+@pytest.mark.parametrize("extra", USER_FILES_UNDER_IGNORED_NAMES)
+def test_recording_legacy_ownership_parks_a_users_file(tmp_path, walk_env, extra):
+    """A hashless marker on a tree equal to the source in every scanned file is
+    republished by the "recording legacy ownership" route, which parks nothing."""
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo")
+    target = tmp_path / "skills" / "demo"
+    intent = Intent(target=target, source=source, plugin="ar")
+    walk_env(walk_env.install, intent)
+    marker = target / OWNED_MARKER_NAME
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    payload["files"] = {}
+    marker.write_text(json.dumps(payload), encoding="utf-8")
+    _put(target, extra, "mine-legacy\n")
+
+    walk_env(walk_env.install, intent)
+    assert _parked_text(walk_env, Path(extra).name) == ["mine-legacy\n"]
+    assert read_marker(target).files  # republished with hashes
+
+
+@pytest.mark.parametrize("extra", USER_FILES_UNDER_IGNORED_NAMES)
+def test_the_bridge_copy_replacing_a_proven_directory_parks_a_users_file(
+    tmp_path, walk_env, extra
+):
+    from autorun.installer.traversal import Intent, Kind
+
+    shared = tmp_path / "shared"
+    source = _skill_source(shared / "demo", "# v2\n")
+    target = _skill_source(tmp_path / "agy" / "demo", "# v1\n")
+    _put(target, extra, "mine-bridge\n")
+    intent = Intent(
+        target=target, source=source, plugin="ar", kind=Kind.LINK,
+        ownership_proof=lambda _t: True,
+    )
+    walk_env(walk_env.install, intent)
+    assert _parked_text(walk_env, Path(extra).name) == ["mine-bridge\n"]
+
+
+@pytest.mark.parametrize("junk", REGENERATED_ONLY)
+def test_regenerated_junk_alone_is_never_backed_up(tmp_path, walk_env, junk):
+    """No backup growth on an ordinary install: junk is rewritten by the OS or
+    Python on the next use and holds nothing a user wrote."""
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo", "# v1\n")
+    target = tmp_path / "skills" / "demo"
+    intent = Intent(target=target, source=source, plugin="ar")
+    walk_env(walk_env.install, intent)
+    _put(target, junk, "junk\n")
+    (source / "SKILL.md").write_text("# v2\n", encoding="utf-8")
+    walk_env(walk_env.install, intent)
+    assert _backup_files(walk_env) == []
+    _put(target, junk, "junk\n")
+    walk_env(walk_env.uninstall, intent)
+    assert not target.exists()
+    assert _backup_files(walk_env) == []
+
+
+TOOL_CACHE_ONLY = (
+    ".pytest_cache/v/cache/lastfailed", ".ruff_cache/0.6.9/123", ".mypy_cache/3.12/x.json",
+    "htmlcov/index.html", ".coverage", ".coverage.host.1", "coverage.xml",
+    "tests/.pytest_cache/README.md",
+)
+
+
+@pytest.mark.parametrize("cache", TOOL_CACHE_ONLY)
+def test_a_test_or_lint_tool_cache_alone_is_never_backed_up(tmp_path, walk_env, cache):
+    """A plugin tree copied from a development checkout holds these; the next
+    tool run rebuilds them, so an upgrade or uninstall must not park the tree."""
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo", "# v1\n")
+    target = tmp_path / "skills" / "demo"
+    intent = Intent(target=target, source=source, plugin="ar")
+    walk_env(walk_env.install, intent)
+    _put(target, cache, "cache\n")
+    (source / "SKILL.md").write_text("# v2\n", encoding="utf-8")
+    walk_env(walk_env.install, intent)
+    assert _backup_files(walk_env) == []
+    _put(target, cache, "cache\n")
+    walk_env(walk_env.uninstall, intent)
+    assert not target.exists()
+    assert _backup_files(walk_env) == []
+
+
+def test_a_users_file_is_parked_without_the_tool_caches_beside_it(tmp_path, walk_env):
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo", "# v1\n")
+    target = tmp_path / "skills" / "demo"
+    intent = Intent(target=target, source=source, plugin="ar")
+    walk_env(walk_env.install, intent)
+    _put(target, ".pytest_cache/v/cache/lastfailed", "cache\n")
+    _put(target, "notes~", "mine\n")
+    walk_env(walk_env.uninstall, intent)
+    assert _parked_text(walk_env, "notes~") == ["mine\n"]
+    assert not [p for p in _backup_files(walk_env) if ".pytest_cache" in p.parts]
+
+
+def test_an_ordinary_clean_upgrade_and_uninstall_make_no_backup(tmp_path, walk_env):
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo", "# v1\n")
+    (source / "scripts").mkdir()
+    (source / "scripts" / "run.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    target = tmp_path / "skills" / "demo"
+    intent = Intent(target=target, source=source, plugin="ar")
+    walk_env(walk_env.install, intent)
+    (source / "SKILL.md").write_text("# v2\n", encoding="utf-8")
+    walk_env(walk_env.install, intent)
+    walk_env(walk_env.uninstall, intent)
+    assert not target.exists()
+    assert not walk_env.backups.exists() or not any(walk_env.backups.iterdir())
+
+
+def test_a_proven_unmarked_tree_holding_only_what_the_scan_reads_makes_no_backup(
+    tmp_path, walk_env
+):
+    from autorun.installer.traversal import Intent
+
+    target = _skill_source(tmp_path / "ext" / "demo")
+    _put(target, "scripts/run.sh", "#!/bin/sh\n")
+    _put(target, ".gemini-extension-install.json", "{}")  # the harness's own receipt
+    intent = Intent(target=target, source=None, plugin="ar", ownership_proof=lambda _t: True)
+    walk_env(walk_env.uninstall, intent)
+    assert not target.exists()
+    assert _backup_files(walk_env) == []
+
+
+def test_an_edited_hashed_tree_is_still_refused_whatever_else_it_holds(tmp_path, walk_env):
+    from autorun.installer.traversal import Intent
+
+    source = _skill_source(tmp_path / "src" / "demo")
+    target = tmp_path / "skills" / "demo"
+    intent = Intent(target=target, source=source, plugin="ar")
+    walk_env(walk_env.install, intent)
+    (target / "SKILL.md").write_text("# my edit\n", encoding="utf-8")
+    _put(target, "SKILL.md.bak", "mine\n")
+    walk_env(walk_env.uninstall, intent)
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "# my edit\n"
+    assert (target / "SKILL.md.bak").is_file()
+    assert _backup_files(walk_env) == []
+
+
+def test_a_shared_directory_install_never_backs_up_the_users_own_files(tmp_path, walk_env):
+    """``publish_files`` swaps a directory it copies whole into the stage, so
+    the user's ``mine.md`` and ``mine.md.bak`` beside our files are kept in
+    place; parking them on every install would grow the backups each time."""
+    from autorun.installer.traversal import Intent, Kind
+
+    source = tmp_path / "src" / "commands"
+    source.mkdir(parents=True)
+    (source / "ar-go.md").write_text("v1\n", encoding="utf-8")
+    target = tmp_path / "cfg" / "commands"
+    _put(target, "mine.md")
+    _put(target, "mine.md.bak")
+    intent = Intent(target=target, source=source, plugin="ar", kind=Kind.FILES)
+    walk_env(walk_env.install, intent)
+    (source / "ar-go.md").write_text("v2\n", encoding="utf-8")
+    walk_env(walk_env.install, intent)
+    assert (target / "ar-go.md").read_text(encoding="utf-8") == "v2\n"
+    assert (target / "mine.md.bak").is_file() and (target / "mine.md").is_file()
+    assert _backup_files(walk_env) == []

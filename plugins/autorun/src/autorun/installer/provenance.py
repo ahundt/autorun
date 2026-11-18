@@ -40,6 +40,7 @@ from typing import Callable, Iterator, Mapping
 
 from .fs import (
     _LINK,
+    REGENERATED_GLOBS,
     SKIP_NAMES,
     TreeManifest,
     _fingerprint,
@@ -82,15 +83,10 @@ def _digest(manifest: Mapping[str, str]) -> str:
     ).hexdigest()[:32]
 
 
-#: What an operating system or interpreter writes into any directory in use.
-#: An installed tree is measured with only these left out. ``fs.IGNORED_GLOBS``
-#: also skips ``*.bak``, ``*~``, ``*.tmp``, ``.git`` and ``.venv``: a copy
-#: autorun writes never holds those, so inside an unmarked directory they are
-#: the user's work, and a proof that did not read them retired the directory
-#: with them in it.
-REGENERATED_GLOBS: tuple[str, ...] = (
-    "*.pyc", "*.pyo", ".DS_Store", "._*", "Thumbs.db", "desktop.ini",
-)
+# ``REGENERATED_GLOBS`` (imported from ``fs``, its one definition) is what an
+# installed tree's digest leaves out: ``fs.IGNORED_GLOBS`` also skips ``*.bak``,
+# ``*~``, ``*.tmp``, ``.git`` and ``.venv``, which a copy autorun writes never
+# holds, so inside an unmarked directory they are the user's work.
 _UNREAD_DIRECTORY = "unread-directory"
 
 
