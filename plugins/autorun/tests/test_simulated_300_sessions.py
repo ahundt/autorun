@@ -446,11 +446,11 @@ def test_two_bursts_and_restart(running_daemon, record_property, monkeypatch, sq
     print("CAPACITY_METRICS " + json.dumps(metrics))
 
 
-def measure_session_start_cpu(enough=0.0):
+def measure_session_start_cpu(enough=0.0, passes=None):
     """CPU seconds for 300 real starts, excluding imports and one-time setup.
 
-    Repeats up to three times and stops at the first measurement no greater
-    than ``enough``: a slow host pays for the repeats only when it needs them.
+    Repeats up to three times and stops at the first measurement below
+    ``enough``: a slow host pays for the repeats only when it needs them.
     """
     from autorun import plugins  # noqa: F401  registers the real handlers
 
@@ -468,8 +468,10 @@ def measure_session_start_cpu(enough=0.0):
         for index in range(SESSIONS):
             start(f"{attempt}-{index}")
         spent.append(time.process_time() - begin)
-        if spent[-1] <= enough:
+        if spent[-1] < enough:
             break
+    if passes is not None:
+        passes.extend(spent)  # lets a failing assertion show every pass
     return min(spent)
 
 
@@ -498,10 +500,14 @@ def test_wall_clock_session_count_scales_with_the_probe(slowest, expected):
 def test_300_session_starts_need_less_cpu_than_the_start_deadline(sqlite_manager):
     """300 starts must fit the full deadline on every host (rc3 needed ~3.2s)."""
     deadline = core.CONFIG["daemon_dispatch_timeouts_seconds"]["SessionStart"]
-    spent = measure_session_start_cpu(enough=deadline)
+    spent_passes = []
+    spent = measure_session_start_cpu(enough=deadline, passes=spent_passes)
+    passes = ", ".join(f"{s:.4f}" for s in spent_passes)
+    resolution = time.get_clock_info("process_time").resolution
     assert spent < deadline, (
-        f"{SESSIONS} session starts cost {spent:.2f}s of CPU; they cannot all "
-        f"finish inside the {deadline:g}s SessionStart deadline")
+        f"{SESSIONS} session starts cost {spent:.4f}s of CPU (least of passes: {passes}); "
+        f"they cannot all finish inside the {deadline:g}s SessionStart deadline "
+        f"(process_time resolution {resolution:g}s)")
 
 
 @pytest.fixture
