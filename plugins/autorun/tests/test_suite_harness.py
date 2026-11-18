@@ -280,6 +280,52 @@ def test_a_nested_pytest_run_does_not_kill_the_outer_private_tmux_server(request
         shutil.rmtree(own_root, ignore_errors=True)
 
 
+def test_the_private_tmux_server_outlives_its_last_session(request):
+    """Closing the only session must not take the suite's server down with it.
+
+    A tmux server exits when its last session closes (`exit-empty`, on by
+    default). The suite shares one private server and each tmux test creates
+    and kills its own sessions, so between two tests the server was usually
+    exiting. The next test's `new-session` then met a socket whose server was
+    on its way out: tmux 3.6a (ubuntu-26.04, which `ubuntu-latest` became on
+    2026-11-16) answers `server exited unexpectedly`, and one test per run
+    failed on it, a different one each time, on five consecutive CI runs.
+
+    The server here is this test's own, started with the suite's
+    configuration file, for the reason given in the nested-run test above.
+    """
+    import subprocess
+
+    real_tmux = getattr(request.config, "_autorun_real_tmux_bin", None)
+    if real_tmux is None or os.name != "posix":
+        pytest.skip("no private tmux server on this platform")
+    conf = getattr(request.config, "_autorun_test_tmux_conf", None)
+    assert conf and Path(conf).is_file(), "the suite's tmux server has no configuration file"
+    assert f"-f {conf}" in Path(os.environ["AUTORUN_TMUX_BIN"]).read_text(encoding="utf-8"), (
+        "the tmux wrapper does not start the server with the suite's configuration"
+    )
+
+    own_root = tempfile.mkdtemp(prefix="arown", dir="/tmp" if os.path.isdir("/tmp") else None)
+    argv = [real_tmux, "-f", conf, "-S", os.path.join(own_root, "s")]
+    env = {key: value for key, value in os.environ.items() if key != "TMUX"}
+
+    def tmux(*args):
+        return subprocess.run([*argv, *args], capture_output=True, text=True, timeout=60, env=env)
+
+    try:
+        assert tmux("new-session", "-d", "-s", "only").returncode == 0
+        assert tmux("kill-session", "-t", "only").returncode == 0
+        listed = tmux("list-sessions")
+        assert listed.returncode == 0 and listed.stdout == "", (
+            f"the server exited with its last session: {listed.stderr.strip()!r}"
+        )
+        again = tmux("new-session", "-d", "-s", "next")
+        assert again.returncode == 0, again.stderr
+    finally:
+        tmux("kill-server")
+        shutil.rmtree(own_root, ignore_errors=True)
+
+
 @pytest.mark.parametrize(
     "kind, exists, wrapped",
     [

@@ -194,11 +194,21 @@ def pytest_configure(config):
         wrapper_dir = test_runtime_dir / "tmux-bin"
         wrapper_dir.mkdir(parents=True, exist_ok=True)
         wrapper = wrapper_dir / "tmux"
+        # A server exits when its last session closes, and every tmux test
+        # kills the sessions it made, so the shared server was usually exiting
+        # between two tests. The next `new-session` then raced it: tmux 3.6a
+        # answers `server exited unexpectedly`, which failed one test per CI
+        # run once ubuntu-latest moved to 26.04. `exit-empty off` keeps the
+        # one server up until `pytest_sessionfinish` kills it. Still no user
+        # configuration: this file replaces `-f /dev/null`, it adds no other.
+        tmux_conf = wrapper_dir / "tmux.conf"
+        tmux_conf.write_text("set-option -g exit-empty off\n", encoding="utf-8")
+        config._autorun_test_tmux_conf = str(tmux_conf)
         wrapper.write_text(
             "#!/bin/sh\n"
             "unset TMUX\n"
             "export SHELL=/bin/sh\n"
-            f"exec {shlex.quote(real_tmux)} -f /dev/null -S "
+            f"exec {shlex.quote(real_tmux)} -f {shlex.quote(str(tmux_conf))} -S "
             f"{shlex.quote(socket_path)} \"$@\"\n",
             encoding="utf-8",
         )
