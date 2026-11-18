@@ -604,3 +604,35 @@ def test_a_stale_bridge_link_is_actually_removed_not_merely_planned(
     assert not stale.is_symlink(), "the stale link outlived its own retirement"
     assert theirs not in named, "a link outside the shared root is not our business"
     assert theirs.is_symlink() and (theirs / "SKILL.md").is_file()
+
+
+def test_the_install_walk_keeps_an_unmarked_shared_copy_holding_a_user_file(
+    plugin, shared, ctx, monkeypatch
+):
+    """The adopt path end to end. A copy equal to the source in every file the
+    old manifest read, plus the user's ``SKILL.md.bak``, is the user's: the name
+    is blocked, no shared intent is planned, and ``run`` leaves the backup.
+    Without the extra file the same copy is adopted, so the proof is not simply
+    refusing everything."""
+    from autorun.installer.traversal import Mode, run
+
+    monkeypatch.setenv("AUTORUN_HOME", str(ctx.home / "ar-home"))
+    source = plugin / "skills" / "commit"
+    copy = shared / "commit"
+    copy.mkdir(parents=True)
+    (copy / "SKILL.md").write_bytes((source / "SKILL.md").read_bytes())
+    backup = copy / "SKILL.md.bak"
+    backup.write_text("mine\n", encoding="utf-8")
+
+    writer = FakePlatform("writer", True)
+    intents, placement = skill_plan(writer, ctx, {"ar": plugin}, shared_root_override=shared)
+    assert copy not in [i.target for i in intents]
+    assert "ar:commit" in placement.refused
+    run((), ctx, Mode.INSTALL, extra=intents)
+    assert backup.read_text(encoding="utf-8") == "mine\n"
+    assert not (copy / ".autorun-owned").exists(), "kept, not adopted"
+
+    backup.unlink()
+    intents, placement = skill_plan(writer, ctx, {"ar": plugin}, shared_root_override=shared)
+    run((), ctx, Mode.INSTALL, extra=intents)
+    assert (copy / ".autorun-owned").is_file(), "the clean copy is adopted"

@@ -101,6 +101,12 @@ that need it. No disk access: stage generated content to a temp dir and point th
   `scripts/legacy_skill_digests.py`; receipts cover every later install).
   It reaches `decide`/`withdrawn` as the existing `ownership_proof`, so an
   edited tree stays the user's and nothing about marked trees changes.
+  "Byte-identical" reads every file except the marker and
+  `provenance.REGENERATED_GLOBS` (`.DS_Store`, `*.pyc` and similar), not
+  `fs.IGNORED_GLOBS`: a `SKILL.md.bak`, `notes~` or `.git/` inside an unmarked
+  tree is the user's work, and a digest that skipped it retired the tree with
+  that file in it and no backup. A directory named like a regenerated pattern
+  also counts as unread content.
 - **Shared dirs are owned per file.** For `commands/` use
   `publish_files`/`withdraw_files`. `publish_tree` there either refuses or
   deletes the user's files.

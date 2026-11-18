@@ -10,6 +10,7 @@ the user's; only a byte-exact match to something autorun wrote is adopted.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -172,3 +173,309 @@ def test_the_legacy_catalog_holds_the_dereferenced_tmux_automation_rc_copy():
         for digest in digests
     )
     assert _legacy_skill_digests.DIGESTS["autorun-skills"]["tmux-automation"]
+
+
+def _write(path: Path, text: str = "mine\n") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+#: Names ``fs.IGNORED_GLOBS`` keeps out of a manifest. Inside an unmarked tree
+#: each can still be the user's own work, which an exact-copy proof must see.
+USER_CONTENT_UNDER_IGNORED_NAMES = (
+    "SKILL.md.bak", "notes~", "draft.tmp", ".git/HEAD", ".venv/pyvenv.cfg",
+    "__pycache__/my-notes.txt", "htmlcov/index.html", "coverage.xml",
+)
+#: What the operating system or Python writes into any directory in use; a
+#: copy holding only these is still the copy autorun wrote.
+REGENERATED_JUNK = (
+    ".DS_Store", "._SKILL.md", "Thumbs.db", "desktop.ini",
+    "__pycache__/helper.cpython-313.pyc", "scripts/__pycache__/x.cpython-312.pyo",
+)
+
+
+@pytest.mark.parametrize("extra", USER_CONTENT_UNDER_IGNORED_NAMES)
+def test_a_copy_holding_the_users_file_under_an_ignored_name_is_not_proven(tmp_path, extra):
+    """2026-11-17: a tree equal to the source in every file ``scan_tree`` reads
+    was retired as "an exact copy autorun installed" with the user's own
+    ``SKILL.md.bak`` and ``.git`` inside it, and no backup."""
+    source = _skill(tmp_path / "src" / "commit")
+    copy = _skill(tmp_path / "shared" / "commit")
+    assert provenance.autorun_wrote(copy, plugin="ar", source=source)
+    _write(copy / extra)
+    assert not provenance.autorun_wrote(copy, plugin="ar", source=source)
+
+
+@pytest.mark.parametrize("extra", REGENERATED_JUNK)
+def test_a_copy_holding_only_regenerated_junk_is_still_autoruns(tmp_path, extra):
+    source = _skill(tmp_path / "src" / "commit")
+    copy = _skill(tmp_path / "shared" / "commit")
+    _write(copy / extra)
+    assert provenance.autorun_wrote(copy, plugin="ar", source=source)
+
+
+@pytest.mark.parametrize("extra", USER_CONTENT_UNDER_IGNORED_NAMES)
+def test_the_install_walk_keeps_a_stale_copy_that_holds_the_users_file(tmp_path, monkeypatch, extra):
+    """The property at the entry point: after the sweep and the removal the
+    walk performs, the user's file is still where they left it."""
+    from autorun.installer.traversal import Context, Mode, run
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    root = home / ".agents"
+    stale = _skill(root / "skills" / "mermaid-diagrams", "# old release\n")
+    monkeypatch.setattr(
+        provenance,
+        "LEGACY_DIGESTS",
+        {"autorun-skills": {"mermaid-diagrams": (provenance.tree_digest(stale),)}},
+    )
+    kept = _write(stale / extra)
+
+    intents = list(retirements([root], [], plugins=["autorun-skills"]))
+    run((), Context(marketplace_root=tmp_path / "marketplace", home=home), Mode.INSTALL, extra=intents)
+    assert kept.read_text(encoding="utf-8") == "mine\n"
+    assert (stale / "SKILL.md").is_file()
+
+
+def test_the_install_walk_removes_a_stale_copy_autorun_wrote(tmp_path, monkeypatch):
+    """The other half, through the same walk: an exact copy does go."""
+    from autorun.installer.traversal import Context, Mode, run
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    root = home / ".agents"
+    stale = _skill(root / "skills" / "mermaid-diagrams", "# old release\n")
+    _write(stale / ".DS_Store", "finder\n")
+    monkeypatch.setattr(
+        provenance,
+        "LEGACY_DIGESTS",
+        {"autorun-skills": {"mermaid-diagrams": (provenance.tree_digest(stale),)}},
+    )
+    intents = list(retirements([root], [], plugins=["autorun-skills"]))
+    assert [intent.target for intent in intents] == [stale]
+    run((), Context(marketplace_root=tmp_path / "marketplace", home=home), Mode.INSTALL, extra=intents)
+    assert not stale.exists()
+
+
+#: Directories the user names like regenerated junk. ``scan_tree`` applies its
+#: ignore patterns to directory names too, so without a rule of its own the
+#: digest skipped everything inside them.
+USER_DIRECTORIES_NAMED_LIKE_JUNK = ("._notes", "cache.pyc", ".DS_Store", "Thumbs.db")
+
+
+@pytest.mark.parametrize("name", USER_DIRECTORIES_NAMED_LIKE_JUNK)
+def test_a_directory_named_like_junk_holding_a_user_file_is_not_proven(tmp_path, name):
+    source = _skill(tmp_path / "src" / "commit")
+    copy = _skill(tmp_path / "shared" / "commit")
+    _write(copy / name / "mine.txt")
+    assert not provenance.autorun_wrote(copy, plugin="ar", source=source)
+
+
+@pytest.mark.parametrize("name", USER_DIRECTORIES_NAMED_LIKE_JUNK)
+def test_a_symlinked_directory_named_like_junk_is_not_proven(tmp_path, name):
+    source = _skill(tmp_path / "src" / "commit")
+    copy = _skill(tmp_path / "shared" / "commit")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    try:
+        (copy / name).symlink_to(elsewhere, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks need privileges here")
+    assert not provenance.autorun_wrote(copy, plugin="ar", source=source)
+
+
+def _stale_mermaid(home: Path, monkeypatch) -> Path:
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    stale = _skill(home / ".agents" / "skills" / "mermaid-diagrams", "# old release\n")
+    monkeypatch.setattr(
+        provenance,
+        "LEGACY_DIGESTS",
+        {"autorun-skills": {"mermaid-diagrams": (provenance.tree_digest(stale),)}},
+    )
+    return stale
+
+
+@pytest.mark.parametrize("extra", ("SKILL.md.bak", "extra.md", ".git/HEAD"))
+def test_uninstall_keeps_an_unmarked_tree_holding_a_user_file(tmp_path, monkeypatch, extra):
+    from autorun.installer.traversal import Context, Mode, run
+
+    home = tmp_path / "home"
+    stale = _stale_mermaid(home, monkeypatch)
+    kept = _write(stale / extra)
+    intents = list(retirements([home / ".agents"], [], plugins=["autorun-skills"]))
+    run((), Context(marketplace_root=tmp_path / "m", home=home), Mode.UNINSTALL, extra=intents)
+    assert kept.read_text(encoding="utf-8") == "mine\n"
+    assert (stale / "SKILL.md").is_file()
+
+
+def test_uninstall_removes_an_unmarked_tree_autorun_wrote(tmp_path, monkeypatch):
+    from autorun.installer.traversal import Context, Mode, run
+
+    home = tmp_path / "home"
+    stale = _stale_mermaid(home, monkeypatch)
+    intents = list(retirements([home / ".agents"], [], plugins=["autorun-skills"]))
+    run((), Context(marketplace_root=tmp_path / "m", home=home), Mode.UNINSTALL, extra=intents)
+    assert not stale.exists()
+
+
+def test_a_receipt_for_another_plugin_does_not_prove_ownership(tmp_path):
+    source = _skill(tmp_path / "src" / "commit", "# v1\n")
+    target = tmp_path / "skills" / "commit"
+    _perform(Intent(target=target, source=source, plugin="pdf-extractor"),
+             Decision(Verdict.PUBLISH, target, "new"))
+    _lose_marker(target)
+    (source / "SKILL.md").write_text("# moved on\n", encoding="utf-8")  # only the receipt can match
+    assert provenance.autorun_wrote(target, plugin="pdf-extractor", source=source)
+    assert not provenance.autorun_wrote(target, plugin="ar", source=source)
+
+
+def test_a_copy_with_crlf_line_endings_is_not_proven(tmp_path):
+    """Git on Windows rewrites ``\\n`` to ``\\r\\n``: a different file, so the user's."""
+    source = _skill(tmp_path / "src" / "commit", "# a\n# b\n")
+    copy = tmp_path / "shared" / "commit"
+    copy.mkdir(parents=True)
+    (copy / "SKILL.md").write_bytes(b"# a\r\n# b\r\n")
+    assert not provenance.autorun_wrote(copy, plugin="ar", source=source)
+
+
+def test_an_extra_ordinary_file_is_not_proven(tmp_path):
+    source = _skill(tmp_path / "src" / "commit")
+    copy = _skill(tmp_path / "shared" / "commit")
+    _write(copy / "extra.md")
+    assert not provenance.autorun_wrote(copy, plugin="ar", source=source)
+
+
+def test_a_receipt_from_before_the_stricter_digest_still_matches_a_clean_tree(tmp_path):
+    """A receipt written by an earlier build digested with ``fs.IGNORED_GLOBS``.
+    For a tree holding none of those names the two schemes agree, so existing
+    receipts keep proving what they proved; a tree that differs is kept."""
+    copy = _skill(tmp_path / "skills" / "commit")
+    old_scheme = provenance._digest(fs.scan_tree(copy))
+    assert old_scheme == provenance.tree_digest(copy)
+
+
+def test_the_digest_equals_the_one_the_catalog_script_computes_for_a_blob_set(tmp_path):
+    """Pins the scheme to the frozen catalog without needing git history: the
+    script digests ``(path, fingerprint)`` pairs through ``provenance._digest``
+    with ``fs`` fingerprints, and a tree materialised from the same files must
+    digest the same through ``tree_digest``. A drift in either side, such as a
+    new ignore rule or a different fingerprint, fails here instead of silently
+    stranding every catalogued copy."""
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[3] / "scripts" / "legacy_skill_digests.py"
+    if not script.is_file():
+        pytest.skip("repository scripts are not shipped in this checkout")
+    spec = importlib.util.spec_from_file_location("legacy_skill_digests_under_test", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # imports only; main() is behind __main__
+
+    files = {"SKILL.md": (b"# skill\n", False), "scripts/run.sh": (b"#!/bin/sh\n", True)}
+    root = tmp_path / "tree"
+    shas = {}
+    for relative, (data, executable) in files.items():
+        _write(root / relative, data.decode())
+        if executable:
+            (root / relative).chmod(0o755)
+        shas[relative] = hashlib.sha1(data).hexdigest()
+
+    class Blobs(module.Blobs):  # same fingerprint rule, bytes supplied instead of `git cat-file`
+        def __init__(self):
+            self.cache = {sha: files[rel][0] for rel, sha in shas.items()}
+
+    blobs = Blobs()
+    raw = {
+        rel: blobs.fingerprint("100755" if files[rel][1] else "100644", sha)
+        for rel, sha in shas.items()
+    }
+    if os.name == "nt":
+        pytest.skip("the executable bit is not recorded on Windows")
+    assert module._digest(raw) == provenance.tree_digest(root)
+
+
+# Commits holding a version of a skill that an earlier release installed.
+# ``tmux-automation`` has a symlinked SKILL.md at f115ca56, which that
+# release's install dereferenced into a regular file; the plugin is the one
+# that ships the name today, which is how the catalog keys it.
+LEGACY_VERSIONS = (
+    ("f115ca56", "autorun", "autorun-skills", "tmux-automation"),
+    ("ee734a6d", "autorun-skills", "autorun-skills", "mermaid-diagrams"),
+    ("929c9e9d", "autorun", "ar", "commit"),
+)
+
+
+def _materialise(commit: str, plugin_dir: str, name: str, into: Path, dereference: bool) -> Path:
+    import posixpath
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[3]
+    prefix = f"plugins/{plugin_dir}/skills/{name}/"
+    listing = subprocess.run(
+        ["git", "ls-tree", "-r", commit, "--", prefix.rstrip("/")],
+        cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    files = {}
+    for line in listing:
+        meta, path = line.split("\t", 1)
+        mode, _kind, sha = meta.split()
+        files[path[len(prefix):]] = (mode, sha)
+
+    def blob(sha: str) -> bytes:
+        return subprocess.run(
+            ["git", "cat-file", "blob", sha], cwd=repo, capture_output=True, check=True
+        ).stdout
+
+    root = into / name
+    for relative, (mode, sha) in files.items():
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if mode == "120000":
+            target = blob(sha).decode()
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(relative), target))
+            if dereference and resolved in files:
+                destination.write_bytes(blob(files[resolved][1]))
+            else:
+                destination.symlink_to(target)
+        else:
+            destination.write_bytes(blob(sha))
+            if mode == "100755":
+                destination.chmod(0o755)
+    return root
+
+
+@pytest.mark.parametrize("commit,plugin_dir,plugin,name", LEGACY_VERSIONS)
+def test_a_skill_tree_rebuilt_from_git_history_is_still_recognised(
+    tmp_path, monkeypatch, commit, plugin_dir, plugin, name
+):
+    """The frozen catalog was generated from history with the old digest rule.
+    Rebuilding the tree an old release installed and asking the new one proves
+    the stricter rule did not strand it. Skipped where history is shallow."""
+    import importlib
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[3]
+    if subprocess.run(["git", "cat-file", "-e", f"{commit}^{{commit}}"], cwd=repo,
+                      capture_output=True).returncode:
+        pytest.skip(f"{commit} is not in this clone (shallow history)")
+    monkeypatch.setattr(
+        provenance, "LEGACY_DIGESTS", importlib.import_module(
+            "autorun.installer._legacy_skill_digests").DIGESTS,
+    )
+    for dereference in (False, True):
+        root = _materialise(commit, plugin_dir, name, tmp_path / str(dereference), dereference)
+        assert provenance.autorun_wrote(root, plugin=plugin, name=name), (commit, name, dereference)
+
+
+def test_decide_keeps_an_unmarked_copy_holding_a_backup_instead_of_publishing_over_it(tmp_path):
+    """``fs.decide`` is the second gate behind ``skills.blocked_names``; it must
+    refuse on its own, because other callers hand it the same proof."""
+    source = _skill(tmp_path / "src" / "commit")
+    copy = _skill(tmp_path / "shared" / "commit")
+    _write(copy / "SKILL.md.bak")
+    proof = provenance.proof_for(plugin="ar", source=source)
+    assert fs.decide(copy, source, plugin="ar", ownership_proof=proof).verdict is Verdict.KEEP
+    assert fs.decide(copy, None, plugin="ar", ownership_proof=proof).verdict is Verdict.KEEP

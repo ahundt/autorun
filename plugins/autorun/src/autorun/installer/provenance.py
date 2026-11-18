@@ -10,7 +10,9 @@ skills with nothing to say why.
 This module answers the question the marker can no longer answer, and answers
 it only with an exact match, so an edited tree stays the user's:
 
-1. the tree is byte-identical to the source being installed now;
+1. the tree is byte-identical to the source being installed now ("identical"
+   reads every file but the marker and :data:`REGENERATED_GLOBS`, so a user's
+   ``SKILL.md.bak`` or ``.git`` inside the tree makes it the user's);
 2. the tree is byte-identical to what autorun last published at that path,
    per the receipt :func:`record` keeps in autorun's own state directory,
    which the user's ignore rules and cleans never reach;
@@ -29,6 +31,7 @@ receipt store is one small JSON document read per question.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -49,6 +52,7 @@ from .fs import (
 
 __all__ = [
     "LEGACY_DIGESTS",
+    "REGENERATED_GLOBS",
     "autorun_wrote",
     "forget",
     "proof_for",
@@ -78,13 +82,47 @@ def _digest(manifest: Mapping[str, str]) -> str:
     ).hexdigest()[:32]
 
 
+#: What an operating system or interpreter writes into any directory in use.
+#: An installed tree is measured with only these left out. ``fs.IGNORED_GLOBS``
+#: also skips ``*.bak``, ``*~``, ``*.tmp``, ``.git`` and ``.venv``: a copy
+#: autorun writes never holds those, so inside an unmarked directory they are
+#: the user's work, and a proof that did not read them retired the directory
+#: with them in it.
+REGENERATED_GLOBS: tuple[str, ...] = (
+    "*.pyc", "*.pyo", ".DS_Store", "._*", "Thumbs.db", "desktop.ini",
+)
+_UNREAD_DIRECTORY = "unread-directory"
+
+
 def tree_digest(root: Path) -> str:
-    """One tree's content as :func:`fs.scan_tree` sees it, marker excluded."""
-    return _digest(scan_tree(root))
+    """An installed tree's content, marker and regenerated junk excluded.
+
+    Every other file counts, whatever its name, so one file autorun did not
+    write makes the digest match nothing. ``scan_tree`` applies the ignore
+    patterns to directory names too, so a directory the user named like one
+    (``._notes/``, ``cache.pyc/``) would hide everything inside it. The
+    junk is files; such a directory is recorded as an entry of its own and
+    the digest matches nothing autorun wrote.
+    """
+    manifest = scan_tree(root, ignored_globs=REGENERATED_GLOBS)
+    for directory, subdirs, _names in os.walk(root):
+        here = Path(directory)
+        for sub in subdirs:
+            if any(fnmatch.fnmatch(sub, pattern) for pattern in REGENERATED_GLOBS):
+                manifest[(here / sub).relative_to(root).as_posix() + "/"] = _UNREAD_DIRECTORY
+        subdirs[:] = [
+            d for d in subdirs
+            if not (here / d).is_symlink()
+            and not any(fnmatch.fnmatch(d, pattern) for pattern in REGENERATED_GLOBS)
+        ]
+    return _digest(manifest)
 
 
 def tree_digests(root: Path) -> frozenset[str]:
-    """Every digest a copy of ``root`` can have once published.
+    """Every digest a copy of the source ``root`` can have once published.
+
+    Read as the copy reads it (``fs.IGNORED_GLOBS`` left out), not as
+    :func:`tree_digest` reads an installed tree.
 
     A tree publication keeps links (``copytree(symlinks=True)``); earlier
     installs dereferenced them, writing the file a link named. Both are what
@@ -268,3 +306,7 @@ def demo() -> None:
             else:
                 os.environ["AUTORUN_HOME"] = previous
     print("installer.provenance: all self-checks passed")
+
+
+if __name__ == "__main__":
+    demo()
