@@ -14,8 +14,15 @@ database or taking the daemon lock fails on a volume that is nearly out of
 space, the caller deletes the reserve and retries once. The daemon's watchdog
 recreates it after space returns.
 
-Every function here swallows ``OSError`` and returns a bool: the reserve exists
-to recover from I/O failure, so it must never raise one of its own.
+``arm`` and ``release_if_exhausted`` never raise and return a bool: the reserve
+exists to recover from failure, so it must never be one. Filesystem calls catch
+``OSError``; resolving the path or size (config, environment) can fail in other
+ways, so each public function also catches ``Exception`` around its whole body.
+
+Limits. The reserve covers a failure when a connection opens or the daemon lock
+is created, not a write that fails later inside an open transaction. It frees
+bytes, not inodes, so a volume out of inodes is not helped. On a volume with
+snapshots or transparent compression, deleting it may free less than its size.
 """
 
 from __future__ import annotations
@@ -35,6 +42,16 @@ RESERVE_NAME = "disk.reserve"
 #: The reserve is only created while the volume has this many times its size
 #: free, so holding it never contributes to filling the disk.
 ARM_FREE_FACTOR = 4
+
+_reported: set[str] = set()
+
+
+def _report_once(what: str, exc: Exception) -> None:
+    """Warn once per distinct failure so a 60-second watchdog cannot flood the log."""
+    key = f"{what}:{type(exc).__name__}:{exc}"
+    if key not in _reported:
+        _reported.add(key)
+        logger.warning("Disk reserve %s failed: %s: %s", what, type(exc).__name__, exc)
 
 
 def reserve_bytes() -> int:
@@ -66,8 +83,16 @@ def _same_volume(first: Path, second: Path) -> bool:
 def arm(path: Path | None = None) -> bool:
     """Create the reserve when it is missing and the volume has room to spare.
 
-    Returns True only when this call created it.
+    Returns True only when this call created it. Never raises.
     """
+    try:
+        return _arm(path)
+    except Exception as exc:  # the reserve must never be the failure
+        _report_once("arm", exc)
+        return False
+
+
+def _arm(path: Path | None) -> bool:
     size = reserve_bytes()
     path = path or reserve_path()
     if size <= 0:
@@ -103,7 +128,16 @@ def release_if_exhausted(failed_near: Path, path: Path | None = None) -> bool:
     not about space (the reserve is kept), the reserve is on another volume, or
     there is none to release (never created, or another process just released
     it; that caller's retry succeeds and this one degrades for one call).
+    Never raises.
     """
+    try:
+        return _release_if_exhausted(failed_near, path)
+    except Exception as exc:  # the reserve must never be the failure
+        _report_once("release", exc)
+        return False
+
+
+def _release_if_exhausted(failed_near: Path, path: Path | None) -> bool:
     size = reserve_bytes()
     path = path or reserve_path()
     if size <= 0:

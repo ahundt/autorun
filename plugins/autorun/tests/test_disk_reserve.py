@@ -177,6 +177,123 @@ def test_daemon_lock_releases_the_reserve_when_creating_the_lock_file_fails(rese
     assert not reserve.exists()
 
 
+def test_lock_failure_warning_names_the_errno_and_does_not_blame_nfs(reserve, tmp_path, monkeypatch, caplog):
+    import logging
+
+    from autorun.core import AutorunDaemon
+
+    _free(monkeypatch, 10 * MIB)  # not a space failure: the reserve is kept
+
+    class FullLock:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def acquire(self):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    daemon = AutorunDaemon.__new__(AutorunDaemon)
+    daemon._daemon_lock = None
+    monkeypatch.setattr(daemon, "_socket_connect_test", lambda: False)
+    with mock.patch("autorun.core.LOCK_PATH", tmp_path / "daemon.lock"), \
+            mock.patch("filelock.FileLock", FullLock), caplog.at_level(logging.WARNING):
+        daemon._acquire_daemon_lock()
+    text = caplog.text
+    assert "No space left on device" in text and str(errno.ENOSPC) in text
+    assert "(NFS?)" not in text
+
+
+@pytest.mark.parametrize("error", [OSError(errno.EIO, "I/O error"), RuntimeError("config dir unresolved")])
+def test_arm_and_release_never_raise_when_the_reserve_path_cannot_be_resolved(error, monkeypatch):
+    """The reserve exists to recover from failure, so it must never be the failure."""
+    monkeypatch.setitem(CONFIG, "disk_reserve_bytes", MIB)
+
+    def broken():
+        raise error
+
+    monkeypatch.setattr(disk_reserve, "reserve_path", broken)
+    assert disk_reserve.arm() is False
+    assert disk_reserve.release_if_exhausted(Path("/")) is False
+
+
+def test_arm_and_release_never_raise_when_the_size_lookup_fails(reserve, monkeypatch):
+    def broken():
+        raise RuntimeError("config unavailable")
+
+    monkeypatch.setattr(disk_reserve, "reserve_bytes", broken)
+    assert disk_reserve.arm() is False
+    assert disk_reserve.release_if_exhausted(reserve.parent) is False
+
+
+def test_the_watchdog_tick_arms_the_reserve(monkeypatch):
+    """The entry point must call arm: a correct arm() nobody calls protects nothing."""
+    import asyncio
+
+    from autorun import core
+
+    daemon = core.AutorunDaemon.__new__(core.AutorunDaemon)
+    daemon.running = True
+    daemon._shutdown_event = None
+    daemon.active_pids = {os.getpid()}
+    daemon.last_activity = 0
+
+    async def tick_now(_awaitable, timeout):
+        _awaitable.close()  # a coroutine that was never awaited warns
+        raise asyncio.TimeoutError
+
+    calls = []
+
+    def arm_once():
+        calls.append(1)
+        daemon.running = False
+
+    monkeypatch.setattr(core, "disk_reserve_arm", arm_once)
+    monkeypatch.setattr(core.asyncio, "wait_for", tick_now)
+    asyncio.run(daemon.watchdog())
+    assert calls == [1]
+
+
+def test_daemon_start_arms_the_reserve(monkeypatch):
+    import asyncio
+    import threading
+
+    from autorun import command_detection, core
+
+    daemon = core.AutorunDaemon.__new__(core.AutorunDaemon)
+    daemon._loop = daemon._shutdown_event = daemon._server = daemon._watchdog_task = None
+    armed = threading.Event()
+
+    class Server:
+        async def __aenter__(self):
+            for _ in range(500):  # the arm call runs on an executor thread
+                if armed.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            daemon._shutdown_event.set()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    async def start_server(*_a, **_k):
+        return Server()
+
+    async def no_watchdog():
+        return None
+
+    async def no_stop():
+        return None
+
+    monkeypatch.setattr(core, "disk_reserve_arm", armed.set)
+    monkeypatch.setattr(core.ipc, "start_server", start_server)
+    monkeypatch.setattr(command_detection, "warm_parser", lambda: None)
+    monkeypatch.setattr(daemon, "_cleanup_stale_socket", lambda: None)
+    monkeypatch.setattr(daemon, "_register_atexit_cleanup", lambda: None)
+    monkeypatch.setattr(daemon, "_setup_signal_handlers", lambda: None)
+    monkeypatch.setattr(daemon, "watchdog", no_watchdog)
+    monkeypatch.setattr(daemon, "async_stop", no_stop)
+    asyncio.run(daemon.start())
+    assert armed.is_set(), "AutorunDaemon.start() never called disk_reserve arm"
+
+
 @pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("hdiutil"),
                     reason="needs a real full volume; macOS can make one without privileges")
 def test_disk_reserve_on_a_full_volume(tmp_path):

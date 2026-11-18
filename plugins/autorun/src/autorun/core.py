@@ -4072,7 +4072,9 @@ class AutorunDaemon:
                 self._daemon_lock = None
                 return False
             except OSError as e:
-                logger.warning(f"FileLock.acquire() raised OSError (NFS?): {e}")
+                logger.warning(f"Daemon lock {flock_path} could not be created or locked "
+                               f"(errno {e.errno}, {e.strerror or e}); on NFS this can mean "
+                               f"the filesystem does not support locks")
                 self._daemon_lock = None
                 # A full disk fails the lock file's creation; the reserve
                 # frees room for it, and the retry runs once.
