@@ -32,8 +32,23 @@ class TestSessionTargetingRegression:
         self.current_session = "main"  # Expected current session
 
         # Ensure test session exists
-        subprocess.run(tmux_argv('new-session', '-d', '-s', self.test_session),
-                      capture_output=True, timeout=5)
+        created = subprocess.run(tmux_argv('new-session', '-d', '-s', self.test_session),
+                                 capture_output=True, text=True, timeout=5)
+        assert created.returncode == 0 or 'duplicate session' in created.stderr, (
+            f"tmux could not create {self.test_session!r}: {created.stderr!r}"
+        )
+
+        # A shell that has not yet installed its signal handlers dies on the
+        # Ctrl-C the first test sends, and its session goes with it; the send
+        # that follows then fails with "no current target". ubuntu-26.04
+        # runners lost that race in three of five runs. A printed prompt means
+        # the shell is reading input.
+        deadline = time.monotonic() + 10
+        while not self._capture_session_content(self.test_session).strip():
+            assert time.monotonic() < deadline, (
+                f"no shell prompt in {self.test_session!r}; {self._server_state()}"
+            )
+            time.sleep(0.05)
 
         # Get tmux utilities for test session
         self.tmux = get_tmux_utilities(self.test_session)
@@ -66,6 +81,22 @@ class TestSessionTargetingRegression:
                               capture_output=True, text=True, timeout=5)
         return result.stdout if result.returncode == 0 else ""
 
+    def _server_state(self):
+        """What the private server holds, for a failure message: a send that
+        fails because the session is gone reads the same as one tmux refused."""
+        sessions = subprocess.run(tmux_argv('list-sessions'),
+                                  capture_output=True, text=True, timeout=5)
+        panes = subprocess.run(
+            tmux_argv('list-panes', '-a', '-F',
+                      '#{session_name} pid=#{pane_pid} dead=#{pane_dead} '
+                      'status=#{pane_dead_status} cmd=#{pane_current_command}'),
+            capture_output=True, text=True, timeout=5)
+        retry = subprocess.run(tmux_argv('send-keys', '-t', self.test_session, ''),
+                               capture_output=True, text=True, timeout=5)
+        return (f"sessions={sessions.stdout!r} {sessions.stderr!r}; "
+                f"panes={panes.stdout!r} {panes.stderr!r}; "
+                f"send-keys now: rc={retry.returncode} {retry.stderr!r}")
+
     def _detect_leakage_in_current_session(self, test_text):
         """Check if test text leaked into current session"""
         current_content = self._capture_session_content(self.current_session)
@@ -85,7 +116,7 @@ class TestSessionTargetingRegression:
         # Send test command to target session
         test_text = "echo regression-test-target"
         result = self.tmux.send_keys(test_text, self.test_session)
-        assert result is True, "send_keys should succeed"
+        assert result is True, f"send_keys should succeed; {self._server_state()}"
 
         # Send Enter to execute the command
         result = self.tmux.send_keys('C-m', self.test_session)
