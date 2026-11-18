@@ -9,7 +9,7 @@ marketplace itself carries a separate `version` field.
 
 ## [Unreleased]
 
-## [1.0.0rc5] - 2026-11-17
+## [1.0.0rc5] - 2026-11-18
 
 1.0.0rc5 fixes the defects that 1.0.0rc4 shipped with. The most serious: an
 uninstall or upgrade could delete files you had added inside a skill or
