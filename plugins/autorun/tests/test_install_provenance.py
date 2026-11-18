@@ -30,9 +30,15 @@ def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(provenance, "LEGACY_DIGESTS", {})
 
 
+def _put(path: Path, text: str) -> None:
+    """Write LF bytes on every OS: ``write_text`` turns ``\\n`` into ``\\r\\n`` on Windows,
+    which would make a source and a deliberately CRLF copy byte-identical."""
+    path.write_bytes(text.encode("utf-8"))
+
+
 def _skill(root: Path, body: str = "# skill\n") -> Path:
     root.mkdir(parents=True)
-    (root / "SKILL.md").write_text(body, encoding="utf-8")
+    _put(root / "SKILL.md", body)
     return root
 
 
@@ -44,7 +50,7 @@ def test_a_copy_identical_to_the_shipped_source_is_autoruns(tmp_path):
     source = _skill(tmp_path / "src" / "commit")
     copy = _skill(tmp_path / "shared" / "commit")
     assert provenance.autorun_wrote(copy, plugin="ar", source=source)
-    (copy / "SKILL.md").write_text("# mine now\n", encoding="utf-8")
+    _put(copy / "SKILL.md", "# mine now\n")
     assert not provenance.autorun_wrote(copy, plugin="ar", source=source)
 
 
@@ -53,15 +59,15 @@ def test_a_dereferenced_copy_of_a_linked_source_is_autoruns(tmp_path):
     source had a symlink; both are what autorun publishes."""
     source = tmp_path / "src" / "tmux"
     source.mkdir(parents=True)
-    (source / "GUIDE.md").write_text("guide\n", encoding="utf-8")
+    _put(source / "GUIDE.md", "guide\n")
     try:
         (source / "SKILL.md").symlink_to("GUIDE.md")
     except (OSError, NotImplementedError):
         pytest.skip("symlinks need privileges here")
     copy = tmp_path / "shared" / "tmux"
     copy.mkdir(parents=True)
-    (copy / "GUIDE.md").write_text("guide\n", encoding="utf-8")
-    (copy / "SKILL.md").write_text("guide\n", encoding="utf-8")
+    _put(copy / "GUIDE.md", "guide\n")
+    _put(copy / "SKILL.md", "guide\n")
     assert provenance.autorun_wrote(copy, plugin="ar", source=source)
 
 
@@ -73,11 +79,11 @@ def test_publishing_records_a_receipt_that_outlives_the_marker(tmp_path):
     _lose_marker(target)
 
     # The source moved on; the copy is the one autorun wrote, so it is autorun's.
-    (source / "SKILL.md").write_text("# v2\n", encoding="utf-8")
+    _put(source / "SKILL.md", "# v2\n")
     assert provenance.autorun_wrote(target, plugin="ar", source=source)
     assert not provenance.autorun_wrote(target, plugin="pdf-extractor", source=source)
 
-    (target / "SKILL.md").write_text("# edited after the marker was lost\n", encoding="utf-8")
+    _put(target / "SKILL.md", "# edited after the marker was lost\n")
     assert not provenance.autorun_wrote(target, plugin="ar", source=source)
 
 
@@ -88,7 +94,7 @@ def test_retiring_forgets_the_receipt(tmp_path):
     _perform(Intent(target=target, source=None, plugin="ar"), Decision(Verdict.RETIRE, target, "gone"))
     assert not target.exists()
     _skill(target, "# v1\n")  # the user makes their own at the same path
-    (source / "SKILL.md").write_text("# moved on\n", encoding="utf-8")
+    _put(source / "SKILL.md", "# moved on\n")
     assert not provenance.autorun_wrote(target, plugin="ar", source=source)
 
 
@@ -100,7 +106,7 @@ def test_a_released_version_in_the_legacy_catalog_is_autoruns(tmp_path, monkeypa
     )
     assert provenance.autorun_wrote(stale, plugin="autorun-skills")
     assert not provenance.autorun_wrote(stale, plugin="ar"), "another plugin's version"
-    (stale / "SKILL.md").write_text("# old release, edited\n", encoding="utf-8")
+    _put(stale / "SKILL.md", "# old release, edited\n")
     assert not provenance.autorun_wrote(stale, plugin="autorun-skills")
 
 
@@ -109,7 +115,7 @@ def test_decide_adopts_a_proven_unmarked_tree_and_keeps_an_edited_one(tmp_path):
     copy = _skill(tmp_path / "shared" / "commit", "# v2\n")
     proof = provenance.proof_for(plugin="ar", source=source)
     assert fs.decide(copy, source, plugin="ar", ownership_proof=proof).verdict is Verdict.PUBLISH
-    (copy / "SKILL.md").write_text("# mine\n", encoding="utf-8")
+    _put(copy / "SKILL.md", "# mine\n")
     assert fs.decide(copy, source, plugin="ar", ownership_proof=proof).verdict is Verdict.KEEP
 
 
@@ -177,7 +183,7 @@ def test_the_legacy_catalog_holds_the_dereferenced_tmux_automation_rc_copy():
 
 def _write(path: Path, text: str = "mine\n") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _put(path, text)
     return path
 
 
@@ -328,7 +334,7 @@ def test_a_receipt_for_another_plugin_does_not_prove_ownership(tmp_path):
     _perform(Intent(target=target, source=source, plugin="pdf-extractor"),
              Decision(Verdict.PUBLISH, target, "new"))
     _lose_marker(target)
-    (source / "SKILL.md").write_text("# moved on\n", encoding="utf-8")  # only the receipt can match
+    _put(source / "SKILL.md", "# moved on\n")  # only the receipt can match
     assert provenance.autorun_wrote(target, plugin="pdf-extractor", source=source)
     assert not provenance.autorun_wrote(target, plugin="ar", source=source)
 

@@ -707,7 +707,18 @@ class TestTaskReasonsAreFreeText:
 
     def test_scope_words_still_parse_before_the_reason(self):
         reply = self._pause("/ar:task pause 5m don't wait on CI")
-        assert "❌" not in reply and "don't wait on CI" in reply and "5m" in reply, reply
+        assert "❌" not in reply, reply
+        # The reason is exactly the free text: the scope word is not part of it.
+        assert "Reason: don't wait on CI" in reply.splitlines(), reply
+        # The scope word became a 5-minute limit. Read the parsed value, not
+        # the "(4m59s remaining)" text, which depends on how long the run took.
+        parsed = plugins._parse_task_pause_arguments(
+            ("5m", "don't", "wait", "on", "CI"),
+            bare_default_scope=plugins.ScopeSpec(ttl_seconds=1),
+            reason_only_default_scope=plugins.ScopeSpec(),
+        )
+        assert parsed.scope.ttl_seconds == 300 and parsed.reason == "don't wait on CI", parsed
+        assert "remaining)" in reply, reply  # the pause the reply describes is time-limited
 
 
 class TestNoSuggestionMatchesTheExactPattern:
