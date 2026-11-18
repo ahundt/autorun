@@ -9,6 +9,38 @@ marketplace itself carries a separate `version` field.
 
 ## [Unreleased]
 
+## [1.0.0rc5] - 2026-11-17
+
+1.0.0rc5 fixes the defects that 1.0.0rc4 shipped with. The most serious: an
+uninstall or upgrade could delete files you had added inside a skill or
+extension folder that autorun installed, with no copy kept. The release also
+fixes the Claude desktop app's task list, hooks run through the `autorun`
+command in that app, stale Codex skill copies, task-tracking writes on a full
+disk, and one hook failure under load on Linux.
+
+### Upgrading from 1.0.0rc4
+
+1. Quit and relaunch each installed coding CLI or app and start a new session,
+   because a session reads its hooks only when it starts. If you used the
+   Claude Code marketplace route, also run
+   `claude plugin install autorun-skills@autorun` first, because the
+   marketplace update command updates `ar` only.
+2. Nothing else is required. Config files, task state, and `/ar:` commands carry
+   over. You will notice three things. The install may warn that it kept skill
+   copies in `~/.agents/skills` that match no version it wrote, and it now
+   replaces the ones it can prove are its own (Fixed item 3). A file you
+   added to a folder autorun installed, under a name its ownership check skips
+   such as `SKILL.md.bak`, is copied under `~/.autorun/installer/backups/`
+   before that folder is removed or replaced (Fixed item 6). And autorun now keeps a
+   file `~/.autorun/disk.reserve` of 8 MiB while the disk has room (Fixed
+   item 4). To turn that off, put `{"disk_reserve_bytes": 0}` in
+   `~/.autorun/autorun.config.json` and delete the file; the setting stops
+   autorun creating it and does not remove one that exists.
+3. If you keep your own files in a skill or extension folder that autorun
+   installed, upgrade with the commands above and do not run 1.0.0rc4's
+   `autorun --uninstall` first: that version deletes them with the folder
+   (Fixed item 6).
+
 ### Fixed
 
 1. In the Claude desktop app's Code tab, autorun no longer pushes the session
@@ -27,32 +59,50 @@ marketplace itself carries a separate `version` field.
    loads the plugin's own `hooks/hooks.json`, which uses that command, and it
    forwarded none of them. So the daemon never saw
    `CLAUDE_CODE_ENABLE_TODO_TOOLS`, and every such session reported
-   "autorun is not enforcing task tracking yet". Both paths now read one list,
-   `platforms.forwarded_harness_env_names()`.
+   "autorun is not enforcing task tracking yet". Both paths now forward the same
+   four variables: `platforms.forwarded_harness_env_names()` is the list, and a
+   test fails if the copy in `hooks/hook_entry.py` differs.
 3. Codex now gets this release's skills when an earlier autorun left copies
    in `~/.agents/skills` that lost their `.autorun-owned` marker, for example
    because that directory is kept in git and the marker was ignored. Those
    copies read as your own skills, so the install left them in place and
    Codex, which reads that directory, kept running them instead of its plugin's
-   copies. An unmarked copy is now autorun's when it is byte-identical to a
-   version autorun installed: the install records what it publishes in
-   `~/.autorun/installer/published-trees.json`, and it recognizes every skill
-   version autorun committed before that. Such copies are retired and the
-   packaged ones take over. A copy you edited, or a skill you wrote, is kept as
-   before, and the warning now says it matches no version autorun wrote.
+   copies. An unmarked copy is now autorun's when every file in it is
+   byte-identical to a version autorun installed: the install records what it
+   publishes in `~/.autorun/installer/published-trees.json`, and it recognizes
+   every skill version autorun committed before that. Such copies are retired
+   and the packaged ones take over. A copy you edited, or a skill you wrote, is
+   kept as before, and the warning now says it matches no version autorun
+   wrote. A folder that also holds a file of yours is kept too, even when the
+   file has a name the comparison skips elsewhere, such as `SKILL.md.bak`,
+   `notes~` or `.git/`. Only operating system and Python leftovers
+   (`.DS_Store`, `*.pyc` and similar) are ignored in this comparison; the
+   backup in item 6 skips a longer list. One case is not handled: on a
+   case-sensitive filesystem, an old skill folder whose name differs from the
+   shipped one only by letter case (`Commit` against `commit`) is left beside
+   the new folder. Nothing is deleted.
 4. A full disk no longer stops autorun from writing its own state. On
    2026-11-13 SQLite could not create its `-wal` and `-shm` files
    (`unable to open database file`) and every tool call was refused, so the
    agent that had to free space could not run a command; on 2026-11-15 a full
    disk also stopped the daemon from starting, because creating `daemon.flock`
    failed with ENOSPC. autorun now keeps `~/.autorun/disk.reserve`, 8 MiB
-   (`disk_reserve_bytes`; 0 turns it off), created while the volume has four
+   (`disk_reserve_bytes`; 0 stops autorun creating it), created while the volume has four
    times that free. When opening the state database or taking the daemon lock
    fails on a volume with under half the reserve free, autorun deletes the
    reserve and retries once; the daemon recreates it when space returns. A real
-   full volume that made the unpatched daemon degrade every tool call
+   full volume that made the 1.0.0rc4 daemon degrade every tool call
    (`state_evaluation_failed`) now runs them normally. Guarded deletions still
    need `/ar:ok rm` typed by you, which works again once state can be written.
+   The reserve has limits. It covers opening the state database and creating the
+   daemon lock, not a write that fails later inside an open transaction. It
+   frees bytes, not inodes, so a volume that has run out of inodes is not
+   helped. On a volume with snapshots or transparent compression, deleting it
+   may free less than 8 MiB. Creating or releasing the reserve cannot itself
+   raise an error: a failure there is logged and ignored. When the daemon
+   lock cannot be created, the log warning now names the lock path and the
+   error number (for example `errno 28, No space left on device`). It used to
+   print `(NFS?)` and the error text with no path.
 5. A hook sent while the daemon's connection queue is full is now retried
    instead of failing with "Daemon accepted the request but did not answer:
    ConnectionResetError('Connection lost')". On Linux such a connection attempt
@@ -61,6 +111,53 @@ marketplace itself carries a separate `version` field.
    when the first write did. `ipc.connect` now asks the socket for its peer
    and reports a socket without one as a refused connection, before anything
    is sent, so the client waits and reconnects.
+6. Uninstalling or upgrading autorun deleted a skill or extension folder it
+   had installed together with files you had added to it, with no copy. This
+   covered names such as `SKILL.md.bak`, `notes~`, `.git/` and `__pycache__/`,
+   which the install's ownership check skipped, and it happened on uninstall, on
+   upgrade, when the install adopted a folder, with `--force`, and when the
+   install replaced a folder it had proven to be its own with a link. Before
+   it removes or replaces a folder, autorun now looks through it once. If it
+   finds a file that is not one autorun installed, it copies the folder to
+   `~/.autorun/installer/backups/` first. It
+   ignores files an operating system or Python regenerates (`.DS_Store`,
+   `._*`, `Thumbs.db`, `*.pyc`), test and lint caches (`.pytest_cache`,
+   `.mypy_cache`, `.ruff_cache`, `htmlcov`, coverage files), and the `.venv` of
+   an old Claude plugin cache version, so an ordinary upgrade makes no backup.
+   Two limits remain. In a folder that has no autorun marker and is known to be
+   autorun's only from a harness's install record, a file of yours under an
+   ordinary name such as `notes.md` is still not covered. And the install
+   output does not name the backup it made, so look in that directory after an
+   upgrade or uninstall if you kept files in an autorun folder.
+
+### For contributors
+
+1. A tmux test failed once per run on GitHub's `ubuntu-latest` after it moved to
+   Ubuntu 26.04 (tmux 3.6a): the suite's private tmux server exited when a test
+   closed its last session, and the next test's first command raced that exit.
+   `tests/conftest.py` now writes a `tmux.conf` with `exit-empty off`, and the
+   server runs for the whole pytest session.
+   `test_the_private_tmux_server_outlives_its_last_session` covers it.
+2. `test_session_targeting_regression.py` sent Ctrl-C to a shell that had not
+   yet installed its signal handlers on the same runners, which closed the
+   session. `setup_method` now checks that `new-session` succeeded and waits
+   for a shell prompt, and a failed send reports the server's sessions and
+   panes.
+3. `test_revision_3_upgrade_cost` in `test_state_store_benchmark.py` timed one
+   migration per size and failed when a shared runner stalled once. It now
+   builds three fresh stores per size and keeps the fastest.
+4. `test_300_session_starts_need_less_cpu_than_the_start_deadline` stopped
+   measuring at `<=` while asserting `<`, so a pass exactly at the 2 s deadline
+   failed with `assert 2.0 < 2.0` and no detail. The early exit now uses `<`,
+   and the failure message lists every pass to four decimals.
+5. `test_host_task_list.py` pins that a Codex, Gemini, Qwen, Pi, or any other
+   non-Claude harness started inside a Claude desktop session ignores the
+   inherited `CLAUDE_CODE_ENTRYPOINT` and `CLAUDE_CODE_TERMINAL_MCP_TOOLS`
+   variables. `test_install_provenance.py` and `test_install_fs.py` pin the
+   no-loss and no-backup-for-junk rules of Fixed items 3 and 6.
+6. `scripts/release_notes.py` now puts the two `uv tool install` commands first
+   in the generated Upgrading section and the Claude Code marketplace route
+   second, labelled "Claude Code only".
 
 ## [1.0.0rc4] - 2026-11-15
 

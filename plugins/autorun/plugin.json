@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ar",
-  "version": "1.0.0rc4",
+  "version": "1.0.0rc5",
   "description": "Lifecycle safety hooks and reusable automation skills for AI coding assistants",
   "author": {
     "name": "Andrew Hundt",

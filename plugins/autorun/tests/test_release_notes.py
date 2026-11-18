@@ -64,13 +64,18 @@ def test_the_published_notes_are_the_changelog_section_rendered():
     )
 
 
+def _rc4_notes() -> str:
+    """The released 1.0.0rc4 notes; build() renders only the declared version."""
+    return (REPO_ROOT / "docs" / "releases" / "1.0.0rc4.md").read_text(encoding="utf-8")
+
+
 def test_rc4_notes_keep_the_active_ghost_clear_reason_setting():
-    _, rendered, _ = release_notes.build()
+    rendered = _rc4_notes()
     assert "`ghost_clear_reason`" not in rendered
 
 
 def test_rc4_notes_do_not_promise_retired_read_guards():
-    _, rendered, _ = release_notes.build()
+    rendered = _rc4_notes()
     fixed67 = rendered.split("67. ", 1)[1].split("68. ", 1)[0]
     assert "Still blocked" not in fixed67
     assert "Codex's messages for `cat`" not in fixed67

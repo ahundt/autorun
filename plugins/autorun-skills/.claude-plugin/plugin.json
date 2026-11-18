@@ -1,6 +1,6 @@
 {
   "name": "autorun-skills",
-  "version": "1.0.0rc4",
+  "version": "1.0.0rc5",
   "description": "General-purpose agent skills: writing, planning reports, skill authoring, diagrams, demos, tmux testing",
   "author": {
     "name": "Andrew Hundt",

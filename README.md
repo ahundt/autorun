@@ -419,7 +419,7 @@ Install into the standalone Gemini CLI with `--gemini`. The install needs Gemini
 
 ```bash
 autorun --install --gemini --force
-autorun --status --gemini      # lists ar@1.0.0rc4
+autorun --status --gemini      # lists ar@1.0.0rc5
 ```
 
 ### Other ways to install

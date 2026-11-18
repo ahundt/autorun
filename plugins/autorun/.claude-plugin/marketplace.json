@@ -10,7 +10,7 @@
     {
       "name": "ar",
       "description": "autorun plugin - uses 'ar' as command prefix (/ar:status, /ar:file allow, etc.). Provides AutoFile policies, autonomous operation via hooks, and session exploration tools.",
-      "version": "1.0.0rc4",
+      "version": "1.0.0rc5",
       "author": {
         "name": "Andrew Hundt",
         "email": "ATHundt@gmail.com"
