@@ -1,0 +1,49 @@
+name: tmux debug
+
+on:
+  push:
+    branches: ['dbg/**']
+
+permissions:
+  contents: read
+
+jobs:
+  tmux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rep: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install tmux and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+          tmux -V
+          cat /etc/os-release | head -3
+          uname -r
+          uv sync --project plugins/autorun --locked --dev
+      - name: Run the tmux tests three times with call and server logs
+        working-directory: plugins/autorun
+        env:
+          AR_TMUX_LOGDIR: ${{ github.workspace }}/tmuxlog
+        run: |
+          for i in 1 2 3; do
+            uv run --project . --locked pytest tests/ -m tmux --tb=short -q -p no:cacheprovider || echo "RUN $i FAILED"
+          done
+      - name: Show the end of the call log and the newest server logs
+        if: always()
+        run: |
+          ls "$GITHUB_WORKSPACE/tmuxlog" | head -5; ls "$GITHUB_WORKSPACE/tmuxlog" | wc -l
+          tail -40 "$GITHUB_WORKSPACE/tmuxlog/calls.log" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tmuxlog-${{ matrix.rep }}
+          path: tmuxlog
+          retention-days: 3

@@ -208,8 +208,14 @@ def pytest_configure(config):
             "#!/bin/sh\n"
             "unset TMUX\n"
             "export SHELL=/bin/sh\n"
-            f"exec {shlex.quote(real_tmux)} -f {shlex.quote(str(tmux_conf))} -S "
-            f"{shlex.quote(socket_path)} \"$@\"\n",
+            # DEBUG-ONLY (branch dbg/tmux): log every call and its exit code, run tmux -vv.
+            "L=${AR_TMUX_LOGDIR:-/tmp/artmuxlog}; mkdir -p \"$L\"; cd \"$L\"\n"
+            "echo \"$(date +%s.%N) START $$ $*\" >> \"$L/calls.log\"\n"
+            f"{shlex.quote(real_tmux)} -vv -f {shlex.quote(str(tmux_conf))} -S "
+            f"{shlex.quote(socket_path)} \"$@\"\n"
+            "rc=$?\n"
+            "echo \"$(date +%s.%N) END $$ rc=$rc\" >> \"$L/calls.log\"\n"
+            "exit $rc\n",
             encoding="utf-8",
         )
         wrapper.chmod(0o755)
