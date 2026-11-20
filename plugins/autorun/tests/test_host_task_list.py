@@ -333,6 +333,18 @@ def test_desktop_plan_proof_delivers_definitive_guidance_once(desktop_after_task
     assert guidance not in _start_text(sid, store, env)
 
 
+def test_resumed_desktop_session_gets_the_guidance_at_its_first_plan_call(isolated_session):
+    """A resume delivers no startup instruction, so the proof is the only chance."""
+    store, sid, env = ThreadSafeDB(), "desktop-resumed", {**DESKTOP_ENV, **SWITCH}
+    guidance = f"This session's host keeps its task list in `{DESKTOP_TOOL}`"
+    resumed, _ = _dispatch("SessionStart", sid, store, env, source="resume")
+    assert guidance not in str(resumed)
+    first, _ = _call_desktop_plan(sid, store, env)
+    assert guidance in str(first)
+    second, _ = _call_desktop_plan(sid, store, env)
+    assert guidance not in str(second)
+
+
 def test_task_evidence_follows_the_proof_not_the_environment(isolated_session):
     """(a)+(b) Same switch variables: desktop without proof equals a terminal;
     after the plan tool was called the evidence is the empty set."""

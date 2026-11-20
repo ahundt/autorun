@@ -132,6 +132,25 @@ def test_json_save_releases_the_reserve_and_retries_once(reserve, tmp_path, monk
         assert state["saved"] is True
 
 
+def test_json_save_stops_after_one_retry_when_the_disk_stays_full(reserve, tmp_path, monkeypatch):
+    from autorun import session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    attempts = []
+
+    def write_always_full(path, data):
+        attempts.append(1)
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(session_manager, "atomic_write_json", write_always_full)
+    with pytest.raises(session_manager.SessionPersistenceError, match="No space left"):
+        with store.session("s") as state:
+            state["saved"] = True
+    assert len(attempts) == 2, "one retry after the release, then the error stands"
+
+
 def _store_needing_space(tmp_path, reserve):
     """A store whose connection opens only once the reserve is gone."""
     store = SQLiteStore(tmp_path / "state.sqlite3")
@@ -300,13 +319,18 @@ def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport):
     daemon = core.AutorunDaemon.__new__(core.AutorunDaemon)
     daemon._loop = daemon._shutdown_event = daemon._server = daemon._watchdog_task = None
     armed = threading.Event()
-    attempts = []
+    attempts, released_near = [], []
     if transport:
         reserve.write_bytes(bytes(MIB))
         _free(monkeypatch, 0)
         monkeypatch.setattr(core.ipc, "HAS_UNIX_SOCKETS", transport == "unix")
-        for attr in ("SOCKET_PATH", "PORT_FILE", "TOKEN_FILE"):
-            monkeypatch.setattr(core.ipc, attr, reserve.parent / attr.lower())
+        # Separate directories, so the test sees which endpoint start() names.
+        for attr, folder in (("SOCKET_PATH", "unix"), ("PORT_FILE", "tcp"), ("TOKEN_FILE", "tcp")):
+            (reserve.parent / folder).mkdir(exist_ok=True)
+            monkeypatch.setattr(core.ipc, attr, reserve.parent / folder / attr.lower())
+        real_release = disk_reserve.release_if_exhausted
+        monkeypatch.setattr(disk_reserve, "release_if_exhausted",
+                            lambda near, *a: released_near.append(near) or real_release(near, *a))
 
     class Server:
         async def __aenter__(self):
@@ -342,6 +366,7 @@ def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport):
     asyncio.run(daemon.start())
     assert armed.is_set(), "AutorunDaemon.start() never called disk_reserve arm"
     assert attempts == ([True, False] if transport else [False])
+    assert released_near == ([reserve.parent / transport] if transport else [])
     assert not reserve.exists()
 
 

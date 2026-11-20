@@ -5225,10 +5225,9 @@ def register_hooks(app_instance) -> None:
 
         def claim(metadata):
             nonlocal claimed
-            previous = metadata.get("claude_task_tool_load_instruction")
-            # If proof arrives before startup, let SessionStart deliver the first
-            # instruction. Otherwise replace the already delivered conditional one.
-            if previous == claim_value or (at_host_proof and previous is None):
+            # The proof delivers even with no earlier claim: a resumed session
+            # gets no startup instruction, so nothing else would deliver it.
+            if metadata.get("claude_task_tool_load_instruction") == claim_value:
                 return
             metadata["claude_task_tool_load_instruction"] = claim_value
             claimed = True
