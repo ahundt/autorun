@@ -649,9 +649,12 @@ gh api "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
 env_id=$(gh api "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
   --jq '.[] | select(.environment.name=="pypi") | .environment.id')
 # A failed `test` typed at a prompt does not stop the lines after it, so the
-# approval is chained to the checks: it is sent only when the pushed tag and
-# this run are both at the verified commit.
+# approval is chained to the checks: it is sent only when the local tag, the
+# pushed tag and this run are all at the verified commit. The artifact checks
+# above (digests, the two install probes) are yours to read before running
+# this; nothing here repeats them.
 test -n "${release_sha:-}" \
+  && test "$(git rev-list -n 1 "$release_tag")" = "$release_sha" \
   && test "$(git ls-remote origin "refs/tags/$release_tag^{}" | cut -f1)" = "$release_sha" \
   && test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$release_sha" \
   && gh api --method POST \
@@ -732,8 +735,9 @@ the attempt, or take the browser route above:
 # which would select the stable branch below.
 release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
 release_tag="v$release_version"
-test -n "$release_version" || echo "STOP: no version read from plugins/autorun/pyproject.toml"
 case "$release_version" in
+  "") echo "STOP: no version read from plugins/autorun/pyproject.toml"
+      release_kind=--STOP-no-version; expect_prerelease=unknown ;;
   *[A-Za-z]*) release_kind=--prerelease; expect_prerelease=true ;;
   *)          release_kind=--latest;     expect_prerelease=false ;;
 esac
