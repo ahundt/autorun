@@ -209,7 +209,7 @@ These commands apply to this session; add `--global` as the first argument for e
 | This session | Every session | Effect |
 |---|---|---|
 | `/ar:no <pattern>`, `/ar:no "<pattern>" <message>` | `/ar:no --global` with the same arguments | block; a message needs a quoted, `regex:` or `glob:` pattern, or the message becomes part of the pattern |
-| `/ar:ok <pattern> [N\|5m\|perm]` | `/ar:ok --global <pattern> [N\|5m\|perm]` | allow `N` times, for a duration (`5m`, `2h30m`, `2d`), or `perm` (session: until the session ends; global: until cleared); with no scope, a single use |
+| `/ar:ok <pattern> ['<literal>' ...] [N\|5m\|perm]` | `/ar:ok --global` with the same arguments | allow each pattern `N` times, for a duration (`5m`, `2h30m`, `2d`), or `perm` (session: until the session ends; global: until cleared); with no scope, one use per pattern |
 | `/ar:status` | `/ar:status` | list blocks and allows together |
 | `/ar:clear` | `/ar:clear --global` | remove all blocks and allows |
 
@@ -220,8 +220,10 @@ These commands apply to this session; add `--global` as the first argument for e
 /ar:no glob:*.tmp temporary files are not allowed in this session
 /ar:no /eval\(.*assert/ no eval( followed by assert
 /ar:no --global "git reset --hard" PERMANENTLY DESTRUCTIVE: use git stash instead
-/ar:ok 'git push' 1h
+/ar:ok 'git push' 'gh pr create' 1h
 ```
+
+For multiple allows, start with a quoted or typed pattern, then quote each additional literal. A bare scope word such as `'5m'` needs its own `/ar:ok` command to be used as a pattern.
 
 A pattern is a literal substring by default; `regex:` and `glob:` switch modes, and `/.../` with metacharacters is a regular expression. The first match in this order decides:
 

@@ -7,9 +7,11 @@ tells you what overrides exist so a block can always be resolved.
 
 ## Override commands (user types these)
 
-- `/ar:ok <pattern> [N|5m|perm]` — allow a blocked command in this session;
+- `/ar:ok <pattern> ['<literal>' ...] [N|5m|perm]` — allow a blocked command in this session;
   default is one use, then it locks again.
-- `/ar:ok --global <pattern> [N|5m|perm]` — same allow, for every session.
+- `/ar:ok --global` with the same arguments applies to every session.
+  To allow several patterns, quote the first unless it is typed (`regex:`,
+  `glob:` or `/re/`), and quote every additional literal.
 - `/ar:status` — show the file policy and the current allows.
 - `/ar:help` — list every autorun command.
 

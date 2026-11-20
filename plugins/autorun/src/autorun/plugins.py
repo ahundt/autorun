@@ -509,7 +509,21 @@ def _typed_pattern_unit(args: str) -> tuple[str, str, str] | None:
     return pattern, ptype, rest.strip()
 
 
-def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
+def _fully_quoted_words(text: str, words: list[str]) -> set[int]:
+    """Return positions of fully quoted words only when both shlex splits agree."""
+    try:
+        raw = shlex.split(text, posix=False)
+        # Equal lengths alone don't guarantee token alignment around escapes.
+        if len(raw) != len(words) or any(shlex.split(token) != [word] for token, word in zip(raw, words)):
+            return set()
+    except ValueError:
+        return set()
+    return {i for i, token in enumerate(raw) if len(token) >= 2 and token[0] in _QUOTES and token[-1] == token[0]}
+
+
+def _parse_pattern(
+    args: str, *, scope: bool, extra_patterns: list[str] | None = None
+) -> tuple[str, list[str], str]:
     """The one /ar:no and /ar:ok pattern grammar: (pattern, rest, pattern_type).
 
     A quoted, regex:, glob: or /re/ first unit is the whole pattern and the
@@ -518,10 +532,15 @@ def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
     allows. With ``scope`` (/ar:ok) the rest is the count/duration/perm words
     before or after the pattern, and any other word is an error rather than a
     guess. Quote a literal that ends in a scope-looking word (/ar:ok "sleep 5").
+    When the caller passes ``extra_patterns``, a later word written inside
+    quotes that is not a scope word is appended to it as one more literal
+    pattern (/ar:ok 'git push' 'gh pr create' 1h); without quotes it stays the
+    error, so a stray word never becomes an allow.
     """
     args = args.strip()
     if not args:
         raise ValueError("No pattern provided")
+    # Keep the raw argument cap; no individual parsed pattern can exceed it.
     if len(args) > _MAX_PATTERN_LENGTH:
         raise ValueError(f"Pattern too long (max {_MAX_PATTERN_LENGTH})")
 
@@ -531,6 +550,7 @@ def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
         args = head[1] if len(head) > 1 else ""
 
     typed = _typed_pattern_unit(args) if args else None
+    rest_text, offset = "", 0
     if typed:
         pattern, ptype, rest_text = typed
         rest = _split_command_args(rest_text)
@@ -541,6 +561,7 @@ def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
         ptype = "literal"
         if args[:1] in _QUOTES:
             pattern, rest = parts[0], parts[1:]
+            rest_text, offset = args, 1
         else:
             rest = []
             while scope and len(parts) > 1 and looks_like_scope(parts[-1]):
@@ -549,13 +570,29 @@ def _parse_pattern(args: str, *, scope: bool) -> tuple[str, list[str], str]:
     if not pattern:
         raise ValueError("No pattern provided")
     if scope:
-        stray = [token for token in rest if not looks_like_scope(token)]
+        scopes, stray, extras = [], [], []
+        quoted = (
+            _fully_quoted_words(rest_text, [pattern, *rest] if offset else rest)
+            if extra_patterns is not None and any(not looks_like_scope(word) for word in rest)
+            else set()
+        )
+        for i, token in enumerate(rest, start=offset):
+            if looks_like_scope(token):
+                scopes.append(token)
+            elif i in quoted and not token.startswith(("regex:", "glob:")) and _auto_detect_regex(token, "literal")[1] == "literal":
+                extras.append(token)
+            else:
+                stray.append(token)
         if stray:
             raise ValueError(
                 f"unexpected {' '.join(stray)!r} after the pattern {pattern!r}; quote the whole "
                 "pattern, and put only a count, duration or perm after it"
             )
-        rest = leading + rest
+        if extra_patterns is not None:
+            if "" in extras:
+                raise ValueError("No pattern provided")
+            extra_patterns.extend(extras)
+        rest = leading + scopes
     return pattern, rest, ptype
 
 
@@ -568,13 +605,13 @@ def _parse_args(args: str) -> tuple:
     return pattern, " ".join(rest) or None, ptype
 
 
-def _parse_allow_args(args: str) -> tuple:
-    """/ar:ok arguments: (pattern, scope words or None, pattern_type).
+def _parse_allow_args(args: str, *, extra_patterns: list[str] | None = None) -> tuple:
+    """/ar:ok arguments: (first pattern, scope words or None, pattern_type).
 
-    Scope may come before or after the pattern: /ar:ok git push 5m,
-    /ar:ok 5m git push.
+    Scope may come before or after the pattern. Append any additional literal
+    patterns to ``extra_patterns`` if provided.
     """
-    pattern, rest, ptype = _parse_pattern(args, scope=True)
+    pattern, rest, ptype = _parse_pattern(args, scope=True, extra_patterns=extra_patterns)
     return pattern, " ".join(rest) or None, ptype
 
 
@@ -775,17 +812,18 @@ def _make_block_op(op: str):
         if op == "allow":
             if not args:
                 usage = format_command_for_cli(
-                    f"/ar:ok{flag} <pattern> [count] [duration] [permanent|perm|p]",
+                    f"/ar:ok{flag} <pattern> ['<literal>' ...] [count] [duration] [permanent|perm|p]",
                     ctx.cli_type,
                 )
                 return f"❌ Usage: {usage}"
+            extras: list[str] = []
             try:
-                pattern, desc, ptype = _parse_allow_args(args)
+                pattern, desc, ptype = _parse_allow_args(args, extra_patterns=extras)
                 ttl, uses, explicit_permanent = parse_scope_args(desc)
             except ValueError as e:
                 return f"❌ Error: {e}"
 
-            if pattern.lower() == "cache" and "cache" in args.lower().split():
+            if not extras and pattern.lower() == "cache" and "cache" in args.lower().split():
                 # `/ar:ok cache` is `/ar:cache ok`: pass the held prompt (same count,
                 # duration and perm words). Quote it, `/ar:ok 'cache'`, to allow a
                 # shell command that is literally named cache.
@@ -804,17 +842,24 @@ def _make_block_op(op: str):
                 if default_scope and platform_for(ctx.cli_type).policy_commands_arrive_in_transcript
                 else None
             )
-            sa = ScopedAllow(
-                pattern=pattern,
-                pattern_type=ptype,
-                granted_at=time.time(),
-                ttl_seconds=ttl,
-                remaining_uses=uses,
-                grace_seconds=grace_seconds,
-            )
-            # Replace existing entry for same pattern (update scope)
-            accessor.update_allowed(lambda allows: [a for a in allows if a["pattern"] != pattern] + [sa.to_dict()])
-            return f"✅ Allowed: '{pattern}' ({sa.status_label()})"
+            grants, labels = [], []
+            granted_at = time.time()
+            # One grant per pattern text: the first spelling in the command wins.
+            patterns = {pattern: ptype, **{extra: "literal" for extra in extras if extra != pattern}}
+            for text, pattern_type in patterns.items():
+                sa = ScopedAllow(
+                    pattern=text,
+                    pattern_type=pattern_type,
+                    granted_at=granted_at,
+                    ttl_seconds=ttl,
+                    remaining_uses=uses,
+                    grace_seconds=grace_seconds,
+                )
+                grants.append(sa.to_dict())
+                labels.append(f"'{text}' ({sa.status_label()})")
+            # Replace existing entries for the same pattern text (update scope).
+            accessor.update_allowed(lambda allows: [a for a in allows if a["pattern"] not in patterns] + grants)
+            return "✅ Allowed: " + ", ".join(labels)
 
         if op == "clear":
             accessor.set([])

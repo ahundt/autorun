@@ -215,6 +215,76 @@ class TestCommandBlockingHandlers:
         response_str = str(response)
         assert "rm" in response_str
 
+    def test_ok_multiple_patterns_pass_the_guard(self):
+        sid = self.test_session_id
+        store = self._store
+        commands = ["git push origin main", "gh pr create --draft", "gh pr edit 42", "gh pr merge 42"]
+        assert all(_check_block_real(sid, cmd, store) for cmd in commands)
+
+        result = _dispatch_cmd("/ar:ok 'git push' 'gh pr create' 'gh pr edit' 72h", sid, store)
+        message = result.get("systemMessage", "")
+        ctx = EventContext(session_id=sid, event="PreToolUse", store=store)
+        allows = ctx.state_get("session_allowed_patterns", [])
+        assert [(a["pattern"], a["ttl_seconds"]) for a in allows] == [
+            ("git push", 259200), ("gh pr create", 259200), ("gh pr edit", 259200),
+        ], message
+        for a in allows:
+            assert f"'{a['pattern']}' ({plugins.ScopedAllow.from_dict(a).status_label()})" in message
+        assert all(_check_block_real(sid, cmd, store) is None for cmd in commands[:3])
+        assert _check_block_real(sid, commands[3], store)
+
+    @pytest.mark.parametrize("args, expected, ttl, uses", [
+        ("5m 'a b' 'c d'", [("a b", "literal"), ("c d", "literal")], 300, None),
+        (r"regex:git\s+push 'gh pr create'", [(r"git\s+push", "regex"), ("gh pr create", "literal")], None, 1),
+        ("'git push' 'git push' 'gh pr create'", [("git push", "literal"), ("gh pr create", "literal")], None, 1),
+    ], ids=["leading-scope", "typed-first", "duplicate"])
+    def test_ok_multiple_patterns_session_state(self, args, expected, ttl, uses):
+        sid = self.test_session_id
+        store = self._store
+        result = _dispatch_cmd(f"/ar:ok {args}", sid, store)
+        ctx = EventContext(session_id=sid, event="PreToolUse", store=store)
+        allows = ctx.state_get("session_allowed_patterns", [])
+        assert [(a["pattern"], a["pattern_type"]) for a in allows] == expected, result
+        assert all(a.get("ttl_seconds") == ttl and a.get("remaining_uses") == uses for a in allows)
+        message = result.get("systemMessage", "")
+        for pattern, _ in expected:
+            assert message.count(f"'{pattern}'") == 1
+
+    def test_ok_multiple_patterns_global(self):
+        with _isolated_global_store() as state:
+            store = ThreadSafeDB()
+            sid = self.test_session_id
+            result = _dispatch_cmd("/ar:ok --global 'git push' 'gh pr create' 3", sid, store)
+            allows = state.get("global_allowed_patterns", [])
+            assert [(a["pattern"], a["remaining_uses"]) for a in allows] == [
+                ("git push", 3), ("gh pr create", 3),
+            ], result
+            ctx = EventContext(session_id=sid, event="PreToolUse", store=store)
+            assert not ctx.state_get("session_allowed_patterns", [])
+            assert _check_block_real(f"{sid}-other", "git push origin main", store) is None
+            assert _check_block_real(f"{sid}-other", "gh pr create --draft", store) is None
+
+    @pytest.mark.parametrize("bad_tail, error", [
+        ("gh pr create", "unexpected 'gh pr create' after the pattern 'git push'"),
+        ("'gh pr create", "unexpected"),
+        ("'gh pr'create", "unexpected"),
+        ("'regex:gh.*'", "unexpected"),
+        ("'glob:gh*'", "unexpected"),
+        ("'/gh.*/'", "unexpected"),
+        ("''", "No pattern provided"),
+        ("'" + "x" * (plugins._MAX_PATTERN_LENGTH + 1) + "'", "Pattern too long"),
+    ], ids=["stray", "unterminated", "partial-quote", "regex", "glob", "slash-regex", "empty", "too-long"])
+    def test_ok_invalid_extra_pattern_does_not_write(self, bad_tail, error):
+        sid = self.test_session_id
+        store = self._store
+        _dispatch_cmd("/ar:ok 'git push' 3", sid, store)
+        ctx = EventContext(session_id=sid, event="PreToolUse", store=store)
+        before = ctx.state_get("session_allowed_patterns", [])
+        assert [a["pattern"] for a in before] == ["git push"]
+        result = _dispatch_cmd(f"/ar:ok 'git push' {bad_tail} 5m", sid, store)
+        assert error in result.get("systemMessage", "")
+        assert ctx.state_get("session_allowed_patterns", []) == before
+
     def test_handle_clear_pattern_all(self):
         """Test clearing all session blocks via /ar:clear."""
         # Add multiple blocks
