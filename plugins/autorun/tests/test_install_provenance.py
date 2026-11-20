@@ -132,6 +132,29 @@ def test_a_receipt_is_not_saved_for_a_tree_a_later_publish_replaced(tmp_path):
     assert not provenance.autorun_wrote(target, plugin="ar", catalog=False)
 
 
+def test_a_receipt_waits_for_the_lock_a_publisher_of_that_folder_holds(tmp_path):
+    """The digest comparison and the write share the publisher's lock, so a
+    publish cannot replace the tree between them."""
+    import threading
+
+    from filelock import FileLock
+
+    source = _skill(tmp_path / "src" / "local")
+    target = tmp_path / "skills" / "local"
+    assert fs.publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+    digest = provenance.tree_digest(target)
+    recorder = threading.Thread(target=provenance.record, args=(target, "ar", digest))
+    with FileLock(str(target.parent / fs.INSTALL_LOCK_NAME)):
+        recorder.start()
+        recorder.join(timeout=0.5)
+        assert recorder.is_alive(), "record ran without the publication lock"
+        assert not provenance.receipts_path().exists()
+    recorder.join(timeout=10)
+    assert not recorder.is_alive()
+    _lose_marker(target)
+    assert provenance.autorun_wrote(target, plugin="ar", catalog=False)
+
+
 def test_tree_receipt_accounts_for_writing_through_a_marker_symlink(tmp_path):
     source = _skill(tmp_path / "src" / "local")
     _put(source / "marker.json", "{}\n")

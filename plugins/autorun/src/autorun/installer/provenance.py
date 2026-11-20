@@ -38,8 +38,11 @@ import os
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
+from filelock import FileLock
+
 from .fs import (
     _LINK,
+    INSTALL_LOCK_NAME,
     REGENERATED_GLOBS,
     SKIP_NAMES,
     TreeManifest,
@@ -154,14 +157,17 @@ def record(target: Path, plugin: str, digest: str) -> None:
     Nothing is saved when the tree at ``target`` no longer has that digest:
     a later publish or an edit has replaced what this publish wrote, and a
     receipt for bytes that are not there would prove ownership of whatever
-    tree later matched them.
+    tree later matched them. The comparison and the write run under the lock
+    every publisher of ``target`` holds while it swaps, so no publish can land
+    between them.
     """
-    if tree_digest(target) != digest:
-        return
-    path = receipts_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with json_document(path) as receipts:
-        receipts[_key(target)] = {"plugin": plugin, "digest": digest}
+    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
+        if tree_digest(target) != digest:
+            return
+        path = receipts_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with json_document(path) as receipts:
+            receipts[_key(target)] = {"plugin": plugin, "digest": digest}
 
 
 def forget(target: Path) -> None:
