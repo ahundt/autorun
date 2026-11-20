@@ -108,8 +108,28 @@ def test_receipt_excludes_an_edit_after_publication(tmp_path, monkeypatch):
     intents = retirements([target.parent], [], plugins=["ar"])
     assert traversal.run((), ctx, traversal.Mode.UNINSTALL, extra=intents) == []
     assert (target / "SKILL.md").read_bytes() == b"# my edit\n"
+    # No receipt was saved for a tree that had already changed, so putting the
+    # shipped text back by hand does not make the folder autorun's either.
     _put(target / "SKILL.md", "# shipped\n")
-    assert provenance.autorun_wrote(target, plugin="ar")
+    assert not provenance.autorun_wrote(target, plugin="ar", catalog=False)
+
+
+def test_a_receipt_is_not_saved_for_a_tree_a_later_publish_replaced(tmp_path):
+    """Two installs of one folder: the first to swap is the last to record."""
+    target = tmp_path / "skills" / "local"
+    first = _skill(tmp_path / "src-a" / "local", "# version a\n")
+    second = _skill(tmp_path / "src-b" / "local", "# version b\n")
+    assert fs.publish_tree(first, target, plugin="ar").verdict is Verdict.PUBLISH
+    digest_a = provenance.tree_digest(target)
+    assert fs.publish_tree(second, target, plugin="ar", force=True).verdict is Verdict.PUBLISH
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "# version b\n"
+    provenance.record(target, "ar", provenance.tree_digest(target))
+    provenance.record(target, "ar", digest_a)  # the first install resumes late
+
+    _lose_marker(target)
+    assert provenance.autorun_wrote(target, plugin="ar", catalog=False), "b keeps its receipt"
+    _put(target / "SKILL.md", "# version a\n")
+    assert not provenance.autorun_wrote(target, plugin="ar", catalog=False)
 
 
 def test_tree_receipt_accounts_for_writing_through_a_marker_symlink(tmp_path):

@@ -149,7 +149,15 @@ def _key(target: Path) -> str:
 
 
 def record(target: Path, plugin: str, digest: str) -> None:
-    """Save the digest captured before the published tree became visible."""
+    """Save the digest captured before the published tree became visible.
+
+    Nothing is saved when the tree at ``target`` no longer has that digest:
+    a later publish or an edit has replaced what this publish wrote, and a
+    receipt for bytes that are not there would prove ownership of whatever
+    tree later matched them.
+    """
+    if tree_digest(target) != digest:
+        return
     path = receipts_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with json_document(path) as receipts:
