@@ -18,7 +18,8 @@ fixes the Claude desktop app's task list, hooks run through the `autorun`
 command in that app, stale Codex skill copies, task-tracking writes on a full
 disk, and one hook failure under load on Linux. Three behaviors change: in the
 Claude Code terminal and the Claude desktop app, `/ar:cache` now holds a prompt
-sent after the prompt cache expired instead of only warning; `/ar:ok` takes
+sent after the prompt cache expired on a conversation of 100,000 tokens or more
+(Changed item 1 has the conditions) instead of only warning; `/ar:ok` takes
 several quoted patterns in one command; and Pi agents started by pi-subagents
 0.68.0 or newer now get autorun's tool checks.
 
@@ -112,7 +113,8 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    case-sensitive filesystem, an old skill folder whose name differs from the
    shipped one only by letter case (`Commit` against `commit`) is left beside
    the new folder. Nothing is deleted.
-4. A full disk no longer stops autorun from writing its own state. On
+4. A full disk no longer stops autorun from opening or saving its own state
+   or starting its daemon, within the limits listed at the end of this item. On
    2026-11-13 SQLite could not create its `-wal` and `-shm` files
    (`unable to open database file`) and every tool call was refused, so the
    agent that had to free space could not run a command; on 2026-11-15 a full

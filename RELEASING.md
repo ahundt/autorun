@@ -570,6 +570,9 @@ pushed tag is the one thing the recovery table below rules out.
 release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
 test -n "$release_version"
 release_tag="v$release_version"
+# An empty $release_sha would make both comparisons below `test "" = ""` when
+# the tag is missing, so require the Stage 2 value before comparing.
+test -n "${release_sha:-}"
 test "$(git rev-list -n 1 "$release_tag")" = "$release_sha"
 test "$(git ls-remote origin "refs/tags/$release_tag^{}" | cut -f1)" = "$release_sha"
 ```
@@ -606,6 +609,8 @@ rehearsal against TestPyPI directly.
 ```bash
 run_id=$(gh run list --workflow publish.yml --branch "$release_tag" \
   --limit 1 --json databaseId --jq '.[0].databaseId')
+# The run you are about to approve must be the one for the verified commit.
+test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$release_sha"
 gh run view "$run_id"                      # which jobs passed, which is waiting
 
 # Which rehearsal steps ran, readable while the run is still parked.

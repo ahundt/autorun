@@ -11,7 +11,8 @@ per pattern (auto-revokes after its first match).
 
 With a quoted or typed first pattern, each additional pattern must be a
 quoted literal, and a bare count, duration or perm word (such as `'5m'`)
-needs its own `/ar:ok` command to be used as a pattern.
+needs its own `/ar:ok` command to be used as a pattern. So does a literal that
+contains an escaped quote (`"say \"hi\""`).
 
 `--global` writes the allow to the global rules, which apply to every session
 until they run out or `/ar:clear --global` removes them. Without it the allow
