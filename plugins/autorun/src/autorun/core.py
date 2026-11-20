@@ -4142,7 +4142,8 @@ class AutorunDaemon:
                 self._daemon_lock = None
                 # A full disk fails the lock file's creation; the reserve
                 # frees room for it, and the retry runs once.
-                if attempt == 1 and disk_reserve.release_if_exhausted(flock_path):
+                if (attempt == 1 and disk_reserve.is_out_of_space(e)
+                        and disk_reserve.release_if_exhausted(flock_path)):
                     continue
                 return self._socket_connect_test()
         # Write PID to daemon.lock for discovery by other processes.
@@ -4266,11 +4267,12 @@ class AutorunDaemon:
             try:
                 self._server = await ipc.start_server(self.handle_client, limit=READ_BUFFER_LIMIT)
                 break
-            except OSError:
+            except OSError as exc:
                 from . import disk_reserve
 
                 endpoint = ipc.SOCKET_PATH if ipc.HAS_UNIX_SOCKETS else ipc.PORT_FILE
-                if attempt == 2 or not disk_reserve.release_if_exhausted(endpoint.parent):
+                if (attempt == 2 or not disk_reserve.is_out_of_space(exc)
+                        or not disk_reserve.release_if_exhausted(endpoint.parent)):
                     raise
         self.running = True
 

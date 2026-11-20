@@ -27,6 +27,7 @@ free less than its size.
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 from pathlib import Path
@@ -117,6 +118,14 @@ def _arm(path: Path | None) -> bool:
         except OSError:
             pass
         return False
+
+
+def is_out_of_space(error: OSError) -> bool:
+    """Identify native space errors before checking whether the reserve can help."""
+    # CPython maps ERROR_DISK_FULL (112) to ENOSPC, but
+    # ERROR_HANDLE_DISK_FULL (39) falls back to EINVAL.
+    return (error.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC))
+            or getattr(error, "winerror", None) == 39)
 
 
 def release_if_exhausted(failed_near: Path, path: Path | None = None) -> bool:

@@ -151,6 +151,48 @@ def test_json_save_stops_after_one_retry_when_the_disk_stays_full(reserve, tmp_p
     assert len(attempts) == 2, "one retry after the release, then the error stands"
 
 
+@pytest.mark.parametrize(
+    "errnum, winerror, retry",
+    [
+        pytest.param(errno.EACCES, None, False, id="eacces"),
+        pytest.param(None, None, False, id="no-errno"),
+        pytest.param(getattr(errno, "EDQUOT", None), None, True, id="edquot",
+                     marks=pytest.mark.skipif(not hasattr(errno, "EDQUOT"), reason="no EDQUOT")),
+        pytest.param(errno.ENOSPC, 112, True, id="winerror-112"),
+        pytest.param(errno.EINVAL, 39, True, id="winerror-39"),
+        pytest.param(errno.EINVAL, 87, False, id="winerror-87"),
+    ],
+)
+def test_json_save_reserve_depends_on_write_error(reserve, tmp_path, monkeypatch, errnum, winerror, retry):
+    from contextlib import nullcontext
+
+    from autorun import session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    error = OSError(errnum, "injected write failure")
+    if winerror is not None:
+        error.winerror = winerror  # Match CPython's Windows error fields on any platform.
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    real_write = session_manager.atomic_write_json
+    attempts = []
+
+    def write_once_failing(path, data):
+        attempts.append(reserve.exists())
+        if len(attempts) == 1:
+            raise error
+        return real_write(path, data)
+
+    monkeypatch.setattr(session_manager, "atomic_write_json", write_once_failing)
+    with (nullcontext() if retry else pytest.raises(session_manager.SessionPersistenceError)) as exc:
+        with store.session("s") as state:
+            state["saved"] = True
+    if not retry:
+        assert exc.value.__cause__ is error
+    assert attempts == ([True, False] if retry else [True])
+    assert reserve.exists() is not retry
+
+
 def _store_needing_space(tmp_path, reserve):
     """A store whose connection opens only once the reserve is gone."""
     store = SQLiteStore(tmp_path / "state.sqlite3")
@@ -205,7 +247,8 @@ def test_a_second_failure_after_the_retry_is_raised(reserve, tmp_path, monkeypat
     assert store._connect_once.call_count == 2, "exactly one retry"
 
 
-def test_daemon_lock_releases_the_reserve_when_creating_the_lock_file_fails(reserve, tmp_path, monkeypatch):
+@pytest.mark.parametrize("errnum", [errno.ENOSPC, errno.EACCES], ids=["enospc", "eacces"])
+def test_daemon_lock_releases_the_reserve_when_creating_the_lock_file_fails(reserve, tmp_path, monkeypatch, errnum):
     from autorun.core import AutorunDaemon
 
     reserve.write_bytes(bytes(MIB))
@@ -219,19 +262,25 @@ def test_daemon_lock_releases_the_reserve_when_creating_the_lock_file_fails(rese
 
         def acquire(self):
             attempts.append(reserve.exists())
-            if reserve.exists():
-                raise OSError(errno.ENOSPC, "No space left on device")
+            if (errnum == errno.ENOSPC and reserve.exists()) or len(attempts) == 1:
+                raise OSError(errnum, os.strerror(errnum))
 
         def release(self):
             pass
 
     daemon = AutorunDaemon.__new__(AutorunDaemon)
     daemon._daemon_lock = None
+    monkeypatch.setattr(daemon, "_socket_connect_test", lambda: False)
     with mock.patch("autorun.core.LOCK_PATH", lock_path), \
             mock.patch("filelock.FileLock", SpaceDependentLock):
-        assert daemon._acquire_daemon_lock() is True
-    assert attempts == [True, False]
-    assert not reserve.exists()
+        if errnum == errno.EACCES:
+            assert daemon._acquire_daemon_lock() is False
+            assert attempts == [True]
+            assert reserve.exists()
+        else:
+            assert daemon._acquire_daemon_lock() is True
+            assert attempts == [True, False]
+            assert not reserve.exists()
 
 
 def test_lock_failure_warning_names_the_errno_and_does_not_blame_nfs(reserve, tmp_path, monkeypatch, caplog):
@@ -309,8 +358,14 @@ def test_the_watchdog_tick_arms_the_reserve(monkeypatch):
     assert calls == [1]
 
 
-@pytest.mark.parametrize("transport", [None, "unix", "tcp"], ids=["no-error", "unix-enospc", "tcp-enospc"])
-def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport):
+@pytest.mark.parametrize("transport, errnum", [
+    pytest.param(None, None, id="no-error"),
+    pytest.param("unix", errno.ENOSPC, id="unix-enospc"),
+    pytest.param("tcp", errno.ENOSPC, id="tcp-enospc"),
+    pytest.param("unix", errno.EACCES, id="unix-eacces"),
+    pytest.param("tcp", errno.EACCES, id="tcp-eacces"),
+])
+def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport, errnum):
     import asyncio
     import threading
 
@@ -343,10 +398,12 @@ def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport):
         async def __aexit__(self, *_exc):
             return False
 
+    error = OSError(errnum, os.strerror(errnum)) if errnum is not None else None
+
     async def start_server(*_a, **_k):
         attempts.append(reserve.exists())
-        if reserve.exists():
-            raise OSError(errno.ENOSPC, "No space left on device")
+        if (errnum == errno.ENOSPC and reserve.exists()) or (errnum == errno.EACCES and len(attempts) == 1):
+            raise error
         return Server()
 
     async def no_watchdog():
@@ -363,6 +420,15 @@ def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport):
     monkeypatch.setattr(daemon, "_setup_signal_handlers", lambda: None)
     monkeypatch.setattr(daemon, "watchdog", no_watchdog)
     monkeypatch.setattr(daemon, "async_stop", no_stop)
+    if errnum == errno.EACCES:
+        with pytest.raises(OSError) as exc:
+            asyncio.run(daemon.start())
+        assert exc.value is error
+        assert attempts == [True]
+        assert released_near == []
+        assert reserve.exists()
+        assert not armed.is_set()
+        return
     asyncio.run(daemon.start())
     assert armed.is_set(), "AutorunDaemon.start() never called disk_reserve arm"
     assert attempts == ([True, False] if transport else [False])
