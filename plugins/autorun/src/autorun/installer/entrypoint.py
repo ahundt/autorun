@@ -813,8 +813,17 @@ def _registry_entries() -> Mapping[str, Sequence[str]]:
     return {"codex": tuple(str(entry.get("name")) for entry in plugins if isinstance(entry, Mapping) and entry.get("name"))}
 
 
-def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: bool = False) -> int:
-    """Preview the next install and run checks a file walk cannot answer."""
+def show_status(
+    custom_harnesses: Sequence[str] = (),
+    *,
+    include_legacy_gemini: bool = False,
+    skill_placement: object = None,
+) -> int:
+    """Preview the next install and run checks a file walk cannot answer.
+
+    ``skill_placement`` is the same ``--skill-placement`` value an install
+    takes, so the preview is of the install the user would actually run.
+    """
     from .. import __build_time__, __commit__, __version__
     from ..config import overload_policy_status
 
@@ -835,7 +844,9 @@ def show_status(custom_harnesses: Sequence[str] = (), *, include_legacy_gemini: 
     root = _marketplace_root()
     try:
         plugins = parse_selection(root, "all")
-        resolved, custom = _resolved_settings(custom_harnesses=custom_harnesses)
+        resolved, custom = _resolved_settings(
+            custom_harnesses=custom_harnesses, skill_placement=skill_placement
+        )
         harnesses, table, available, _ = _harnesses(root, plugins, custom)
     except ValueError as error:
         print(f"Error: {error}")

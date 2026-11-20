@@ -1299,6 +1299,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
         return show_status(
             custom_harnesses=args.custom_harness,
             include_legacy_gemini=args.gemini,
+            skill_placement=args.skill_placement,
         )
 
     # Restart daemon mode
