@@ -71,10 +71,12 @@ or they reach the live daemon; spec:
 8. **Default off.** A new gate stays off until the user runs `/ar:<feature> on`;
    the cache gate reads its `cache/toggle` state through
    `cache_guard._toggle_enabled`. One exception: the cache guard's
-   prompt-time expiry check (`CacheGuard.check_prompt_after_expiry`) runs
-   with nothing stored, at CONFIG `cache_guard_expired_prompt_action`, which
-   is `warn`: it shows a notice and never stops a prompt unless the user
-   runs `/ar:cache on` (block). `/ar:cache off` turns it off.
+   prompt-time expiry check holds by default in the Claude Code terminal and
+   Claude desktop app. Other entrypoints (including SDK hosts such as T3 Code)
+   and other harnesses warn when cache data exists. `/ar:cache on` opts a
+   session into holding where supported; a guessed lifetime never holds.
+   Resend the same text to proceed once; Claude Code slash commands such as
+   `/ar:cache ok` are model requests, so resending is cheaper.
 9. **Anchor `.gitignore` directory patterns with `/`** when you mean the repo
    root: unanchored `cache/` once hid a plugin directory named `cache` from git.
 10. **Harness hook-event allowlists have one owner, `tests/harness_hook_events.py`.**

@@ -785,6 +785,12 @@ def _make_block_op(op: str):
             except ValueError as e:
                 return f"❌ Error: {e}"
 
+            if pattern.lower() == "cache" and "cache" in args.lower().split():
+                # `/ar:ok cache` is `/ar:cache ok`: pass the held prompt (same count,
+                # duration and perm words). Quote it, `/ar:ok 'cache'`, to allow a
+                # shell command that is literally named cache.
+                return _run_cache_command(ctx, f"{'global ' if rule_scope == 'global' else ''}ok {desc or ''}")
+
             default_scope = not explicit_permanent and ttl is None and uses is None
             if default_scope:
                 uses = 1  # Safe default: one user-visible command
@@ -2838,14 +2844,16 @@ def handle_cache(ctx: EventContext) -> str:
     Reuses `scoped_allow.parse_scope_args` for `5m|5|perm` grammar; see
     `cache_guard.cache_command` and plan §6.5.1.
     """
-    from .cache_guard import cache_command
+    return _run_cache_command(ctx, _command_line_arguments(ctx))
 
-    tail = _command_line_arguments(ctx)
-    parts = tail.split()
-    target_session = "__global__" if parts and parts[0].lower() == "global" else ctx.session_id
+
+def _run_cache_command(ctx: EventContext, tail: str) -> str:
+    """Run `/ar:cache <tail>`, refreshing the daemon cache of the session it writes."""
+    from .cache_guard import cache_command, cache_scope_session
+
     return ctx.state_synchronize(
         lambda: cache_command(tail, ctx.session_id, ctx.cli_type),
-        session_id=target_session,
+        session_id=cache_scope_session(tail, ctx.session_id),
     )
 
 
@@ -3471,9 +3479,8 @@ def deliver_deferred_stop_notice(ctx: EventContext) -> Optional[Dict]:
 def cache_guard_prompt_after_expiry(ctx: EventContext) -> Optional[Dict]:
     """Stop or warn before a prompt re-writes an expired prompt cache.
 
-    Only the user's own prose reaches the check: a command (`/ar:cache off`
-    must always get through) and any prompt resolve_prompt_author does not
-    credit to the user pass untouched.
+    Registered commands and prompts resolve_prompt_author does not credit
+    to the user pass untouched. An unmarked prompt may still be automated.
     """
     if app._find_command((ctx.prompt or "").strip(), ctx.cli_type) is not None:
         return None

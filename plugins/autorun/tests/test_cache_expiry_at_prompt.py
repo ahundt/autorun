@@ -35,6 +35,7 @@ time.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -94,13 +95,14 @@ def clock(tmp_path, monkeypatch):
 
 
 class Session:
-    def __init__(self, cli_type: str = "claude", transcript: Path | None = None):
+    def __init__(self, cli_type: str = "claude", transcript: Path | None = None, store: ThreadSafeDB | None = None):
         self.id = f"k2-{cli_type}-{uuid.uuid4().hex[:10]}"
         self.cli_type = cli_type
         self.transcript = str(transcript) if transcript else None
-        self.store = ThreadSafeDB()
+        self.store = store or ThreadSafeDB()  # sessions sharing one store share the daemon's cache
 
     def prompt(self, text: str, **fields) -> dict:
+        fields.setdefault("harness_entrypoint", "cli" if self.cli_type == "claude" else None)
         return app.dispatch(
             EventContext(
                 session_id=self.id,
@@ -187,6 +189,30 @@ def test_prompt_time_blocks_exactly_the_expired_large_contexts(clock, tmp_path):
     assert outcomes == expected
 
 
+def test_next_prompt_reads_new_usage_inside_the_memo_window(clock, tmp_path):
+    transcript = tmp_path / "same-session.jsonl"
+    shutil.copyfile(EXPIRED_1H, transcript)
+    session = Session("claude", transcript)
+    assert outcome(session.prompt("First prompt.")) == "hold"
+    with transcript.open("a") as stream:
+        stream.write(FRESH_1H.read_text())
+    # The clock has not advanced; the old reading is still within the memo TTL.
+    assert outcome(session.prompt("Different prompt after a response.")) == "silent"
+
+
+@pytest.mark.parametrize(("read", "written", "expected"), [(0, 0, "silent"), (1, 0, "hold"), (0, 1, "hold")])
+def test_expiry_requires_cached_tokens(clock, tmp_path, read, written, expected):
+    transcript = tmp_path / "usage.jsonl"
+    transcript.write_text(json.dumps({
+        "type": "assistant", "timestamp": clock.now - 2,
+        "message": {"usage": {"input_tokens": 250_000, "cache_read_input_tokens": read,
+                              "cache_creation_input_tokens": written}},
+    }) + "\n")
+    session = Session("claude", transcript)
+    session.command("ar:cache set age 1s")
+    assert outcome(session.prompt("Continue.")) == expected
+
+
 def test_cache_ok_lets_the_next_prompt_through_once(clock):
     session = armed(EXPIRED_1H)
     assert blocked(session.prompt("Continue with the refactor."))
@@ -201,8 +227,198 @@ def test_resending_the_blocked_text_passes_and_other_text_still_blocks(clock):
     assert blocked(first), f"an expired 250k-token cache did not block: {first}"
     again = session.prompt("Continue with the refactor.")
     assert not blocked(again), f"resending the same text was blocked again: {again}"
+    twin = session.prompt("Continue with the refactor.")  # a second hook for the same prompt sees the same pass
+    assert not blocked(twin), f"two hooks for one resent prompt disagreed: {twin}"
     other = session.prompt("Now update the changelog.")
     assert blocked(other), f"the resend pass became a pass for every prompt: {other}"
+    next_expiry(session, clock)
+    later = session.prompt("Continue with the refactor.")
+    assert blocked(later), f"the resend pass outlived its expiry: {later}"
+
+
+# Every case below drives the one fake clock (`clock`), so a one-hour or ten-day
+# duration is a number assigned to `clock.now`, never a wait.
+SCOPES = {"session": ("", ""), "global": ("global ", "--global ")}  # (`/ar:cache` word, `/ar:ok` flag)
+
+
+def next_expiry(session: Session, clock: _FrozenClock) -> None:
+    """Move to a later expired cache: another response was written, so this is another expiry."""
+    other = EXPIRED_5M if session.transcript == str(EXPIRED_1H) else EXPIRED_1H
+    session.transcript = str(other)
+    clock.now += 10  # past the few seconds the usage reading is memoised for on this clock
+
+
+def outcome(response: dict) -> str:
+    """What the prompt check did: hold the prompt, tell and send it, or stay silent."""
+    if blocked(response):
+        return "hold"
+    return "notice" if EXPIRED_NOTICE in text_of(response) else "silent"
+
+
+def observer(scope: str, setter: Session) -> Session:
+    """The session whose prompts are checked: the setter, or another one for a global setting."""
+    return setter if scope == "session" else Session("claude", EXPIRED_1H)
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+@pytest.mark.parametrize(
+    ("command", "during"), [("on", "hold"), ("warn", "notice"), ("off", "silent")], ids=["on", "warn", "off"]
+)
+@pytest.mark.parametrize(
+    ("duration", "after_an_hour", "after_ten_days"),
+    [("", None, None), ("1h", "hold", "hold"), ("perm", None, None)],
+    ids=["standing", "1h", "perm"],
+)
+def test_on_warn_off_apply_to_a_session_or_to_every_session_and_timed_ones_lapse(
+    clock, scope, command, during, duration, after_an_hour, after_ten_days
+):
+    """`on|warn|off [5m|1h|perm]`, with or without `global`, as for the other switches.
+
+    A timed setting returns to what was there before (here the default, hold);
+    a standing or `perm` one stays.
+    """
+    setter = Session("claude", EXPIRED_1H)
+    setter.command(f"ar:cache {SCOPES[scope][0]}{command} {duration}".strip())
+    watched = observer(scope, setter)
+    # Each prompt has its own text: resending a held prompt's text is its one-time pass.
+    assert outcome(watched.prompt("Now.")) == during
+    clock.now = NOW + 3601
+    assert outcome(watched.prompt("After an hour.")) == (after_an_hour or during)
+    clock.now = NOW + 10 * 86400
+    assert outcome(watched.prompt("After ten days.")) == (after_ten_days or during)
+
+
+def test_a_session_setting_overrides_the_global_one(clock):
+    setter = Session("claude", EXPIRED_1H)
+    setter.command("ar:cache global off")
+    other = Session("claude", EXPIRED_1H)
+    assert outcome(other.prompt("Continue.")) == "silent"
+    other.command("ar:cache on")
+    assert outcome(other.prompt("Continue.")) == "hold"
+    assert outcome(setter.prompt("Continue.")) == "silent", "the session setting leaked into another session"
+
+
+def test_on_warn_off_take_a_duration_or_perm_and_refuse_a_count(clock):
+    """A count means uses; a mode switch has none. `ok` is the setting that counts."""
+    session = Session("claude", EXPIRED_1H)
+    for command in ("on", "warn", "off"):
+        reply = session.command(f"ar:cache {command} 3")
+        assert "not a count" in text_of(reply), f"{command} accepted a count: {reply}"
+    assert outcome(session.prompt("Continue.")) == "hold", "a refused count still changed the setting"
+
+
+# `/ar:ok cache [words]` and `/ar:cache ok [words]` are one grant, spelled six ways.
+OK_SPELLINGS = [
+    ("session", "ar:ok cache {w}"),
+    ("session", "ar ok cache {w}"),
+    ("session", "ar:ok {w} cache"),
+    ("session", "ar:cache ok {w}"),
+    ("global", "ar:ok --global cache {w}"),
+    ("global", "ar ok --global cache {w}"),
+    ("global", "ar:cache global ok {w}"),
+    ("global", "ar:cache --global ok {w}"),
+]
+
+
+def run_prompts(session: Session, how_many: int, start: int = 0) -> list[str]:
+    return [outcome(session.prompt(f"Prompt {start + i}.")) for i in range(how_many)]
+
+
+@pytest.mark.parametrize(("scope", "spelling"), OK_SPELLINGS, ids=[f"{s}:{t}" for s, t in OK_SPELLINGS])
+@pytest.mark.parametrize(
+    ("words", "plan"),
+    [
+        ("", [("pass", 1), ("hold", 1)]),
+        ("1", [("pass", 1), ("hold", 1)]),
+        ("2", [("pass", 2), ("hold", 1)]),
+        ("5m", [("pass", 3), ("at", 299), ("pass", 1), ("at", 302), ("hold", 1)]),
+        ("2 5m", [("pass", 2), ("hold", 1)]),
+        ("perm", [("pass", 3), ("at", 10 * 86400), ("pass", 1)]),
+    ],
+    ids=["default", "1", "2", "5m", "2+5m", "perm"],
+)
+def test_ok_for_the_cache_follows_the_count_and_time_rules_of_ar_ok(clock, scope, spelling, words, plan):
+    """Count, duration, both, and `perm`, in every spelling, per session and global."""
+    if scope == "session" and "{w} cache" in spelling and not words:
+        pytest.skip("the scope-before-pattern spelling needs a scope word")
+    setter = Session("claude", EXPIRED_1H)
+    setter.command(spelling.format(w=words).replace("  ", " ").strip())
+    watched = observer(scope, setter)
+    seen = 0
+    for step, amount in plan:
+        if step == "at":
+            clock.now = NOW + amount
+            continue
+        got = run_prompts(watched, amount, start=seen)
+        seen += amount
+        assert got == [step if step == "hold" else "silent"] * amount, f"{words!r} via {spelling!r}: {step} x{amount} gave {got}"
+
+
+@pytest.mark.parametrize("words", ["0", "-1", "forever", "5x"])
+def test_ok_for_the_cache_rejects_a_bad_count_or_duration_and_grants_nothing(clock, words):
+    session = Session("claude", EXPIRED_1H)
+    reply = session.command(f"ar:ok cache {words}")
+    assert "granted" not in text_of(reply), f"{words!r} was accepted: {reply}"
+    assert outcome(session.prompt("Continue.")) == "hold", f"{words!r} granted a pass anyway"
+
+
+def test_a_quoted_cache_is_an_ordinary_allow_pattern_and_global_is_accepted(clock):
+    session = armed(EXPIRED_1H)
+    reply = session.command("ar:ok 'cache'")
+    assert "Allowed" in text_of(reply) and "override granted" not in text_of(reply), reply
+    assert blocked(session.prompt("Continue with the refactor.")), "a quoted 'cache' passed the cache hold"
+
+    from autorun.cache_guard import cache_command
+
+    assert "override granted" in cache_command("--global ok", f"k5-{uuid.uuid4().hex[:8]}")
+
+
+def test_a_resend_and_an_ok_for_the_same_hold_spend_both_passes(clock):
+    session = armed(EXPIRED_1H)
+    assert outcome(session.prompt("continue")) == "hold"
+    session.command("ar:cache ok")
+    assert outcome(session.prompt("continue")) == "silent"  # resent: passes, and spends the ok too
+    assert outcome(session.prompt("totally different")) == "hold", "an unspent ok passed the next expired cache"
+
+
+def test_a_hold_that_was_answered_with_other_text_does_not_pass_its_text_later(clock):
+    session = armed(EXPIRED_1H)
+    assert outcome(session.prompt("continue")) == "hold"
+    session.command("ar:cache ok")
+    assert outcome(session.prompt("something else")) == "silent"  # the ok passes this one
+    next_expiry(session, clock)
+    assert outcome(session.prompt("continue")) == "hold", "the old hold's text passed unheld"
+
+
+def test_a_later_expiry_holds_the_same_text_again_even_without_a_prompt_between(clock):
+    session = armed(EXPIRED_1H)
+    assert outcome(session.prompt("continue")) == "hold"
+    assert outcome(session.prompt("continue")) == "silent"  # resent: passes this expiry
+    next_expiry(session, clock)  # a response, then the cache expires again with no prompt in between
+    assert outcome(session.prompt("continue")) == "hold", "a hold from an earlier expiry passed"
+
+
+@pytest.mark.parametrize(
+    ("setter", "during"),
+    [("ar:cache global off", "silent"), ("ar:cache --global off", "silent"), ("ar:ok --global cache", "silent"),
+     ("ar:cache global warn", "notice"), ("ar:cache --global warn", "notice")],
+)
+def test_a_global_setting_reaches_a_session_the_daemon_already_cached(clock, setter, during):
+    """Sessions sharing one store, as in the daemon: a stale cached read must not hide the change."""
+    shared = ThreadSafeDB()
+    first, second = Session("claude", EXPIRED_1H, shared), Session("claude", EXPIRED_1H, shared)
+    assert outcome(first.prompt("warm one")) == "hold" and outcome(second.prompt("warm two")) == "hold"
+    first.command(setter)
+    assert outcome(second.prompt("after the change")) == during, f"{setter!r} did not reach the other session"
+
+
+@pytest.mark.parametrize("spelling", ["ar:ok cache", "ar ok cache", "ar:cache ok"])
+def test_every_ok_spelling_passes_one_prompt_and_the_next_is_held(clock, spelling):
+    session = armed(EXPIRED_1H)
+    assert blocked(session.prompt("Continue with the refactor.")), "control: the expired cache did not block"
+    session.command(spelling)
+    assert not blocked(session.prompt("Now update the changelog.")), f"{spelling!r} did not pass the next prompt"
+    assert blocked(session.prompt("Then run the tests.")), f"{spelling!r} passed more than one prompt"
 
 
 def test_a_prompt_the_user_did_not_type_is_never_blocked(clock):
@@ -338,8 +554,12 @@ def test_ordinary_prompt_cache_check_executes_zero_sql_writes(
         conn.set_trace_callback(statements.append)
         return conn
 
+    # Warn mode records nothing; a held prompt (the default) stores one digest
+    # so that resending its text passes.
+    session = Session(cli_type, EXPIRED_1H)
+    session.command("ar:cache warn")
     monkeypatch.setattr(store, "_connect", connect)
-    response = Session(cli_type, EXPIRED_1H).prompt("Continue with the refactor.")
+    response = session.prompt("Continue with the refactor.")
     assert EXPIRED_NOTICE in text_of(response)
     writes = [
         statement
@@ -347,6 +567,27 @@ def test_ordinary_prompt_cache_check_executes_zero_sql_writes(
         if statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
     ]
     assert writes == []
+
+
+def test_default_check_on_a_live_cache_executes_zero_sql_writes(clock, monkeypatch):
+    from autorun import session_manager as sm
+
+    monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+    sm._reset_for_testing()
+    store = sm.get_session_manager()._store
+    statements = []
+    real_connect = store._connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(store, "_connect", connect)
+    response = Session("claude", FRESH_1H).prompt("Continue with the refactor.")  # nothing stored, cache live
+    assert outcome(response) == "silent", response
+    writes = [s for s in statements if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))]
+    assert writes == [], f"an ordinary prompt on a live cache wrote state: {writes}"
 
 
 def test_warn_mode_tells_and_never_blocks(clock):
@@ -365,11 +606,108 @@ def test_the_prompt_time_message_names_its_switches_and_no_tool_time_hint(clock)
     assert leaked == [], f"the prompt-time message carries tool-time hints {leaked}: {text}"
 
 
+def test_an_expired_prompt_is_held_when_the_user_has_stored_nothing(clock):
+    """A notice recorded before the request goes out cannot stop it, so the
+    default holds the prompt (2026-11-18: 741K tokens re-written 341 ms after a notice)."""
+    assert CONFIG["cache_guard_expired_prompt_action"] == "block"
+    session = Session("claude", EXPIRED_1H)  # no /ar:cache command, here or globally
+    response = session.prompt("Continue with the refactor.")
+    assert blocked(response), f"an expired 250k-token cache was not held by default: {response}"
+    assert RESEND_LINE in text_of(response), response
+    assert not blocked(session.prompt("Continue with the refactor.")), "resending the held text was blocked again"
+
+
+@pytest.mark.parametrize(
+    ("cli_type", "entrypoint", "setting", "expected"),
+    [
+        ("claude", "cli", None, "hold"),
+        ("claude", "claude-desktop", None, "hold"),
+        ("claude", "t3-code", None, "notice"),
+        ("claude", None, None, "notice"),
+        ("claude", "t3-code", "on", "hold"),
+        ("claude", "t3-code", "global on", "hold"),
+        ("codex", "cli", None, "notice"),
+        ("pi", "cli", None, "notice"),
+    ],
+)
+def test_default_hold_follows_the_forwarded_entrypoint(clock, monkeypatch, capsys, cli_type, entrypoint, setting, expected):
+    from autorun.__main__ import run_direct
+
+    path = FIXTURES.parents[2] / "hooks" / "hook_entry.py"
+    spec = importlib.util.spec_from_file_location("hook_entry_cache_expiry", path)
+    assert spec and spec.loader
+    hook_entry = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, hook_entry)
+    spec.loader.exec_module(hook_entry)
+    monkeypatch.setattr(hook_entry, "explicit_event_name", lambda: None)
+    env_name = "CLAUDE_CODE_ENTRYPOINT"
+    if entrypoint is None:
+        monkeypatch.delenv(env_name, raising=False)
+    else:
+        monkeypatch.setenv(env_name, entrypoint)
+
+    transcript = PI_NO_LIFETIME if cli_type == "pi" else EXPIRED_1H
+    payload = {
+        "session_id": f"cache-entrypoint-{uuid.uuid4().hex}",
+        "hook_event_name": "UserPromptSubmit",
+        "transcript_path": str(transcript),
+        "prompt": "Continue with the refactor.",
+    }
+    prepared = hook_entry.prepare_hook_payload(payload, cli_type)
+    # Only the prepared frame, not the receiving process's environment, is evidence.
+    monkeypatch.delenv(env_name, raising=False)
+    if setting:
+        run_direct({**prepared, "prompt": f"/ar:cache {setting}"})
+        assert "enabled" in capsys.readouterr().out
+    run_direct(prepared)
+    response = json.loads(capsys.readouterr().out)
+    assert outcome(response) == expected, response
+    if cli_type == "claude" and expected == "notice":
+        assert "/ar:cache on" in text_of(response), response
+
+
+@pytest.mark.parametrize("cli_type", sorted(p.name for p in hook_platforms()))
+def test_the_message_names_how_to_turn_it_off_in_the_harnesss_spelling(clock, cli_type):
+    from autorun.platforms import command_display_prefix
+
+    session = armed(PI_NO_LIFETIME, cli_type)
+    session.command("ar:cache set age 1h")
+    text = text_of(session.prompt("Continue with the refactor."))
+    prefix = command_display_prefix(cli_type)
+    for command in ("cache off", "cache global off"):
+        assert f"{prefix}{command}" in text, f"{cli_type}: no {prefix}{command} in {text}"
+    assert prefix == "/ar:" or "/ar:" not in text, f"{cli_type} shows the canonical spelling: {text}"
+    assert ("/clear" in text) == (cli_type == "claude"), text
+    assert "start a new session" in text.lower() and "combine requests" in text, text
+    assert "Stop the check in every session:" not in text, text
+    assert "prompt caching stays on" in text, f"{cli_type}: 'off' reads as disabling caching: {text}"
+
+
+def test_the_hold_message_puts_each_command_alone_on_a_line_to_copy(clock):
+    reason = Session("claude", EXPIRED_1H).prompt("Continue with the refactor.")["reason"]
+    lines = [line.strip() for line in reason.splitlines()]
+    for command in ("/ar:cache ok", "/ar:cache off", "/ar:cache global off", "/ar:cache warn", "/clear",
+                    "/ar:cache set expired-min-tokens 200k"):
+        assert command in lines, f"{command!r} is not alone on a line: {reason}"
+    assert next(i for i, line in enumerate(lines) if RESEND_LINE in line) < lines.index("/ar:cache ok"), reason
+    assert len(lines) <= 20, f"the hold message grew to {len(lines)} lines: {reason}"
+
+
+@pytest.mark.parametrize("scope", ["", "global "])
+def test_status_does_not_label_explicit_off_as_default(clock, scope):
+    session = Session("claude", EXPIRED_1H)
+    session.command(f"ar:cache {scope}off")
+    status = text_of(session.command(f"ar:cache {scope}status"))
+    assert "disabled" in status and "prompt-time expiry check: off" in status, status
+    assert "(default)" not in status, status
+
+
 def test_a_command_typed_while_expired_gets_through(clock):
     session = armed(EXPIRED_1H)
     assert blocked(session.prompt("Continue with the refactor.")), "control: the expired cache did not block"
     reply = session.command("ar:cache off")
     assert "disabled" in text_of(reply), f"/ar:cache off did not run: {reply}"
+    assert "prompt caching stays on" in text_of(reply), f"/ar:cache off reads as disabling caching: {reply}"
     after = session.prompt("Now update the changelog.")
     assert not blocked(after), f"/ar:cache off did not switch the prompt check off: {after}"
 
@@ -504,8 +842,11 @@ def test_the_expiry_test_reads_the_written_lifetime_and_the_floor(clock, tmp_pat
     assert _expired_trip(reading(one_hour, 3601), default)
     assert _expired_trip(reading(five_min, 301), default)
     assert not _expired_trip(reading(one_hour, 7200, total=99_999), default), "below the 100k default floor"
-    assert not _expired_trip(reading(None, 7200), default), "no lifetime and no age set"
+    assert _expired_trip(reading(None, 7200), default), "no lifetime and no age set: the 300 s default applies"
+    assert not _expired_trip(reading(None, 200), default)
+    assert not _expired_trip(reading(None, 1800), CacheGuardConfig(cache_age_max_seconds=3600)), "the user's age beats the default"
     assert _expired_trip(reading(None, 7200), CacheGuardConfig(cache_age_max_seconds=3600))
+    assert not _expired_trip(reading(one_hour, 400), default), "a recorded 1 h lifetime beats the 300 s default"
     assert not _expired_trip(None, default)
 
     sid = f"k3-{uuid.uuid4().hex[:8]}"
@@ -519,15 +860,43 @@ def test_the_expiry_test_reads_the_written_lifetime_and_the_floor(clock, tmp_pat
 
 
 @pytest.mark.parametrize("cli_type", ["pi", "prime"])
-def test_pi_record_without_lifetime_warns_only_when_age_is_set(clock, cli_type):
-    silent = armed(PI_NO_LIFETIME, cli_type).prompt("Continue with the refactor.")
-    assert EXPIRED_NOTICE not in text_of(silent), f"spoke with no lifetime and no age: {silent}"
+def test_pi_record_without_lifetime_guesses_five_minutes_until_age_is_set(clock, cli_type):
+    guess = armed(PI_NO_LIFETIME, cli_type).prompt("Continue with the refactor.")
+    assert not blocked(guess), guess
+    assert "assuming a 5 m lifetime" in text_of(guess), f"{cli_type}: a guessed lifetime is not labelled: {guess}"
+    assert "cache set age 1h" in text_of(guess), "the guess does not say how to set the real lifetime"
 
     session = armed(PI_NO_LIFETIME, cli_type)
     session.command("ar:cache set age 1h")
     response = session.prompt("Continue with the refactor.")
     assert not blocked(response), f"{cli_type} cannot block a prompt, but the response blocks: {response}"
-    assert EXPIRED_NOTICE in text_of(response), f"{cli_type} with age 1h and a 2h-old record said nothing: {response}"
+    assert EXPIRED_NOTICE in text_of(response) and "assuming" not in text_of(response), response  # a set age is not a guess
+
+    young = armed(PI_NO_LIFETIME, cli_type)
+    young.command("ar:cache set age 3h")
+    assert outcome(young.prompt("Continue with the refactor.")) == "silent", "the 2 h-old record is inside a 3 h age"
+
+
+def test_a_guessed_lifetime_never_holds_a_prompt_even_where_holding_works(clock, tmp_path):
+    """Claude can hold a prompt, but a row with no written lifetime is no evidence of expiry."""
+    stripped = tmp_path / "claude_no_lifetime.jsonl"
+    rows = []
+    for line in EXPIRED_1H.read_text().splitlines():
+        row = json.loads(line)
+        ((row.get("message") or {}).get("usage") or {}).pop("cache_creation", None)
+        rows.append(json.dumps(row))
+    stripped.write_text("\n".join(rows) + "\n")
+    session = armed(stripped)
+    response = session.prompt("Continue with the refactor.")
+    assert outcome(response) == "notice" and "assuming a 5 m lifetime" in text_of(response), response
+    assert not blocked(session.prompt("Continue with the refactor.")), "a guess held a prompt"
+
+
+def test_the_default_lifetime_guess_can_be_switched_off(clock, monkeypatch):
+    from autorun.config import CONFIG
+
+    monkeypatch.setitem(CONFIG, "cache_guard_default_lifetime_seconds", 0)
+    assert EXPIRED_NOTICE not in text_of(armed(PI_NO_LIFETIME, "pi").prompt("Continue with the refactor."))
 
 
 @pytest.mark.parametrize("cli_type", sorted(p.name for p in hook_platforms()))

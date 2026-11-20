@@ -137,6 +137,13 @@ disk, and one hook failure under load on Linux.
    starts drop from about 0.31 s to about 0.28 s of CPU, and the cost no longer
    grows with the number of cached sessions. A state directory symlink that is
    retargeted while the daemon runs is not noticed until it restarts.
+8. Two Claude desktop prompts re-wrote 279k and 741k cached tokens despite
+   a warning. `/ar:cache` now holds by default in the Claude Code terminal
+   and Claude desktop app. Other entrypoints (including T3 Code) and other
+   harnesses warn when cache data is available. `/ar:cache on` makes a
+   session hold where supported; a guessed lifetime never holds. Resend the
+   same text to proceed once. On Claude Code, resending costs less than
+   `/ar:cache ok`: every slash command is itself a model request.
 
 ### For contributors
 

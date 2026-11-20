@@ -347,12 +347,14 @@ Settings live in `~/.autorun/task-lifecycle.config.json`. [docs/TASK_TRACKING.md
 | `/ar:commit` | the 17-step commit process: `<files>:` or `type(scope):` subjects, concrete wording, a secrets check |
 | `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
 | `/ar:tmux` | list the AI coding sessions in your tmux panes and type text into the sessions you name ([docs/TMUX.md](docs/TMUX.md), [CLI Reference](#cli-reference)) |
-| `/ar:cache` | warn before a prompt re-writes an expired prompt cache at the cache-write price (options below) |
+| `/ar:cache` | hold or warn before a prompt re-writes an expired prompt cache (options below) |
 | `/ar:restart-daemon` | restart the daemon for this install |
 
-`/ar:cache` warns before a prompt re-sends an expired prompt cache of 100,000 tokens or more (Claude Code; Pi and Prime Agent when `age` is set):
+`/ar:cache` checks expired prompt caches of 100,000 tokens or more. The Claude Code terminal and Claude desktop app hold by default. Other entrypoints, including SDK hosts such as T3 Code, and other harnesses warn when cache data is available. A guessed lifetime never holds.
 
-1. `on` holds the prompt until you send the same text again, `warn` (the default) shows a notice, and `off` disables the check. Each takes `[5m|1h|perm]`.
+Send the same text again to proceed once. On Claude Code, `/ar:cache ok` and every other slash command are model requests, so resending is cheaper.
+
+1. `on` makes the session hold where the harness supports it. `warn` shows a notice and sends the prompt; `off` stops the check without turning off prompt caching. Each takes `[5m|1h|perm]`; `global off` applies unless the session has its own setting.
 2. `set expired-min-tokens <tokens>` sets the floor.
 3. Optional tool-time thresholds: `set ratio|read|age <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`), `ok [5m|N|perm]`, `no`, and `global <subcommand>`. Details: [commands/cache.md](plugins/autorun/commands/cache.md).
 
