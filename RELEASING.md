@@ -211,8 +211,8 @@ command that must run outside the lock has to say why, on the line.
    A harness whose CLI is not on `PATH` is skipped; put a stub on the
    sandbox's `bin` to exercise its publish step. If the upgrade rehearsal
    exposes a rollback need, use the designated recovery-commit recipe in
-   [Stage 7](#roll-back-a-live-install-to-the-designated-recovery-commit), not
-   `previous=1.0.0rc3`; that variable is only the upgrade source.
+   [Roll back a live install](#roll-back-a-live-install-to-the-designated-recovery-commit), not
+   `previous=1.0.0rc4`; that variable is only the upgrade source.
 7. Commit the bump, the section, and the generated notes together, so every
    commit passes `test_release_notes.py`. Do not push yet.
 
@@ -566,6 +566,10 @@ pushed tag is the one thing the recovery table below rules out.
 ### Stage 5: Verify the tag, then approve the tag run — **RELEASER public write**
 
 ```bash
+# Stage 4 set these inside its own `bash`, so this shell derives them again.
+release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
+test -n "$release_version"
+release_tag="v$release_version"
 test "$(git rev-list -n 1 "$release_tag")" = "$release_sha"
 test "$(git ls-remote origin "refs/tags/$release_tag^{}" | cut -f1)" = "$release_sha"
 ```

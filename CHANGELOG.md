@@ -16,19 +16,24 @@ uninstall or upgrade could delete files you had added inside a skill or
 extension folder that autorun installed, with no copy kept. The release also
 fixes the Claude desktop app's task list, hooks run through the `autorun`
 command in that app, stale Codex skill copies, task-tracking writes on a full
-disk, and one hook failure under load on Linux. Two behaviors change: in the
+disk, and one hook failure under load on Linux. Three behaviors change: in the
 Claude Code terminal and the Claude desktop app, `/ar:cache` now holds a prompt
-sent after the prompt cache expired instead of only warning, and Pi agents
-started by pi-subagents 0.68.0 or newer now get autorun's tool checks.
+sent after the prompt cache expired instead of only warning; `/ar:ok` takes
+several quoted patterns in one command; and Pi agents started by pi-subagents
+0.68.0 or newer now get autorun's tool checks.
 
 ### Upgrading from 1.0.0rc4
 
-1. Quit and relaunch each installed coding CLI or app and start a new session,
+1. If you keep your own files in a skill or extension folder that autorun
+   installed, do not run 1.0.0rc4's `autorun --uninstall` before you upgrade:
+   that version deletes them with the folder (Fixed item 6). The install
+   commands replace 1.0.0rc4 in place.
+2. Quit and relaunch each installed coding CLI or app and start a new session,
    because a session reads its hooks only when it starts. If you used the
    Claude Code marketplace route, also run
    `claude plugin install autorun-skills@autorun` first, because the
    marketplace update command updates `ar` only.
-2. Nothing else is required. Config files, task state, and `/ar:` commands carry
+3. Nothing else is required. Config files, task state, and `/ar:` commands carry
    over. You will notice four things. The install may warn that it kept skill
    copies in `~/.agents/skills` that match no version it wrote, and it now
    replaces the ones it can prove are its own (Fixed item 3). A file you
@@ -43,10 +48,6 @@ started by pi-subagents 0.68.0 or newer now get autorun's tool checks.
    cache expired on a context of 100,000 tokens or more is held once; send the
    same text again to proceed, or run `/ar:cache warn` to get the 1.0.0rc4
    notice back (Changed item 1).
-3. If you keep your own files in a skill or extension folder that autorun
-   installed, upgrade with the commands above and do not run 1.0.0rc4's
-   `autorun --uninstall` first: that version deletes them with the folder
-   (Fixed item 6).
 
 ### Changed
 
@@ -61,6 +62,15 @@ started by pi-subagents 0.68.0 or newer now get autorun's tool checks.
    makes such a session hold where its prompt hook can stop a prompt. On
    Claude Code, resending costs less than `/ar:cache ok`, because a slash
    command is itself a model request.
+2. `/ar:ok` takes several patterns in one command when each is quoted:
+   `/ar:ok 'git push' 'gh pr create' 'gh pr edit' 72h` allows all three for 72
+   hours, where 1.0.0rc4 needed three commands and rejected the second quoted
+   string. The count, duration or `perm` word applies to every pattern, and
+   nothing is stored if one pattern is invalid. Every form 1.0.0rc4 accepted
+   means what it did: an unquoted `/ar:ok git push` is still one pattern, and
+   a word outside quotes that is not a scope word is still an error. A pattern
+   that is itself a bare count, duration or `perm` word, such as `'5m'`, needs
+   its own `/ar:ok` command. `/ar:no` is unchanged.
 
 ### Fixed
 
@@ -109,14 +119,15 @@ started by pi-subagents 0.68.0 or newer now get autorun's tool checks.
    disk also stopped the daemon from starting, because creating `daemon.flock`
    failed with ENOSPC. autorun now keeps `~/.autorun/disk.reserve`, 8 MiB
    (`disk_reserve_bytes`; 0 stops autorun creating it), created while the volume has four
-   times that free. When opening the state database or taking the daemon lock
-   fails on a volume with under half the reserve free, autorun deletes the
-   reserve and retries once; the daemon recreates it when space returns. A real
+   times that free. When opening the SQLite state database, saving the JSON
+   state file, taking the daemon lock or creating the daemon's socket fails on
+   a volume with under half the reserve free, autorun deletes the reserve and
+   retries once; the daemon recreates it when space returns. A real
    full volume that made the 1.0.0rc4 daemon degrade every tool call
    (`state_evaluation_failed`) now runs them normally. Guarded deletions still
    need `/ar:ok rm` typed by you, which works again once state can be written.
-   The reserve has limits. It covers opening the state database and creating the
-   daemon lock, not a write that fails later inside an open transaction. It
+   The reserve has limits. It does not cover a write that fails inside an open
+   SQLite transaction. It
    frees bytes, not inodes, so a volume that has run out of inodes is not
    helped. On a volume with snapshots or transparent compression, deleting it
    may free less than 8 MiB. Creating or releasing the reserve cannot itself
