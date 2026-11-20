@@ -220,6 +220,23 @@ def test_json_save_retries_when_the_directory_fsync_reports_no_space(reserve, tm
         assert state["saved"] is True
 
 
+def test_out_of_space_is_found_behind_a_later_close_failure():
+    """durable_io raises the fsync wrapper `from` a failed close, which leaves
+    the native ENOSPC as the wrapper's context, not its cause."""
+    native = OSError(errno.ENOSPC, "No space left on device")
+    try:
+        try:
+            raise native
+        except OSError as exc:
+            wrapped = OSError(f"Could not fsync directory: {exc}")
+            raise wrapped from OSError(errno.EIO, "close failed")
+    except OSError as outer:
+        assert outer.errno is None and outer.__cause__.errno == errno.EIO
+        assert disk_reserve.is_out_of_space(outer)
+    assert not disk_reserve.is_out_of_space(OSError(errno.EIO, "close failed"))
+    assert not disk_reserve.is_out_of_space(None)
+
+
 def _store_needing_space(tmp_path, reserve):
     """A store whose connection opens only once the reserve is gone."""
     store = SQLiteStore(tmp_path / "state.sqlite3")

@@ -129,15 +129,20 @@ def is_out_of_space(error: BaseException | None) -> bool:
     """
     # CPython maps ERROR_DISK_FULL (112) to ENOSPC, but
     # ERROR_HANDLE_DISK_FULL (39) falls back to EINVAL.
-    for _ in range(8):  # a cause chain is short; the bound stops a cycle
-        if error is None:
-            return False
+    pending, seen = [error], set()
+    while pending and len(seen) < 16:  # chains are short; the bound stops a cycle
+        error = pending.pop()
+        if error is None or id(error) in seen:
+            continue
+        seen.add(id(error))
         if isinstance(error, OSError) and (
             error.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC))
             or getattr(error, "winerror", None) == 39
         ):
             return True
-        error = error.__cause__ or error.__context__
+        # Both links: `raise wrapped from close_error` replaces the cause and
+        # leaves the native fsync error reachable only as the context.
+        pending += [error.__cause__, error.__context__]
     return False
 
 
