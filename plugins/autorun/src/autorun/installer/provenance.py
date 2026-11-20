@@ -35,6 +35,7 @@ import fnmatch
 import hashlib
 import json
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
@@ -161,12 +162,22 @@ def record(target: Path, plugin: str, digest: str) -> None:
     every publisher of ``target`` holds while it swaps, so no publish can land
     between them.
     """
-    with FileLock(str(target.parent / INSTALL_LOCK_NAME)):
-        if tree_digest(target) != digest:
-            return
-        path = receipts_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with json_document(path) as receipts:
+    if not target.is_dir():
+        return  # withdrawn since the publish; a lock here would recreate its parent
+    path = receipts_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        one_directory = path.parent.samefile(target.parent)
+    except OSError:
+        one_directory = False
+    # json_document locks the receipts file's directory under the same lock
+    # name. When that directory is also the target's parent, its lock is the
+    # publication lock, and a second FileLock on it in this process raises.
+    publication_lock = (
+        nullcontext() if one_directory else FileLock(str(target.parent / INSTALL_LOCK_NAME))
+    )
+    with publication_lock, json_document(path) as receipts:
+        if tree_digest(target) == digest:
             receipts[_key(target)] = {"plugin": plugin, "digest": digest}
 
 

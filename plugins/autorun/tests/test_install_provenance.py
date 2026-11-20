@@ -155,6 +155,35 @@ def test_a_receipt_waits_for_the_lock_a_publisher_of_that_folder_holds(tmp_path)
     assert provenance.autorun_wrote(target, plugin="ar", catalog=False)
 
 
+@pytest.mark.parametrize("alias", [False, True], ids=["same-path", "symlink-alias"])
+def test_a_receipt_is_saved_when_its_file_shares_the_skill_folders_directory(tmp_path, monkeypatch, alias):
+    """With the shared skills directory configured as the directory that holds
+    published-trees.json, the receipts file's lock is the publication lock.
+    Taking it twice raised RuntimeError("Deadlock") and aborted the install."""
+    parent = tmp_path / "installer"
+    source = _skill(tmp_path / "src" / "local")
+    target = parent / "local"
+    seen_from = parent
+    if alias:
+        seen_from = tmp_path / "alias"
+        seen_from.symlink_to(parent, target_is_directory=True)
+    monkeypatch.setattr(provenance, "receipts_path", lambda: seen_from / "published-trees.json")
+    ctx = traversal.Context(marketplace_root=tmp_path)
+    [decision] = traversal.run((), ctx, traversal.Mode.INSTALL, extra=[
+        Intent(target=target, source=source, plugin="ar"),
+    ])
+    assert decision.verdict is Verdict.PUBLISH
+    _lose_marker(target)
+    assert provenance.autorun_wrote(target, plugin="ar", catalog=False)
+
+
+def test_a_receipt_for_a_folder_that_is_gone_creates_nothing(tmp_path):
+    target = tmp_path / "skills" / "local"
+    provenance.record(target, "ar", "0" * 32)
+    assert not target.parent.exists()
+    assert not provenance.receipts_path().exists()
+
+
 def test_tree_receipt_accounts_for_writing_through_a_marker_symlink(tmp_path):
     source = _skill(tmp_path / "src" / "local")
     _put(source / "marker.json", "{}\n")
