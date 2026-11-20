@@ -16,6 +16,7 @@ exercises the same property against a real full volume on macOS.
 import errno
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -191,6 +192,32 @@ def test_json_save_reserve_depends_on_write_error(reserve, tmp_path, monkeypatch
         assert exc.value.__cause__ is error
     assert attempts == ([True, False] if retry else [True])
     assert reserve.exists() is not retry
+
+
+def test_json_save_retries_when_the_directory_fsync_reports_no_space(reserve, tmp_path, monkeypatch):
+    """durable_io wraps that failure in an OSError without an errno; the
+    native ENOSPC is its cause, and the real writer is what raises it here."""
+    from autorun import durable_io, session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    real_fsync = os.fsync
+    failures = []
+
+    def fsync_needing_space(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode) and reserve.exists():
+            failures.append(1)
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(durable_io.os, "fsync", fsync_needing_space)
+    with store.session("s") as state:
+        state["saved"] = True
+    assert failures == [1], "the directory fsync failed once, with the reserve present"
+    assert not reserve.exists()
+    with store.session("s") as state:
+        assert state["saved"] is True
 
 
 def _store_needing_space(tmp_path, reserve):

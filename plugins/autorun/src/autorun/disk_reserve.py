@@ -120,12 +120,25 @@ def _arm(path: Path | None) -> bool:
         return False
 
 
-def is_out_of_space(error: OSError) -> bool:
-    """Identify native space errors before checking whether the reserve can help."""
+def is_out_of_space(error: BaseException | None) -> bool:
+    """Identify native space errors before checking whether the reserve can help.
+
+    ``durable_io`` re-raises a failed directory fsync as an ``OSError`` with a
+    message and no errno, keeping the native error as its cause, so the causes
+    are examined too.
+    """
     # CPython maps ERROR_DISK_FULL (112) to ENOSPC, but
     # ERROR_HANDLE_DISK_FULL (39) falls back to EINVAL.
-    return (error.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC))
-            or getattr(error, "winerror", None) == 39)
+    for _ in range(8):  # a cause chain is short; the bound stops a cycle
+        if error is None:
+            return False
+        if isinstance(error, OSError) and (
+            error.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC))
+            or getattr(error, "winerror", None) == 39
+        ):
+            return True
+        error = error.__cause__ or error.__context__
+    return False
 
 
 def release_if_exhausted(failed_near: Path, path: Path | None = None) -> bool:
