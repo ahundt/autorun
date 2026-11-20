@@ -390,34 +390,49 @@ def _run_pi_adapter_driver(
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
-@pytest.mark.parametrize(("cli_type", "has_subagent", "expected"), [
-    ("pi", True, ["pi-parent", "pi-next"]),
-    ("pi", False, []),
-    ("prime", True, []),
+@pytest.mark.parametrize(("cli_type", "tool_package", "throws", "registers", "warnings"), [
+    pytest.param("pi", "pi-subagents", False, True, 0, id="loaded-package"),
+    pytest.param("pi", None, False, False, 0, id="no-subagent-tool"),
+    pytest.param("prime", "pi-subagents", False, False, 0, id="prime"),
+    pytest.param("pi", "unrelated-plugin", False, False, 0, id="unrelated-subagent-tool"),
+    pytest.param("pi", "pi-subagents", False, False, 1, id="missing-export"),
+    pytest.param("pi", "pi-subagents", True, True, 0, id="throwing-disposer"),
 ])
-def test_pi_requires_child_bridge_for_the_loaded_subagents_package(tmp_path, cli_type, has_subagent, expected):
-    package = tmp_path / "subagents"
-    package.mkdir()
-    (package / "package.json").write_text(json.dumps({
-        "name": "pi-subagents",
-        "type": "module",
-        "exports": {"./required-child-extensions": "./required.mjs"},
-    }), encoding="utf-8")
-    (package / "required.mjs").write_text("""
+def test_pi_requires_child_bridge_for_the_loaded_subagents_package(tmp_path, cli_type, tool_package, throws, registers, warnings):
+    if tool_package:
+        package = tmp_path / "subagents"
+        package.mkdir()
+        (package / "index.js").write_text("", encoding="utf-8")
+        exports = {".": "./index.js"}
+        if not warnings:
+            exports["./required-child-extensions"] = "./required.mjs"
+        (package / "package.json").write_text(json.dumps({
+            "name": tool_package,
+            "type": "module",
+            "exports": exports,
+        }), encoding="utf-8")
+        (package / "required.mjs").write_text("""
 export function registerRequiredChildExtensions(registration) {
   globalThis.registrations.push(registration);
-  return { dispose: () => globalThis.disposals.push(registration.sessionId) };
+  return { dispose() {
+    globalThis.disposals.push(registration.sessionId);
+    if (__THROWS__) throw new Error("fixture disposer failed");
+  } };
 }
-""", encoding="utf-8")
-    result, _ = _run_pi_adapter_driver(
+""".replace("__THROWS__", json.dumps(throws)), encoding="utf-8")
+    # Exercise replacement without prior shutdown, then shutdown of the new session.
+    # The old-package case starts just once to check for one warning per start.
+    sessions = ["pi-parent"] if warnings else ["pi-parent", "pi-next"]
+    result, frames = _run_pi_adapter_driver(
         tmp_path,
-        [{}, {}, {}, {}, {}, {}],
+        [{}] * (2 * len(sessions) + 1),
         '''import extension from "__EXTENSION__";
 import {fileURLToPath} from "node:url";
 const handlers = new Map();
 globalThis.registrations = [];
 globalThis.disposals = [];
-let id = "pi-parent";
+const notifications = [];
+let id;
 extension({
   registerCommand() {}, registerTool() {}, sendMessage() {},
   on(name, fn) { handlers.set(name, fn); },
@@ -425,18 +440,27 @@ extension({
     path:fileURLToPath(new URL("./subagents/index.js", import.meta.url)),
   }}] : []; },
 });
-const ctx = {cwd:"/sandbox", mode:"rpc", ui:{notify() {}},
+const ctx = {cwd:"/sandbox", mode:"rpc", ui:{notify(message, level) { notifications.push({message, level}); }},
   sessionManager:{getSessionId:()=>id, getSessionFile:()=>undefined,
     getBranch:()=>[], buildSessionContext:()=>({messages:[]})}};
-await handlers.get("session_start")({reason:"startup"}, ctx);
-await handlers.get("session_shutdown")({reason:"new"}, ctx);
-id = "pi-next";
-await handlers.get("session_start")({reason:"new"}, ctx);
+for (id of __SESSIONS__) {
+  await handlers.get("session_start")({reason:id === "pi-parent" ? "startup" : "new"}, ctx);
+}
 await handlers.get("session_shutdown")({reason:"quit"}, ctx);
-console.log(JSON.stringify({registrations, disposals}));
-'''.replace("__HAS_SUBAGENT__", json.dumps(has_subagent)),
+console.log(JSON.stringify({registrations, disposals, notifications}));
+'''.replace("__HAS_SUBAGENT__", json.dumps(tool_package is not None))
+        .replace("__SESSIONS__", json.dumps(sessions)),
         cli_type=cli_type,
     )
+    assert len(result["notifications"]) == warnings, result["notifications"]
+    for notice in result["notifications"]:
+        assert notice["level"] == "warning"
+        assert "Autorun could not require its bridge in Pi subagents" in notice["message"]
+    assert [(frame["hook_event_name"], frame["session_id"]) for frame in frames] == [
+        *(event for session in sessions for event in [("AutorunOperation", session), ("SessionStart", session)]),
+        ("SessionEnd", sessions[-1]),
+    ]
+    expected = sessions if registers else []
     assert [row["sessionId"] for row in result["registrations"]] == expected
     for row in result["registrations"]:
         assert row["extensions"] == [{

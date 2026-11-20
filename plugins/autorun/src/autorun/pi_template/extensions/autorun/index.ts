@@ -213,12 +213,40 @@ function promptAuthorOf(source: unknown): "user" | "automation" {
   return source === "interactive" ? "user" : "automation";
 }
 
+function resolveChildBridgeEntry(subagentSource: string): string | undefined {
+  const require = createRequire(subagentSource);
+  try {
+    return require.resolve("pi-subagents/required-child-extensions");
+  } catch (error) {
+    // Bun also reports a missing export as MODULE_NOT_FOUND. Probe the package
+    // entry without loading it before treating the tool as unrelated.
+    if ((error as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND") {
+      try {
+        require.resolve("pi-subagents");
+      } catch (packageError) {
+        if ((packageError as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND") return undefined;
+      }
+    }
+    throw error;
+  }
+}
+
 export default function autorunPiExtension(pi: ExtensionAPI) {
   let continuationInFlight = false;
   let childBridgeRegistration: { dispose(): void } | undefined;
   // Author of the prompt the latest input event carried, for the
   // before_agent_start frame that follows it.
   let pendingPromptAuthor: "user" | "automation" | undefined;
+
+  function disposeChildBridgeRegistration(): void {
+    const registration = childBridgeRegistration;
+    childBridgeRegistration = undefined;
+    try {
+      registration?.dispose();
+    } catch {
+      // Optional extension cleanup must not interrupt autorun's session events.
+    }
+  }
 
   // `source` is the session_start reason. A "fork" reason tells the daemon
   // these snapshots are the parent's history, so the fork does not own them
@@ -383,14 +411,13 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (event, ctx) => {
     continuationInFlight = false;
-    childBridgeRegistration?.dispose();
-    childBridgeRegistration = undefined;
+    disposeChildBridgeRegistration();
     if (__AUTORUN_CLI_TYPE__ === "pi" && !autorunDisabled() && process.env.PI_SUBAGENT_CHILD !== "1") {
       try {
         const subagentSource = pi.getAllTools?.().find((tool) => tool.name === "subagent")?.sourceInfo?.path;
-        if (subagentSource && isAbsolute(subagentSource)) {
-          // Resolve against the loaded copy, which may be installed per project.
-          const entry = createRequire(subagentSource).resolve("pi-subagents/required-child-extensions");
+        // Resolve against the loaded copy, which may be installed per project.
+        const entry = subagentSource && isAbsolute(subagentSource) ? resolveChildBridgeEntry(subagentSource) : undefined;
+        if (entry) {
           const { registerRequiredChildExtensions } = await import(pathToFileURL(entry).href);
           childBridgeRegistration = registerRequiredChildExtensions({
             sessionId: sessionId(ctx),
@@ -550,8 +577,7 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     continuationInFlight = false;
-    childBridgeRegistration?.dispose();
-    childBridgeRegistration = undefined;
+    disposeChildBridgeRegistration();
     await bridge.askDaemon(frame(ctx, "SessionEnd", pi));
   });
 }
