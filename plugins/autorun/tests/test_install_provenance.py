@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from autorun.installer import fs, provenance  # noqa: E402
+from autorun.installer import fs, provenance, traversal  # noqa: E402
 from autorun.installer.fs import OWNED_MARKER_NAME, Decision, Verdict  # noqa: E402
 from autorun.installer.traversal import Intent, _perform, retirements  # noqa: E402
 
@@ -85,6 +85,50 @@ def test_publishing_records_a_receipt_that_outlives_the_marker(tmp_path):
 
     _put(target / "SKILL.md", "# edited after the marker was lost\n")
     assert not provenance.autorun_wrote(target, plugin="ar", source=source)
+
+
+def test_receipt_excludes_an_edit_after_publication(tmp_path, monkeypatch):
+    source = _skill(tmp_path / "src" / "local", "# shipped\n")
+    target = tmp_path / "skills" / "local"
+    ctx = traversal.Context(marketplace_root=tmp_path)
+    publish = traversal.publish_tree
+
+    def publish_then_edit(*args, **kwargs):
+        result = publish(*args, **kwargs)
+        _put(target / "SKILL.md", "# my edit\n")
+        return result
+
+    monkeypatch.setattr(traversal, "publish_tree", publish_then_edit)
+    [decision] = traversal.run((), ctx, traversal.Mode.INSTALL, extra=[
+        Intent(target=target, source=source, plugin="ar"),
+    ])
+    assert decision.verdict is Verdict.PUBLISH
+    _lose_marker(target)
+
+    intents = retirements([target.parent], [], plugins=["ar"])
+    assert traversal.run((), ctx, traversal.Mode.UNINSTALL, extra=intents) == []
+    assert (target / "SKILL.md").read_bytes() == b"# my edit\n"
+    _put(target / "SKILL.md", "# shipped\n")
+    assert provenance.autorun_wrote(target, plugin="ar")
+
+
+def test_tree_receipt_accounts_for_writing_through_a_marker_symlink(tmp_path):
+    source = _skill(tmp_path / "src" / "local")
+    _put(source / "marker.json", "{}\n")
+    try:
+        (source / OWNED_MARKER_NAME).symlink_to("marker.json")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks need privileges here")
+    target = tmp_path / "skills" / "local"
+    [decision] = traversal.run((), traversal.Context(marketplace_root=tmp_path),
+                              traversal.Mode.INSTALL, extra=[
+        Intent(target=target, source=source, plugin="ar", settings={"bridge": "copy"}),
+    ])
+    assert decision.verdict is Verdict.PUBLISH
+    assert (target / OWNED_MARKER_NAME).is_symlink()
+    _lose_marker(target)
+    assert provenance.tree_digest(target) not in provenance.tree_digests(source)
+    assert provenance.autorun_wrote(target, plugin="ar")
 
 
 def test_retiring_forgets_the_receipt(tmp_path):

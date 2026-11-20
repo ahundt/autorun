@@ -148,12 +148,12 @@ def _key(target: Path) -> str:
     return os.path.normcase(str(target.resolve()))
 
 
-def record(target: Path, plugin: str) -> None:
-    """Remember what autorun just published at ``target``."""
+def record(target: Path, plugin: str, digest: str) -> None:
+    """Save the digest captured before the published tree became visible."""
     path = receipts_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with json_document(path) as receipts:
-        receipts[_key(target)] = {"plugin": plugin, "digest": tree_digest(target)}
+        receipts[_key(target)] = {"plugin": plugin, "digest": digest}
 
 
 def forget(target: Path) -> None:
@@ -284,7 +284,7 @@ def demo() -> None:
             (source / "SKILL.md").write_text("# v1\n", encoding="utf-8")
             target = root / "skills" / "commit"
             publish_tree(source, target, plugin="ar")
-            record(target, "ar")
+            record(target, "ar", tree_digest(target))
             (target / OWNED_MARKER_NAME).unlink()  # the user's tooling lost it
 
             (source / "SKILL.md").write_text("# v2\n", encoding="utf-8")
