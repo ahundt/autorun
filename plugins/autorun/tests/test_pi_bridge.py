@@ -390,6 +390,63 @@ def _run_pi_adapter_driver(
 
 
 @pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
+@pytest.mark.parametrize(("cli_type", "has_subagent", "expected"), [
+    ("pi", True, ["pi-parent", "pi-next"]),
+    ("pi", False, []),
+    ("prime", True, []),
+])
+def test_pi_requires_child_bridge_for_the_loaded_subagents_package(tmp_path, cli_type, has_subagent, expected):
+    package = tmp_path / "subagents"
+    package.mkdir()
+    (package / "package.json").write_text(json.dumps({
+        "name": "pi-subagents",
+        "type": "module",
+        "exports": {"./required-child-extensions": "./required.mjs"},
+    }), encoding="utf-8")
+    (package / "required.mjs").write_text("""
+export function registerRequiredChildExtensions(registration) {
+  globalThis.registrations.push(registration);
+  return { dispose: () => globalThis.disposals.push(registration.sessionId) };
+}
+""", encoding="utf-8")
+    result, _ = _run_pi_adapter_driver(
+        tmp_path,
+        [{}, {}, {}, {}, {}, {}],
+        '''import extension from "__EXTENSION__";
+import {fileURLToPath} from "node:url";
+const handlers = new Map();
+globalThis.registrations = [];
+globalThis.disposals = [];
+let id = "pi-parent";
+extension({
+  registerCommand() {}, registerTool() {}, sendMessage() {},
+  on(name, fn) { handlers.set(name, fn); },
+  getAllTools() { return __HAS_SUBAGENT__ ? [{name:"subagent", sourceInfo:{
+    path:fileURLToPath(new URL("./subagents/index.js", import.meta.url)),
+  }}] : []; },
+});
+const ctx = {cwd:"/sandbox", mode:"rpc", ui:{notify() {}},
+  sessionManager:{getSessionId:()=>id, getSessionFile:()=>undefined,
+    getBranch:()=>[], buildSessionContext:()=>({messages:[]})}};
+await handlers.get("session_start")({reason:"startup"}, ctx);
+await handlers.get("session_shutdown")({reason:"new"}, ctx);
+id = "pi-next";
+await handlers.get("session_start")({reason:"new"}, ctx);
+await handlers.get("session_shutdown")({reason:"quit"}, ctx);
+console.log(JSON.stringify({registrations, disposals}));
+'''.replace("__HAS_SUBAGENT__", json.dumps(has_subagent)),
+        cli_type=cli_type,
+    )
+    assert [row["sessionId"] for row in result["registrations"]] == expected
+    for row in result["registrations"]:
+        assert row["extensions"] == [{
+            "id": "autorun",
+            "path": str(tmp_path / "extension" / "index.ts"),
+        }]
+    assert result["disposals"] == expected
+
+
+@pytest.mark.skipif(JAVASCRIPT_RUNTIME is None, reason="Bun or Node.js is required for Pi callback tests")
 def test_pi_active_tool_introspection_failure_keeps_bridge_events_live(tmp_path):
     result, frames = _run_pi_adapter_driver(
         tmp_path,

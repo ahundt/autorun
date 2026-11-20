@@ -1,4 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createRequire } from "node:module";
+import { isAbsolute } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { autorunDisabled, createDaemonBridge, degradedNotice, denialReason, responseMessage } from "./daemon-client.mjs";
 
 const TASK_STATUSES = ["pending", "in_progress", "completed", "deleted"];
@@ -212,6 +215,7 @@ function promptAuthorOf(source: unknown): "user" | "automation" {
 
 export default function autorunPiExtension(pi: ExtensionAPI) {
   let continuationInFlight = false;
+  let childBridgeRegistration: { dispose(): void } | undefined;
   // Author of the prompt the latest input event carried, for the
   // before_agent_start frame that follows it.
   let pendingPromptAuthor: "user" | "automation" | undefined;
@@ -379,6 +383,24 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (event, ctx) => {
     continuationInFlight = false;
+    childBridgeRegistration?.dispose();
+    childBridgeRegistration = undefined;
+    if (__AUTORUN_CLI_TYPE__ === "pi" && !autorunDisabled() && process.env.PI_SUBAGENT_CHILD !== "1") {
+      try {
+        const subagentSource = pi.getAllTools?.().find((tool) => tool.name === "subagent")?.sourceInfo?.path;
+        if (subagentSource && isAbsolute(subagentSource)) {
+          // Resolve against the loaded copy, which may be installed per project.
+          const entry = createRequire(subagentSource).resolve("pi-subagents/required-child-extensions");
+          const { registerRequiredChildExtensions } = await import(pathToFileURL(entry).href);
+          childBridgeRegistration = registerRequiredChildExtensions({
+            sessionId: sessionId(ctx),
+            extensions: [{ id: "autorun", path: fileURLToPath(import.meta.url) }],
+          });
+        }
+      } catch {
+        ctx.ui.notify("Autorun could not require its bridge in Pi subagents. Native child tool calls may not be protected.", "warning");
+      }
+    }
     await reprojectTaskReceipts(ctx, event.reason);
     const response = await bridge.askDaemon({
       ...frame(ctx, "SessionStart", pi), source: event.reason,
@@ -528,6 +550,8 @@ export default function autorunPiExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     continuationInFlight = false;
+    childBridgeRegistration?.dispose();
+    childBridgeRegistration = undefined;
     await bridge.askDaemon(frame(ctx, "SessionEnd", pi));
   });
 }
