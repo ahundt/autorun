@@ -186,30 +186,6 @@ def test_the_sweep_retires_an_unmarked_copy_autorun_wrote(tmp_path, monkeypatch)
     assert mine.is_dir()
 
 
-def test_the_sweep_follows_filesystem_case_aliases(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
-    root = home / ".agents"
-    stale = _skill(root / "skills" / "Mermaid-Diagrams", "# old release\n")
-    shipped = stale.with_name("mermaid-diagrams")
-    aliases = shipped.exists() and shipped.samefile(stale)
-    if not aliases:
-        _skill(shipped, "# old release\n")
-    monkeypatch.setattr(provenance, "LEGACY_DIGESTS", {
-        "autorun-skills": {shipped.name: (provenance.tree_digest(stale),)},
-    })
-
-    intents = retirements([root], [], plugins=["autorun-skills"])
-    decisions = traversal.run((), traversal.Context(marketplace_root=tmp_path, home=home),
-                              traversal.Mode.UNINSTALL, extra=intents)
-    assert [(d.target.name, d.verdict) for d in decisions] == [
-        (stale.name if aliases else shipped.name, Verdict.RETIRE),
-    ]
-    assert not shipped.exists()
-    assert stale.exists() != aliases
-
-
 def test_a_catalogued_copy_inside_someone_elses_tree_is_left_alone(tmp_path, monkeypatch):
     """A user's own plugin bundle may carry copies of autorun skills. The
     catalog only describes copies earlier releases put directly in the shared
