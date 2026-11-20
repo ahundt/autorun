@@ -121,6 +121,7 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
             }
             for host in platform.host_task_lists
         ],
+        "human_prompt_entrypoints": sorted(platform.human_prompt_entrypoints),
         "first_model_invocation_event": platform.first_model_invocation_event,
         "first_model_invocation_index_field": platform.first_model_invocation_index_field,
         "prompt_payload_field": platform.prompt_payload_field,
