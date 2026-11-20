@@ -109,10 +109,14 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    file has a name the comparison skips elsewhere, such as `SKILL.md.bak`,
    `notes~` or `.git/`. Only operating system and Python leftovers
    (`.DS_Store`, `*.pyc` and similar) are ignored in this comparison; the
-   backup in item 6 skips a longer list. One case is not handled: on a
-   case-sensitive filesystem, an old skill folder whose name differs from the
-   shipped one only by letter case (`Commit` against `commit`) is left beside
-   the new folder. Nothing is deleted.
+   backup in item 6 skips a longer list. The record of what the install
+   published is taken from the copy autorun staged, before it becomes visible,
+   so an edit you save right after an install cannot be mistaken for autorun's
+   own text. Where the disk treats `Commit` and `commit` as one folder (the
+   macOS and Windows default), an old copy stored under the other spelling is
+   recognized too. One case is not handled: on a case-sensitive filesystem, an
+   old skill folder whose name differs from the shipped one only by letter
+   case is left beside the new folder. Nothing is deleted.
 4. A full disk no longer stops autorun from opening or saving its own state
    or starting its daemon, within the limits listed at the end of this item. On
    2026-11-13 SQLite could not create its `-wal` and `-shm` files
@@ -132,7 +136,9 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    SQLite transaction. It
    frees bytes, not inodes, so a volume that has run out of inodes is not
    helped. On a volume with snapshots or transparent compression, deleting it
-   may free less than 8 MiB. Creating or releasing the reserve cannot itself
+   may free less than 8 MiB. For the JSON save, the daemon lock and the
+   daemon's socket, only an out-of-space error releases it; a permission error
+   on a nearly full disk leaves it in place. Creating or releasing the reserve cannot itself
    raise an error: a failure there is logged and ignored. When the daemon
    lock cannot be created, the log warning now names the lock path and the
    error number (for example `errno 28, No space left on device`). It used to
@@ -158,11 +164,17 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    `._*`, `Thumbs.db`, `*.pyc`), test and lint caches (`.pytest_cache`,
    `.mypy_cache`, `.ruff_cache`, `htmlcov`, coverage files), and the `.venv` of
    an old Claude plugin cache version, so an ordinary upgrade makes no backup.
-   Two limits remain. In a folder that has no autorun marker and is known to be
+   Four limits remain. In a folder that has no autorun marker and is known to be
    autorun's only from a harness's install record, a file of yours under an
-   ordinary name such as `notes.md` is still not covered. And the install
-   output does not name the backup it made, so look in that directory after an
-   upgrade or uninstall if you kept files in an autorun folder.
+   ordinary name such as `notes.md` is still not covered. A file of yours that
+   carries the name of a harness's own record (`qwen-extension.json`,
+   `.gemini-extension-install.json`), or sits in a `.venv` folder below the top of a
+   Claude plugin cache version, is treated as that record or runtime and is
+   not copied. A named pipe (FIFO) inside a skill or extension folder makes
+   the install wait forever on it; remove the pipe and run the install again.
+   And the install output does not name the backup it made, so look in that
+   directory after an upgrade or uninstall if you kept files in an autorun
+   folder.
 7. Starting a session cost more CPU the more sessions the daemon had cached. Each
    state write scanned every cached key of every session, and each
    `get_session_manager()` call resolved the state directory path again, about
