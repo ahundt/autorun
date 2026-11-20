@@ -86,12 +86,50 @@ def test_release_deletes_the_reserve_only_when_the_volume_is_nearly_full(reserve
     assert disk_reserve.release_if_exhausted(reserve.parent) is False, "nothing left to release"
 
 
+@pytest.mark.parametrize("armed", [False, True], ids=["staging-only", "both-files"])
+def test_release_removes_an_interrupted_staging_file(reserve, monkeypatch, armed):
+    staging = reserve.with_suffix(".reserve.tmp")
+    staging.write_bytes(bytes(MIB))
+    if armed:
+        reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, MIB)
+    assert disk_reserve.release_if_exhausted(reserve.parent) is False
+    assert staging.exists()
+    _free(monkeypatch, 0)
+    assert disk_reserve.release_if_exhausted(reserve.parent) is True
+    assert not staging.exists() and not reserve.exists()
+
+
 def test_release_ignores_a_failure_on_another_volume(reserve, monkeypatch):
     reserve.write_bytes(bytes(MIB))
     _free(monkeypatch, 0)
     monkeypatch.setattr(disk_reserve, "_same_volume", lambda *_a: False)
     assert disk_reserve.release_if_exhausted(reserve.parent) is False
     assert reserve.exists(), "freeing this volume cannot help the other one"
+
+
+def test_json_save_releases_the_reserve_and_retries_once(reserve, tmp_path, monkeypatch):
+    from autorun import session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    real_write = session_manager.atomic_write_json
+    attempts = []
+
+    def write_needing_space(path, data):
+        attempts.append(reserve.exists())
+        if reserve.exists():
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write(path, data)
+
+    monkeypatch.setattr(session_manager, "atomic_write_json", write_needing_space)
+    with store.session("s") as state:
+        state["saved"] = True
+    assert attempts == [True, False]
+    assert not reserve.exists()
+    with store.session("s") as state:
+        assert state["saved"] is True
 
 
 def _store_needing_space(tmp_path, reserve):
@@ -252,7 +290,8 @@ def test_the_watchdog_tick_arms_the_reserve(monkeypatch):
     assert calls == [1]
 
 
-def test_daemon_start_arms_the_reserve(monkeypatch):
+@pytest.mark.parametrize("transport", [None, "unix", "tcp"], ids=["no-error", "unix-enospc", "tcp-enospc"])
+def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport):
     import asyncio
     import threading
 
@@ -261,6 +300,13 @@ def test_daemon_start_arms_the_reserve(monkeypatch):
     daemon = core.AutorunDaemon.__new__(core.AutorunDaemon)
     daemon._loop = daemon._shutdown_event = daemon._server = daemon._watchdog_task = None
     armed = threading.Event()
+    attempts = []
+    if transport:
+        reserve.write_bytes(bytes(MIB))
+        _free(monkeypatch, 0)
+        monkeypatch.setattr(core.ipc, "HAS_UNIX_SOCKETS", transport == "unix")
+        for attr in ("SOCKET_PATH", "PORT_FILE", "TOKEN_FILE"):
+            monkeypatch.setattr(core.ipc, attr, reserve.parent / attr.lower())
 
     class Server:
         async def __aenter__(self):
@@ -274,6 +320,9 @@ def test_daemon_start_arms_the_reserve(monkeypatch):
             return False
 
     async def start_server(*_a, **_k):
+        attempts.append(reserve.exists())
+        if reserve.exists():
+            raise OSError(errno.ENOSPC, "No space left on device")
         return Server()
 
     async def no_watchdog():
@@ -292,6 +341,8 @@ def test_daemon_start_arms_the_reserve(monkeypatch):
     monkeypatch.setattr(daemon, "async_stop", no_stop)
     asyncio.run(daemon.start())
     assert armed.is_set(), "AutorunDaemon.start() never called disk_reserve arm"
+    assert attempts == ([True, False] if transport else [False])
+    assert not reserve.exists()
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("hdiutil"),

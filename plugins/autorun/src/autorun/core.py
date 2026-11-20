@@ -4262,7 +4262,16 @@ class AutorunDaemon:
 
         # Start server with large buffer to accept full payloads before truncation
         # Default 64KB too small - client sends full transcript, we truncate after reading
-        self._server = await ipc.start_server(self.handle_client, limit=READ_BUFFER_LIMIT)
+        for attempt in (1, 2):
+            try:
+                self._server = await ipc.start_server(self.handle_client, limit=READ_BUFFER_LIMIT)
+                break
+            except OSError:
+                from . import disk_reserve
+
+                endpoint = ipc.SOCKET_PATH if ipc.HAS_UNIX_SOCKETS else ipc.PORT_FILE
+                if attempt == 2 or not disk_reserve.release_if_exhausted(endpoint.parent):
+                    raise
         self.running = True
 
         # Start watchdog as tracked task
