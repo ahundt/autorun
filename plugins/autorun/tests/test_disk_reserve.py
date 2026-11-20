@@ -220,6 +220,39 @@ def test_json_save_retries_when_the_directory_fsync_reports_no_space(reserve, tm
         assert state["saved"] is True
 
 
+def test_json_save_retries_when_the_directory_fsync_and_then_its_close_fail(reserve, tmp_path, monkeypatch):
+    """Both faults through the real writer: the close failure replaces the
+    fsync error's cause, so the errno has to survive on the error itself."""
+    from autorun import durable_io, session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    real_fsync, real_close = os.fsync, os.close
+    failing = set()
+
+    def fsync_needing_space(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode) and reserve.exists():
+            failing.add(descriptor)
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_fsync(descriptor)
+
+    def close_failing_after(descriptor):
+        real_close(descriptor)
+        if descriptor in failing:
+            failing.discard(descriptor)
+            raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(durable_io.os, "fsync", fsync_needing_space)
+    monkeypatch.setattr(durable_io.os, "close", close_failing_after)
+    with store.session("s") as state:
+        state["saved"] = True
+    assert not reserve.exists()
+    monkeypatch.undo()
+    with store.session("s") as state:
+        assert state["saved"] is True
+
+
 def test_out_of_space_is_found_behind_a_later_close_failure():
     """durable_io raises the fsync wrapper `from` a failed close, which leaves
     the native ENOSPC as the wrapper's context, not its cause."""
