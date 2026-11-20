@@ -45,6 +45,7 @@ from .fs import (
     TreeManifest,
     _fingerprint,
     autorun_state_dir,
+    is_link_or_reparse,
     json_document,
     owns,
     read_marker,
@@ -174,6 +175,24 @@ def _receipt(target: Path) -> Mapping[str, str] | None:
     return entry if isinstance(entry, dict) else None
 
 
+def _catalog_digests(target: Path, plugin: str, name: str = "") -> tuple[str, ...]:
+    skills = LEGACY_DIGESTS.get(plugin, {})
+    name = name or target.name
+    if name in skills:
+        return skills[name]
+    for shipped, digests in skills.items():
+        if shipped.casefold() != name.casefold():
+            continue
+        alias = target.with_name(shipped)
+        try:
+            # A separate link is not a case alias, even if it points here.
+            if not is_link_or_reparse(alias.lstat()) and alias.samefile(target):
+                return digests
+        except OSError:
+            continue
+    return ()
+
+
 def autorun_wrote(
     target: Path,
     *,
@@ -203,7 +222,7 @@ def autorun_wrote(
         and owns(TreeManifest(plugin=str(receipt.get("plugin", ""))), plugin)
     ):
         return True
-    return catalog and current in LEGACY_DIGESTS.get(plugin, {}).get(name or target.name, ())
+    return catalog and current in _catalog_digests(target, plugin, name)
 
 
 def proof_for(
@@ -238,7 +257,6 @@ def proven_trees(
         catalog_parent = catalog_root.resolve()
     except OSError:
         catalog_parent = None
-    named = set(LEGACY_DIGESTS.get(plugin, {}))
     try:
         receipts = json.loads(receipts_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -257,7 +275,9 @@ def proven_trees(
             if read_marker(child) is not None:
                 continue  # marked trees are owned_trees' to report
             receipted_here = _key(child) in receipted
-            catalogued_here = child.name in named and child.parent.resolve() == catalog_parent
+            catalogued_here = (
+                child.parent.resolve() == catalog_parent and bool(_catalog_digests(child, plugin))
+            )
             if (receipted_here or catalogued_here) and autorun_wrote(
                 child, plugin=plugin, catalog=catalogued_here
             ):
