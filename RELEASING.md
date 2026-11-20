@@ -648,9 +648,16 @@ gh api "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
 # Approve, naming the environment id the call above reported.
 env_id=$(gh api "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
   --jq '.[] | select(.environment.name=="pypi") | .environment.id')
-gh api --method POST \
-  "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
-  -f state=approved -F "environment_ids[]=$env_id" -f comment="rc verified"
+# A failed `test` typed at a prompt does not stop the lines after it, so the
+# approval is chained to the checks: it is sent only when the pushed tag and
+# this run are both at the verified commit.
+test -n "${release_sha:-}" \
+  && test "$(git ls-remote origin "refs/tags/$release_tag^{}" | cut -f1)" = "$release_sha" \
+  && test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$release_sha" \
+  && gh api --method POST \
+       "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
+       -f state=approved -F "environment_ids[]=$env_id" -f comment="rc verified" \
+  || echo "STOP: not approved. The tag, the run or \$release_sha did not match, or the request failed."
 ```
 
 ### Stage 6: Create the GitHub release — **RELEASER public write**
@@ -721,6 +728,11 @@ the attempt, or take the browser route above:
 ```bash
 # The updater's rule (installer/entrypoint.py:_latest_version): a version with a
 # letter in it is a prerelease, one of digits and dots is stable.
+# Derived again here so a fresh shell cannot run this stage with empty values,
+# which would select the stable branch below.
+release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
+release_tag="v$release_version"
+test -n "$release_version" || echo "STOP: no version read from plugins/autorun/pyproject.toml"
 case "$release_version" in
   *[A-Za-z]*) release_kind=--prerelease; expect_prerelease=true ;;
   *)          release_kind=--latest;     expect_prerelease=false ;;
