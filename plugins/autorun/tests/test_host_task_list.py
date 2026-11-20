@@ -291,6 +291,48 @@ def test_desktop_session_start_after_proof_names_the_host_list(isolated_session)
     assert "not enforcing task tracking yet" not in text
 
 
+@pytest.fixture
+def desktop_after_task_stop(isolated_session, request):
+    store = ThreadSafeDB()
+    sid = request.node.name
+    env = {**DESKTOP_ENV, **SWITCH}
+    assert f"If this session has `{DESKTOP_TOOL}`" in _start_text(sid, store, env)
+    _dispatch("PostToolUse", sid, store, env, tool_name="TaskCreate",
+              tool_input={"subject": "Original task"},
+              tool_response="Task #1 created successfully: Original task")
+    block, _ = _dispatch("Stop", sid, store, env)
+    assert all(text in str(block) for text in ("CANNOT STOP", "Original task", "TaskUpdate"))
+    return sid, store, env
+
+
+def _call_desktop_plan(sid, store, env):
+    return _dispatch("PostToolUse", sid, store, env, tool_name=DESKTOP_TOOL,
+                     tool_input={"steps": []}, tool_response="Plan shown")
+
+
+def test_desktop_plan_proof_drops_pending_task_stop_replay(desktop_after_task_stop):
+    sid, store, env = desktop_after_task_stop
+    proof, ctx = _call_desktop_plan(sid, store, env)
+    assert ctx.host_task_list_in_use
+    assert "CANNOT STOP" not in str(proof)
+    assert ctx.pending_stop_injection is None
+    stop, _ = _dispatch("Stop", sid, store, env)
+    assert "CANNOT STOP" not in str(stop)
+
+
+def test_desktop_plan_proof_delivers_definitive_guidance_once(desktop_after_task_stop):
+    sid, store, env = desktop_after_task_stop
+    guidance = f"This session's host keeps its task list in `{DESKTOP_TOOL}`"
+    proof, _ = _call_desktop_plan(sid, store, env)
+    assert guidance in (proof or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "If this session has" not in str(proof)
+    repeat, _ = _call_desktop_plan(sid, store, env)
+    assert guidance not in str(repeat)
+    # A later fresh context has not seen it: one more delivery, then none.
+    assert guidance in _start_text(sid, store, env)
+    assert guidance not in _start_text(sid, store, env)
+
+
 def test_task_evidence_follows_the_proof_not_the_environment(isolated_session):
     """(a)+(b) Same switch variables: desktop without proof equals a terminal;
     after the plan tool was called the evidence is the empty set."""
