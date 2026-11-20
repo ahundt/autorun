@@ -653,7 +653,7 @@ env_id=$(gh api "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" 
 # pushed tag and this run are all at the verified commit. The artifact checks
 # above (digests, the two install probes) are yours to read before running
 # this; nothing here repeats them.
-test -n "${release_sha:-}" \
+test -n "${release_sha:-}" && test -n "${release_version:-}" \
   && test "$(git rev-list -n 1 "$release_tag")" = "$release_sha" \
   && test "$(git ls-remote origin "refs/tags/$release_tag^{}" | cut -f1)" = "$release_sha" \
   && test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$release_sha" \
@@ -741,15 +741,18 @@ case "$release_version" in
   *[A-Za-z]*) release_kind=--prerelease; expect_prerelease=true ;;
   *)          release_kind=--latest;     expect_prerelease=false ;;
 esac
-if gh release view "$release_tag" >/dev/null 2>&1; then
-  gh release view "$release_tag" --json tagName,isDraft,isPrerelease,url
-else
-  gh release create "$release_tag" --verify-tag "$release_kind" \
-    --title "autorun $release_tag" \
-    --notes-file "docs/releases/$release_version.md"
+# Nothing below runs without a version: `v` alone is not a release tag.
+if test -n "$release_version"; then
+  if gh release view "$release_tag" >/dev/null 2>&1; then
+    gh release view "$release_tag" --json tagName,isDraft,isPrerelease,url
+  else
+    gh release create "$release_tag" --verify-tag "$release_kind" \
+      --title "autorun $release_tag" \
+      --notes-file "docs/releases/$release_version.md"
+  fi
+  test "$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)" = "$expect_prerelease"
+  test "$(gh release view "$release_tag" --json isDraft --jq .isDraft)" = false
 fi
-test "$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)" = "$expect_prerelease"
-test "$(gh release view "$release_tag" --json isDraft --jq .isDraft)" = false
 ```
 
 ### Stage 7: Verify the published release from the public install path

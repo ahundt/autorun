@@ -50,8 +50,8 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    autorun creating it and does not remove one that exists. And in the Claude
    Code terminal and the Claude desktop app, a prompt sent after the prompt
    cache expired on a context of 100,000 tokens or more is held once, when
-   the session's record states how long its cache lives; send the same text
-   again to proceed, or run `/ar:cache warn` to get the 1.0.0rc4
+   the session's record states how long its cache lives or you set that with
+   `/ar:cache set age`; send the same text again to proceed, or run `/ar:cache warn` to get the 1.0.0rc4
    notice back (Changed item 1).
 
 ### Changed
@@ -60,7 +60,8 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    sent the prompt; two Claude desktop prompts re-wrote 279k and 741k cached
    tokens that way. In the Claude Code terminal and the Claude desktop app,
    autorun now holds such a prompt when the conversation is 100,000 tokens or
-   more and the session's record states how long its cache lives. Send the
+   more and the cache lifetime is known, from the session's record or from
+   `/ar:cache set age`. Send the
    same message again to send it once, or run `/ar:cache warn` to get the
    notice back in that session. Claude Code started another way (by T3 Code,
    for example) and the other coding CLIs warn by default; `/ar:cache on`
@@ -74,9 +75,9 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    nothing is stored if one pattern is invalid. Every form 1.0.0rc4 accepted
    means what it did: an unquoted `/ar:ok git push` is still one pattern, and
    a word outside quotes that is not a scope word is still an error. A quoted
-   word that is a bare count, duration or `perm` word, such as `'5m'`, is read
-   as the scope, as before, so a pattern spelled that way needs its own
-   `/ar:ok` command. So does one that contains an escaped quote, and a
+   word after the first pattern that is a bare count, duration or `perm`
+   word, such as `'5m'`, is read as the scope, as before, so a pattern spelled
+   that way goes first or in its own `/ar:ok` command. So does one that contains an escaped quote, and a
    `regex:` or `glob:` pattern can only come first. `/ar:no` is unchanged.
 
 ### Fixed
@@ -149,7 +150,8 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    helped. On a volume with snapshots or transparent compression, deleting it
    may free less than 8 MiB. For the JSON save, the daemon lock and the
    daemon's socket, only an out-of-space error on the reserve's own volume
-   releases it; a permission error on a nearly full disk leaves it in place. Creating or releasing the reserve cannot itself
+   releases it; a permission error on a nearly full disk leaves it in place.
+   A state file reached through a symlink onto another volume is not covered. Creating or releasing the reserve cannot itself
    raise an error: a failure there is logged and ignored. When the daemon
    lock cannot be created, the log warning now names the lock path and the
    error number (for example `errno 28, No space left on device`). It used to
@@ -180,13 +182,14 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    ordinary name such as `notes.md` is still not covered. A file of yours that
    carries the name of a harness's own record (`qwen-extension.json`,
    `.gemini-extension-install.json`), or sits in a `.venv` folder below the top of a
-   Claude plugin cache version, is treated as that record or runtime and is
-   not copied. A named pipe (FIFO) inside a skill or extension folder makes
-   the install wait forever on it; stop that install, remove the pipe and run
-   it again.
-   And the install output does not name the backup it made, so look in that
-   directory after an upgrade or uninstall if you kept files in an autorun
-   folder.
+   Claude plugin cache version, is treated as that record or runtime: it does
+   not cause a backup, and the `.venv` content is left out of one made for
+   another file. A named pipe (FIFO) inside a skill or extension folder,
+   under a name the install reads, makes the install wait forever on it; stop
+   that install, remove the pipe and run it again.
+   And apart from a forced refresh of a Claude plugin cache, the install
+   output does not name the backup it made, so look in that directory after
+   an upgrade or uninstall if you kept files in an autorun folder.
 7. Starting a session cost more CPU the more sessions the daemon had cached. Each
    state write scanned every cached key of every session, and each
    `get_session_manager()` call resolved the state directory path again, about
@@ -206,7 +209,8 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    --skill-placement both` a status check listed every shared skill copy as
    `retire ... no longer shipped` and exited 1. The option still applies only
    to the command it is given to: a later `autorun --install` without it
-   returns to the default placement and removes those shared copies.
+   returns to the placement set in the environment or the config file, or to
+   the default, and under the default it removes those shared copies.
 
 ### For contributors
 
