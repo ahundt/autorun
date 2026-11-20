@@ -660,7 +660,7 @@ test -n "${release_sha:-}" && test -n "${release_version:-}" \
   && gh api --method POST \
        "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
        -f state=approved -F "environment_ids[]=$env_id" -f comment="rc verified" \
-  || echo "STOP: not approved. \$release_sha or \$release_version is empty, the tag or the run is at another commit, or the request failed."
+  || echo "STOP: not approved. \$release_sha or \$release_version is empty, the tag is missing or the tag or the run is at another commit, or the request failed."
 ```
 
 ### Stage 6: Create the GitHub release — **RELEASER public write**

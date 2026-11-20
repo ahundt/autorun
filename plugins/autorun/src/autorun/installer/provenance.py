@@ -162,14 +162,17 @@ def record(target: Path, plugin: str, digest: str) -> None:
     every publisher of ``target`` holds while it swaps, so no publish can land
     between them.
     """
-    if not target.is_dir():
-        return  # withdrawn since the publish; a lock here would recreate its parent
+    if target.is_symlink() or not target.is_dir():
+        # Withdrawn since the publish (a lock here would recreate its parent),
+        # or replaced by a link: its contents are another folder's, and the
+        # receipt would be filed under that folder's path.
+        return
     path = receipts_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         one_directory = path.parent.samefile(target.parent)
     except OSError:
-        one_directory = False
+        return  # which locks to take is unknown; taking the same one twice raises
     # json_document locks the receipts file's directory under the same lock
     # name. When that directory is also the target's parent, its lock is the
     # publication lock, and a second FileLock on it in this process raises.

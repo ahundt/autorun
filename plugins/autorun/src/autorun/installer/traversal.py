@@ -345,11 +345,14 @@ def _receipt(action: Callable[..., None], *args: str | Path) -> None:
     """Keep the publication receipt, never at the cost of the publication.
 
     The marker inside the tree is still written; a receipt that cannot be
-    saved costs only the fallback for a marker the user later loses.
+    saved costs only the fallback for a marker the user later loses. Every
+    failure is absorbed, not only the expected OSError and ValueError: a
+    receipts file that is a link to itself or nested past the recursion limit
+    raises RuntimeError or RecursionError, after the tree has been published.
     """
     try:
         action(*args)
-    except (OSError, ValueError):
+    except Exception:
         pass
 
 

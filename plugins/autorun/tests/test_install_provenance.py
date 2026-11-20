@@ -177,6 +177,56 @@ def test_a_receipt_is_saved_when_its_file_shares_the_skill_folders_directory(tmp
     assert provenance.autorun_wrote(target, plugin="ar", catalog=False)
 
 
+def test_a_receipt_is_not_saved_for_a_folder_replaced_by_a_link(tmp_path):
+    """Between the publish and the receipt, the folder is moved aside and a
+    link to another folder with the same bytes takes its place."""
+    source = _skill(tmp_path / "src" / "local")
+    target = tmp_path / "skills" / "local"
+    elsewhere = _skill(tmp_path / "mine" / "local")
+    assert fs.publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+    digest = provenance.tree_digest(target)
+    target.rename(tmp_path / "skills" / "aside")
+    target.symlink_to(elsewhere, target_is_directory=True)
+
+    provenance.record(target, "ar", digest)
+    assert not provenance.autorun_wrote(elsewhere, plugin="ar", catalog=False)
+    assert not provenance.receipts_path().exists()
+
+
+@pytest.mark.parametrize("failure", [
+    RuntimeError("Deadlock"), RecursionError("maximum recursion depth exceeded"),
+], ids=["runtime-error", "recursion-error"])
+def test_a_receipt_failure_of_any_kind_does_not_fail_the_publish(tmp_path, monkeypatch, failure):
+    """A receipts file that links to itself, or is nested past the recursion
+    limit, raises neither OSError nor ValueError; the tree is already published."""
+    source = _skill(tmp_path / "src" / "local")
+    target = tmp_path / "skills" / "local"
+
+    def broken(*_args):
+        raise failure
+
+    monkeypatch.setattr(provenance, "record", broken)
+    ctx = traversal.Context(marketplace_root=tmp_path)
+    [decision] = traversal.run((), ctx, traversal.Mode.INSTALL, extra=[
+        Intent(target=target, source=source, plugin="ar"),
+    ])
+    assert decision.verdict is Verdict.PUBLISH
+    assert (target / OWNED_MARKER_NAME).is_file()
+
+
+def test_a_receipt_is_skipped_when_the_two_directories_cannot_be_compared(tmp_path, monkeypatch):
+    source = _skill(tmp_path / "src" / "local")
+    target = tmp_path / "skills" / "local"
+    assert fs.publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+
+    def unreadable(self, other):
+        raise OSError("identity lookup failed")
+
+    monkeypatch.setattr(Path, "samefile", unreadable)
+    provenance.record(target, "ar", provenance.tree_digest(target))
+    assert not provenance.receipts_path().exists()
+
+
 def test_a_receipt_for_a_folder_that_is_gone_creates_nothing(tmp_path):
     target = tmp_path / "skills" / "local"
     provenance.record(target, "ar", "0" * 32)
