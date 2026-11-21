@@ -632,8 +632,11 @@ class CacheGuard:
             and _expiry_lifetime(usage, self.config)[1] != "default"
         )
         # Unmarked SDK sends can look like typed prompts. Only known human
-        # entrypoints hold without the user's explicit opt-in.
-        default_warn = entry is None and ctx.harness_entrypoint not in platform.human_prompt_entrypoints
+        # entrypoints hold without the user's explicit opt-in, and the opt-in
+        # is a stored "block": 1.0.0rc4's `/ar:cache on` stored only
+        # `enabled`, and meant the notice.
+        opted_in = entry is not None and entry.get("expired_prompt_action") == "block"
+        default_warn = not opted_in and ctx.harness_entrypoint not in platform.human_prompt_entrypoints
         if action == "warn" or not can_hold or default_warn:
             message = _render_expired(usage, self.config, ctx.cli_type, blocking=False, offer_hold=can_hold and default_warn)
             return ctx.respond("allow", message, to_ai=False)
@@ -686,7 +689,9 @@ class CacheGuard:
         volatile cache. Direct mode falls back to durable session state because
         no process survives to reuse an in-memory value.
         """
-        if not fresh:
+        # A frame with no transcript path cannot be scanned, so a fresh read
+        # of it falls back to the memo too.
+        if not fresh or not getattr(ctx, "transcript_path", None):
             if hasattr(ctx, "state_get"):
                 memo = ctx.state_get(_LAST_USAGE_KEY)  # type: ignore[union-attr]
             else:
@@ -833,8 +838,8 @@ def _consume_by_call_id(session_id: str, call_id: str) -> bool:
     Time comes from this module's clock, the one `grant_override` stamps
     grants with and the toggles expire by, so a test can drive all three.
     """
-    now = time.time()
     with session_state(session_id) as st:
+        now = time.time()  # after the wait for the lock, or an expired grant passes
         grants_raw = list(st.get(_GRANT_KEY, []))
         live: list[dict] = []
         consumed_any = False

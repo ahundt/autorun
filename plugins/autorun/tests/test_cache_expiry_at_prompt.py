@@ -626,6 +626,9 @@ def test_an_expired_prompt_is_held_when_the_user_has_stored_nothing(clock):
         ("claude", None, None, "notice"),
         ("claude", "t3-code", "on", "hold"),
         ("claude", "t3-code", "global on", "hold"),
+        # 1.0.0rc4's `/ar:cache on` stored {"enabled": true} and meant the notice.
+        ("claude", "t3-code", "stored by 1.0.0rc4", "notice"),
+        ("claude", "cli", "stored by 1.0.0rc4", "hold"),
         ("codex", "cli", None, "notice"),
         ("pi", "cli", None, "notice"),
     ],
@@ -656,7 +659,12 @@ def test_default_hold_follows_the_forwarded_entrypoint(clock, monkeypatch, capsy
     prepared = hook_entry.prepare_hook_payload(payload, cli_type)
     # Only the prepared frame, not the receiving process's environment, is evidence.
     monkeypatch.delenv(env_name, raising=False)
-    if setting:
+    if setting == "stored by 1.0.0rc4":
+        from autorun import cache_guard
+
+        with cache_guard.session_state(prepared["session_id"]) as stored:
+            stored[cache_guard._TOGGLE_KEY] = {"enabled": True}
+    elif setting:
         run_direct({**prepared, "prompt": f"/ar:cache {setting}"})
         assert "enabled" in capsys.readouterr().out
     run_direct(prepared)
@@ -664,6 +672,44 @@ def test_default_hold_follows_the_forwarded_entrypoint(clock, monkeypatch, capsy
     assert outcome(response) == expected, response
     if cli_type == "claude" and expected == "notice":
         assert "/ar:cache on" in text_of(response), response
+
+
+def test_a_prompt_frame_without_a_transcript_path_uses_the_last_reading(clock, capsys):
+    """The prompt check reads the transcript afresh; a frame that names no
+    transcript cannot be read, and the reading from the frame before it is
+    still the session's last response."""
+    from autorun.__main__ import run_direct
+
+    frame = {
+        "session_id": f"cache-no-path-{uuid.uuid4().hex}",
+        "hook_event_name": "UserPromptSubmit",
+        "transcript_path": str(EXPIRED_1H),
+        "prompt": "Continue with the refactor.",
+        "cli_type": "claude",
+    }
+    run_direct(frame)
+    assert outcome(json.loads(capsys.readouterr().out)) == "notice"
+    run_direct({key: value for key, value in frame.items() if key != "transcript_path"})
+    assert outcome(json.loads(capsys.readouterr().out)) == "notice"
+
+
+def test_an_override_that_expires_while_waiting_for_the_state_lock_is_not_used(clock, monkeypatch):
+    from contextlib import contextmanager
+
+    from autorun import cache_guard
+
+    session = f"cache-late-{uuid.uuid4().hex}"
+    cache_guard.grant_override(session, ttl_seconds=1.0, uses=1)
+    real_state = cache_guard.session_state
+
+    @contextmanager
+    def slow_lock(session_id):
+        clock.now += 2.0  # the grant ran out while this call waited
+        with real_state(session_id) as state:
+            yield state
+
+    monkeypatch.setattr(cache_guard, "session_state", slow_lock)
+    assert cache_guard._consume_by_call_id(session, "any-call") is False
 
 
 @pytest.mark.parametrize("cli_type", sorted(p.name for p in hook_platforms()))
