@@ -664,7 +664,15 @@ class CacheGuard:
         # changes `responded_at`, so a later expiry holds the same text again,
         # and two hooks for one prompt (same expiry) both see the pass.
         hold = f"{digest}@{int(usage.responded_at or 0)}"
-        resent = hold in _held_digests(ctx.state_get(_RESENT_PROMPTS_KEY, []))
+        held = _held_digests(ctx.state_get(_RESENT_PROMPTS_KEY, []))
+        resent = hold in held
+        if not resent and digest in held:
+            # 1.0.0rc4 stored the bare digest. A prompt it held passes its
+            # resend, and the record is rewritten so it ends with this expiry.
+            ctx.state_update(
+                _RESENT_PROMPTS_KEY,
+                lambda kept: [hold if h == digest else h for h in _held_digests(kept)], [])
+            resent = True
         # Keyed on the prompt text: a prompt has no tool input, so the tool
         # fingerprint is the same for every prompt, and ScopedAllow's
         # parallel-hook grace would let one `ok` pass the next prompt too.

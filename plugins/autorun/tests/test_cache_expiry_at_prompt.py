@@ -274,6 +274,23 @@ def test_resending_the_blocked_text_passes_and_other_text_still_blocks(clock):
     assert blocked(later), f"the resend pass outlived its expiry: {later}"
 
 
+def test_a_hold_recorded_by_1_0_0rc4_still_passes_its_resend_after_the_upgrade(clock):
+    """1.0.0rc4 stored the bare prompt digest. A prompt held just before the
+    upgrade must not be held a second time when it is resent after it."""
+    import hashlib
+
+    from autorun import cache_guard
+
+    session = armed(EXPIRED_1H)
+    digest = hashlib.sha256(b"Continue with the refactor.").hexdigest()
+    EventContext(session_id=session.id, event="UserPromptSubmit", store=session.store).state_set(
+        cache_guard._RESENT_PROMPTS_KEY, [digest])
+    assert not blocked(session.prompt("Continue with the refactor."))
+    assert not blocked(session.prompt("Continue with the refactor."))  # second hook, same prompt
+    next_expiry(session, clock)
+    assert blocked(session.prompt("Continue with the refactor.")), "the 1.0.0rc4 record outlived its expiry"
+
+
 # Every case below drives the one fake clock (`clock`), so a one-hour or ten-day
 # duration is a number assigned to `clock.now`, never a wait.
 SCOPES = {"session": ("", ""), "global": ("global ", "--global ")}  # (`/ar:cache` word, `/ar:ok` flag)
