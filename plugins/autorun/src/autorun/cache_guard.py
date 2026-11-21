@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Optional
 
-from .config import CONFIG, detect_cli_type
+from .config import CONFIG, detect_cli_type, read_user_config
 from .platforms import format_commands_for_cli, platform_for
 from .scoped_allow import (
     ScopedAllow, _PERMANENT_KEYWORDS,
@@ -151,6 +151,22 @@ def _expired_prompt_action(entry: "dict | None") -> "str | None":
         return None
     action = entry.get("expired_prompt_action")
     return action if action in _EXPIRED_PROMPT_ACTIONS else default
+
+
+def _hold_opted_in(entry: "dict | None") -> bool:
+    """Whether the user asked for the hold, as opposed to getting the default.
+
+    A stored "block" (`/ar:cache on`) or "block" in the user's config file.
+    A toggle that records only `enabled`, from a release before the prompt
+    action was stored, is not the request: it falls to the default, which
+    holds on the human entrypoints and warns elsewhere.
+    """
+    if entry is not None and entry.get("expired_prompt_action") == "block":
+        return True
+    try:
+        return read_user_config().get("cache_guard_expired_prompt_action") == "block"
+    except Exception:
+        return False
 
 
 def _read_toggle(session_id: str) -> dict:
@@ -525,10 +541,12 @@ def _expired_trip(usage: Optional[UsageReading], cfg: CacheGuardConfig) -> bool:
     """
     if usage is None or usage.cache_age_seconds is None or usage.total_input_tokens is None:
         return False
-    if (usage.cache_read_tokens or 0) + (usage.cache_creation_tokens or 0) <= 0:
-        return False
-    lifetime, _ = _expiry_lifetime(usage, cfg)
+    lifetime, source = _expiry_lifetime(usage, cfg)
     if lifetime is None:
+        return False
+    # A recorded lifetime comes from the row's own cache-write counts, so it
+    # is evidence of a cache even when the aggregate fields are absent.
+    if source != "record" and (usage.cache_read_tokens or 0) + (usage.cache_creation_tokens or 0) <= 0:
         return False
     return usage.cache_age_seconds > lifetime and usage.total_input_tokens >= _expired_min_tokens(cfg)
 
@@ -632,11 +650,11 @@ class CacheGuard:
             and _expiry_lifetime(usage, self.config)[1] != "default"
         )
         # Unmarked SDK sends can look like typed prompts. Only known human
-        # entrypoints hold without the user's explicit opt-in, and the opt-in
-        # is a stored "block": 1.0.0rc4's `/ar:cache on` stored only
-        # `enabled`, and meant the notice.
-        opted_in = entry is not None and entry.get("expired_prompt_action") == "block"
-        default_warn = not opted_in and ctx.harness_entrypoint not in platform.human_prompt_entrypoints
+        # entrypoints hold without the user's explicit opt-in.
+        default_warn = (
+            not _hold_opted_in(entry)
+            and ctx.harness_entrypoint not in platform.human_prompt_entrypoints
+        )
         if action == "warn" or not can_hold or default_warn:
             message = _render_expired(usage, self.config, ctx.cli_type, blocking=False, offer_hold=can_hold and default_warn)
             return ctx.respond("allow", message, to_ai=False)
@@ -689,25 +707,27 @@ class CacheGuard:
         volatile cache. Direct mode falls back to durable session state because
         no process survives to reuse an in-memory value.
         """
-        # A frame with no transcript path cannot be scanned, so a fresh read
-        # of it falls back to the memo too.
-        if not fresh or not getattr(ctx, "transcript_path", None):
-            if hasattr(ctx, "state_get"):
-                memo = ctx.state_get(_LAST_USAGE_KEY)  # type: ignore[union-attr]
-            else:
-                with session_state(self.session_id) as st:
-                    memo = st.get(_LAST_USAGE_KEY)
-
-            if memo and (time.time() - memo.get("observed_at", 0)) < _MEMO_TTL_SECONDS:
-                return _usage_from_memo(memo)
+        if hasattr(ctx, "state_get"):
+            memo = ctx.state_get(_LAST_USAGE_KEY)  # type: ignore[union-attr]
+        else:
+            with session_state(self.session_id) as st:
+                memo = st.get(_LAST_USAGE_KEY)
+        if not (memo and (time.time() - memo.get("observed_at", 0)) < _MEMO_TTL_SECONDS):
+            memo = None
+        if memo and not fresh:
+            return _usage_from_memo(memo)
 
         path = getattr(ctx, "transcript_path", None)
         if path:
             path = os.path.expanduser(str(path))
-        if not path:
-            return None
         cli = getattr(ctx, "cli_type", None) or detect_cli_type() or "claude"
-        usage = _read_jsonl_tail(path, max_bytes=_DEFAULT_JSONL_MAX_BYTES, cli=cli)
+        usage = _read_jsonl_tail(path, max_bytes=_DEFAULT_JSONL_MAX_BYTES, cli=cli) if path else None
+        if usage is None:
+            # No path on the frame, or one that no longer reads: the memo,
+            # while it is within its lifetime, is still the last response.
+            return _usage_from_memo(memo) if memo else None
+        if memo and memo.get("responded_at") == usage.responded_at:
+            return usage  # same response: keep the memo's age, do not renew it
         if usage is not None:
             if hasattr(ctx, "state_set_volatile"):
                 ctx.state_set_volatile(  # type: ignore[union-attr]
@@ -1066,7 +1086,7 @@ def _render_status(session_id: str, cli_type: str | None = None) -> str:
     scope = "global" if session_id == _GLOBAL_SESSION_ID else "session"
     toggle_label = "enabled" if enabled else "disabled" if entry is not None else "disabled (default)"
     prompt_label = action or "off"
-    if entry is None and action == "block":
+    if action == "block" and not _hold_opted_in(entry):
         prompt_label = "hold in Claude Code terminal and desktop; warn elsewhere"
     lines = [
         f"ar:cache [{scope}] — {toggle_label} — cli: {cli}",

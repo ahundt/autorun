@@ -213,6 +213,44 @@ def test_expiry_requires_cached_tokens(clock, tmp_path, read, written, expected)
     assert outcome(session.prompt("Continue.")) == expected
 
 
+def test_a_recorded_lifetime_counts_as_a_cache_without_the_aggregate_fields(clock, tmp_path):
+    """A row can report its cache write only in the nested per-lifetime counts."""
+    transcript = tmp_path / "usage.jsonl"
+    transcript.write_text(json.dumps({
+        "type": "assistant", "timestamp": clock.now - 600,
+        "message": {"usage": {"input_tokens": 120_000,
+                              "cache_creation": {"ephemeral_5m_input_tokens": 100}}},
+    }) + "\n")
+    assert outcome(Session("claude", transcript).prompt("Continue.")) != "silent"
+
+
+def test_a_transcript_that_stops_reading_keeps_the_notice_from_the_last_reading(clock, tmp_path):
+    transcript = tmp_path / "usage.jsonl"
+    shutil.copyfile(EXPIRED_1H, transcript)
+    session = armed(transcript, mode="warn")
+    assert outcome(session.prompt("Continue with the refactor.")) == "notice"
+    transcript.rename(tmp_path / "moved.jsonl")
+    assert outcome(session.prompt("Continue with the refactor.")) == "notice"
+
+
+def test_reading_the_same_response_again_does_not_renew_the_remembered_reading(clock, tmp_path):
+    """The remembered reading may be reused for a short time after it was
+    taken. A second prompt check of the same response must not restart that
+    time, or a frame that cannot be read is answered from a response that a
+    newer one has replaced."""
+    from autorun import cache_guard
+
+    transcript = tmp_path / "usage.jsonl"
+    shutil.copyfile(EXPIRED_1H, transcript)
+    session = armed(transcript, mode="warn")
+    assert outcome(session.prompt("Continue with the refactor.")) == "notice"
+    clock.now += cache_guard._MEMO_TTL_SECONDS / 2
+    assert outcome(session.prompt("Continue with the refactor.")) == "notice"
+    clock.now += cache_guard._MEMO_TTL_SECONDS * 0.6  # past the first reading's time, not the second's
+    transcript.rename(tmp_path / "moved.jsonl")
+    assert outcome(session.prompt("Continue with the refactor.")) == "silent"
+
+
 def test_cache_ok_lets_the_next_prompt_through_once(clock):
     session = armed(EXPIRED_1H)
     assert blocked(session.prompt("Continue with the refactor."))
@@ -617,6 +655,18 @@ def test_an_expired_prompt_is_held_when_the_user_has_stored_nothing(clock):
     assert not blocked(session.prompt("Continue with the refactor.")), "resending the held text was blocked again"
 
 
+def test_status_says_where_a_toggle_without_an_action_holds(clock):
+    from autorun import cache_guard
+
+    session = Session("claude", EXPIRED_1H)
+    with cache_guard.session_state(session.id) as stored:
+        stored[cache_guard._TOGGLE_KEY] = {"enabled": True}
+    assert "hold in Claude Code terminal and desktop; warn elsewhere" in text_of(session.command("ar:cache status"))
+    session.command("ar:cache on")
+    status = text_of(session.command("ar:cache status"))
+    assert "prompt-time expiry check: block" in status and "warn elsewhere" not in status
+
+
 @pytest.mark.parametrize(
     ("cli_type", "entrypoint", "setting", "expected"),
     [
@@ -626,9 +676,12 @@ def test_an_expired_prompt_is_held_when_the_user_has_stored_nothing(clock):
         ("claude", None, None, "notice"),
         ("claude", "t3-code", "on", "hold"),
         ("claude", "t3-code", "global on", "hold"),
-        # 1.0.0rc4's `/ar:cache on` stored {"enabled": true} and meant the notice.
-        ("claude", "t3-code", "stored by 1.0.0rc4", "notice"),
-        ("claude", "cli", "stored by 1.0.0rc4", "hold"),
+        # A toggle from before the prompt action was stored records only
+        # `enabled`; it is not a request to hold.
+        ("claude", "t3-code", "stored without an action", "notice"),
+        ("claude", "cli", "stored without an action", "hold"),
+        ("claude", "t3-code", "block in the config file", "hold"),
+        ("codex", None, "block in the config file", "hold"),
         ("codex", "cli", None, "notice"),
         ("pi", "cli", None, "notice"),
     ],
@@ -659,11 +712,16 @@ def test_default_hold_follows_the_forwarded_entrypoint(clock, monkeypatch, capsy
     prepared = hook_entry.prepare_hook_payload(payload, cli_type)
     # Only the prepared frame, not the receiving process's environment, is evidence.
     monkeypatch.delenv(env_name, raising=False)
-    if setting == "stored by 1.0.0rc4":
+    if setting == "stored without an action":
         from autorun import cache_guard
 
         with cache_guard.session_state(prepared["session_id"]) as stored:
             stored[cache_guard._TOGGLE_KEY] = {"enabled": True}
+    elif setting == "block in the config file":
+        from autorun import cache_guard
+
+        monkeypatch.setattr(
+            cache_guard, "read_user_config", lambda: {"cache_guard_expired_prompt_action": "block"})
     elif setting:
         run_direct({**prepared, "prompt": f"/ar:cache {setting}"})
         assert "enabled" in capsys.readouterr().out

@@ -823,7 +823,7 @@ def _make_block_op(op: str):
             except ValueError as e:
                 return f"❌ Error: {e}"
 
-            if not extras and pattern.lower() == "cache" and "cache" in args.lower().split():
+            if not extras and ptype == "literal" and pattern == "cache" and "cache" in args.split():
                 # `/ar:ok cache` is `/ar:cache ok`: pass the held prompt (same count,
                 # duration and perm words). Quote it, `/ar:ok 'cache'`, to allow a
                 # shell command that is literally named cache.

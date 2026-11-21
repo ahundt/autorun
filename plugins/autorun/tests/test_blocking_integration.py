@@ -285,6 +285,15 @@ class TestCommandBlockingHandlers:
         assert error in result.get("systemMessage", "")
         assert ctx.state_get("session_allowed_patterns", []) == before
 
+    @pytest.mark.parametrize("args", ["CACHE", "regex: cache", "glob: cache", "'cache'"])
+    def test_ok_treats_only_the_bare_word_cache_as_the_cache_shortcut(self, args):
+        """`/ar:ok cache` passes a held prompt. Other spellings are shell
+        patterns, as they were before the shortcut existed."""
+        result = _dispatch_cmd(f"/ar:ok {args}", self.test_session_id, self._store)
+        assert "Allowed" in result.get("systemMessage", ""), result
+        ctx = EventContext(session_id=self.test_session_id, event="PreToolUse", store=self._store)
+        assert len(ctx.state_get("session_allowed_patterns", [])) == 1
+
     def test_handle_clear_pattern_all(self):
         """Test clearing all session blocks via /ar:clear."""
         # Add multiple blocks
