@@ -194,6 +194,7 @@ def test_json_save_reserve_depends_on_write_error(reserve, tmp_path, monkeypatch
     assert reserve.exists() is not retry
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="durable_io.sync_directory does not fsync a directory on Windows")
 def test_json_save_retries_when_the_directory_fsync_reports_no_space(reserve, tmp_path, monkeypatch):
     """durable_io wraps that failure in an OSError without an errno; the
     native ENOSPC is its cause, and the real writer is what raises it here."""
@@ -220,6 +221,7 @@ def test_json_save_retries_when_the_directory_fsync_reports_no_space(reserve, tm
         assert state["saved"] is True
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="durable_io.sync_directory does not fsync a directory on Windows")
 def test_json_save_retries_when_the_directory_fsync_and_then_its_close_fail(reserve, tmp_path, monkeypatch):
     """Both faults through the real writer: the close failure replaces the
     fsync error's cause, so the errno has to survive on the error itself."""
