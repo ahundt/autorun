@@ -308,7 +308,7 @@ def task_tool_recovery_sentence(cli_type: str | None) -> str:
 
 
 def _host_task_list_instruction(tool: str) -> str:
-    """SessionStart guidance for a session seen using its host's task list.
+    """Guidance for a session seen using its host's task list.
 
     The host (the Claude desktop app's Code tab) tells the model to use
     ``tool`` instead of Claude's task tools and not to search for them, so
@@ -5007,6 +5007,7 @@ def register_hooks(app_instance) -> None:
             return None
         if not ctx.state_get(EventContext.HOST_TASK_LIST_OBSERVED, False):
             ctx.state_set(EventContext.HOST_TASK_LIST_OBSERVED, True)
+            request_claude_deferred_task_tools(ctx, at_host_proof=True)
         return None
 
     @app_instance.on("PostToolUse")
@@ -5074,6 +5075,8 @@ def register_hooks(app_instance) -> None:
         if not injection:
             return None
         ctx.pending_stop_injection = None  # Clear so it fires only once per Stop
+        if ctx.host_task_list_in_use:
+            return None  # The Task gate no longer applies to this session.
 
         manager = TaskLifecycle(ctx=ctx)
 
@@ -5196,8 +5199,8 @@ def register_hooks(app_instance) -> None:
         return None  # Always allow tool to complete
 
     @app_instance.on("SessionStart")
-    def request_claude_deferred_task_tools(ctx: EventContext) -> None:
-        """Ask Claude to load its deferred task tools once per fresh context.
+    def request_claude_deferred_task_tools(ctx: EventContext, *, at_host_proof: bool = False) -> None:
+        """Give task-tool guidance on fresh context or when a host list is proven.
 
         REQUIREMENT: gate on ``Platform.gates_mutable_task_tools``, not on a
         harness name. This is the same condition ``_workaround_flag_applies``
@@ -5210,15 +5213,20 @@ def register_hooks(app_instance) -> None:
         if (
             not is_enabled()
             or not platform_for(ctx.cli_type).gates_mutable_task_tools
-            or ctx.source not in {"startup", "clear"}
+            or (not at_host_proof and ctx.source not in {"startup", "clear"})
         ):
             return None
 
         claimed = False
-        claim_value = f"{ctx.source}:v1"
+        # A fresh context (startup, clear) after the proof has not seen the
+        # instruction given at the proof, so each gets its own claim value.
+        occasion = "proof" if at_host_proof else ctx.source
+        claim_value = f"host-plan:{occasion}:v1" if ctx.host_task_list_in_use else f"{occasion}:v1"
 
         def claim(metadata):
             nonlocal claimed
+            # The proof delivers even with no earlier claim: a resumed session
+            # gets no startup instruction, so nothing else would deliver it.
             if metadata.get("claude_task_tool_load_instruction") == claim_value:
                 return
             metadata["claude_task_tool_load_instruction"] = claim_value

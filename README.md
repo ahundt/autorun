@@ -209,7 +209,7 @@ These commands apply to this session; add `--global` as the first argument for e
 | This session | Every session | Effect |
 |---|---|---|
 | `/ar:no <pattern>`, `/ar:no "<pattern>" <message>` | `/ar:no --global` with the same arguments | block; a message needs a quoted, `regex:` or `glob:` pattern, or the message becomes part of the pattern |
-| `/ar:ok <pattern> [N\|5m\|perm]` | `/ar:ok --global <pattern> [N\|5m\|perm]` | allow `N` times, for a duration (`5m`, `2h30m`, `2d`), or `perm` (session: until the session ends; global: until cleared); with no scope, a single use |
+| `/ar:ok <pattern> ['<literal>' ...] [N\|5m\|perm]` | `/ar:ok --global` with the same arguments | allow each pattern `N` times, for a duration (`5m`, `2h30m`, `2d`), or `perm` (session: until the session ends; global: until cleared); with no scope, one use per pattern |
 | `/ar:status` | `/ar:status` | list blocks and allows together |
 | `/ar:clear` | `/ar:clear --global` | remove all blocks and allows |
 
@@ -220,8 +220,10 @@ These commands apply to this session; add `--global` as the first argument for e
 /ar:no glob:*.tmp temporary files are not allowed in this session
 /ar:no /eval\(.*assert/ no eval( followed by assert
 /ar:no --global "git reset --hard" PERMANENTLY DESTRUCTIVE: use git stash instead
-/ar:ok 'git push' 1h
+/ar:ok 'git push' 'gh pr create' 1h
 ```
+
+For multiple allows, start with a quoted or typed pattern, then quote each additional literal. A bare scope word such as `'5m'` needs its own `/ar:ok` command to be used as a pattern.
 
 A pattern is a literal substring by default; `regex:` and `glob:` switch modes, and `/.../` with metacharacters is a regular expression. The first match in this order decides:
 
@@ -347,12 +349,14 @@ Settings live in `~/.autorun/task-lifecycle.config.json`. [docs/TASK_TRACKING.md
 | `/ar:commit` | the 17-step commit process: `<files>:` or `type(scope):` subjects, concrete wording, a secrets check |
 | `/ar:philosophy` | 17 system design principles, such as "Automatic and Correct" and "One Problem, One Solution" |
 | `/ar:tmux` | list the AI coding sessions in your tmux panes and type text into the sessions you name ([docs/TMUX.md](docs/TMUX.md), [CLI Reference](#cli-reference)) |
-| `/ar:cache` | warn before a prompt re-writes an expired prompt cache at the cache-write price (options below) |
+| `/ar:cache` | hold or warn before a prompt re-writes an expired prompt cache (options below) |
 | `/ar:restart-daemon` | restart the daemon for this install |
 
-`/ar:cache` warns before a prompt re-sends an expired prompt cache of 100,000 tokens or more (Claude Code; Pi and Prime Agent when `age` is set):
+`/ar:cache` checks expired prompt caches of 100,000 tokens or more. The Claude Code terminal and Claude desktop app hold by default. Other entrypoints, including SDK hosts such as T3 Code, and other harnesses warn when cache data is available. A guessed lifetime never holds.
 
-1. `on` holds the prompt until you send the same text again, `warn` (the default) shows a notice, and `off` disables the check. Each takes `[5m|1h|perm]`.
+Send the same text again to proceed once. On Claude Code, `/ar:cache ok` and every other slash command are model requests, so resending is cheaper.
+
+1. `on` makes the session hold where the harness supports it. `warn` shows a notice and sends the prompt; `off` stops the check without turning off prompt caching. Each takes `[5m|1h|perm]`; `global off` applies unless the session has its own setting.
 2. `set expired-min-tokens <tokens>` sets the floor.
 3. Optional tool-time thresholds: `set ratio|read|age <value>` (tokens `50k`, `.5M`; `85%`; `5m`, `2h30m`), `ok [5m|N|perm]`, `no`, and `global <subcommand>`. Details: [commands/cache.md](plugins/autorun/commands/cache.md).
 

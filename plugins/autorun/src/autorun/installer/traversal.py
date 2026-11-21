@@ -273,6 +273,12 @@ def _perform(
     publishers = {Kind.TREE: publish_tree, Kind.FILES: publish_files, Kind.LINK: publish_link}
     if decision.verdict is Verdict.PUBLISH and intent.source is not None:
         if intent.kind is Kind.TREE:
+            digest: str | None = None
+
+            def capture(staged: Path) -> None:
+                nonlocal digest
+                digest = provenance.tree_digest(staged)
+
             published = publish_tree(
                 intent.source,
                 intent.target,
@@ -280,10 +286,11 @@ def _perform(
                 ownership_proof=intent.ownership_proof,
                 force=force,
                 backup_root=backups,
+                inspect_staged=lambda staged: _receipt(capture, staged),
                 **intent.settings,
             )
-            if published.verdict is Verdict.PUBLISH:
-                _receipt(provenance.record, intent.target, intent.plugin)
+            if published.verdict is Verdict.PUBLISH and digest is not None:
+                _receipt(provenance.record, intent.target, intent.plugin, digest)
             return published
         if intent.kind is Kind.LINK:
             return publish_link(
@@ -338,11 +345,14 @@ def _receipt(action: Callable[..., None], *args: str | Path) -> None:
     """Keep the publication receipt, never at the cost of the publication.
 
     The marker inside the tree is still written; a receipt that cannot be
-    saved costs only the fallback for a marker the user later loses.
+    saved costs only the fallback for a marker the user later loses. Every
+    failure is absorbed, not only the expected OSError and ValueError: a
+    receipts file that is a link to itself or nested past the recursion limit
+    raises RuntimeError or RecursionError, after the tree has been published.
     """
     try:
         action(*args)
-    except (OSError, ValueError):
+    except Exception:
         pass
 
 

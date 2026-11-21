@@ -4,16 +4,21 @@ description: Allow a blocked command pattern in this session, or for every sessi
 
 # Allow a blocked pattern
 
-Allows a pattern that a guard or a `/ar:no` rule would block. Default: 1 use
-(auto-revokes after the first match).
+Allows patterns that a guard or an `/ar:no` rule would block. Default: 1 use
+per pattern (auto-revokes after its first match).
 
-**Usage**: `/ar:ok [--global] <pattern> [count] [duration] [permanent|perm|p]`
+**Usage**: `/ar:ok [--global] <pattern> ['<literal>' ...] [count] [duration] [permanent|perm|p]`
+
+With a quoted or typed first pattern, each additional pattern must be a
+quoted literal, and a bare count, duration or perm word (such as `'5m'`)
+needs its own `/ar:ok` command to be used as a pattern. So does a literal that
+contains an escaped quote (`"say \"hi\""`).
 
 `--global` writes the allow to the global rules, which apply to every session
 until they run out or `/ar:clear --global` removes them. Without it the allow
 applies to this session only.
 
-**Scope options** (trailing args after pattern):
+**Scope options** (applied to each pattern):
 - No args: **1 use** (safe default, auto-revokes)
 - Integer: use count (e.g. `3` = allow 3 times)
 - Duration: time limit (e.g. `5m`, `1h`, `30s`, `2h30m`, `2d`, `1d12h`)
@@ -29,6 +34,7 @@ applies to this session only.
 - `/ar:ok rm permanent` — allow rm for the rest of this session
 - `/ar:ok rm p` — same (shortest form)
 - `/ar:ok --global 'git push' 6h` — allow git push in every session for 6 hours
+- `/ar:ok 'git push' 'gh pr create' 'gh pr edit' 72h` — allow all three for 72 hours
 
 `/ar:status` lists the current allows.
 

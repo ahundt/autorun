@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from autorun.installer import fs, provenance  # noqa: E402
+from autorun.installer import fs, provenance, traversal  # noqa: E402
 from autorun.installer.fs import OWNED_MARKER_NAME, Decision, Verdict  # noqa: E402
 from autorun.installer.traversal import Intent, _perform, retirements  # noqa: E402
 
@@ -85,6 +85,172 @@ def test_publishing_records_a_receipt_that_outlives_the_marker(tmp_path):
 
     _put(target / "SKILL.md", "# edited after the marker was lost\n")
     assert not provenance.autorun_wrote(target, plugin="ar", source=source)
+
+
+def test_receipt_excludes_an_edit_after_publication(tmp_path, monkeypatch):
+    source = _skill(tmp_path / "src" / "local", "# shipped\n")
+    target = tmp_path / "skills" / "local"
+    ctx = traversal.Context(marketplace_root=tmp_path)
+    publish = traversal.publish_tree
+
+    def publish_then_edit(*args, **kwargs):
+        result = publish(*args, **kwargs)
+        _put(target / "SKILL.md", "# my edit\n")
+        return result
+
+    monkeypatch.setattr(traversal, "publish_tree", publish_then_edit)
+    [decision] = traversal.run((), ctx, traversal.Mode.INSTALL, extra=[
+        Intent(target=target, source=source, plugin="ar"),
+    ])
+    assert decision.verdict is Verdict.PUBLISH
+    _lose_marker(target)
+
+    intents = retirements([target.parent], [], plugins=["ar"])
+    assert traversal.run((), ctx, traversal.Mode.UNINSTALL, extra=intents) == []
+    assert (target / "SKILL.md").read_bytes() == b"# my edit\n"
+    # No receipt was saved for a tree that had already changed, so putting the
+    # shipped text back by hand does not make the folder autorun's either.
+    _put(target / "SKILL.md", "# shipped\n")
+    assert not provenance.autorun_wrote(target, plugin="ar", catalog=False)
+
+
+def test_a_receipt_is_not_saved_for_a_tree_a_later_publish_replaced(tmp_path):
+    """Two installs of one folder: the first to swap is the last to record."""
+    target = tmp_path / "skills" / "local"
+    first = _skill(tmp_path / "src-a" / "local", "# version a\n")
+    second = _skill(tmp_path / "src-b" / "local", "# version b\n")
+    assert fs.publish_tree(first, target, plugin="ar").verdict is Verdict.PUBLISH
+    digest_a = provenance.tree_digest(target)
+    assert fs.publish_tree(second, target, plugin="ar", force=True).verdict is Verdict.PUBLISH
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "# version b\n"
+    provenance.record(target, "ar", provenance.tree_digest(target))
+    provenance.record(target, "ar", digest_a)  # the first install resumes late
+
+    _lose_marker(target)
+    assert provenance.autorun_wrote(target, plugin="ar", catalog=False), "b keeps its receipt"
+    _put(target / "SKILL.md", "# version a\n")
+    assert not provenance.autorun_wrote(target, plugin="ar", catalog=False)
+
+
+def test_a_receipt_waits_for_the_lock_a_publisher_of_that_folder_holds(tmp_path):
+    """The digest comparison and the write share the publisher's lock, so a
+    publish cannot replace the tree between them."""
+    import threading
+
+    from filelock import FileLock
+
+    source = _skill(tmp_path / "src" / "local")
+    target = tmp_path / "skills" / "local"
+    assert fs.publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+    digest = provenance.tree_digest(target)
+    recorder = threading.Thread(target=provenance.record, args=(target, "ar", digest))
+    with FileLock(str(target.parent / fs.INSTALL_LOCK_NAME)):
+        recorder.start()
+        recorder.join(timeout=0.5)
+        assert recorder.is_alive(), "record ran without the publication lock"
+        assert not provenance.receipts_path().exists()
+    recorder.join(timeout=10)
+    assert not recorder.is_alive()
+    _lose_marker(target)
+    assert provenance.autorun_wrote(target, plugin="ar", catalog=False)
+
+
+@pytest.mark.parametrize("alias", [False, True], ids=["same-path", "symlink-alias"])
+def test_a_receipt_is_saved_when_its_file_shares_the_skill_folders_directory(tmp_path, monkeypatch, alias):
+    """With the shared skills directory configured as the directory that holds
+    published-trees.json, the receipts file's lock is the publication lock.
+    Taking it twice raised RuntimeError("Deadlock") and aborted the install."""
+    parent = tmp_path / "installer"
+    source = _skill(tmp_path / "src" / "local")
+    target = parent / "local"
+    seen_from = parent
+    if alias:
+        seen_from = tmp_path / "alias"
+        seen_from.symlink_to(parent, target_is_directory=True)
+    monkeypatch.setattr(provenance, "receipts_path", lambda: seen_from / "published-trees.json")
+    ctx = traversal.Context(marketplace_root=tmp_path)
+    [decision] = traversal.run((), ctx, traversal.Mode.INSTALL, extra=[
+        Intent(target=target, source=source, plugin="ar"),
+    ])
+    assert decision.verdict is Verdict.PUBLISH
+    _lose_marker(target)
+    assert provenance.autorun_wrote(target, plugin="ar", catalog=False)
+
+
+def test_a_receipt_is_not_saved_for_a_folder_replaced_by_a_link(tmp_path):
+    """Between the publish and the receipt, the folder is moved aside and a
+    link to another folder with the same bytes takes its place."""
+    source = _skill(tmp_path / "src" / "local")
+    target = tmp_path / "skills" / "local"
+    elsewhere = _skill(tmp_path / "mine" / "local")
+    assert fs.publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+    digest = provenance.tree_digest(target)
+    target.rename(tmp_path / "skills" / "aside")
+    target.symlink_to(elsewhere, target_is_directory=True)
+
+    provenance.record(target, "ar", digest)
+    assert not provenance.autorun_wrote(elsewhere, plugin="ar", catalog=False)
+    assert not provenance.receipts_path().exists()
+
+
+@pytest.mark.parametrize("failure", [
+    RuntimeError("Deadlock"), RecursionError("maximum recursion depth exceeded"),
+], ids=["runtime-error", "recursion-error"])
+def test_a_receipt_failure_of_any_kind_does_not_fail_the_publish(tmp_path, monkeypatch, failure):
+    """A receipts file that links to itself, or is nested past the recursion
+    limit, raises neither OSError nor ValueError; the tree is already published."""
+    source = _skill(tmp_path / "src" / "local")
+    target = tmp_path / "skills" / "local"
+
+    def broken(*_args):
+        raise failure
+
+    monkeypatch.setattr(provenance, "record", broken)
+    ctx = traversal.Context(marketplace_root=tmp_path)
+    [decision] = traversal.run((), ctx, traversal.Mode.INSTALL, extra=[
+        Intent(target=target, source=source, plugin="ar"),
+    ])
+    assert decision.verdict is Verdict.PUBLISH
+    assert (target / OWNED_MARKER_NAME).is_file()
+
+
+def test_a_receipt_is_skipped_when_the_two_directories_cannot_be_compared(tmp_path, monkeypatch):
+    source = _skill(tmp_path / "src" / "local")
+    target = tmp_path / "skills" / "local"
+    assert fs.publish_tree(source, target, plugin="ar").verdict is Verdict.PUBLISH
+
+    def unreadable(self, other):
+        raise OSError("identity lookup failed")
+
+    monkeypatch.setattr(Path, "samefile", unreadable)
+    provenance.record(target, "ar", provenance.tree_digest(target))
+    assert not provenance.receipts_path().exists()
+
+
+def test_a_receipt_for_a_folder_that_is_gone_creates_nothing(tmp_path):
+    target = tmp_path / "skills" / "local"
+    provenance.record(target, "ar", "0" * 32)
+    assert not target.parent.exists()
+    assert not provenance.receipts_path().exists()
+
+
+def test_tree_receipt_accounts_for_writing_through_a_marker_symlink(tmp_path):
+    source = _skill(tmp_path / "src" / "local")
+    _put(source / "marker.json", "{}\n")
+    try:
+        (source / OWNED_MARKER_NAME).symlink_to("marker.json")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks need privileges here")
+    target = tmp_path / "skills" / "local"
+    [decision] = traversal.run((), traversal.Context(marketplace_root=tmp_path),
+                              traversal.Mode.INSTALL, extra=[
+        Intent(target=target, source=source, plugin="ar", settings={"bridge": "copy"}),
+    ])
+    assert decision.verdict is Verdict.PUBLISH
+    assert (target / OWNED_MARKER_NAME).is_symlink()
+    _lose_marker(target)
+    assert provenance.tree_digest(target) not in provenance.tree_digests(source)
+    assert provenance.autorun_wrote(target, plugin="ar")
 
 
 def test_retiring_forgets_the_receipt(tmp_path):

@@ -540,7 +540,9 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
             transcript = truncated
             logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → {len(truncated)} messages ({size_estimate // 1024}KB)")
 
-    from .platforms import hook_payload_cwd, host_task_list_tool, normalize_tool_payload
+    from .platforms import forwarded_harness_entrypoint, hook_payload_cwd, host_task_list_tool, normalize_tool_payload
+
+    harness_env = payload.get("autorun_harness_env")
     tool_name, tool_input_envelopes = normalize_tool_payload(payload, cli_type)
     tool_input = tool_input_envelopes[0]
 
@@ -562,9 +564,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         # `tools:` list), so for it the switch proves nothing.
         from .platforms import task_tools_proven_by_switch
 
-        active_tools = task_tools_proven_by_switch(
-            cli_type, payload.get("autorun_harness_env")
-        )
+        active_tools = task_tools_proven_by_switch(cli_type, harness_env)
         if active_tools is None:
             active_tools = task_tools_proven_by_settings(cli_type, payload.get("cwd"))
 
@@ -596,9 +596,8 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "active_tools": active_tools,
         # The task-list tool a host application (the Claude desktop app) gives
         # this session instead of the harness's task tools, or None.
-        "host_task_list_tool": host_task_list_tool(
-            cli_type, payload.get("autorun_harness_env")
-        ),
+        "host_task_list_tool": host_task_list_tool(cli_type, harness_env),
+        "harness_entrypoint": forwarded_harness_entrypoint(platform, harness_env),
         # Current Claude Code Stop payload fields (v2.1.145+). Preserve them
         # without interpretation so Stop policies can prefer structured state
         # over transcript inference while older harnesses keep safe defaults.
@@ -1848,6 +1847,7 @@ class EventContext:
         "_prompt_author",
         "_active_tools",
         "_host_task_list_tool",
+        "_harness_entrypoint",
         "_agent_transcript_path",
         "_chain_notifications",
         "_transcript_path",
@@ -1934,6 +1934,7 @@ class EventContext:
         harness_pid: Optional[int] = None,
         harness_started_at_units: Optional[int] = None,
         tool_input_envelopes: tuple[dict, ...] | None = None,
+        harness_entrypoint: str | None = None,
     ):
         object.__setattr__(self, "_session_id", session_id)
         object.__setattr__(
@@ -2004,6 +2005,7 @@ class EventContext:
             None if active_tools is None else frozenset(active_tools),
         )
         object.__setattr__(self, "_host_task_list_tool", host_task_list_tool or None)
+        object.__setattr__(self, "_harness_entrypoint", harness_entrypoint)
         object.__setattr__(self, "_agent_transcript_path", agent_transcript_path or None)
         object.__setattr__(self, "_stop_hook_active", bool(stop_hook_active))
         object.__setattr__(self, "_last_assistant_message", last_assistant_message or "")
@@ -2210,6 +2212,11 @@ class EventContext:
         this session has the tool is ``host_task_list_in_use``.
         """
         return self._host_task_list_tool
+
+    @property
+    def harness_entrypoint(self) -> str | None:
+        """The entrypoint this hook forwarded, or None if unknown."""
+        return self._harness_entrypoint
 
     #: Session state recording that a main session called its host's task-list
     #: tool (task_lifecycle.record_host_task_list_use). The environment
@@ -3792,6 +3799,7 @@ class AutorunDaemon:
                 prompt_author=normalized["prompt_author"],
                 active_tools=normalized["active_tools"],
                 host_task_list_tool=normalized["host_task_list_tool"],
+                harness_entrypoint=normalized["harness_entrypoint"],
                 transcript_path=normalized.get("transcript_path"),
                 agent_transcript_path=normalized.get("agent_transcript_path"),
                 stop_hook_active=normalized["stop_hook_active"],
@@ -4134,7 +4142,8 @@ class AutorunDaemon:
                 self._daemon_lock = None
                 # A full disk fails the lock file's creation; the reserve
                 # frees room for it, and the retry runs once.
-                if attempt == 1 and disk_reserve.release_if_exhausted(flock_path):
+                if (attempt == 1 and disk_reserve.is_out_of_space(e)
+                        and disk_reserve.release_if_exhausted(flock_path)):
                     continue
                 return self._socket_connect_test()
         # Write PID to daemon.lock for discovery by other processes.
@@ -4254,7 +4263,17 @@ class AutorunDaemon:
 
         # Start server with large buffer to accept full payloads before truncation
         # Default 64KB too small - client sends full transcript, we truncate after reading
-        self._server = await ipc.start_server(self.handle_client, limit=READ_BUFFER_LIMIT)
+        for attempt in (1, 2):
+            try:
+                self._server = await ipc.start_server(self.handle_client, limit=READ_BUFFER_LIMIT)
+                break
+            except OSError as exc:
+                from . import disk_reserve
+
+                endpoint = ipc.SOCKET_PATH if ipc.HAS_UNIX_SOCKETS else ipc.PORT_FILE
+                if (attempt == 2 or not disk_reserve.is_out_of_space(exc)
+                        or not disk_reserve.release_if_exhausted(endpoint.parent)):
+                    raise
         self.running = True
 
         # Start watchdog as tracked task

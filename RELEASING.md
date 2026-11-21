@@ -211,8 +211,8 @@ command that must run outside the lock has to say why, on the line.
    A harness whose CLI is not on `PATH` is skipped; put a stub on the
    sandbox's `bin` to exercise its publish step. If the upgrade rehearsal
    exposes a rollback need, use the designated recovery-commit recipe in
-   [Stage 7](#roll-back-a-live-install-to-the-designated-recovery-commit), not
-   `previous=1.0.0rc3`; that variable is only the upgrade source.
+   [Roll back a live install](#roll-back-a-live-install-to-the-designated-recovery-commit), not
+   `previous=1.0.0rc4`; that variable is only the upgrade source.
 7. Commit the bump, the section, and the generated notes together, so every
    commit passes `test_release_notes.py`. Do not push yet.
 
@@ -566,6 +566,13 @@ pushed tag is the one thing the recovery table below rules out.
 ### Stage 5: Verify the tag, then approve the tag run — **RELEASER public write**
 
 ```bash
+# Stage 4 set these inside its own `bash`, so this shell derives them again.
+release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
+test -n "$release_version"
+release_tag="v$release_version"
+# An empty $release_sha would make both comparisons below `test "" = ""` when
+# the tag is missing, so require the Stage 2 value before comparing.
+test -n "${release_sha:-}"
 test "$(git rev-list -n 1 "$release_tag")" = "$release_sha"
 test "$(git ls-remote origin "refs/tags/$release_tag^{}" | cut -f1)" = "$release_sha"
 ```
@@ -602,6 +609,8 @@ rehearsal against TestPyPI directly.
 ```bash
 run_id=$(gh run list --workflow publish.yml --branch "$release_tag" \
   --limit 1 --json databaseId --jq '.[0].databaseId')
+# The run you are about to approve must be the one for the verified commit.
+test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$release_sha"
 gh run view "$run_id"                      # which jobs passed, which is waiting
 
 # Which rehearsal steps ran, readable while the run is still parked.
@@ -639,9 +648,19 @@ gh api "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
 # Approve, naming the environment id the call above reported.
 env_id=$(gh api "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
   --jq '.[] | select(.environment.name=="pypi") | .environment.id')
-gh api --method POST \
-  "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
-  -f state=approved -F "environment_ids[]=$env_id" -f comment="rc verified"
+# A failed `test` typed at a prompt does not stop the lines after it, so the
+# approval is chained to the checks: it is sent only when the local tag, the
+# pushed tag and this run are all at the verified commit. The artifact checks
+# above (digests, the two install probes) are yours to read before running
+# this; nothing here repeats them.
+test -n "${release_sha:-}" && test -n "${release_version:-}" \
+  && test "$(git rev-list -n 1 "$release_tag")" = "$release_sha" \
+  && test "$(git ls-remote origin "refs/tags/$release_tag^{}" | cut -f1)" = "$release_sha" \
+  && test "$(gh run view "$run_id" --json headSha --jq .headSha)" = "$release_sha" \
+  && gh api --method POST \
+       "repos/ahundt/autorun/actions/runs/$run_id/pending_deployments" \
+       -f state=approved -F "environment_ids[]=$env_id" -f comment="rc verified" \
+  || echo "STOP: not approved. \$release_sha or \$release_version is empty, the tag is missing or the tag or the run is at another commit, or the request failed."
 ```
 
 ### Stage 6: Create the GitHub release — **RELEASER public write**
@@ -712,19 +731,28 @@ the attempt, or take the browser route above:
 ```bash
 # The updater's rule (installer/entrypoint.py:_latest_version): a version with a
 # letter in it is a prerelease, one of digits and dots is stable.
+# Derived again here so a fresh shell cannot run this stage with empty values,
+# which would select the stable branch below.
+release_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' plugins/autorun/pyproject.toml)
+release_tag="v$release_version"
 case "$release_version" in
+  "") echo "STOP: no version read from plugins/autorun/pyproject.toml"
+      release_kind=--STOP-no-version; expect_prerelease=unknown ;;
   *[A-Za-z]*) release_kind=--prerelease; expect_prerelease=true ;;
   *)          release_kind=--latest;     expect_prerelease=false ;;
 esac
-if gh release view "$release_tag" >/dev/null 2>&1; then
-  gh release view "$release_tag" --json tagName,isDraft,isPrerelease,url
-else
-  gh release create "$release_tag" --verify-tag "$release_kind" \
-    --title "autorun $release_tag" \
-    --notes-file "docs/releases/$release_version.md"
+# Nothing below runs without a version: `v` alone is not a release tag.
+if test -n "$release_version"; then
+  if gh release view "$release_tag" >/dev/null 2>&1; then
+    gh release view "$release_tag" --json tagName,isDraft,isPrerelease,url
+  else
+    gh release create "$release_tag" --verify-tag "$release_kind" \
+      --title "autorun $release_tag" \
+      --notes-file "docs/releases/$release_version.md"
+  fi
+  test "$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)" = "$expect_prerelease"
+  test "$(gh release view "$release_tag" --json isDraft --jq .isDraft)" = false
 fi
-test "$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)" = "$expect_prerelease"
-test "$(gh release view "$release_tag" --json isDraft --jq .isDraft)" = false
 ```
 
 ### Stage 7: Verify the published release from the public install path

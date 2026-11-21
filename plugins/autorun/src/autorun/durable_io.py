@@ -49,7 +49,11 @@ def sync_directory(directory: Path) -> None:
         try:
             os.fsync(descriptor)
         except OSError as exc:
-            raise OSError(f"Could not fsync directory {directory}: {exc}") from exc
+            # Keep the native errno on the error callers see: closing the
+            # descriptor can fail next and replace this error's cause.
+            error = OSError(f"Could not fsync directory {directory}: {exc}")
+            error.errno = exc.errno
+            raise error from exc
 
 
 def sync_file(path: Path) -> None:

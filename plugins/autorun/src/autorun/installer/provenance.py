@@ -35,11 +35,15 @@ import fnmatch
 import hashlib
 import json
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
 
+from filelock import FileLock
+
 from .fs import (
     _LINK,
+    INSTALL_LOCK_NAME,
     REGENERATED_GLOBS,
     SKIP_NAMES,
     TreeManifest,
@@ -148,12 +152,36 @@ def _key(target: Path) -> str:
     return os.path.normcase(str(target.resolve()))
 
 
-def record(target: Path, plugin: str) -> None:
-    """Remember what autorun just published at ``target``."""
+def record(target: Path, plugin: str, digest: str) -> None:
+    """Save the digest captured before the published tree became visible.
+
+    Nothing is saved when the tree at ``target`` no longer has that digest:
+    a later publish or an edit has replaced what this publish wrote, and a
+    receipt for bytes that are not there would prove ownership of whatever
+    tree later matched them. The comparison and the write run under the lock
+    every publisher of ``target`` holds while it swaps, so no publish can land
+    between them.
+    """
+    if target.is_symlink() or not target.is_dir():
+        # Withdrawn since the publish (a lock here would recreate its parent),
+        # or replaced by a link: its contents are another folder's, and the
+        # receipt would be filed under that folder's path.
+        return
     path = receipts_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with json_document(path) as receipts:
-        receipts[_key(target)] = {"plugin": plugin, "digest": tree_digest(target)}
+    try:
+        one_directory = path.parent.samefile(target.parent)
+    except OSError:
+        return  # which locks to take is unknown; taking the same one twice raises
+    # json_document locks the receipts file's directory under the same lock
+    # name. When that directory is also the target's parent, its lock is the
+    # publication lock, and a second FileLock on it in this process raises.
+    publication_lock = (
+        nullcontext() if one_directory else FileLock(str(target.parent / INSTALL_LOCK_NAME))
+    )
+    with publication_lock, json_document(path) as receipts:
+        if tree_digest(target) == digest:
+            receipts[_key(target)] = {"plugin": plugin, "digest": digest}
 
 
 def forget(target: Path) -> None:
@@ -284,7 +312,7 @@ def demo() -> None:
             (source / "SKILL.md").write_text("# v1\n", encoding="utf-8")
             target = root / "skills" / "commit"
             publish_tree(source, target, plugin="ar")
-            record(target, "ar")
+            record(target, "ar", tree_digest(target))
             (target / OWNED_MARKER_NAME).unlink()  # the user's tooling lost it
 
             (source / "SKILL.md").write_text("# v2\n", encoding="utf-8")
