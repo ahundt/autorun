@@ -67,15 +67,20 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    same message again to send it once, or run `/ar:cache warn` to get the
    notice back in that session. Claude Code started another way (by T3 Code,
    for example) and the other coding CLIs warn by default; `/ar:cache on`
-   makes such a session hold where its prompt hook can stop a prompt. A
-   setting saved by 1.0.0rc4's `/ar:cache on` keeps meaning the notice there.
+   makes such a session hold where its prompt hook can stop a prompt. A hold
+   you asked for, with `/ar:cache on` in this release or in 1.0.0rc4 or with
+   `cache_guard_expired_prompt_action` set to `block` in the config file,
+   applies in those sessions as it did; a setting from an earlier release
+   that records only that the guard is on does not, and warns there.
+   Passing a held prompt uses up both the resend and a waiting
+   `/ar:cache ok`, so a leftover `ok` cannot pass a later prompt unseen.
    The hook cannot tell text you type from text a program types into a
    terminal session (`tmux send-keys`, a script driving the terminal), so
    such a program is held the same way: have it send the text twice, or run
    `/ar:cache warn` in that session or `/ar:cache global warn` for all of
-   them. `/ar:ok cache` now sends the held prompt, like `/ar:cache ok`; to
-   allow a shell command that is literally named `cache`, quote it:
-   `/ar:ok 'cache'`. On Claude Code, resending costs less than
+   them. `/ar:ok cache`, that exact lowercase word, now sends the held prompt,
+   like `/ar:cache ok`; to allow a shell command that is literally named
+   `cache`, quote it: `/ar:ok 'cache'`. On Claude Code, resending costs less than
    `/ar:cache ok`, because a slash command is itself a model request.
 2. `/ar:ok` takes several literal patterns in one command when each is quoted:
    `/ar:ok 'git push' 'gh pr create' 'gh pr edit' 72h` allows all three for 72
