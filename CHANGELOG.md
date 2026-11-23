@@ -228,6 +228,15 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    to the command it is given to: a later `autorun --install` without it
    returns to the placement set in the environment or the config file, or to
    the default, and under the default it removes those shared copies.
+10. `autorun --status` reported `FAIL Claude cache ar@autorun <version>` and
+    `pdf-extractor@autorun <version>`, listing hundreds of files, when Claude's
+    plugin cache had been written the other way: from a source checkout
+    (`python -m autorun --install`) when the check ran from the installed
+    `autorun` command, or the other way round. Nothing was wrong with the
+    files; the two routes install different layouts. Such a cache is now
+    checked against the file hashes autorun recorded when it wrote it. An edited
+    or deleted file still fails, and an intact cache is a warning that names
+    the route that wrote it.
 
 ### For contributors
 
@@ -257,6 +266,12 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
 6. `scripts/release_notes.py` now puts the two `uv tool install` commands first
    in the generated Upgrading section and the Claude Code marketplace route
    second, labelled "Claude Code only".
+7. `installer/claude.py:from_checkout` tells the two Claude cache layouts apart
+   by payload files under `src/`, which the built package never has
+   (`build_support.BUNDLED_PLUGIN_EXCLUDES`), ignoring the bytecode a packaged
+   refresh leaves there. `test_install_status.py` covers Fixed item 10 for both
+   plugin shapes, both directions, an edited file, a cache with no receipt, and
+   leftover bytecode.
 
 ## [1.0.0rc4] - 2026-11-15
 

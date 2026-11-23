@@ -164,25 +164,52 @@ def _duplicate_skills(routes: Mapping[str, Sequence[Path]]) -> Iterator[Finding]
                 )
 
 
+_INSTALL_ROUTES = {True: "a source checkout", False: "the installed `autorun` command"}
+
+
+def _shown(paths: Sequence[str]) -> str:
+    shown = ", ".join(paths[:5])
+    if len(paths) > 5:
+        shown += f", and {len(paths) - 5} more"
+    return shown
+
+
 def _claude_caches(entries: Mapping[str, tuple[Path, Path]]) -> Iterator[Finding]:
-    """Same-version cache payloads that no longer match what this build ships."""
+    """Same-version cache payloads that no longer match what this build ships.
+
+    A cache written by the other install route (see ``claude.from_checkout``)
+    is judged by its own receipt instead: this build's payload has a different
+    layout, so comparing against it would list nearly every file.
+    """
     for label, (source, cached) in entries.items():
-        mismatches = claude.cache_mismatches(source, cached)
-        if not mismatches:
+        def fix(source: Path = source, cached: Path = cached) -> str:
+            return claude.cache_refresh_fix(
+                source, cached, autorun_state_dir() / "installer" / "backups"
+            )
+
+        writer = claude.from_checkout(cached)
+        if writer != claude.from_checkout(source):
+            damage = claude.cache_receipt_damage(source, cached)
+            if damage:
+                yield Finding(f"Claude cache {label}", Level.BROKEN, _shown(damage), fix())
+                continue
+            checked = (
+                "its files match the receipt it was written with"
+                if damage is not None
+                else "it has no autorun receipt, so its files were not checked"
+            )
+            yield Finding(
+                f"Claude cache {label}",
+                Level.WARN,
+                f"written by {_INSTALL_ROUTES[writer]}, not by {_INSTALL_ROUTES[not writer]} "
+                f"running this check; {checked}",
+                "nothing to repair; an install from this autorun replaces it with this "
+                "build's files and hook runtime",
+            )
             continue
-        shown = ", ".join(mismatches[:5])
-        if len(mismatches) > 5:
-            shown += f", and {len(mismatches) - 5} more"
-        yield Finding(
-            f"Claude cache {label}",
-            Level.BROKEN,
-            shown,
-            claude.cache_refresh_fix(
-                source,
-                cached,
-                autorun_state_dir() / "installer" / "backups",
-            ),
-        )
+        mismatches = claude.cache_mismatches(source, cached)
+        if mismatches:
+            yield Finding(f"Claude cache {label}", Level.BROKEN, _shown(mismatches), fix())
 
 
 def _codex_files(codex_dir: Path, guidance: memory.Block | None) -> Iterator[Finding]:
