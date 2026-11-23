@@ -115,6 +115,22 @@ class Session:
             )
         )
 
+    def compact(self, instructions: str | None = None, trigger: str = "manual", **fields) -> dict:
+        """Claude Code's PreCompact hook: `/compact [instructions]`, or an automatic one."""
+        fields.setdefault("harness_entrypoint", "cli" if self.cli_type == "claude" else None)
+        return app.dispatch(
+            EventContext(
+                session_id=self.id,
+                event="PreCompact",
+                prompt=instructions or "",
+                source=trigger,
+                cli_type=self.cli_type,
+                transcript_path=self.transcript,
+                store=self.store,
+                **fields,
+            )
+        )
+
     def command(self, text: str) -> dict:
         """A command the user types; it must never be blocked itself."""
         response = self.prompt(text)
@@ -524,6 +540,68 @@ def test_every_ok_spelling_passes_one_prompt_and_the_next_is_held(clock, spellin
     session.command(spelling)
     assert not blocked(session.prompt("Now update the changelog.")), f"{spelling!r} did not pass the next prompt"
     assert blocked(session.prompt("Then run the tests.")), f"{spelling!r} passed more than one prompt"
+
+
+# ─── a manual /compact on an expired cache ────────────────────────────────
+
+
+def test_a_manual_compact_on_an_expired_cache_is_held_until_it_is_run_again(clock):
+    """Summarising sends the whole old context once more, so `/compact` costs
+    what the prompt after it would have. The same `/compact` again passes."""
+    session = Session("claude", EXPIRED_1H)
+    held = session.compact()
+    assert set(held) == {"decision", "reason"} and held["decision"] == "block", held
+    assert "held /compact" in held["reason"] and "Run the same /compact again" in held["reason"]
+    assert "/ar:cache ok" not in held["reason"], "the hold offered a command that costs a full request"
+    assert not session.compact(), "the same /compact was held twice"
+    assert blocked(session.compact("keep the test results")), "other instructions passed on the first's hold"
+    assert not session.compact("keep the test results")
+
+
+@pytest.mark.parametrize(
+    ("transcript", "trigger", "mode", "entrypoint"),
+    [(EXPIRED_1H, "auto", None, "cli"), (FRESH_1H, "manual", None, "cli"),
+     (SMALL_EXPIRED_1H, "manual", None, "cli"), (EXPIRED_1H, "manual", "warn", "cli"),
+     (EXPIRED_1H, "manual", "off", "cli"), (EXPIRED_1H, "manual", None, "sdk-py")],
+    ids=["automatic", "fresh", "small", "warn", "off", "sdk-entrypoint"],
+)
+def test_a_compact_that_is_not_held_writes_nothing(clock, transcript, trigger, mode, entrypoint):
+    """An automatic compaction is never held: blocking it leaves the context
+    over its limit. Nothing is written for a pass, because a PreCompact hook's
+    output becomes instructions for the summary."""
+    session = Session("claude", transcript) if mode is None else armed(transcript, mode=mode)
+    assert session.compact(trigger=trigger, harness_entrypoint=entrypoint) in (None, {})
+
+
+def test_a_compact_hold_and_a_prompt_hold_are_separate(clock):
+    session = Session("claude", EXPIRED_1H)
+    assert blocked(session.compact())
+    assert blocked(session.prompt("Continue with the refactor.")), "a /compact hold passed a prompt"
+    assert not session.compact()
+    assert not blocked(session.prompt("Continue with the refactor."))
+
+
+@pytest.mark.parametrize("cli_type", ["codex", "gemini"])
+def test_compact_is_held_only_where_the_platform_declares_it(clock, cli_type):
+    assert "PreCompact" not in PLATFORMS[cli_type].hook_protocol.context_events_with_block_decision
+    session = Session(cli_type, EXPIRED_1H)
+    assert session.compact(harness_entrypoint="cli") in (None, {})
+
+
+def test_the_precompact_payload_and_block_reach_claude_code_in_its_own_fields():
+    from autorun.core import normalize_hook_payload, validate_hook_response
+
+    normalized = normalize_hook_payload({
+        "hook_event_name": "PreCompact", "session_id": "s", "trigger": "manual",
+        "custom_instructions": "keep the test results", "transcript_path": "/nonexistent",
+    })
+    assert (normalized["source"], normalized["prompt"]) == ("manual", "keep the test results")
+    auto = normalize_hook_payload({"hook_event_name": "PreCompact", "session_id": "s", "trigger": "auto",
+                                   "custom_instructions": None})
+    assert (auto["source"], auto["prompt"]) == ("auto", "")
+    response = validate_hook_response(
+        "PreCompact", {"decision": "block", "reason": "r", "continue": True, "systemMessage": "r"}, cli_type="claude")
+    assert response == {"decision": "block", "reason": "r"}
 
 
 def test_a_prompt_the_user_did_not_type_is_never_blocked(clock):

@@ -1048,7 +1048,11 @@ CLAUDE_HOOKS = ClaudeHookProtocol(
     # PostToolUse stays feedback-only: Claude accepts block/reason there, but
     # existing deny() calls on that event were written as feedback.
     # https://code.claude.com/docs/en/hooks#posttooluse-decision-control
-    context_events_with_block_decision=frozenset({"UserPromptSubmit"}),
+    # PreCompact: a block stops the compaction; for `/compact` Claude Code
+    # shows the reason. The cache guard blocks only a manual one, since a
+    # blocked automatic compaction leaves the context over its limit.
+    # https://code.claude.com/docs/en/hooks#precompact
+    context_events_with_block_decision=frozenset({"UserPromptSubmit", "PreCompact"}),
 )
 
 # Legacy Gemini CLI: root allow/deny decisions; deny rejects AfterAgent

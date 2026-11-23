@@ -352,7 +352,7 @@ Settings live in `~/.autorun/task-lifecycle.config.json`. [docs/TASK_TRACKING.md
 | `/ar:cache` | hold or warn before a prompt re-writes an expired prompt cache (options below) |
 | `/ar:restart-daemon` | restart the daemon for this install |
 
-`/ar:cache` checks expired prompt caches of 100,000 tokens or more. The Claude Code terminal and Claude desktop app hold by default. Other entrypoints, including SDK hosts such as T3 Code, and other harnesses warn when cache data is available. A guessed lifetime never holds.
+`/ar:cache` checks expired prompt caches of 100,000 tokens or more. The Claude Code terminal and Claude desktop app hold by default. Other entrypoints, including SDK hosts such as T3 Code, and other harnesses warn when cache data is available. A guessed lifetime never holds. In Claude Code a manual `/compact` on an expired cache is held too; run it again to proceed.
 
 Send the same text again to proceed once. On Claude Code, `/ar:cache ok` and every other slash command are model requests, so resending is cheaper.
 

@@ -60,9 +60,13 @@ Anthropic measures the lifetime from the start of the request; autorun
 measures from the last response. The check needs a record that reports
 at least one cache-read or cache-write token.
 Auto-compaction runs inside a turn that began with a prompt, so this check
-runs before it. After a manual `/compact` the next prompt is not checked: the
-compaction already re-sent the old context, and the check resumes with the
-next response.
+runs before it, and an automatic compaction is never held. A manual `/compact`
+on an expired cache is held like a prompt, because summarizing re-sends the
+whole old context: run the same `/compact` again to proceed once, or `/clear`
+to drop the context instead. Where the check only warns, `/compact` is not
+checked, since a compaction hook has no way to show a notice. After a
+compaction the next prompt is not checked for the context it replaced; the
+check resumes with the next response.
 
 In `autorun.config.json`, `cache_guard_expired_prompt_action` sets the
 default for sessions with no setting of their own: `block` (the default),

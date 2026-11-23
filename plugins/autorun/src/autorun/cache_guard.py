@@ -663,24 +663,24 @@ class CacheGuard:
             return None
         return ctx.deny(self._render_block(usage, trips))  # type: ignore[union-attr]
 
-    def check_prompt_after_expiry(self, ctx: EventContext) -> Optional[dict]:
-        """Prompt-time check: None, or a denial when the cache has expired.
+    def _expiry_verdict(self, ctx: EventContext, event: str) -> "tuple[UsageReading | None, str | None, bool]":
+        """(reading, "hold" | "notice" | None, offer_hold) for an expired cache at ``event``.
 
-        Runs only the `expired` test (`_expired_trip`); the user's `ratio`,
-        `read` and `age` thresholds stay at tool time in `check`. The caller
-        decides which prompts reach it (the user's own, never a command).
+        "hold" where the platform can block ``event``, the lifetime was
+        recorded, and the session opted in or the entrypoint is a known human
+        one; "notice" where the check runs but cannot or may not hold.
         """
         entry = _effective_entry(_read_toggle_from_ctx(ctx, self.session_id))
         action = _expired_prompt_action(entry)
         if action is None:
-            return None
+            return None, None, False
         # A response may have arrived since the last tool or prompt check.
         usage = self._read_usage(ctx, fresh=True)
         if not _expired_trip(usage, self.config):
-            return None
+            return usage, None, False
         platform = platform_for(ctx.cli_type)
         can_hold = (
-            "UserPromptSubmit" in platform.hook_protocol.context_events_with_block_decision
+            event in platform.hook_protocol.context_events_with_block_decision
             and _expiry_lifetime(usage, self.config)[1] != "default"
         )
         # Unmarked SDK sends can look like typed prompts. Only known human
@@ -690,35 +690,80 @@ class CacheGuard:
             and ctx.harness_entrypoint not in platform.human_prompt_entrypoints
         )
         if action == "warn" or not can_hold or default_warn:
-            message = _render_expired(usage, self.config, ctx.cli_type, blocking=False, offer_hold=can_hold and default_warn)
-            return ctx.respond("allow", message, to_ai=False)
-        prompt = (ctx.prompt or "").strip()
-        digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            return usage, "notice", can_hold and default_warn
+        return usage, "hold", False
+
+    def _passes_held_text(self, ctx: EventContext, event: str, digest: str, usage: UsageReading) -> bool:
+        """True when the user already chose to pay for this text in this expiry.
+
+        A resend of held text, or an `ok` grant, passes once and is spent;
+        otherwise the hold is recorded so the same text passes next time.
+        """
         # A hold is valid for the expiry it happened in: the next response
         # changes `responded_at`, so a later expiry holds the same text again,
         # and two hooks for one prompt (same expiry) both see the pass.
         hold = f"{digest}@{int(usage.responded_at or 0)}"
-        held = _held_digests(ctx.state_get(_RESENT_PROMPTS_KEY, []))
-        resent = hold in held
-        if not resent and digest in held:
+        resent = hold in _held_digests(ctx.state_get(_RESENT_PROMPTS_KEY, []))
+        # Keyed on the text: a prompt has no tool input, so the tool
+        # fingerprint is the same for every prompt, and ScopedAllow's
+        # parallel-hook grace would let one `ok` pass the next prompt too.
+        granted = self._consume_override(ctx, fingerprint_call(self.session_id, event, digest))
+        if resent or granted:
+            return True
+        ctx.state_update(
+            _RESENT_PROMPTS_KEY, lambda kept: [*_held_digests(kept), hold][-_RESENT_PROMPTS_KEPT:], [])
+        return False
+
+    def check_prompt_after_expiry(self, ctx: EventContext) -> Optional[dict]:
+        """Prompt-time check: None, or a denial when the cache has expired.
+
+        Runs only the `expired` test (`_expired_trip`); the user's `ratio`,
+        `read` and `age` thresholds stay at tool time in `check`. The caller
+        decides which prompts reach it (the user's own, never a command).
+        """
+        usage, verdict, offer_hold = self._expiry_verdict(ctx, "UserPromptSubmit")
+        if verdict is None:
+            return None
+        if verdict == "notice":
+            message = _render_expired(usage, self.config, ctx.cli_type, blocking=False, offer_hold=offer_hold)
+            return ctx.respond("allow", message, to_ai=False)
+        prompt = (ctx.prompt or "").strip()
+        digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        if digest in _held_digests(ctx.state_get(_RESENT_PROMPTS_KEY, [])):
             # 1.0.0rc4 stored the bare digest. A prompt it held passes its
             # resend, and the record is rewritten so it ends with this expiry.
             # It never removed a digest whose resend had passed, so this text
             # may have been held days ago: it passes with the cost notice.
+            hold = f"{digest}@{int(usage.responded_at or 0)}"
             ctx.state_update(
                 _RESENT_PROMPTS_KEY,
                 lambda kept: [hold if h == digest else h for h in _held_digests(kept)], [])
             return ctx.respond(
                 "allow", _render_expired(usage, self.config, ctx.cli_type, blocking=False), to_ai=False)
-        # Keyed on the prompt text: a prompt has no tool input, so the tool
-        # fingerprint is the same for every prompt, and ScopedAllow's
-        # parallel-hook grace would let one `ok` pass the next prompt too.
-        granted = self._consume_override(ctx, fingerprint_call(self.session_id, "UserPromptSubmit", digest))
-        if resent or granted:
-            return None  # the user chose to pay, this once: a resend and an `ok` are both spent
-        ctx.state_update(
-            _RESENT_PROMPTS_KEY, lambda kept: [*_held_digests(kept), hold][-_RESENT_PROMPTS_KEPT:], [])
+        if self._passes_held_text(ctx, "UserPromptSubmit", digest, usage):
+            return None  # the user chose to pay, this once
         return ctx.deny(_render_expired(usage, self.config, ctx.cli_type))
+
+    def check_compact_after_expiry(self, ctx: EventContext) -> Optional[dict]:
+        """Hold a manual `/compact` that would re-send an expired cache.
+
+        Summarising sends the whole old context once more, so on an expired
+        cache `/compact` costs what the prompt after it would have. An
+        automatic compaction is never held: blocking it leaves the context
+        over its limit. Where it would only warn it stays silent, because a
+        PreCompact hook's output becomes compaction instructions.
+        """
+        if ctx.source != "manual":
+            return None
+        usage, verdict, _ = self._expiry_verdict(ctx, "PreCompact")
+        if verdict != "hold":
+            return None
+        # A NUL keeps these apart from the digest of any typed prompt.
+        text = "\0/compact\0" + (ctx.prompt or "").strip()
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if self._passes_held_text(ctx, "PreCompact", digest, usage):
+            return None
+        return ctx.deny(_render_expired(usage, self.config, ctx.cli_type, compacting=True))
 
     _INVALIDATING_EVENTS = frozenset({
         "PreCompact",   "PostCompact",    # Claude Code: summarise lifecycle
@@ -827,7 +872,13 @@ def _duration_words(seconds: float) -> str:
 
 
 def _render_expired(
-    usage: UsageReading, cfg: CacheGuardConfig, cli_type: str | None, *, blocking: bool = True, offer_hold: bool = False
+    usage: UsageReading,
+    cfg: CacheGuardConfig,
+    cli_type: str | None,
+    *,
+    blocking: bool = True,
+    offer_hold: bool = False,
+    compacting: bool = False,
 ) -> str:
     """The prompt-time message, with commands in the harness's spelling.
 
@@ -842,11 +893,24 @@ def _render_expired(
     # (label, commands, follow-up sentence). Commands sit alone on their lines.
     sections = [
         ("Cut the cost:", ["/clear"] if cli_type == "claude" else [],
-         ("Or start" if cli_type == "claude" else "Start") + " a new session or combine requests into one prompt."),
+         ("Or start" if cli_type == "claude" else "Start") + " a new session"
+         + ("." if compacting else " or combine requests into one prompt.")),
         (f"Stop the check in this session ({_CACHING_UNAFFECTED}):", ["/ar:cache off"], ""),
         ("Turn off the global default (session settings still win):", ["/ar:cache global off"], ""),
     ]
-    if blocking:
+    if blocking and compacting:
+        head = (
+            f"ar:cache held /compact. The prompt cache expired {ago} ago, so summarizing\n"
+            f"re-sends about {tokens} tokens without the cache-read discount."
+        )
+        sections = [
+            # Not `/ar:cache ok`: on Claude Code that is a model request at
+            # the same price, and it would not run the compaction.
+            ("Run the same /compact again to proceed once.", [], ""),
+            *sections,
+            ("Warn without holding:", ["/ar:cache warn"], ""),
+        ]
+    elif blocking:
         head = (
             f"ar:cache held this prompt. The prompt cache expired {ago} ago, so sending it\n"
             f"re-writes about {tokens} tokens at the cache-write price."

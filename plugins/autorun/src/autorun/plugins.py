@@ -3354,9 +3354,17 @@ def cache_guard_on_sessionstart(ctx: EventContext) -> None:
 
 
 @app.on("PreCompact")
-def cache_guard_on_precompact(ctx: EventContext) -> None:
+def cache_guard_on_precompact(ctx: EventContext) -> Optional[Dict]:
+    """Drop the usage memo, then hold a manual `/compact` on an expired cache."""
     _cache_guard_invalidate(ctx, "PreCompact")
-    return None
+    try:
+        from .cache_guard import CacheGuard
+
+        return CacheGuard.from_ctx(ctx).check_compact_after_expiry(ctx)
+    except Exception as exc:
+        # Fail open: a compaction is never stopped because the check broke.
+        logger.warning(f"Cache guard compact check failed open: {exc}")
+        return None
 
 
 @app.on("PostCompact")

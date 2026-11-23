@@ -572,9 +572,12 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "cli_type": cli_type,
         "hook_event_name": event,
         "session_id": session_id,
+        # PreCompact sends what the user typed after `/compact` as
+        # custom_instructions and the kind of compaction as trigger.
         "prompt": (
             payload.get(platform.prompt_payload_field)
             or payload.get("prompt", "")
+            or (payload.get("custom_instructions") or "" if event == "PreCompact" else "")
         ),
         "tool_name": tool_name,
         "tool_input": tool_input,
@@ -582,7 +585,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "tool_result": payload.get("tool_response") or payload.get("tool_result") or payload.get("toolResult"),
         "session_transcript": transcript,
         "permission_mode": payload.get("permission_mode", "default"),
-        "source": payload.get("source", "startup"),
+        "source": payload.get("trigger") if event == "PreCompact" else payload.get("source", "startup"),
         # Both Claude Code and Codex include agent_id only for hooks fired
         # inside a subagent. agent_type may also describe a main --agent
         # session, so it must never be used alone as the discriminator.
@@ -1456,6 +1459,9 @@ HOOK_SCHEMAS = {
         "hso": {"hookEventName", "additionalContext"},
     },
     "SessionStart": {"root": {"continue", "stopReason", "suppressOutput", "systemMessage"}, "hso": {}},
+    # Only a block has output: an allow's stdout would become compaction
+    # instructions (see EventContext.respond, PATHWAY 2b).
+    "PreCompact": {"root": {"decision", "reason"}, "hso": set()},
     "Stop": {
         "root": {
             "continue",
@@ -2826,6 +2832,18 @@ class EventContext:
             )
 
             return validate_hook_response(self._event, resp, cli_type=cli_type)
+
+        # =====================================================================
+        # PATHWAY 2b: PreCompact (Compaction Hold)
+        # =====================================================================
+        # A successful PreCompact hook's stdout is added to the compaction
+        # instructions, so an allow writes nothing. A block is decision/reason
+        # alone: Claude Code shows the reason and discards continue and
+        # systemMessage on this event.
+        # https://code.claude.com/docs/en/hooks#precompact
+        if self._event == "PreCompact":
+            resp = protocol.block_decision_for_context_event(self._event, msg_reason) if decision != "allow" else None
+            return {} if resp is None else validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
         # PATHWAY 3: Stop & SubagentStop (Stop Prevention)
