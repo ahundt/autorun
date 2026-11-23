@@ -9,7 +9,7 @@ Single-file feature. Exports:
     _read_jsonl_tail                    — JSONL bounded-tail reader
 
 Four tests, all read from the transcript: `expired` at prompt time
-(CacheGuard.check_prompt_after_expiry; on by default as a warning), and
+(CacheGuard.check_prompt_after_expiry; holds by default on human entrypoints), and
 `ratio`, `read`, `age` at tool time (CacheGuard.check; off until
 `/ar:cache on`). No new sync primitive, no new state file.
 """
@@ -23,15 +23,21 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
-from .config import CONFIG, detect_cli_type
-from .platforms import platform_for
+from .config import CONFIG, detect_cli_type, read_user_config
+from .platforms import format_commands_for_cli, platform_for
 from .scoped_allow import (
     ScopedAllow, _PERMANENT_KEYWORDS,
     call_fingerprint, fingerprint_call, parse_scope_args, parse_duration,
 )
+from .logging_utils import get_logger
 from .session_manager import session_state
+
+logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from .core import EventContext
 
 
 # ── sentinels ─────────────────────────────────────────────────────────
@@ -106,6 +112,15 @@ def parse_quantity(s: str, *, expect: Literal["tokens", "percent"]):
 # ── toggle ───────────────────────────────────────────────────────────
 
 _GLOBAL_SESSION_ID = "__global__"
+_GLOBAL_WORDS = ("global", "--global")  # `--global` as in /ar:ok --global
+
+
+def cache_scope_session(args: str, session_id: str) -> str:
+    """The session whose state `/ar:cache <args>` writes: the global one when `args` starts with a global word."""
+    first = (args or "").split(None, 1)[:1]
+    return _GLOBAL_SESSION_ID if first and first[0].lower() in _GLOBAL_WORDS else session_id
+
+
 # flat dict: {enabled, expired_prompt_action, expires_at, prior}. `prior` is
 # the whole entry a timed toggle replaced, or None when there was none;
 # entries written by older builds hold a bool there.
@@ -130,15 +145,57 @@ def _effective_entry(toggle) -> "dict | None":
     return toggle
 
 
+_BUILT_IN_PROMPT_ACTION = "block"  # config.py's default for cache_guard_expired_prompt_action
+_unknown_actions_logged: set = set()
+
+
+def _configured_prompt_action() -> "str | None":
+    """The config file's prompt action: `block`, `warn`, or None for `off`.
+
+    `off` (any case) or null turns the check off, the word `/ar:cache off`
+    uses. Any other value keeps the built-in default instead of a behavior the
+    user did not write, and is logged once.
+    """
+    raw = CONFIG.get("cache_guard_expired_prompt_action", _BUILT_IN_PROMPT_ACTION)
+    if raw is None or raw is False:
+        return None
+    word = str(raw).strip().lower()
+    if word == "off":
+        return None
+    if word in _EXPIRED_PROMPT_ACTIONS:
+        return word
+    if word not in _unknown_actions_logged:
+        _unknown_actions_logged.add(word)
+        logger.warning("cache_guard_expired_prompt_action %r is not block, warn or off; using %s",
+                       raw, _BUILT_IN_PROMPT_ACTION)
+    return _BUILT_IN_PROMPT_ACTION
+
+
 def _expired_prompt_action(entry: "dict | None") -> "str | None":
     """`block`, `warn`, or None (off) for the prompt-time expiry check."""
-    default = CONFIG["cache_guard_expired_prompt_action"]
+    default = _configured_prompt_action()
     if entry is None:
         return default
     if not entry.get("enabled", False):
         return None
     action = entry.get("expired_prompt_action")
     return action if action in _EXPIRED_PROMPT_ACTIONS else default
+
+
+def _hold_opted_in(entry: "dict | None") -> bool:
+    """Whether the user asked for the hold, as opposed to getting the default.
+
+    A stored "block" (`/ar:cache on`) or "block" in the user's config file.
+    A toggle that records only `enabled`, from a release before the prompt
+    action was stored, is not the request: it falls to the default, which
+    holds on the human entrypoints and warns elsewhere.
+    """
+    if entry is not None and entry.get("expired_prompt_action") == "block":
+        return True
+    try:
+        return read_user_config().get("cache_guard_expired_prompt_action") == "block"
+    except Exception:
+        return False
 
 
 def _read_toggle(session_id: str) -> dict:
@@ -272,6 +329,9 @@ class UsageReading:
     # 300 for a 5-minute one, None when the record does not say (Pi, Prime).
     cache_lifetime_seconds: float | None = None
     observed_at:            float = 0.0
+    # When the response this reading came from was written (epoch seconds):
+    # one value per expiry episode, since the next response changes it.
+    responded_at:           float | None = None
 
 
 # ── JSONL bounded-tail reader ────────────────────────────────────────
@@ -331,6 +391,11 @@ def _scan_once(path: str, *, start_from_end: int, cli: str) -> "UsageReading | N
             continue
         if not isinstance(obj, dict):
             continue
+        if obj.get("subtype") == "compact_boundary" or obj.get("isCompactSummary") is True:
+            # Claude Code's `/compact` writes these and no response with usage.
+            # Every response before them measured the context it replaced, so
+            # there is no reading until the next response.
+            return None
         entry_type = (obj.get("type") or obj.get("role") or "").lower()
         if entry_type == "message" and isinstance(obj.get("message"), dict):
             entry_type = str(obj["message"].get("role") or "").lower()
@@ -411,6 +476,7 @@ def _usage_from_assistant(entry: dict, usage: dict, *, cli: str) -> UsageReading
     # Clock-skew handling: far-future timestamps (beyond tolerance) → age = None
     # (fail-open), not clamped 0 which would silently suppress age-axis trips.
     age: float | None = None
+    responded_at: float | None = None
     _clock_skew_tol = CONFIG["cache_guard_clock_skew_tolerance_s"]
     for k in _TIMESTAMP_KEYS:
         raw = entry.get(k)
@@ -419,6 +485,7 @@ def _usage_from_assistant(entry: dict, usage: dict, *, cli: str) -> UsageReading
         t = _parse_ts(raw)
         if t is None:
             continue
+        responded_at = t
         delta = time.time() - t
         if delta >= 0:
             age = delta
@@ -437,6 +504,7 @@ def _usage_from_assistant(entry: dict, usage: dict, *, cli: str) -> UsageReading
         cache_age_seconds=age,
         cache_lifetime_seconds=lifetime,
         observed_at=time.time(),
+        responded_at=responded_at,
     )
 
 
@@ -502,15 +570,29 @@ def _expired_trip(usage: Optional[UsageReading], cfg: CacheGuardConfig) -> bool:
 
     Two measurements against each other, which an `_AXES` row (one field
     against one threshold) cannot express. The lifetime is the one the
-    record wrote, else the user's `age` (Pi and Prime Agent records carry
-    none); with neither it does not trip. Missing data never trips.
+    record wrote, else the user's `age`, else CONFIG's documented default
+    (`_expiry_lifetime`). Missing data never trips.
     """
     if usage is None or usage.cache_age_seconds is None or usage.total_input_tokens is None:
         return False
-    lifetime = usage.cache_lifetime_seconds or cfg.cache_age_max_seconds
+    lifetime, source = _expiry_lifetime(usage, cfg)
     if lifetime is None:
         return False
+    # A recorded lifetime comes from the row's own cache-write counts, so it
+    # is evidence of a cache even when the aggregate fields are absent.
+    if source != "record" and (usage.cache_read_tokens or 0) + (usage.cache_creation_tokens or 0) <= 0:
+        return False
     return usage.cache_age_seconds > lifetime and usage.total_input_tokens >= _expired_min_tokens(cfg)
+
+
+def _expiry_lifetime(usage: UsageReading, cfg: CacheGuardConfig) -> "tuple[float | None, str]":
+    """(seconds, source) of the cache lifetime: "record" (the response wrote it),
+    "age" (the user's `/ar:cache set age`), or "default" (a guess; None when off)."""
+    if usage.cache_lifetime_seconds:
+        return usage.cache_lifetime_seconds, "record"
+    if cfg.cache_age_max_seconds:
+        return cfg.cache_age_max_seconds, "age"
+    return CONFIG["cache_guard_default_lifetime_seconds"] or None, "default"
 
 
 def _which_axes_trip(cfg: CacheGuardConfig, usage: Optional[UsageReading]) -> list[str]:
@@ -534,9 +616,22 @@ _DEFAULT_JSONL_MAX_BYTES = CONFIG["cache_guard_jsonl_scan_bytes"]
 _MEMO_TTL_SECONDS        = CONFIG["cache_guard_memo_ttl_seconds"]
 _GRANT_KEY = "cache/overrides"
 _LAST_USAGE_KEY = "cache/last_usage"
-# sha256 of prompts the expiry check blocked; the same text then passes.
+# "sha256-of-prompt@response-time" of prompts the expiry check blocked; the
+# same text then passes within that expiry only.
 _RESENT_PROMPTS_KEY = "cache/blocked_prompts"
 _RESENT_PROMPTS_KEPT = 50  # ponytail: oldest dropped; a block is rare, 50 covers a session
+# The text of the prompt held last, so `/ar:cache ok` can send it in its place.
+_HELD_PROMPT_KEY = "cache/held_prompt"
+# Claude Code keeps hook context up to 10,000 characters; a longer held prompt
+# is not forwarded, and the user resends it instead.
+_FORWARD_MAX_CHARS = 9_000
+# Said by the hold message and by the `off` reply: `off` stops autorun's check only.
+_CACHING_UNAFFECTED = "prompt caching stays on"
+
+
+def _held_digests(stored) -> list:
+    """The stored holds, or [] when nothing usable is stored."""
+    return stored if isinstance(stored, list) else []
 
 
 @dataclass
@@ -573,41 +668,130 @@ class CacheGuard:
             return None
         return ctx.deny(self._render_block(usage, trips))  # type: ignore[union-attr]
 
-    def check_prompt_after_expiry(self, ctx: object) -> Optional[dict]:
+    def _expiry_verdict(self, ctx: EventContext, event: str) -> "tuple[UsageReading | None, str | None, bool]":
+        """(reading, "hold" | "notice" | None, offer_hold) for an expired cache at ``event``.
+
+        "hold" where the platform can block ``event``, the lifetime was
+        recorded, and the session opted in or the entrypoint is a known human
+        one; "notice" where the check runs but cannot or may not hold.
+        """
+        entry = _effective_entry(_read_toggle_from_ctx(ctx, self.session_id))
+        action = _expired_prompt_action(entry)
+        if action is None:
+            return None, None, False
+        # A response may have arrived since the last tool or prompt check.
+        usage = self._read_usage(ctx, fresh=True)
+        if not _expired_trip(usage, self.config):
+            return usage, None, False
+        platform = platform_for(ctx.cli_type)
+        can_hold = (
+            event in platform.hook_protocol.context_events_with_block_decision
+            and _expiry_lifetime(usage, self.config)[1] != "default"
+        )
+        # Unmarked SDK sends can look like typed prompts. Only known human
+        # entrypoints hold without the user's explicit opt-in.
+        default_warn = (
+            not _hold_opted_in(entry)
+            and ctx.harness_entrypoint not in platform.human_prompt_entrypoints
+        )
+        if action == "warn" or not can_hold or default_warn:
+            return usage, "notice", can_hold and default_warn
+        return usage, "hold", False
+
+    def _passes_held_text(self, ctx: EventContext, event: str, digest: str, usage: UsageReading) -> bool:
+        """True when the user already chose to pay for this text in this expiry.
+
+        A resend of held text, or an `ok` grant, passes once and is spent;
+        otherwise the hold is recorded so the same text passes next time.
+        """
+        # A hold is valid for the expiry it happened in: the next response
+        # changes `responded_at`, so a later expiry holds the same text again,
+        # and two hooks for one prompt (same expiry) both see the pass.
+        hold = f"{digest}@{int(usage.responded_at or 0)}"
+        resent = hold in _held_digests(ctx.state_get(_RESENT_PROMPTS_KEY, []))
+        # Keyed on the text: a prompt has no tool input, so the tool
+        # fingerprint is the same for every prompt, and ScopedAllow's
+        # parallel-hook grace would let one `ok` pass the next prompt too.
+        granted = self._consume_override(ctx, fingerprint_call(self.session_id, event, digest))
+        if resent or granted:
+            return True
+        ctx.state_update(
+            _RESENT_PROMPTS_KEY, lambda kept: [*_held_digests(kept), hold][-_RESENT_PROMPTS_KEPT:], [])
+        return False
+
+    def check_prompt_after_expiry(self, ctx: EventContext) -> Optional[dict]:
         """Prompt-time check: None, or a denial when the cache has expired.
 
         Runs only the `expired` test (`_expired_trip`); the user's `ratio`,
         `read` and `age` thresholds stay at tool time in `check`. The caller
         decides which prompts reach it (the user's own, never a command).
         """
-        action = _expired_prompt_action(_effective_entry(_read_toggle_from_ctx(ctx, self.session_id)))
-        if action is None:
+        usage, verdict, offer_hold = self._expiry_verdict(ctx, "UserPromptSubmit")
+        if verdict is None:
             return None
-        usage = self._read_usage(ctx)
-        if not _expired_trip(usage, self.config):
-            return None
-        if "UserPromptSubmit" not in platform_for(ctx.cli_type).hook_protocol.context_events_with_block_decision:  # type: ignore[union-attr]
-            # Pi, Prime Agent, Gemini CLI, Qwen: a denial is only a message
-            # and the prompt goes out anyway, so say so instead.
-            action = "warn"
-        if action == "warn":
-            # Shown to the user only; the model gains nothing from it.
-            return ctx.respond("allow", _render_expired(usage, self.config, blocking=False), to_ai=False)  # type: ignore[union-attr]
-        prompt = (ctx.prompt or "").strip()  # type: ignore[union-attr]
+        if verdict == "notice":
+            message = _render_expired(usage, self.config, ctx.cli_type, blocking=False, offer_hold=offer_hold)
+            return ctx.respond("allow", message, to_ai=False)
+        prompt = (ctx.prompt or "").strip()
         digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        if digest in (ctx.state_get(_RESENT_PROMPTS_KEY, []) or []):  # type: ignore[union-attr]
-            return None  # sent again after a block: the user chose to pay
-        # Keyed on the prompt text: a prompt has no tool input, so the tool
-        # fingerprint is the same for every prompt, and ScopedAllow's
-        # parallel-hook grace would let one `ok` pass the next prompt too.
-        if self._consume_override(ctx, fingerprint_call(self.session_id, "UserPromptSubmit", digest)):
+        if digest in _held_digests(ctx.state_get(_RESENT_PROMPTS_KEY, [])):
+            # 1.0.0rc4 stored the bare digest. A prompt it held passes its
+            # resend, and the record is rewritten so it ends with this expiry.
+            # It never removed a digest whose resend had passed, so this text
+            # may have been held days ago: it passes with the cost notice.
+            hold = f"{digest}@{int(usage.responded_at or 0)}"
+            ctx.state_update(
+                _RESENT_PROMPTS_KEY,
+                lambda kept: [hold if h == digest else h for h in _held_digests(kept)], [])
+            return ctx.respond(
+                "allow", _render_expired(usage, self.config, ctx.cli_type, blocking=False), to_ai=False)
+        if self._passes_held_text(ctx, "UserPromptSubmit", digest, usage):
+            if ctx.state_get(_HELD_PROMPT_KEY):
+                ctx.state_set(_HELD_PROMPT_KEY, None)  # sent now: `ok` must not send it again
+            return None  # the user chose to pay, this once
+        ctx.state_set(_HELD_PROMPT_KEY, {"text": prompt, "hold": f"{digest}@{int(usage.responded_at or 0)}"})
+        return ctx.deny(_render_expired(usage, self.config, ctx.cli_type))
+
+    def take_held_prompt(self, ctx: EventContext) -> Optional[str]:
+        """The prompt held in the current expiry, removed so it is sent once.
+
+        None when nothing is held, a response has arrived since the hold
+        (that text was answered or the cache was written again), or the text
+        is too long to carry as hook context.
+        """
+        stored = ctx.state_get(_HELD_PROMPT_KEY)
+        if not stored:
             return None
-        ctx.state_update(  # type: ignore[union-attr]
-            _RESENT_PROMPTS_KEY,
-            lambda kept: [*(kept if isinstance(kept, list) else []), digest][-_RESENT_PROMPTS_KEPT:],
-            [],
-        )
-        return ctx.deny(_render_expired(usage, self.config))  # type: ignore[union-attr]
+        ctx.state_set(_HELD_PROMPT_KEY, None)
+        text = stored.get("text") if isinstance(stored, dict) else None
+        if not isinstance(text, str) or not text or len(text) > _FORWARD_MAX_CHARS:
+            return None
+        usage = self._read_usage(ctx, fresh=True)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if usage is None or stored.get("hold") != f"{digest}@{int(usage.responded_at or 0)}":
+            return None
+        return text
+
+    def check_compact_after_expiry(self, ctx: EventContext) -> Optional[dict]:
+        """Hold a manual `/compact` that would re-send an expired cache.
+
+        Summarising sends the whole old context once more, so on an expired
+        cache `/compact` costs what the prompt after it would have. An
+        automatic compaction is never held: blocking it leaves the context
+        over its limit. Where it would only warn it stays silent, because a
+        PreCompact hook's output becomes compaction instructions.
+        """
+        if ctx.source != "manual":
+            return None
+        usage, verdict, _ = self._expiry_verdict(ctx, "PreCompact")
+        if verdict != "hold":
+            return None
+        # A NUL keeps these apart from the digest of any typed prompt.
+        text = "\0/compact\0" + (ctx.prompt or "").strip()
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if self._passes_held_text(ctx, "PreCompact", digest, usage):
+            return None
+        return ctx.deny(_render_expired(usage, self.config, ctx.cli_type, compacting=True))
 
     _INVALIDATING_EVENTS = frozenset({
         "PreCompact",   "PostCompact",    # Claude Code: summarise lifecycle
@@ -634,8 +818,8 @@ class CacheGuard:
 
     # ── usage resolution ─────────────────────────────────────────
 
-    def _read_usage(self, ctx: object) -> Optional[UsageReading]:
-        """Resolve current usage via volatile memo → bounded JSONL scan.
+    def _read_usage(self, ctx: object, *, fresh: bool = False) -> Optional[UsageReading]:
+        """Read the memo unless fresh is required; memoise the bounded scan result.
 
         Daemon-backed hooks read and write the memo only in ThreadSafeDB's
         volatile cache. Direct mode falls back to durable session state because
@@ -646,17 +830,22 @@ class CacheGuard:
         else:
             with session_state(self.session_id) as st:
                 memo = st.get(_LAST_USAGE_KEY)
-
-        if memo and (time.time() - memo.get("observed_at", 0)) < _MEMO_TTL_SECONDS:
+        if not (memo and (time.time() - memo.get("observed_at", 0)) < _MEMO_TTL_SECONDS):
+            memo = None
+        if memo and not fresh:
             return _usage_from_memo(memo)
 
         path = getattr(ctx, "transcript_path", None)
         if path:
             path = os.path.expanduser(str(path))
-        if not path:
-            return None
         cli = getattr(ctx, "cli_type", None) or detect_cli_type() or "claude"
-        usage = _read_jsonl_tail(path, max_bytes=_DEFAULT_JSONL_MAX_BYTES, cli=cli)
+        usage = _read_jsonl_tail(path, max_bytes=_DEFAULT_JSONL_MAX_BYTES, cli=cli) if path else None
+        if usage is None:
+            # No path on the frame, or one that no longer reads: the memo,
+            # while it is within its lifetime, is still the last response.
+            return _usage_from_memo(memo) if memo else None
+        if memo and memo.get("responded_at") == usage.responded_at:
+            return usage  # same response: keep the memo's age, do not renew it
         if usage is not None:
             if hasattr(ctx, "state_set_volatile"):
                 ctx.state_set_volatile(  # type: ignore[union-attr]
@@ -710,26 +899,71 @@ def _duration_words(seconds: float) -> str:
     return f"{hours} h {minutes} m" if hours else f"{minutes} m"
 
 
-def _render_expired(usage: UsageReading, cfg: CacheGuardConfig, *, blocking: bool = True) -> str:
-    """The prompt-time message. Names no tool-time axis or hint."""
-    lifetime = usage.cache_lifetime_seconds or cfg.cache_age_max_seconds or 0
-    ago = _duration_words(max(0.0, (usage.cache_age_seconds or 0) - lifetime))
-    tokens = f"{round(usage.total_input_tokens or 0, -3):,}"
-    if blocking:
-        cost = f"Sending now re-writes about {tokens} tokens at the cache-write price.\n"
-        proceed = "  Send the same prompt again to proceed, or /ar:cache ok\n"
-        switch = "/ar:cache warn   tell me, do not stop me"
+def _render_expired(
+    usage: UsageReading,
+    cfg: CacheGuardConfig,
+    cli_type: str | None,
+    *,
+    blocking: bool = True,
+    offer_hold: bool = False,
+    compacting: bool = False,
+) -> str:
+    """The prompt-time message, with commands in the harness's spelling.
+
+    Names no tool-time axis or hint.
+    """
+    lifetime, source = _expiry_lifetime(usage, cfg)
+    ago = _duration_words(max(0.0, (usage.cache_age_seconds or 0) - (lifetime or 0)))
+    guessed = source == "default"
+    assumed = f" (assuming a {_duration_words(lifetime or 0)} lifetime)" if guessed else ""
+    total = usage.total_input_tokens or 0
+    tokens = f"{round(total / 1000):,}k" if total >= 1000 else f"{total:,}"
+    # (label, commands, follow-up sentence). Commands sit alone on their lines.
+    sections = [
+        ("Cut the cost:", ["/clear"] if cli_type == "claude" else [],
+         ("Or start" if cli_type == "claude" else "Start") + " a new session"
+         + ("." if compacting else " or combine requests into one prompt.")),
+        (f"Stop the check in this session ({_CACHING_UNAFFECTED}):", ["/ar:cache off"], ""),
+        ("Turn off the global default (session settings still win):", ["/ar:cache global off"], ""),
+    ]
+    if blocking and compacting:
+        head = (
+            f"ar:cache held /compact. The prompt cache expired {ago} ago, so summarizing\n"
+            f"re-sends about {tokens} tokens without the cache-read discount."
+        )
+        sections = [
+            # Not `/ar:cache ok`: on Claude Code that is a model request at
+            # the same price, and it would not run the compaction.
+            ("Run the same /compact again to proceed once.", [], ""),
+            *sections,
+            ("Warn without holding:", ["/ar:cache warn"], ""),
+        ]
+    elif blocking:
+        head = (
+            f"ar:cache held this prompt. The prompt cache expired {ago} ago, so sending it\n"
+            f"re-writes about {tokens} tokens at the cache-write price."
+        )
+        sections = [
+            ("Send the same prompt again to proceed once, or use:", ["/ar:cache ok"], ""),
+            *sections,
+            ("Warn without holding:", ["/ar:cache warn"], ""),
+        ]
     else:
-        cost = f"This prompt re-writes about {tokens} tokens at the cache-write price.\n"
-        proceed = ""
-        switch = "/ar:cache on     stop me before sending"
-    return (
-        f"ar:cache: this session's prompt cache expired {ago} ago.\n"
-        f"{cost}{proceed}"
-        "  /clear or a new session avoids the cost; /compact lowers later turns\n"
-        f"  /ar:cache off        this session      {switch}\n"
-        "  /ar:cache set expired-min-tokens 200k  only warn or block at this context size or larger"
+        head = (
+            f"ar:cache: the prompt cache expired {ago} ago{assumed}.\n"
+            f"Sending this prompt re-writes about {tokens} tokens at the cache-write price."
+        )
+        if offer_hold:
+            sections.insert(0, ("Hold prompts in this session:", ["/ar:cache on"], ""))
+        if guessed:
+            sections.insert(0, ("This session's record states no cache lifetime. Set the one your provider uses:",
+                                ["/ar:cache set age 1h"], ""))
+    sections.append(("Check only larger contexts:", ["/ar:cache set expired-min-tokens 200k"], ""))
+    body = "\n".join(
+        "\n".join([label, *(f"  {command}" for command in commands), *([note] if note else [])])
+        for label, commands, note in sections
     )
+    return format_commands_for_cli(f"{head}\n\n{body}", cli_type)
 
 
 # ── grants + override helpers ─────────────────────────────────────────
@@ -756,8 +990,13 @@ def grant_override(
 
 
 def _consume_by_call_id(session_id: str, call_id: str) -> bool:
-    """Consume one ScopedAllow grant, inlining GC of expired entries."""
+    """Consume one ScopedAllow grant, inlining GC of expired entries.
+
+    Time comes from this module's clock, the one `grant_override` stamps
+    grants with and the toggles expire by, so a test can drive all three.
+    """
     with session_state(session_id) as st:
+        now = time.time()  # after the wait for the lock, or an expired grant passes
         grants_raw = list(st.get(_GRANT_KEY, []))
         live: list[dict] = []
         consumed_any = False
@@ -766,12 +1005,12 @@ def _consume_by_call_id(session_id: str, call_id: str) -> bool:
                 g = ScopedAllow.from_dict(gd)
             except Exception:
                 continue             # malformed — drop (GC inline)
-            if not g.is_valid(call_id):
+            if not g.is_valid(call_id, now=now):
                 continue             # expired/exhausted — drop (GC inline)
             if not consumed_any:
-                new_g = g.consume(call_id)
+                new_g = g.consume(call_id, now=now)
                 consumed_any = True
-                if new_g.is_valid(call_id):
+                if new_g.is_valid(call_id, now=now):
                     live.append(new_g.to_dict())
             else:
                 live.append(g.to_dict())
@@ -842,6 +1081,8 @@ def _cmd_toggle(rest: list, session_id: str, target: bool, action: str = "block"
     set_cache_enabled(session_id, target, duration=dur, expired_prompt_action=action)
     word = ("enabled (warn only at prompt time)" if action == "warn" else "enabled") if target else "disabled"
     reply = f"ar:cache {word}{' for ' + ' '.join(rest) if dur else ''}."
+    if not target:
+        reply += f" Autorun stops checking the prompt cache. Your {_CACHING_UNAFFECTED}."
     if target and not any(getattr(CacheGuardConfig.load(session_id), ax.field) is not None for ax in _AXES):
         reply += (
             " Active: the prompt-time expiry check only. Tool-time thresholds"
@@ -930,10 +1171,10 @@ _CACHE_HANDLERS: dict = {
 
 
 def cache_command(args: str, session_id: str, cli_type: str | None = None) -> str:
-    """Dispatch /ar:cache subcommands. Grammar: on|warn|off|set|ok|no|status [global]."""
+    """Dispatch /ar:cache subcommands. Grammar: [global|--global] on|warn|off|set|ok|no|status."""
     parts = (args or "").strip().split()
     sub = (parts[0] if parts else "").lower()
-    if sub == "global":
+    if sub in _GLOBAL_WORDS:
         return "[global] " + cache_command(" ".join(parts[1:]), _GLOBAL_SESSION_ID, cli_type)
     fn = _CACHE_HANDLERS.get(sub)
     if fn is None:
@@ -980,11 +1221,19 @@ def _render_status(session_id: str, cli_type: str | None = None) -> str:
     # started it; the caller passes the session's harness.
     cli = cli_type or detect_cli_type() or "claude"
     scope = "global" if session_id == _GLOBAL_SESSION_ID else "session"
+    toggle_label = "enabled" if enabled else "disabled" if entry is not None else "disabled (default)"
+    prompt_label = action or "off"
+    if action == "block" and not _hold_opted_in(entry):
+        prompt_label = "hold in Claude Code terminal and desktop; warn elsewhere"
     lines = [
-        f"ar:cache [{scope}] — {'enabled' if enabled else 'disabled (default)'} — cli: {cli}",
-        f"prompt-time expiry check: {action or 'off'}"
+        f"ar:cache [{scope}] — {toggle_label} — cli: {cli}",
+        f"prompt-time expiry check: {prompt_label}"
         f"{' (default)' if entry is None else ''}, context of"
         f" {_expired_min_tokens(cfg):,} tokens or more",
+        "cache lifetime: the session record's, else "
+        + (f"{_duration_words(cfg.cache_age_max_seconds)} (your `age`)" if cfg.cache_age_max_seconds
+           else f"an assumed {_duration_words(CONFIG['cache_guard_default_lifetime_seconds'])} (never holds a prompt)"
+           if CONFIG["cache_guard_default_lifetime_seconds"] else "none (no check)"),
         "thresholds:",
     ]
     configured = False

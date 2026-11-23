@@ -9,24 +9,25 @@ second full disk stopped the daemon from starting at all, because creating
 
 Both failures are autorun being unable to write a few kilobytes. This module
 removes the cause: while the disk has room, autorun keeps ``disk.reserve``
-(``disk_reserve_bytes`` of real data, 8 MiB by default). When opening the state
-database or taking the daemon lock fails on a volume that is nearly out of
-space, the caller deletes the reserve and retries once. The daemon's watchdog
-recreates it after space returns.
+(``disk_reserve_bytes`` of real data, 8 MiB by default). When opening SQLite,
+saving JSON state, taking the daemon lock, or starting the IPC server fails
+on a nearly full volume, the caller deletes the reserve and retries once.
+The daemon's watchdog recreates it after space returns.
 
 ``arm`` and ``release_if_exhausted`` never raise and return a bool: the reserve
 exists to recover from failure, so it must never be one. Filesystem calls catch
 ``OSError``; resolving the path or size (config, environment) can fail in other
 ways, so each public function also catches ``Exception`` around its whole body.
 
-Limits. The reserve covers a failure when a connection opens or the daemon lock
-is created, not a write that fails later inside an open transaction. It frees
-bytes, not inodes, so a volume out of inodes is not helped. On a volume with
-snapshots or transparent compression, deleting it may free less than its size.
+Limits. The reserve does not cover a write that fails inside an open SQLite
+transaction. It frees bytes, not inodes, so a volume out of inodes is not
+helped. On a volume with snapshots or transparent compression, deleting it may
+free less than its size.
 """
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 from pathlib import Path
@@ -119,42 +120,89 @@ def _arm(path: Path | None) -> bool:
         return False
 
 
-def release_if_exhausted(failed_near: Path, path: Path | None = None) -> bool:
+def is_out_of_space(error: BaseException | None) -> bool:
+    """Identify native space errors before checking whether the reserve can help.
+
+    ``durable_io`` re-raises a failed directory fsync as an ``OSError`` with a
+    message and no errno, keeping the native error as its cause, so the causes
+    are examined too.
+    """
+    # CPython maps ERROR_DISK_FULL (112) to ENOSPC, but
+    # ERROR_HANDLE_DISK_FULL (39) falls back to EINVAL.
+    return any(
+        error.errno in (errno.ENOSPC, _EDQUOT) or getattr(error, "winerror", None) == 39
+        for error in _os_errors(error)
+    )
+
+
+_EDQUOT = getattr(errno, "EDQUOT", errno.ENOSPC)
+
+
+def _os_errors(error: BaseException | None):
+    """Each OSError in ``error``'s cause and context chain, ``error`` first."""
+    pending, seen = [error], set()
+    while pending and len(seen) < 16:  # chains are short; the bound stops a cycle
+        error = pending.pop()
+        if error is None or id(error) in seen:
+            continue
+        seen.add(id(error))
+        if isinstance(error, OSError):
+            yield error
+        # Both links: `raise wrapped from close_error` replaces the cause and
+        # leaves the native fsync error reachable only as the context.
+        pending += [error.__cause__, error.__context__]
+
+
+def _over_quota(error: BaseException | None) -> bool:
+    return _EDQUOT != errno.ENOSPC and any(e.errno == _EDQUOT for e in _os_errors(error))
+
+
+def release_if_exhausted(
+    failed_near: Path, path: Path | None = None, *, error: BaseException | None = None
+) -> bool:
     """Delete the reserve when the volume holding ``failed_near`` is nearly full.
 
-    ``failed_near`` is a path on the volume where a write just failed (the
-    state database, the daemon lock). Returns True when this call deleted the
-    reserve, so the caller should retry once. Returns False when the failure is
+    ``failed_near`` is a path on the volume where a write just failed, and
+    ``error`` the failure when the caller has it. A quota error (EDQUOT) skips
+    the free-space test: the volume can have room while the user has none,
+    and the reserve counts against the same quota.
+    Returns True when this call deleted the reserve or its staging file,
+    so the caller should retry once. Returns False when the failure is
     not about space (the reserve is kept), the reserve is on another volume, or
     there is none to release (never created, or another process just released
     it; that caller's retry succeeds and this one degrades for one call).
     Never raises.
     """
     try:
-        return _release_if_exhausted(failed_near, path)
+        return _release_if_exhausted(failed_near, path, error)
     except Exception as exc:  # the reserve must never be the failure
         _report_once("release", exc)
         return False
 
 
-def _release_if_exhausted(failed_near: Path, path: Path | None) -> bool:
+def _release_if_exhausted(failed_near: Path, path: Path | None, error: BaseException | None) -> bool:
     size = reserve_bytes()
     path = path or reserve_path()
     if size <= 0:
         return False
     directory = failed_near if failed_near.is_dir() else failed_near.parent
     free = _free_bytes(directory)
-    if free is None or free >= size // 2:
+    if not _over_quota(error) and (free is None or free >= size // 2):
         return False
     if not _same_volume(directory, path.parent):
         return False
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        return False
-    except OSError as exc:
-        logger.warning("Disk reserve could not be released: %s", exc)
-        return False
-    logger.warning("Disk is nearly full (%d bytes free); released the %d-byte reserve "
-                   "so autorun can keep writing its state", free, size)
-    return True
+    released = False
+    for candidate in (path.with_name(path.name + ".tmp"), path):
+        try:
+            candidate.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Disk reserve could not remove %s: %s", candidate, exc)
+        else:
+            released = True
+    if released:
+        reason = "quota exceeded" if _over_quota(error) else f"{free} bytes free"
+        logger.warning("Disk is nearly full (%s); released disk reserve space "
+                       "so autorun can keep writing its state", reason)
+    return released

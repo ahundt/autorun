@@ -1327,6 +1327,7 @@ def published(
     plugin: str = "",
     authorize: Callable[[], Decision] | None = None,
     backup_root: Path | None = None,
+    inspect_staged: Callable[[Path], None] | None = None,
     **settings: str,
 ) -> Iterator[Path]:
     """Stage beside ``target``, record what we wrote, and swap it in atomically.
@@ -1356,6 +1357,8 @@ def published(
             staged / OWNED_MARKER_NAME,
             json.dumps(TreeManifest.of(staged, plugin, **settings).as_payload(), indent=2) + "\n",
         )
+        if inspect_staged is not None:
+            inspect_staged(staged)
 
 
 def refresh_unmarked_tree(
@@ -2465,6 +2468,7 @@ def publish_tree(
     ownership_proof: Callable[[Path], bool] | None = None,
     force: bool = False,
     backup_root: Path | None = None,
+    inspect_staged: Callable[[Path], None] | None = None,
     **settings: str,
 ) -> Decision:
     """The common case: copy a source tree in, unless the decision says not to.
@@ -2493,7 +2497,8 @@ def publish_tree(
         return decision
     try:
         with published(
-            target, plugin=plugin, authorize=judge, backup_root=backup_root, **settings
+            target, plugin=plugin, authorize=judge, backup_root=backup_root,
+            inspect_staged=inspect_staged, **settings
         ) as staged:
             if decision.reason == LEGACY_REPUBLISH:
                 # Under the publication lock and before the swap, so a

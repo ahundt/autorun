@@ -16,6 +16,7 @@ exercises the same property against a real full volume on macOS.
 import errno
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -86,12 +87,215 @@ def test_release_deletes_the_reserve_only_when_the_volume_is_nearly_full(reserve
     assert disk_reserve.release_if_exhausted(reserve.parent) is False, "nothing left to release"
 
 
+@pytest.mark.parametrize("armed", [False, True], ids=["staging-only", "both-files"])
+def test_release_removes_an_interrupted_staging_file(reserve, monkeypatch, armed):
+    staging = reserve.with_suffix(".reserve.tmp")
+    staging.write_bytes(bytes(MIB))
+    if armed:
+        reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, MIB)
+    assert disk_reserve.release_if_exhausted(reserve.parent) is False
+    assert staging.exists()
+    _free(monkeypatch, 0)
+    assert disk_reserve.release_if_exhausted(reserve.parent) is True
+    assert not staging.exists() and not reserve.exists()
+
+
+@pytest.mark.skipif(not hasattr(errno, "EDQUOT"), reason="no EDQUOT")
+def test_a_quota_error_releases_the_reserve_on_a_volume_with_room(reserve, monkeypatch, caplog):
+    """A user over quota cannot write although the volume has room, and the
+    reserve counts against that quota; the free-space test cannot see it."""
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 1024 * MIB)
+    wrapped = OSError("directory fsync failed")
+    wrapped.__cause__ = OSError(errno.EDQUOT, "Disc quota exceeded")
+    assert disk_reserve.release_if_exhausted(reserve.parent) is False, "no error given: free space decides"
+    assert disk_reserve.release_if_exhausted(reserve.parent, error=OSError(errno.ENOSPC, "full")) is False
+    assert reserve.exists()
+    with caplog.at_level("WARNING"):
+        assert disk_reserve.release_if_exhausted(reserve.parent, error=wrapped) is True
+    assert not reserve.exists()
+    assert "quota exceeded" in caplog.text
+
+
+@pytest.mark.skipif(not hasattr(errno, "EDQUOT"), reason="no EDQUOT")
+def test_a_quota_error_still_needs_the_reserve_on_the_same_volume(reserve, monkeypatch):
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 1024 * MIB)
+    monkeypatch.setattr(disk_reserve, "_same_volume", lambda *_a: False)
+    assert disk_reserve.release_if_exhausted(reserve.parent, error=OSError(errno.EDQUOT, "q")) is False
+    assert reserve.exists()
+
+
 def test_release_ignores_a_failure_on_another_volume(reserve, monkeypatch):
     reserve.write_bytes(bytes(MIB))
     _free(monkeypatch, 0)
     monkeypatch.setattr(disk_reserve, "_same_volume", lambda *_a: False)
     assert disk_reserve.release_if_exhausted(reserve.parent) is False
     assert reserve.exists(), "freeing this volume cannot help the other one"
+
+
+def test_json_save_releases_the_reserve_and_retries_once(reserve, tmp_path, monkeypatch):
+    from autorun import session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    real_write = session_manager.atomic_write_json
+    attempts = []
+
+    def write_needing_space(path, data):
+        attempts.append(reserve.exists())
+        if reserve.exists():
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write(path, data)
+
+    monkeypatch.setattr(session_manager, "atomic_write_json", write_needing_space)
+    with store.session("s") as state:
+        state["saved"] = True
+    assert attempts == [True, False]
+    assert not reserve.exists()
+    with store.session("s") as state:
+        assert state["saved"] is True
+
+
+def test_json_save_stops_after_one_retry_when_the_disk_stays_full(reserve, tmp_path, monkeypatch):
+    from autorun import session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    attempts = []
+
+    def write_always_full(path, data):
+        attempts.append(1)
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(session_manager, "atomic_write_json", write_always_full)
+    with pytest.raises(session_manager.SessionPersistenceError, match="No space left"):
+        with store.session("s") as state:
+            state["saved"] = True
+    assert len(attempts) == 2, "one retry after the release, then the error stands"
+
+
+@pytest.mark.parametrize(
+    "errnum, winerror, retry",
+    [
+        pytest.param(errno.EACCES, None, False, id="eacces"),
+        pytest.param(None, None, False, id="no-errno"),
+        pytest.param(getattr(errno, "EDQUOT", None), None, True, id="edquot",
+                     marks=pytest.mark.skipif(not hasattr(errno, "EDQUOT"), reason="no EDQUOT")),
+        pytest.param(errno.ENOSPC, 112, True, id="winerror-112"),
+        pytest.param(errno.EINVAL, 39, True, id="winerror-39"),
+        pytest.param(errno.EINVAL, 87, False, id="winerror-87"),
+    ],
+)
+def test_json_save_reserve_depends_on_write_error(reserve, tmp_path, monkeypatch, errnum, winerror, retry):
+    from contextlib import nullcontext
+
+    from autorun import session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    error = OSError(errnum, "injected write failure")
+    if winerror is not None:
+        error.winerror = winerror  # Match CPython's Windows error fields on any platform.
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    real_write = session_manager.atomic_write_json
+    attempts = []
+
+    def write_once_failing(path, data):
+        attempts.append(reserve.exists())
+        if len(attempts) == 1:
+            raise error
+        return real_write(path, data)
+
+    monkeypatch.setattr(session_manager, "atomic_write_json", write_once_failing)
+    with (nullcontext() if retry else pytest.raises(session_manager.SessionPersistenceError)) as exc:
+        with store.session("s") as state:
+            state["saved"] = True
+    if not retry:
+        assert exc.value.__cause__ is error
+    assert attempts == ([True, False] if retry else [True])
+    assert reserve.exists() is not retry
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="durable_io.sync_directory does not fsync a directory on Windows")
+def test_json_save_retries_when_the_directory_fsync_reports_no_space(reserve, tmp_path, monkeypatch):
+    """durable_io wraps that failure in an OSError without an errno; the
+    native ENOSPC is its cause, and the real writer is what raises it here."""
+    from autorun import durable_io, session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    real_fsync = os.fsync
+    failures = []
+
+    def fsync_needing_space(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode) and reserve.exists():
+            failures.append(1)
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(durable_io.os, "fsync", fsync_needing_space)
+    with store.session("s") as state:
+        state["saved"] = True
+    assert failures == [1], "the directory fsync failed once, with the reserve present"
+    assert not reserve.exists()
+    with store.session("s") as state:
+        assert state["saved"] is True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="durable_io.sync_directory does not fsync a directory on Windows")
+def test_json_save_retries_when_the_directory_fsync_and_then_its_close_fail(reserve, tmp_path, monkeypatch):
+    """Both faults through the real writer: the close failure replaces the
+    fsync error's cause, so the errno has to survive on the error itself."""
+    from autorun import durable_io, session_manager
+
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 0)
+    store = session_manager._JSONStore(str(tmp_path / "state.json"), str(tmp_path / "state.lock"))
+    real_fsync, real_close = os.fsync, os.close
+    failing = set()
+
+    def fsync_needing_space(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode) and reserve.exists():
+            failing.add(descriptor)
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_fsync(descriptor)
+
+    def close_failing_after(descriptor):
+        real_close(descriptor)
+        if descriptor in failing:
+            failing.discard(descriptor)
+            raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(durable_io.os, "fsync", fsync_needing_space)
+    monkeypatch.setattr(durable_io.os, "close", close_failing_after)
+    with store.session("s") as state:
+        state["saved"] = True
+    assert not reserve.exists()
+    monkeypatch.undo()
+    with store.session("s") as state:
+        assert state["saved"] is True
+
+
+def test_out_of_space_is_found_behind_a_later_close_failure():
+    """durable_io raises the fsync wrapper `from` a failed close, which leaves
+    the native ENOSPC as the wrapper's context, not its cause."""
+    native = OSError(errno.ENOSPC, "No space left on device")
+    try:
+        try:
+            raise native
+        except OSError as exc:
+            wrapped = OSError(f"Could not fsync directory: {exc}")
+            raise wrapped from OSError(errno.EIO, "close failed")
+    except OSError as outer:
+        assert outer.errno is None and outer.__cause__.errno == errno.EIO
+        assert disk_reserve.is_out_of_space(outer)
+    assert not disk_reserve.is_out_of_space(OSError(errno.EIO, "close failed"))
+    assert not disk_reserve.is_out_of_space(None)
 
 
 def _store_needing_space(tmp_path, reserve):
@@ -148,7 +352,8 @@ def test_a_second_failure_after_the_retry_is_raised(reserve, tmp_path, monkeypat
     assert store._connect_once.call_count == 2, "exactly one retry"
 
 
-def test_daemon_lock_releases_the_reserve_when_creating_the_lock_file_fails(reserve, tmp_path, monkeypatch):
+@pytest.mark.parametrize("errnum", [errno.ENOSPC, errno.EACCES], ids=["enospc", "eacces"])
+def test_daemon_lock_releases_the_reserve_when_creating_the_lock_file_fails(reserve, tmp_path, monkeypatch, errnum):
     from autorun.core import AutorunDaemon
 
     reserve.write_bytes(bytes(MIB))
@@ -162,19 +367,25 @@ def test_daemon_lock_releases_the_reserve_when_creating_the_lock_file_fails(rese
 
         def acquire(self):
             attempts.append(reserve.exists())
-            if reserve.exists():
-                raise OSError(errno.ENOSPC, "No space left on device")
+            if (errnum == errno.ENOSPC and reserve.exists()) or len(attempts) == 1:
+                raise OSError(errnum, os.strerror(errnum))
 
         def release(self):
             pass
 
     daemon = AutorunDaemon.__new__(AutorunDaemon)
     daemon._daemon_lock = None
+    monkeypatch.setattr(daemon, "_socket_connect_test", lambda: False)
     with mock.patch("autorun.core.LOCK_PATH", lock_path), \
             mock.patch("filelock.FileLock", SpaceDependentLock):
-        assert daemon._acquire_daemon_lock() is True
-    assert attempts == [True, False]
-    assert not reserve.exists()
+        if errnum == errno.EACCES:
+            assert daemon._acquire_daemon_lock() is False
+            assert attempts == [True]
+            assert reserve.exists()
+        else:
+            assert daemon._acquire_daemon_lock() is True
+            assert attempts == [True, False]
+            assert not reserve.exists()
 
 
 def test_lock_failure_warning_names_the_errno_and_does_not_blame_nfs(reserve, tmp_path, monkeypatch, caplog):
@@ -252,7 +463,14 @@ def test_the_watchdog_tick_arms_the_reserve(monkeypatch):
     assert calls == [1]
 
 
-def test_daemon_start_arms_the_reserve(monkeypatch):
+@pytest.mark.parametrize("transport, errnum", [
+    pytest.param(None, None, id="no-error"),
+    pytest.param("unix", errno.ENOSPC, id="unix-enospc"),
+    pytest.param("tcp", errno.ENOSPC, id="tcp-enospc"),
+    pytest.param("unix", errno.EACCES, id="unix-eacces"),
+    pytest.param("tcp", errno.EACCES, id="tcp-eacces"),
+])
+def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport, errnum):
     import asyncio
     import threading
 
@@ -261,6 +479,18 @@ def test_daemon_start_arms_the_reserve(monkeypatch):
     daemon = core.AutorunDaemon.__new__(core.AutorunDaemon)
     daemon._loop = daemon._shutdown_event = daemon._server = daemon._watchdog_task = None
     armed = threading.Event()
+    attempts, released_near = [], []
+    if transport:
+        reserve.write_bytes(bytes(MIB))
+        _free(monkeypatch, 0)
+        monkeypatch.setattr(core.ipc, "HAS_UNIX_SOCKETS", transport == "unix")
+        # Separate directories, so the test sees which endpoint start() names.
+        for attr, folder in (("SOCKET_PATH", "unix"), ("PORT_FILE", "tcp"), ("TOKEN_FILE", "tcp")):
+            (reserve.parent / folder).mkdir(exist_ok=True)
+            monkeypatch.setattr(core.ipc, attr, reserve.parent / folder / attr.lower())
+        real_release = disk_reserve.release_if_exhausted
+        monkeypatch.setattr(disk_reserve, "release_if_exhausted",
+                            lambda near, *a, **k: released_near.append(near) or real_release(near, *a, **k))
 
     class Server:
         async def __aenter__(self):
@@ -273,7 +503,12 @@ def test_daemon_start_arms_the_reserve(monkeypatch):
         async def __aexit__(self, *_exc):
             return False
 
+    error = OSError(errnum, os.strerror(errnum)) if errnum is not None else None
+
     async def start_server(*_a, **_k):
+        attempts.append(reserve.exists())
+        if (errnum == errno.ENOSPC and reserve.exists()) or (errnum == errno.EACCES and len(attempts) == 1):
+            raise error
         return Server()
 
     async def no_watchdog():
@@ -290,8 +525,20 @@ def test_daemon_start_arms_the_reserve(monkeypatch):
     monkeypatch.setattr(daemon, "_setup_signal_handlers", lambda: None)
     monkeypatch.setattr(daemon, "watchdog", no_watchdog)
     monkeypatch.setattr(daemon, "async_stop", no_stop)
+    if errnum == errno.EACCES:
+        with pytest.raises(OSError) as exc:
+            asyncio.run(daemon.start())
+        assert exc.value is error
+        assert attempts == [True]
+        assert released_near == []
+        assert reserve.exists()
+        assert not armed.is_set()
+        return
     asyncio.run(daemon.start())
     assert armed.is_set(), "AutorunDaemon.start() never called disk_reserve arm"
+    assert attempts == ([True, False] if transport else [False])
+    assert released_near == ([reserve.parent / transport] if transport else [])
+    assert not reserve.exists()
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("hdiutil"),

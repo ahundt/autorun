@@ -1048,7 +1048,11 @@ CLAUDE_HOOKS = ClaudeHookProtocol(
     # PostToolUse stays feedback-only: Claude accepts block/reason there, but
     # existing deny() calls on that event were written as feedback.
     # https://code.claude.com/docs/en/hooks#posttooluse-decision-control
-    context_events_with_block_decision=frozenset({"UserPromptSubmit"}),
+    # PreCompact: a block stops the compaction; for `/compact` Claude Code
+    # shows the reason. The cache guard blocks only a manual one, since a
+    # blocked automatic compaction leaves the context over its limit.
+    # https://code.claude.com/docs/en/hooks#precompact
+    context_events_with_block_decision=frozenset({"UserPromptSubmit", "PreCompact"}),
 )
 
 # Legacy Gemini CLI: root allow/deny decisions; deny rejects AfterAgent
@@ -1238,6 +1242,8 @@ class Platform:
     # Host applications that run this harness with their own task list in place
     # of its task tools. See HostTaskList.
     host_task_lists: tuple[HostTaskList, ...] = ()
+    # Entrypoint values for surfaces where a person types prompts, not SDK sends.
+    human_prompt_entrypoints: frozenset[str] = frozenset()
     # True when a successful call to one of this harness's task tools in a main
     # session proves the tools exist for the rest of that session (a Claude
     # session on an older model has them without the switch). False where a
@@ -1736,6 +1742,7 @@ CLAUDE = register(
             # =0 selects the legacy TodoWrite engine instead of the Task tools.
             env_off=("CLAUDE_CODE_ENABLE_TASKS",),
         ),
+        human_prompt_entrypoints=frozenset({"cli", "claude-desktop"}),
         # The Claude desktop app's Code tab shows mcp__ccd_turn__update_plan as
         # the session's task list and tells the model to use it in place of
         # TaskCreate/TaskUpdate/TaskList/TaskGet and not to search for them.
@@ -2877,6 +2884,18 @@ def forwarded_harness_env_names() -> frozenset[str]:
     ``autorun --cli <harness>`` console command).
     """
     return task_tool_switch_env_names() | host_task_list_env_names()
+
+
+def forwarded_harness_entrypoint(
+    platform: Platform, harness_env: "Mapping[str, str] | None"
+) -> str | None:
+    """Read the host's entrypoint marker without requiring its task-list tool."""
+    if isinstance(harness_env, Mapping):
+        for host in platform.host_task_lists:
+            value = harness_env.get(host.entrypoint_env)
+            if isinstance(value, str) and value:
+                return value
+    return None
 
 
 def host_task_list_tool(

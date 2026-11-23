@@ -1630,6 +1630,33 @@ def test_status_fails_when_an_owned_artifact_cannot_be_reconciled(monkeypatch, i
     assert entrypoint.show_status() == 1
 
 
+def test_status_previews_with_the_given_skill_placement(monkeypatch, isolated):
+    """`--status --skill-placement both` after an install with `both` listed
+    every shared skill copy as `retire`, because the preview used `auto`."""
+    from autorun.installer import entrypoint, orchestrate
+    from autorun.installer.traversal import Mode
+
+    seen = {}
+
+    def preview(**kwargs):
+        seen.update(kwargs)
+        return orchestrate.Result(Mode.PREVIEW, decisions=())
+
+    monkeypatch.setattr(
+        entrypoint,
+        "_harnesses",
+        lambda *args, **kwargs: ((SimpleNamespace(name="test"),), {}, (), ()),
+    )
+    monkeypatch.setattr(entrypoint, "_runtime_settings", lambda *args, **kwargs: None)
+    monkeypatch.setattr(orchestrate, "preview", preview)
+
+    entrypoint.show_status(skill_placement=["both"])
+    with_flag = seen["settings"]["skill_placement"]
+    entrypoint.show_status()
+    assert with_flag != seen["settings"]["skill_placement"]
+    assert "both" in str(with_flag)
+
+
 def test_status_reports_and_fails_for_the_hook_kill_switch(
     monkeypatch, isolated, capsys
 ):

@@ -13,9 +13,11 @@ Codex-native forms avoid unknown slash-command interception in the TUI:
 - `ar:estop` — emergency stop, cancels the current autorun.
 - `ar:task ignore <id>` — mark a tracked task as ignored so a Stop
   block can clear.
-- `ar:ok <pattern> [N|5m|perm]` — allow a blocked command in this
+- `ar:ok <pattern> ['<literal>' ...] [N|5m|perm]` — allow a blocked command in this
   session; default is one use then auto-revoke.
-- `ar:ok --global <pattern> [N|5m|perm]` — same allow, for every session.
+- `ar:ok --global` with the same arguments applies to every session.
+  To allow several patterns, quote the first unless it is typed (`regex:`,
+  `glob:` or `/re/`), and quote every additional literal.
 
 Slash forms such as `/ar:estop`, `/ar:task ignore`, and `/ar:ok` remain
 supported by autorun when a harness passes them to hooks, but current Codex

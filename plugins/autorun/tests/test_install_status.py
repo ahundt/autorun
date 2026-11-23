@@ -22,7 +22,7 @@ os.environ.setdefault("AUTORUN_HOME", "/tmp/autorun-test-home")
 os.environ.setdefault("AUTORUN_TEST_STATE_DIR", "/tmp/autorun-test-state")
 
 from autorun.installer import memory, status  # noqa: E402
-from autorun.installer.fs import Verdict, record_tree  # noqa: E402
+from autorun.installer.fs import OWNED_MARKER_NAME, Verdict, record_tree  # noqa: E402
 from autorun.installer.status import Level  # noqa: E402
 
 
@@ -199,6 +199,122 @@ def test_edited_claude_cache_names_force_and_backup_location(tmp_path, monkeypat
         "run `autorun --install --force`; it backs up unproven or edited files to "
         f"{backup_root} and then refreshes the cache"
     )
+
+
+def _cache_pair(tmp_path, *, checkout_source: bool, checkout_cache: bool, pyproject: bool = True):
+    """A source and a recorded cache, each laid out by one install route.
+
+    A source checkout ships the whole plugin directory, `src/` included; the
+    installed `autorun` command ships the built package, which has none.
+    `pyproject=False` is pdf-extractor's checkout, which has `src/` and no
+    `pyproject.toml`. Each payload differs from the other in most paths.
+    """
+    source = tmp_path / "source"
+    cached = tmp_path / "cache"
+    for root, checkout in ((source, checkout_source), (cached, checkout_cache)):
+        (root / ".claude-plugin").mkdir(parents=True)
+        (root / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "ar", "version": "1.2.3"}), encoding="utf-8"
+        )
+        if checkout:
+            if pyproject:
+                (root / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+            (root / "src" / "autorun").mkdir(parents=True)
+            (root / "src" / "autorun" / "core.py").write_text("# core\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_core.py").write_text("# test\n", encoding="utf-8")
+        else:
+            (root / "core.py").write_text("# core\n", encoding="utf-8")
+            (root / "metadata.json").write_text("{}\n", encoding="utf-8")
+    assert record_tree(
+        cached, plugin="ar", ownership_proof=lambda installed: installed == cached
+    )
+    return source, cached
+
+
+def _cache_finding(source, cached):
+    found = status.health(
+        hook_command=("x",),
+        claude_cache_entries={"ar@autorun 1.2.3": (source, cached)},
+        run=runner(0),
+    )
+    return [finding for finding in found if finding.check.startswith("Claude cache")]
+
+
+@pytest.mark.parametrize("pyproject", [True, False], ids=["ar", "pdf-extractor"])
+@pytest.mark.parametrize(
+    ("checkout_source", "checkout_cache", "writer"),
+    [(False, True, "source checkout"), (True, False, "installed `autorun` command")],
+)
+def test_intact_cache_from_the_other_install_route_is_not_broken(
+    tmp_path, checkout_source, checkout_cache, writer, pyproject
+):
+    """1.0.0rc5 reported 725 stale files after `python -m autorun --install`
+    from a checkout followed by the installed `autorun --status`, and the same
+    the other way round, while every cached file still matched its receipt.
+    The two routes ship different layouts, so neither payload is a standard
+    for the other; the receipt is."""
+    source, cached = _cache_pair(
+        tmp_path, checkout_source=checkout_source, checkout_cache=checkout_cache,
+        pyproject=pyproject,
+    )
+
+    findings = _cache_finding(source, cached)
+
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.level is Level.WARN
+    assert writer in finding.detail
+    assert "receipt" in finding.detail
+    assert finding.fix.startswith("nothing to repair;")
+
+
+def test_edited_file_in_a_cache_from_the_other_route_is_still_broken(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTORUN_HOME", str(tmp_path / "autorun-home"))
+    source, cached = _cache_pair(tmp_path, checkout_source=False, checkout_cache=True)
+    (cached / "src" / "autorun" / "core.py").write_text("# user edit\n", encoding="utf-8")
+    (cached / "tests" / "test_core.py").unlink()
+
+    findings = _cache_finding(source, cached)
+
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.level is Level.BROKEN
+    assert finding.detail == "src/autorun/core.py, tests/test_core.py"
+    assert "--force" in finding.fix
+
+
+def test_cache_from_the_other_route_without_a_receipt_says_it_was_not_checked(tmp_path):
+    source, cached = _cache_pair(tmp_path, checkout_source=False, checkout_cache=True)
+    (cached / OWNED_MARKER_NAME).unlink()
+
+    findings = _cache_finding(source, cached)
+
+    assert len(findings) == 1
+    assert findings[0].level is Level.WARN
+    assert "were not checked" in findings[0].detail
+
+
+def test_bytecode_left_in_src_does_not_make_a_packaged_cache_a_checkout(tmp_path):
+    """A packaged install over a checkout cache replaces the payload but leaves
+    `src/autorun/__pycache__/*.pyc`; that cache is the packaged layout."""
+    source, cached = _cache_pair(tmp_path, checkout_source=False, checkout_cache=False)
+    leftover = cached / "src" / "autorun" / "__pycache__"
+    leftover.mkdir(parents=True)
+    (leftover / "core.cpython-312.pyc").write_bytes(b"\0")
+
+    assert _cache_finding(source, cached) == []
+
+
+def test_same_route_comparison_is_unchanged_for_checkouts(tmp_path):
+    source, cached = _cache_pair(tmp_path, checkout_source=True, checkout_cache=True)
+    (source / "src" / "autorun" / "new.py").write_text("# new\n", encoding="utf-8")
+
+    findings = _cache_finding(source, cached)
+
+    assert len(findings) == 1
+    assert findings[0].level is Level.BROKEN
+    assert "src/autorun/new.py" in findings[0].detail
 
 
 def test_two_real_copies_of_a_skill_are_reported(tmp_path):

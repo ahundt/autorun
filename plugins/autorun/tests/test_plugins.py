@@ -270,6 +270,45 @@ class TestCommandBlockingPlugin:
         assert pattern == "cargo set-version"
         assert desc == "perm"
 
+    @pytest.mark.parametrize("args, expected", [
+        ("git push", ("git push", None, "literal")),
+        ("'git push'", ("git push", None, "literal")),
+        ("git push 5m", ("git push", "5m", "literal")),
+        ("5m git push", ("git push", "5m", "literal")),
+        ("git push 30m", ("git push", "30m", "literal")),
+        ("p 'git push'", ("git push", "p", "literal")),
+        ("'git push' p", ("git push", "p", "literal")),
+        ("rm", ("rm", None, "literal")),
+        ("3 rm", ("rm", "3", "literal")),
+        ("5m rm", ("rm", "5m", "literal")),
+        ("rm 2", ("rm", "2", "literal")),
+        ("rm 3", ("rm", "3", "literal")),
+        ("rm 3 5m", ("rm", "3 5m", "literal")),
+        *[(f"rm {word}", ("rm", word, "literal")) for word in ("perm", "permanent", "p")],
+        ("'cargo set-version' perm", ("cargo set-version", "perm", "literal")),
+        ("'regex:version|Cargo.toml' perm", ("version|Cargo.toml", "perm", "regex")),
+        ("regex:version|Cargo.toml perm", ("version|Cargo.toml", "perm", "regex")),
+        ("'regex:git push|git commit' perm", ("git push|git commit", "perm", "regex")),
+        (r"regex:terraform\s+destroy 5m", (r"terraform\s+destroy", "5m", "regex")),
+        (r"regex:git\s+push", (r"git\s+push", None, "regex")),
+        ("glob:*.tmp", ("*.tmp", None, "glob")),
+        ("'/git.*push/' 5m", ("git.*push", "5m", "regex")),
+        ("'sleep 5' '5m'", ("sleep 5", "5m", "literal")),
+        ("'sleep 5' '3'", ("sleep 5", "3", "literal")),
+        ("'sleep 5' 'perm'", ("sleep 5", "perm", "literal")),
+        ("'sleep 5' ' 5m '", ("sleep 5", " 5m ", "literal")),
+        ("'5m'", ("5m", None, "literal")),
+        ("'sleep 5m", ("'sleep", "5m", "literal")),
+    ])
+    def test_parse_allow_args_preserves_single_pattern(self, args, expected):
+        extras = []
+        assert plugins._parse_allow_args(args, extra_patterns=extras) == expected
+        assert extras == []
+
+    def test_no_keeps_quoted_description_words(self):
+        for args, ptype in (("'git push'", "literal"), ("'regex:git push'", "regex")):
+            assert plugins._parse_args(f"{args} 'ask first' '5m'") == ("git push", "ask first 5m", ptype)
+
     def test_check_blocked_commands_allows_non_bash(self):
         """check_blocked_commands should allow non-Bash tools."""
         ctx = EventContext(session_id="test", event="PreToolUse", tool_name="Read")

@@ -881,8 +881,24 @@ class TestMainFunctionRouting:
         mock_status.assert_called_once_with(
             custom_harnesses=[spec],
             include_legacy_gemini=False,
+            skill_placement=mock.ANY,
         )
         assert result == 0
+
+    def test_status_forwards_the_skill_placement_an_install_would_use(self):
+        """--status previews the next install, so it takes the same placement."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.show_status", return_value=0
+        ) as mock_status, mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            assert main(["--status", "--skill-placement", "both"]) == 0
+            assert main(["--install", "--skill-placement", "both"]) == 0
+
+        forwarded = mock_status.call_args.kwargs["skill_placement"]
+        assert forwarded and forwarded == mock_install.call_args.kwargs["skill_placement"]
 
     def test_status_gemini_flag_opts_into_legacy_check(self):
         """Top-level status checks retired Gemini only by explicit request."""
@@ -896,6 +912,7 @@ class TestMainFunctionRouting:
         mock_status.assert_called_once_with(
             custom_harnesses=[],
             include_legacy_gemini=True,
+            skill_placement=mock.ANY,
         )
         assert result == 0
 

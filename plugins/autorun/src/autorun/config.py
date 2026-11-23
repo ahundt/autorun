@@ -943,12 +943,23 @@ CONFIG = {
     # read + cache write tokens) at least this large. 0 checks every size.
     # `/ar:cache set expired-min-tokens <tokens>` overrides it per session.
     "cache_guard_expired_min_tokens": 100_000,
-    # What the prompt-time expiry check does when nothing is stored: "warn"
-    # shows the notice and lets the prompt through; "block" stops it until
-    # it is sent again. `/ar:cache on` stores block, `/ar:cache warn` warn,
-    # `/ar:cache off` turns the check off. Warn until the wrapper text of
-    # turns no person typed has been confirmed from captured payloads.
-    "cache_guard_expired_prompt_action": "warn",
+    # Unstored prompt-time action: "block" holds in the Claude Code terminal
+    # and Claude desktop app. Other entrypoints (e.g. T3 Code) and harnesses
+    # warn. `/ar:cache on` opts a session into holding where supported; a
+    # guessed lifetime never holds. Resend the same text to proceed once;
+    # Claude Code slash commands such as `/ar:cache ok` are model requests.
+    "cache_guard_expired_prompt_action": "block",
+    # Cache lifetime assumed when the session record does not carry one (Pi,
+    # Prime Agent, Gemini CLI, Qwen Code, and a Claude row that wrote nothing)
+    # and `/ar:cache set age` is unset. 300 s is the shortest documented
+    # default: Anthropic's 5-minute prompt cache
+    # (https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+    # and OpenAI's in-memory retention of "around 5 to 10 minutes of
+    # inactivity" (https://developers.openai.com/api/docs/guides/prompt-caching).
+    # Gemini documents no implicit-cache lifetime
+    # (https://aistudio.google.com/docs/caching). A guess only warns, never
+    # holds a prompt. 0 turns the guess off.
+    "cache_guard_default_lifetime_seconds": 300.0,
     # ─── Hook Performance Budgets ───────────────────────────────────────────
     # Maximum time a hook-path state read/write may wait on the shared JSON
     # state lock. Longer waits cause Claude/Codex hook timeouts under many

@@ -347,12 +347,20 @@ class _JSONStore:
     def _save(self):
         # Reported as a state error, as _load reports a failed read and the
         # SQLite store reports a failed commit: callers handle that one type.
-        try:
-            atomic_write_json(Path(self._state_file), self._data)
-        except OSError as exc:
-            raise SessionPersistenceError(
-                f"Could not save state file {self._state_file}: {exc}"
-            ) from exc
+        state_path = Path(self._state_file)
+        for attempt in (1, 2):
+            try:
+                atomic_write_json(state_path, self._data)
+                return
+            except OSError as exc:
+                from . import disk_reserve
+
+                if (attempt == 1 and disk_reserve.is_out_of_space(exc)
+                        and disk_reserve.release_if_exhausted(state_path, error=exc)):
+                    continue
+                raise SessionPersistenceError(
+                    f"Could not save state file {self._state_file}: {exc}"
+                ) from exc
 
     def _assert_authoritative(self) -> None:
         """Refuse a transaction after SQLite has taken state authority.
