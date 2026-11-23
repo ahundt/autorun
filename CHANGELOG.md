@@ -75,7 +75,12 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    Resending a held prompt also uses up a waiting `/ar:cache ok`, so a
    leftover `ok` cannot pass a later prompt unseen; the same text keeps
    passing until the next response, as it did. A prompt that 1.0.0rc4 held
-   just before the upgrade still passes when it is resent.
+   just before the upgrade still passes when it is resent, with the notice
+   saying what the send costs. After a manual `/compact` the next prompt is
+   not held: the compaction already re-sent the old context, and the check
+   resumes with the next response. In the config file,
+   `cache_guard_expired_prompt_action` takes `block`, `warn` or `off`; any
+   other value is logged and treated as `block`.
    The hook cannot tell text you type from text a program types into a
    terminal session (`tmux send-keys`, a script driving the terminal), so
    such a program is held the same way: have it send the text twice, or run
@@ -156,7 +161,8 @@ several quoted patterns in one command; and Pi agents started by pi-subagents
    (`disk_reserve_bytes`; 0 stops autorun creating it), created while the volume has four
    times that free. When opening the SQLite state database, saving the JSON
    state file, taking the daemon lock or creating the daemon's socket fails on
-   a volume with under half the reserve free, autorun deletes the reserve and
+   a volume with under half the reserve free, or with a disk-quota error
+   (EDQUOT) on the reserve's volume, autorun deletes the reserve and
    retries once; the daemon recreates it when space returns. A real
    full volume that made the 1.0.0rc4 daemon degrade every tool call
    (`state_evaluation_failed`) now runs them normally. Guarded deletions still

@@ -31,7 +31,10 @@ from .scoped_allow import (
     ScopedAllow, _PERMANENT_KEYWORDS,
     call_fingerprint, fingerprint_call, parse_scope_args, parse_duration,
 )
+from .logging_utils import get_logger
 from .session_manager import session_state
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from .core import EventContext
@@ -142,9 +145,35 @@ def _effective_entry(toggle) -> "dict | None":
     return toggle
 
 
+_BUILT_IN_PROMPT_ACTION = "block"  # config.py's default for cache_guard_expired_prompt_action
+_unknown_actions_logged: set = set()
+
+
+def _configured_prompt_action() -> "str | None":
+    """The config file's prompt action: `block`, `warn`, or None for `off`.
+
+    `off` (any case) or null turns the check off, the word `/ar:cache off`
+    uses. Any other value keeps the built-in default instead of a behavior the
+    user did not write, and is logged once.
+    """
+    raw = CONFIG.get("cache_guard_expired_prompt_action", _BUILT_IN_PROMPT_ACTION)
+    if raw is None or raw is False:
+        return None
+    word = str(raw).strip().lower()
+    if word == "off":
+        return None
+    if word in _EXPIRED_PROMPT_ACTIONS:
+        return word
+    if word not in _unknown_actions_logged:
+        _unknown_actions_logged.add(word)
+        logger.warning("cache_guard_expired_prompt_action %r is not block, warn or off; using %s",
+                       raw, _BUILT_IN_PROMPT_ACTION)
+    return _BUILT_IN_PROMPT_ACTION
+
+
 def _expired_prompt_action(entry: "dict | None") -> "str | None":
     """`block`, `warn`, or None (off) for the prompt-time expiry check."""
-    default = CONFIG["cache_guard_expired_prompt_action"]
+    default = _configured_prompt_action()
     if entry is None:
         return default
     if not entry.get("enabled", False):
@@ -362,6 +391,11 @@ def _scan_once(path: str, *, start_from_end: int, cli: str) -> "UsageReading | N
             continue
         if not isinstance(obj, dict):
             continue
+        if obj.get("subtype") == "compact_boundary" or obj.get("isCompactSummary") is True:
+            # Claude Code's `/compact` writes these and no response with usage.
+            # Every response before them measured the context it replaced, so
+            # there is no reading until the next response.
+            return None
         entry_type = (obj.get("type") or obj.get("role") or "").lower()
         if entry_type == "message" and isinstance(obj.get("message"), dict):
             entry_type = str(obj["message"].get("role") or "").lower()
@@ -669,10 +703,13 @@ class CacheGuard:
         if not resent and digest in held:
             # 1.0.0rc4 stored the bare digest. A prompt it held passes its
             # resend, and the record is rewritten so it ends with this expiry.
+            # It never removed a digest whose resend had passed, so this text
+            # may have been held days ago: it passes with the cost notice.
             ctx.state_update(
                 _RESENT_PROMPTS_KEY,
                 lambda kept: [hold if h == digest else h for h in _held_digests(kept)], [])
-            resent = True
+            return ctx.respond(
+                "allow", _render_expired(usage, self.config, ctx.cli_type, blocking=False), to_ai=False)
         # Keyed on the prompt text: a prompt has no tool input, so the tool
         # fingerprint is the same for every prompt, and ScopedAllow's
         # parallel-hook grace would let one `ok` pass the next prompt too.

@@ -129,27 +129,43 @@ def is_out_of_space(error: BaseException | None) -> bool:
     """
     # CPython maps ERROR_DISK_FULL (112) to ENOSPC, but
     # ERROR_HANDLE_DISK_FULL (39) falls back to EINVAL.
+    return any(
+        error.errno in (errno.ENOSPC, _EDQUOT) or getattr(error, "winerror", None) == 39
+        for error in _os_errors(error)
+    )
+
+
+_EDQUOT = getattr(errno, "EDQUOT", errno.ENOSPC)
+
+
+def _os_errors(error: BaseException | None):
+    """Each OSError in ``error``'s cause and context chain, ``error`` first."""
     pending, seen = [error], set()
     while pending and len(seen) < 16:  # chains are short; the bound stops a cycle
         error = pending.pop()
         if error is None or id(error) in seen:
             continue
         seen.add(id(error))
-        if isinstance(error, OSError) and (
-            error.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC))
-            or getattr(error, "winerror", None) == 39
-        ):
-            return True
+        if isinstance(error, OSError):
+            yield error
         # Both links: `raise wrapped from close_error` replaces the cause and
         # leaves the native fsync error reachable only as the context.
         pending += [error.__cause__, error.__context__]
-    return False
 
 
-def release_if_exhausted(failed_near: Path, path: Path | None = None) -> bool:
+def _over_quota(error: BaseException | None) -> bool:
+    return _EDQUOT != errno.ENOSPC and any(e.errno == _EDQUOT for e in _os_errors(error))
+
+
+def release_if_exhausted(
+    failed_near: Path, path: Path | None = None, *, error: BaseException | None = None
+) -> bool:
     """Delete the reserve when the volume holding ``failed_near`` is nearly full.
 
-    ``failed_near`` is a path on the volume where a write just failed.
+    ``failed_near`` is a path on the volume where a write just failed, and
+    ``error`` the failure when the caller has it. A quota error (EDQUOT) skips
+    the free-space test: the volume can have room while the user has none,
+    and the reserve counts against the same quota.
     Returns True when this call deleted the reserve or its staging file,
     so the caller should retry once. Returns False when the failure is
     not about space (the reserve is kept), the reserve is on another volume, or
@@ -158,20 +174,20 @@ def release_if_exhausted(failed_near: Path, path: Path | None = None) -> bool:
     Never raises.
     """
     try:
-        return _release_if_exhausted(failed_near, path)
+        return _release_if_exhausted(failed_near, path, error)
     except Exception as exc:  # the reserve must never be the failure
         _report_once("release", exc)
         return False
 
 
-def _release_if_exhausted(failed_near: Path, path: Path | None) -> bool:
+def _release_if_exhausted(failed_near: Path, path: Path | None, error: BaseException | None) -> bool:
     size = reserve_bytes()
     path = path or reserve_path()
     if size <= 0:
         return False
     directory = failed_near if failed_near.is_dir() else failed_near.parent
     free = _free_bytes(directory)
-    if free is None or free >= size // 2:
+    if not _over_quota(error) and (free is None or free >= size // 2):
         return False
     if not _same_volume(directory, path.parent):
         return False
@@ -186,6 +202,7 @@ def _release_if_exhausted(failed_near: Path, path: Path | None) -> bool:
         else:
             released = True
     if released:
-        logger.warning("Disk is nearly full (%d bytes free); released disk reserve space "
-                       "so autorun can keep writing its state", free)
+        reason = "quota exceeded" if _over_quota(error) else f"{free} bytes free"
+        logger.warning("Disk is nearly full (%s); released disk reserve space "
+                       "so autorun can keep writing its state", reason)
     return released

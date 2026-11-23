@@ -356,7 +356,7 @@ class _JSONStore:
                 from . import disk_reserve
 
                 if (attempt == 1 and disk_reserve.is_out_of_space(exc)
-                        and disk_reserve.release_if_exhausted(state_path)):
+                        and disk_reserve.release_if_exhausted(state_path, error=exc)):
                     continue
                 raise SessionPersistenceError(
                     f"Could not save state file {self._state_file}: {exc}"

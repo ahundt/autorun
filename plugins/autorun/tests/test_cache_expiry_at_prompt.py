@@ -276,7 +276,11 @@ def test_resending_the_blocked_text_passes_and_other_text_still_blocks(clock):
 
 def test_a_hold_recorded_by_1_0_0rc4_still_passes_its_resend_after_the_upgrade(clock):
     """1.0.0rc4 stored the bare prompt digest. A prompt held just before the
-    upgrade must not be held a second time when it is resent after it."""
+    upgrade must not be held a second time when it is resent after it.
+
+    1.0.0rc4 never removed a digest once its resend passed, so the record can
+    also name text it held days earlier, such as "continue". That text passes
+    once too, but it says what the send costs instead of passing silently."""
     import hashlib
 
     from autorun import cache_guard
@@ -285,10 +289,56 @@ def test_a_hold_recorded_by_1_0_0rc4_still_passes_its_resend_after_the_upgrade(c
     digest = hashlib.sha256(b"Continue with the refactor.").hexdigest()
     EventContext(session_id=session.id, event="UserPromptSubmit", store=session.store).state_set(
         cache_guard._RESENT_PROMPTS_KEY, [digest])
-    assert not blocked(session.prompt("Continue with the refactor."))
+    assert outcome(session.prompt("Continue with the refactor.")) == "notice"
     assert not blocked(session.prompt("Continue with the refactor."))  # second hook, same prompt
     next_expiry(session, clock)
     assert blocked(session.prompt("Continue with the refactor.")), "the 1.0.0rc4 record outlived its expiry"
+
+
+def _compacted(transcript: Path, source: Path, clock: _FrozenClock) -> Path:
+    """`source` followed by the two rows Claude Code writes for a manual
+    `/compact`: a `system` `compact_boundary` row and the summary as a `user`
+    row. Neither carries usage, so the newest usage row is the one before."""
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(clock.now - 30))
+    rows = [
+        {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
+         "isMeta": False, "timestamp": stamp, "uuid": "c-0001",
+         "compactMetadata": {"trigger": "manual", "preTokens": 250_000, "postTokens": 12_910}},
+        {"type": "user", "isCompactSummary": True, "timestamp": stamp, "uuid": "c-0002",
+         "message": {"role": "user", "content": "This session is being continued from a previous conversation."}},
+    ]
+    transcript.write_text(source.read_text() + "".join(json.dumps(row) + "\n" for row in rows))
+    return transcript
+
+
+def test_a_prompt_after_a_manual_compact_is_not_held_for_the_context_it_replaced(clock, tmp_path):
+    """`/compact` already re-sent the old context to summarise it, and the next
+    prompt sends only the summary. The response before the compaction is no
+    measure of what this prompt costs."""
+    transcript = _compacted(tmp_path / "compacted.jsonl", EXPIRED_1H, clock)
+    assert outcome(Session("claude", transcript).prompt("Continue with the refactor.")) == "silent"
+    assert outcome(armed(transcript, mode="warn").prompt("Continue with the refactor.")) == "silent"
+
+
+def test_a_response_written_after_a_compaction_is_read_as_usual(clock, tmp_path):
+    """Auto-compaction runs inside a turn, so responses follow the boundary;
+    the newest of them decides, as it does without a compaction."""
+    transcript = _compacted(tmp_path / "compacted.jsonl", FRESH_1H, clock)
+    with transcript.open("a") as stream:
+        stream.write(EXPIRED_1H.read_text())
+    assert outcome(Session("claude", transcript).prompt("Continue with the refactor.")) == "hold"
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [("block", "hold"), ("warn", "notice"), ("off", "silent"), ("Off", "silent"), (None, "silent"),
+     ("hold-please", "hold")],
+)
+def test_the_config_file_action_is_block_warn_or_off(clock, monkeypatch, configured, expected):
+    """`off` in autorun.config.json is the same word as `/ar:cache off`; an
+    unknown word keeps the built-in default instead of a setting nobody wrote."""
+    monkeypatch.setitem(CONFIG, "cache_guard_expired_prompt_action", configured)
+    assert outcome(Session("claude", EXPIRED_1H).prompt("Continue with the refactor.")) == expected
 
 
 # Every case below drives the one fake clock (`clock`), so a one-hour or ten-day

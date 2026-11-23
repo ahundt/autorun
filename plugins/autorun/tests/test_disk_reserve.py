@@ -101,6 +101,32 @@ def test_release_removes_an_interrupted_staging_file(reserve, monkeypatch, armed
     assert not staging.exists() and not reserve.exists()
 
 
+@pytest.mark.skipif(not hasattr(errno, "EDQUOT"), reason="no EDQUOT")
+def test_a_quota_error_releases_the_reserve_on_a_volume_with_room(reserve, monkeypatch, caplog):
+    """A user over quota cannot write although the volume has room, and the
+    reserve counts against that quota; the free-space test cannot see it."""
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 1024 * MIB)
+    wrapped = OSError("directory fsync failed")
+    wrapped.__cause__ = OSError(errno.EDQUOT, "Disc quota exceeded")
+    assert disk_reserve.release_if_exhausted(reserve.parent) is False, "no error given: free space decides"
+    assert disk_reserve.release_if_exhausted(reserve.parent, error=OSError(errno.ENOSPC, "full")) is False
+    assert reserve.exists()
+    with caplog.at_level("WARNING"):
+        assert disk_reserve.release_if_exhausted(reserve.parent, error=wrapped) is True
+    assert not reserve.exists()
+    assert "quota exceeded" in caplog.text
+
+
+@pytest.mark.skipif(not hasattr(errno, "EDQUOT"), reason="no EDQUOT")
+def test_a_quota_error_still_needs_the_reserve_on_the_same_volume(reserve, monkeypatch):
+    reserve.write_bytes(bytes(MIB))
+    _free(monkeypatch, 1024 * MIB)
+    monkeypatch.setattr(disk_reserve, "_same_volume", lambda *_a: False)
+    assert disk_reserve.release_if_exhausted(reserve.parent, error=OSError(errno.EDQUOT, "q")) is False
+    assert reserve.exists()
+
+
 def test_release_ignores_a_failure_on_another_volume(reserve, monkeypatch):
     reserve.write_bytes(bytes(MIB))
     _free(monkeypatch, 0)
@@ -464,7 +490,7 @@ def test_daemon_start_arms_the_reserve(reserve, monkeypatch, transport, errnum):
             monkeypatch.setattr(core.ipc, attr, reserve.parent / folder / attr.lower())
         real_release = disk_reserve.release_if_exhausted
         monkeypatch.setattr(disk_reserve, "release_if_exhausted",
-                            lambda near, *a: released_near.append(near) or real_release(near, *a))
+                            lambda near, *a, **k: released_near.append(near) or real_release(near, *a, **k))
 
     class Server:
         async def __aenter__(self):

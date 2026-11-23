@@ -60,7 +60,13 @@ Anthropic measures the lifetime from the start of the request; autorun
 measures from the last response. The check needs a record that reports
 at least one cache-read or cache-write token.
 Auto-compaction runs inside a turn that began with a prompt, so this check
-runs before it.
+runs before it. After a manual `/compact` the next prompt is not checked: the
+compaction already re-sent the old context, and the check resumes with the
+next response.
+
+In `autorun.config.json`, `cache_guard_expired_prompt_action` sets the
+default for sessions with no setting of their own: `block` (the default),
+`warn` or `off`. Any other value is logged and treated as `block`.
 
 ## What proceeding costs
 
