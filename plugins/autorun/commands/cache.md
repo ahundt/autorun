@@ -7,6 +7,9 @@ argument-hint: "[on|warn|off|set|ok|no|status] [args…]"
 
 $ARGUMENTS
 
+When this message's hook context holds a `<held-prompt>`, answer that
+prompt as the user's message for this turn; this command needs no reply.
+
 ## What you see
 
 Autorun holds prompts by default in the Claude Code terminal and Claude
@@ -92,9 +95,12 @@ Each takes an optional duration (`5m`, `1h`, or `perm`). A timed setting
 returns to the previous setting when it ends. `/ar:cache global off` (or
 `on`, `warn`) sets the default for sessions without their own setting.
 
-Send the same text again to proceed once. `/ar:cache ok` also lets the next
-prompt through. On Claude Code, `/ar:cache ok` and every other slash command
-are model requests, so resending the prompt is cheaper.
+Send the same text again to proceed once, or run `/ar:cache ok`. On Claude
+Code every slash command is itself a model request, so `/ar:cache ok` sends
+the held prompt in its place: one request answers it, as a resend would. A
+held prompt over 9,000 characters is not sent that way; resend it. With
+nothing held, `/ar:cache ok` lets the next prompt through. `/ar:cache ok 3`
+also keeps passes for the next three prompts.
 
 The check skips registered autorun commands, subagent hooks, prompts marked
 as non-user, and Claude Code's three known wrappers: `<task-notification>`,

@@ -2953,7 +2953,7 @@ class EventContext:
         # Enforce strict schema validation before returning
         return validate_hook_response(self._event, final_response, cli_type=cli_type)
 
-    def command_response(self, response_text: str, continue_loop: bool = True) -> Dict:
+    def command_response(self, response_text: str, continue_loop: bool = True, *, ai_text: str | None = None) -> Dict:
         """
         Response for locally-handled commands (UserPromptSubmit).
 
@@ -2964,6 +2964,7 @@ class EventContext:
         Args:
             response_text: The command output message
             continue_loop: True (default) keeps AI running. False for estop/stop.
+            ai_text: The AI's context instead of response_text (CommandReply).
 
         Usage:
             return ctx.command_response("✅ AutoFile policy: strict-search")
@@ -2982,7 +2983,7 @@ class EventContext:
             "systemMessage": response_text,
             "hookSpecificOutput": {
                 "hookEventName": get_cli_event_name(self._event, self.cli_type),
-                "additionalContext": response_text,
+                "additionalContext": response_text if ai_text is None else ai_text,
             },
         }
         return validate_hook_response(self._event, resp, cli_type=self.cli_type)
@@ -3016,6 +3017,19 @@ class EventContext:
     # Kept as alias because test_core.py tests the convenience method API
     # (allow/deny/ask/block) and external code may use ctx.block().
     block = continue_running
+
+
+@dataclass(frozen=True)
+class CommandReply:
+    """A command handler's reply when the AI should get other text than the user.
+
+    ``shown`` is printed to the user; ``for_ai`` is the AI's context for the
+    turn the command's prompt starts. A handler that returns a plain string
+    sends the same text to both.
+    """
+
+    shown: str
+    for_ai: str
 
 
 # === WHO WROTE A PROMPT ===
@@ -3394,6 +3408,9 @@ class AutorunApp:
                 response_text = match.handler(ctx)
                 # Stop/estop handlers set _halt_ai=True to kill AI loop
                 halt = getattr(ctx, "_halt_ai", False)
+                if isinstance(response_text, CommandReply):
+                    return ctx.command_response(
+                        response_text.shown, continue_loop=not halt, ai_text=response_text.for_ai)
                 return ctx.command_response(response_text, continue_loop=not halt)
             # Non-commands continue to AI
             return ctx.respond("allow")

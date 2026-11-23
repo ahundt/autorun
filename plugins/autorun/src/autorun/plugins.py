@@ -43,6 +43,7 @@ from .core import (
     apply_command_match,
     canonicalize_command_prompt,
     command_starts_agent_turn,
+    CommandReply,
     EventContext,
     logger,
     format_command_for_cli,
@@ -827,7 +828,9 @@ def _make_block_op(op: str):
                 # `/ar:ok cache` is `/ar:cache ok`: pass the held prompt (same count,
                 # duration and perm words). Quote it, `/ar:ok 'cache'`, to allow a
                 # shell command that is literally named cache.
-                return _run_cache_command(ctx, f"{'global ' if rule_scope == 'global' else ''}ok {desc or ''}")
+                if rule_scope == "global":
+                    return _run_cache_command(ctx, f"global ok {desc or ''}")
+                return _cache_ok_sends_held_prompt(ctx, f"ok {desc or ''}".strip())
 
             default_scope = not explicit_permanent and ttl is None and uses is None
             if default_scope:
@@ -1023,6 +1026,8 @@ def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
         logger.warning(f"Transcript policy command handler failed closed: {exc}")
         return None
 
+    if isinstance(result, CommandReply):
+        result = result.shown  # the prompt has already reached the model
     logger.info(f"Applied Codex transcript policy command {match.alias}: {result}")
     return result
 
@@ -2883,13 +2888,41 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
 
 
 @app.command("/ar:cache")
-def handle_cache(ctx: EventContext) -> str:
+def handle_cache(ctx: EventContext) -> "str | CommandReply":
     """Dispatch `/ar:cache` subcommands (on/off/set/ok/no/status).
 
     Reuses `scoped_allow.parse_scope_args` for `5m|5|perm` grammar; see
     `cache_guard.cache_command` and plan §6.5.1.
     """
-    return _run_cache_command(ctx, _command_line_arguments(ctx))
+    return _cache_ok_sends_held_prompt(ctx, _command_line_arguments(ctx))
+
+
+def _cache_ok_sends_held_prompt(ctx: EventContext, tail: str) -> "str | CommandReply":
+    """Run `/ar:cache <tail>`; a plain `ok` with a prompt held sends that prompt.
+
+    On Claude Code a typed command is itself a model request, so `ok` used to
+    cost one request that answered the command and a second for the resend.
+    Now the held prompt rides on the `ok` request as the user's message, and
+    the single-use grant is not stored: this request spends it. An `ok` with
+    a count or duration still stores the grant it names.
+    """
+    words = tail.split()
+    if [w.lower() for w in words[:1]] == ["ok"]:
+        from .cache_guard import CacheGuard
+
+        held = CacheGuard.from_ctx(ctx).take_held_prompt(ctx)
+        if held is not None:
+            if len(words) > 1:
+                _run_cache_command(ctx, tail)
+            return CommandReply(
+                shown="ar:cache ok: sending the held prompt in place of this command.",
+                for_ai=(
+                    "The user approved sending the prompt that ar:cache held. Answer it as the "
+                    "user's message for this turn; the /ar:cache command needs no reply.\n\n"
+                    f"<held-prompt>\n{held}\n</held-prompt>"
+                ),
+            )
+    return _run_cache_command(ctx, tail)
 
 
 def _run_cache_command(ctx: EventContext, tail: str) -> str:

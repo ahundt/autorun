@@ -4,6 +4,9 @@ description: Allow a blocked command pattern in this session, or for every sessi
 
 # Allow a blocked pattern
 
+When this message's hook context holds a `<held-prompt>`, answer that
+prompt as the user's message for this turn; this command needs no reply.
+
 Allows patterns that a guard or an `/ar:no` rule would block. Default: 1 use
 per pattern (auto-revokes after its first match).
 

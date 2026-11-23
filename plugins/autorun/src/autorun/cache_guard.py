@@ -620,6 +620,11 @@ _LAST_USAGE_KEY = "cache/last_usage"
 # same text then passes within that expiry only.
 _RESENT_PROMPTS_KEY = "cache/blocked_prompts"
 _RESENT_PROMPTS_KEPT = 50  # ponytail: oldest dropped; a block is rare, 50 covers a session
+# The text of the prompt held last, so `/ar:cache ok` can send it in its place.
+_HELD_PROMPT_KEY = "cache/held_prompt"
+# Claude Code keeps hook context up to 10,000 characters; a longer held prompt
+# is not forwarded, and the user resends it instead.
+_FORWARD_MAX_CHARS = 9_000
 # Said by the hold message and by the `off` reply: `off` stops autorun's check only.
 _CACHING_UNAFFECTED = "prompt caching stays on"
 
@@ -741,8 +746,31 @@ class CacheGuard:
             return ctx.respond(
                 "allow", _render_expired(usage, self.config, ctx.cli_type, blocking=False), to_ai=False)
         if self._passes_held_text(ctx, "UserPromptSubmit", digest, usage):
+            if ctx.state_get(_HELD_PROMPT_KEY):
+                ctx.state_set(_HELD_PROMPT_KEY, None)  # sent now: `ok` must not send it again
             return None  # the user chose to pay, this once
+        ctx.state_set(_HELD_PROMPT_KEY, {"text": prompt, "hold": f"{digest}@{int(usage.responded_at or 0)}"})
         return ctx.deny(_render_expired(usage, self.config, ctx.cli_type))
+
+    def take_held_prompt(self, ctx: EventContext) -> Optional[str]:
+        """The prompt held in the current expiry, removed so it is sent once.
+
+        None when nothing is held, a response has arrived since the hold
+        (that text was answered or the cache was written again), or the text
+        is too long to carry as hook context.
+        """
+        stored = ctx.state_get(_HELD_PROMPT_KEY)
+        if not stored:
+            return None
+        ctx.state_set(_HELD_PROMPT_KEY, None)
+        text = stored.get("text") if isinstance(stored, dict) else None
+        if not isinstance(text, str) or not text or len(text) > _FORWARD_MAX_CHARS:
+            return None
+        usage = self._read_usage(ctx, fresh=True)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if usage is None or stored.get("hold") != f"{digest}@{int(usage.responded_at or 0)}":
+            return None
+        return text
 
     def check_compact_after_expiry(self, ctx: EventContext) -> Optional[dict]:
         """Hold a manual `/compact` that would re-send an expired cache.

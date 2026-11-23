@@ -269,8 +269,7 @@ def test_reading_the_same_response_again_does_not_renew_the_remembered_reading(c
 
 def test_cache_ok_lets_the_next_prompt_through_once(clock):
     session = armed(EXPIRED_1H)
-    assert blocked(session.prompt("Continue with the refactor."))
-    session.command("ar:cache ok")
+    session.command("ar:cache ok")  # nothing held: the ok waits for the next prompt
     assert not blocked(session.prompt("Now update the changelog.")), "/ar:cache ok did not pass the next prompt"
     assert blocked(session.prompt("Then run the tests.")), "one /ar:cache ok passed more than one prompt"
 
@@ -505,8 +504,8 @@ def test_a_resend_and_an_ok_for_the_same_hold_spend_both_passes(clock):
 def test_a_hold_that_was_answered_with_other_text_does_not_pass_its_text_later(clock):
     session = armed(EXPIRED_1H)
     assert outcome(session.prompt("continue")) == "hold"
-    session.command("ar:cache ok")
-    assert outcome(session.prompt("something else")) == "silent"  # the ok passes this one
+    session.command("ar:cache ok 1")  # sends "continue" and keeps one pass
+    assert outcome(session.prompt("something else")) == "silent"  # the pass is spent here
     next_expiry(session, clock)
     assert outcome(session.prompt("continue")) == "hold", "the old hold's text passed unheld"
 
@@ -535,11 +534,65 @@ def test_a_global_setting_reaches_a_session_the_daemon_already_cached(clock, set
 
 @pytest.mark.parametrize("spelling", ["ar:ok cache", "ar ok cache", "ar:cache ok"])
 def test_every_ok_spelling_passes_one_prompt_and_the_next_is_held(clock, spelling):
+    assert blocked(armed(EXPIRED_1H).prompt("Continue with the refactor.")), "control: the expired cache did not block"
     session = armed(EXPIRED_1H)
-    assert blocked(session.prompt("Continue with the refactor.")), "control: the expired cache did not block"
     session.command(spelling)
     assert not blocked(session.prompt("Now update the changelog.")), f"{spelling!r} did not pass the next prompt"
     assert blocked(session.prompt("Then run the tests.")), f"{spelling!r} passed more than one prompt"
+
+
+# ─── /ar:cache ok sends the held prompt ───────────────────────────────────
+
+
+def _forwarded(response: dict) -> str | None:
+    """The held prompt an `ok` reply gives the AI, or None."""
+    context = (response.get("hookSpecificOutput") or {}).get("additionalContext") or ""
+    if "<held-prompt>" not in context:
+        return None
+    return context.split("<held-prompt>\n", 1)[1].rsplit("\n</held-prompt>", 1)[0]
+
+
+@pytest.mark.parametrize("spelling", ["ar:ok cache", "ar ok cache", "ar:cache ok"])
+def test_ok_after_a_hold_sends_the_held_prompt_in_its_own_request(clock, spelling):
+    """On Claude Code a typed command is a model request. The `ok` request
+    carries the held prompt as the user's message, so one request answers it,
+    and no pass is left over for a later expiry."""
+    session = armed(EXPIRED_1H)
+    assert outcome(session.prompt("Continue with the refactor.")) == "hold"
+    reply = session.command(spelling)
+    assert _forwarded(reply) == "Continue with the refactor.", reply
+    assert "sending the held prompt" in reply.get("systemMessage", ""), reply
+    assert "held-prompt" not in reply.get("systemMessage", ""), "the user was shown the AI's copy"
+    assert outcome(session.prompt("Now update the changelog.")) == "hold", "the forwarding ok left a pass behind"
+    assert _forwarded(session.command(spelling)) == "Now update the changelog."
+    assert _forwarded(session.command(spelling)) is None, "one held prompt was sent twice"
+
+
+def test_a_resent_prompt_is_not_sent_again_by_a_later_ok(clock):
+    session = armed(EXPIRED_1H)
+    assert outcome(session.prompt("continue")) == "hold"
+    assert outcome(session.prompt("continue")) == "silent"
+    assert _forwarded(session.command("ar:cache OK")) is None, "a prompt already resent was sent twice"
+
+
+def test_ok_with_a_count_sends_the_held_prompt_and_keeps_the_passes_it_names(clock):
+    session = armed(EXPIRED_1H)
+    assert outcome(session.prompt("continue")) == "hold"
+    assert _forwarded(session.command("ar:cache ok 2")) == "continue"
+    assert [outcome(session.prompt(f"prompt {n}")) for n in range(3)] == ["silent", "silent", "hold"]
+
+
+def test_a_hold_from_an_earlier_expiry_or_a_long_prompt_is_not_sent(clock):
+    session = armed(EXPIRED_1H)
+    assert outcome(session.prompt("continue")) == "hold"
+    next_expiry(session, clock)
+    assert _forwarded(session.command("ar:cache ok")) is None, "a prompt held in another expiry was sent"
+    long_text = "x" * 9_001
+    session = armed(EXPIRED_1H)
+    assert outcome(session.prompt(long_text)) == "hold"
+    reply = session.command("ar:cache ok")
+    assert _forwarded(reply) is None and "override granted" in text_of(reply), reply
+    assert outcome(session.prompt(long_text)) == "silent"
 
 
 # ─── a manual /compact on an expired cache ────────────────────────────────

@@ -354,7 +354,7 @@ Settings live in `~/.autorun/task-lifecycle.config.json`. [docs/TASK_TRACKING.md
 
 `/ar:cache` checks expired prompt caches of 100,000 tokens or more. The Claude Code terminal and Claude desktop app hold by default. Other entrypoints, including SDK hosts such as T3 Code, and other harnesses warn when cache data is available. A guessed lifetime never holds. In Claude Code a manual `/compact` on an expired cache is held too; run it again to proceed.
 
-Send the same text again to proceed once. On Claude Code, `/ar:cache ok` and every other slash command are model requests, so resending is cheaper.
+Send the same text again to proceed once, or run `/ar:cache ok`, which sends the held prompt in its own request (on Claude Code a slash command is itself a model request).
 
 1. `on` makes the session hold where the harness supports it. `warn` shows a notice and sends the prompt; `off` stops the check without turning off prompt caching. Each takes `[5m|1h|perm]`; `global off` applies unless the session has its own setting.
 2. `set expired-min-tokens <tokens>` sets the floor.
